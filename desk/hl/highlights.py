@@ -101,6 +101,12 @@ def _window_rows(
             add("Closed at a profit", 1.0, f"{_usd(winners.sum())}: {_ticker_list(winners)}")
         if not losers.empty:
             add("Closed at a loss", -1.0, f"{_usd(losers.sum())}: {_ticker_list(losers)}")
+        if "liquidation" in closes:
+            liquidated = closes.loc[closes["liquidation"].fillna(False).astype(bool)]
+            if not liquidated.empty:
+                attention.insert(0, {"Window": window, "Update": "Liquidated",
+                    "Detail": f"{_usd(liquidated['closedPnl'].sum())}: "
+                              f"{_ticker_list(liquidated.groupby('coin')['closedPnl'].sum())}"})
     if not funding.empty:
         net = float(funding.loc[pd.to_datetime(funding["ts"], utc=True) >= start, "fundingPnl"].sum())
         if net:

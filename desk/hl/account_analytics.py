@@ -520,6 +520,8 @@ def normalize_fills(fills):
             'assetType': 'spot' if str(fill.get('coin', '')).startswith('@') else 'perp',
             'dir': fill.get('dir', ''), 'side': fill.get('side', ''),
             'crossed': bool(fill.get('crossed')),
+            # HL marks a forced close with a ``liquidation`` object; ``dir`` still reads "Close Long".
+            'liquidation': bool(fill.get('liquidation')),
             'size': abs(as_float(fill.get('sz'))),
             'notional': abs(as_float(fill.get('px')) * as_float(fill.get('sz'))),
             'closedPnl': as_float(fill.get('closedPnl')), 'fee': as_float(fill.get('fee'),
@@ -1898,6 +1900,70 @@ def realized_pnl_stats(frame, funding_history=None, now=None, funding_events=Non
         'ev': expected_value, 'fills': len(frame)}
 
 
+def liquidation_mask(frame):
+    """True for fills HL closed by liquidation (flagged fills, or a ``dir`` naming one)."""
+    directions = frame['dir'].fillna('').astype(str).str.lower() if 'dir' in frame else \
+        pd.Series('', index=frame.index)
+    flagged = frame['liquidation'].fillna(False).astype(bool) if 'liquidation' in frame else False
+    return directions.str.contains('liquidat') | flagged
+
+
+def liquidation_events(realized_df):
+    """One row per liquidation: every position HL closed in the same instant counts as one event.
+
+    Columns: When, Wallet (if present), Assets, Positions, Notional, Realized PnL, Fees.
+    """
+    columns = ['When', 'Assets', 'Positions', 'Notional', 'Realized PnL', 'Fees']
+    if realized_df.empty:
+        return pd.DataFrame(columns=columns)
+    liquidated = realized_df.loc[liquidation_mask(realized_df)].copy()
+    if liquidated.empty:
+        return pd.DataFrame(columns=columns)
+    keys = ['wallet', 'time'] if 'wallet' in liquidated.columns else ['time']
+    rows = []
+    for key, group in liquidated.groupby(keys, sort=True):
+        by_asset = group.groupby('coin')['closedPnl'].sum().sort_values()
+        row = {'When': group['ts'].iloc[0].tz_convert(ACCOUNTING_TIMEZONE).strftime('%Y-%m-%d %H:%M'),
+            'Assets': ', '.join(f'{coin} ({_signed_usd(pnl)})' for coin, pnl in by_asset.items()),
+            'Positions': group['coin'].nunique(), 'Notional': group['notional'].sum(),
+            'Realized PnL': group['closedPnl'].sum(), 'Fees': group['fee'].fillna(0).sum()}
+        if 'wallet' in keys:
+            row['Wallet'] = str(key[0])[-4:]
+        rows.append(row)
+    events = pd.DataFrame(rows)
+    order = ['When', 'Wallet'] + columns[1:] if 'Wallet' in events else columns
+    return events[order]
+
+
+def _signed_usd(value):
+    return f"{'-' if value < 0 else '+'}${abs(value):,.2f}"
+
+
+def display_liquidation_events(realized_df, title='LIQUIDATIONS'):
+    """Show each liquidation event with a total row; say so plainly when there were none."""
+    events = liquidation_events(realized_df)
+    if events.empty:
+        print(f'=== {title} ===')
+        print('No liquidations in the available fills.')
+        return events
+    total = {'When': 'Total', 'Assets': f'{len(events)} event(s)', 'Positions': int(events['Positions'].sum()),
+        'Notional': events['Notional'].sum(), 'Realized PnL': events['Realized PnL'].sum(),
+        'Fees': events['Fees'].sum()}
+    table = pd.concat([events, pd.DataFrame([total])], ignore_index=True)
+    def style(row_index, column, value, row):
+        if column == 'Realized PnL' and pd.notna(value):
+            return 'color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else ''
+        return ''
+    display_interactive_table(table, formatters={
+        'Positions': lambda value: f'{value:,.0f}', 'Notional': lambda value: f'${value:,.0f}',
+        'Realized PnL': lambda value: f'${value:,.2f}', 'Fees': lambda value: f'${value:,.2f}',
+    }, cell_style=style, bold_last=True, title=title)
+    print('Each row is one forced close: positions sharing cross margin are liquidated together. '
+          'Realized PnL is closedPnl on the liquidation fills after fees (Fees shows that part); losses '
+          'booked by earlier partial closes of the same positions are in the attribution, not here.')
+    return events
+
+
 def liquidation_stats(perp_frame, funding_history=None):
     'Count liquidation closes and calculate their ' \
         'share of closes and perp PnL.'
@@ -1910,7 +1976,7 @@ def liquidation_stats(perp_frame, funding_history=None):
     if 'wallet' in perp_frame.columns:
         dedupe_columns.insert(0, 'wallet')
     closes = perp_frame.loc[close_mask].drop_duplicates(subset=dedupe_columns)
-    liquidations = perp_frame.loc[directions.str.contains('liquidat')].drop_duplicates(
+    liquidations = perp_frame.loc[liquidation_mask(perp_frame)].drop_duplicates(
         subset=dedupe_columns)
     funding_pnl = funding_history['fundingPnl'].sum() if funding_history is not None and \
         (not funding_history.empty) else 0.0
@@ -1927,7 +1993,7 @@ def perp_close_counts(perp_frame):
     if perp_frame.empty:
         return pd.Series(dtype='int64', name='Closes')
     directions = perp_frame['dir'].fillna('').astype(str).str.lower()
-    close_mask = directions.str.contains('close|liquidat') | (perp_frame['grossPnl'] != 0)
+    close_mask = directions.str.contains('close') | liquidation_mask(perp_frame) | (perp_frame['grossPnl'] != 0)
     dedupe_columns = ['time', 'coin', 'dir']
     if 'wallet' in perp_frame.columns:
         dedupe_columns.insert(0, 'wallet')
@@ -2275,6 +2341,14 @@ def build_pnl_attribution(realized_df, open_positions, funding_history=None, non
             'Realized': non_perp_pnl - spot_realized, 'uPnL': 0.0}]))
     close_counts = perp_close_counts(perp_fills)
     spot_close_counts = perp_close_counts(spot_fills)
+    if perp_fills.empty:
+        liquidated = pd.DataFrame(columns=['coin', 'closedPnl'])
+    else:
+        liquidated = perp_fills.loc[liquidation_mask(perp_fills)]
+        dedupe = [c for c in ('wallet', 'time', 'coin', 'dir') if c in liquidated.columns]
+        liquidated = liquidated.drop_duplicates(subset=dedupe)
+    liquidation_counts = liquidated.groupby('coin').size()
+    liquidation_pnl = liquidated.groupby('coin')['closedPnl'].sum()
     if not close_counts.empty:
         close_rows = close_counts.rename_axis('Asset').reset_index()
         close_rows['Type'] = 'Perp'
@@ -2313,12 +2387,19 @@ def build_pnl_attribution(realized_df, open_positions, funding_history=None, non
             attribution['Asset'] = attribution['Asset'].map(spot_base_token_names())
         except Exception as exc:
             print(f'Spot labels remain as API IDs: {type(exc).__name__}')
+    is_perp_row = attribution['Type'] == 'Perp'
+    attribution['Liquidations'] = [
+        int(liquidation_counts.get(asset, 0)) if perp else 0
+        for perp, asset in zip(is_perp_row, attribution['Asset'])]
+    attribution['Liquidation PnL'] = [
+        float(liquidation_pnl.get(asset, 0.0)) if perp else 0.0
+        for perp, asset in zip(is_perp_row, attribution['Asset'])]
     attribution = attribution[(attribution['Realized'] != 0) | (attribution['uPnL'] != 0) |
         (attribution['Closes'] > 0)].copy()
     is_perp = attribution['Type'] == 'Perp'
     attribution.loc[is_perp, 'Type'] = attribution.loc[is_perp, 'Asset'].map(perp_market_group)
-    perp_columns = ['Asset', 'Closes', 'Realized', 'Realized (% gross)', 'uPnL',
-        'uPnL (% gross)', 'Total PnL', 'Total (% gross)']
+    perp_columns = ['Asset', 'Closes', 'Liquidations', 'Liquidation PnL', 'Realized',
+        'Realized (% gross)', 'uPnL', 'uPnL (% gross)', 'Total PnL', 'Total (% gross)']
     tables = {
         asset_type: _attribution_table(attribution[attribution['Type'] == asset_type], columns)
         for asset_type, columns in [
@@ -2354,6 +2435,8 @@ def _attribution_table(rows, columns):
         rows[share] = rows[column] / gross * 100 if gross > 1e-12 else float('nan')
     rows = rows.sort_values('Total PnL', key=lambda pnl: pnl.abs(), ascending=False)
     total_row = pd.DataFrame([{'Asset': 'Net/total', 'Closes': int(rows['Closes'].sum()),
+        'Liquidations': int(rows['Liquidations'].sum()) if 'Liquidations' in rows else 0,
+        'Liquidation PnL': rows['Liquidation PnL'].sum() if 'Liquidation PnL' in rows else 0.0,
         'Realized': rows['Realized'].sum(), 'uPnL': rows['uPnL'].sum(),
         'Total PnL': rows['Total PnL'].sum()}])
     return pd.concat([rows, total_row], ignore_index=True).reindex(columns=columns)
@@ -2362,13 +2445,15 @@ def _attribution_table(rows, columns):
 def display_pnl_attribution_tables(tables, title):
     """Display one attribution table per market type under a shared title."""
     def style(row_index, column, value, row):
-        if column in {'Realized', 'uPnL', 'Total PnL', 'Realized (% gross)',
+        if column in {'Realized', 'uPnL', 'Total PnL', 'Realized (% gross)', 'Liquidation PnL',
                 'uPnL (% gross)', 'Total (% gross)'} and pd.notna(value):
             return 'color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else ''
         return ''
     for label, table in tables.items():
         display_interactive_table(table, formatters={
             'Closes': lambda value: f'{value:,.0f}',
+            'Liquidations': lambda value: f'{value:,.0f}' if value else '',
+            'Liquidation PnL': lambda value: f'${value:,.2f}' if value else '',
             'Realized': lambda value: f'${value:,.2f}', 'uPnL': lambda value: f'${value:,.2f}',
             'Total PnL': lambda value: f'${value:,.2f}',
             'Realized (% gross)': lambda value: f'{value:.2f}%',
@@ -2397,7 +2482,9 @@ class _PnLAttributionMixin:
         print('Scope: available realized fills (API cap: ' \
             '10,000) + saved perp funding + current open ' \
             'perp uPnL. The Spot table\'s Other row is HL\'s non-perp PnL less spot ' \
-            'fill PnL, so the net matches HL\'s total to within small timing differences.')
+            'fill PnL, so the net matches HL\'s total to within small timing differences. '
+            'Liquidation PnL is the part of Realized booked by forced closes.')
+        display_liquidation_events(data.realized_df)
 
 
 # ----------------------------------------------------------------------------

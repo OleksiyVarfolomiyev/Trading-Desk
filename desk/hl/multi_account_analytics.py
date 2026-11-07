@@ -24,6 +24,7 @@ from desk.hl.account_analytics import (
     display_pnl_attribution_tables,
     fetch_non_perp_pnl,
     liquidation_stats,
+    display_liquidation_events,
     perp_pnl_breakdown,
     plot_account_dashboard,
     plot_value_added_index,
@@ -340,7 +341,9 @@ class _MultiWalletAttributionMixin:
         display_pnl_attribution_tables(tables,'CONSOLIDATED PNL ATTRIBUTION')
         print(f'Net attributed PnL across wallets: ${net_pnl:,.2f}. '
               "The Spot table's Other row is HL's non-perp PnL less spot fill PnL, so the "
-              "net matches HL's total to within small timing differences.")
+              "net matches HL's total to within small timing differences. "
+              'Liquidation PnL is the part of Realized booked by forced closes.')
+        display_liquidation_events(data.realized_df,'LIQUIDATIONS (ALL WALLETS)')
 
 
 # ----------------------------------------------------------------------------

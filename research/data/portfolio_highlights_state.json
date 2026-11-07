@@ -1,37 +1,26 @@
 {
- "ts": "2026-11-06T23:30:22.780793+00:00",
+ "ts": "2026-11-07T21:24:39.921726+00:00",
  "metrics": {
-  "Assets analysed": 21,
-  "Assets in Kelly": 19,
-  "Kelly Sharpe (in-sample)": 3.536101910005216,
-  "Kelly beta (btc)": 0.2481926513877988,
-  "Kelly beta (spy)": 0.7448333663247897,
-  "HL book (actual): alpha (/yr)": 0.2253737768190115,
-  "HL book (actual): alpha t-stat": 0.5638235774696387,
-  "IB book (actual): alpha (/yr)": -0.38389915538685854,
-  "IB book (actual): alpha t-stat": -2.090351535083502
+  "Assets analysed": 10,
+  "Assets in Kelly": 8,
+  "Kelly Sharpe (in-sample)": 3.0419447824280783,
+  "Kelly beta (btc)": 0.5017977555935834,
+  "Kelly beta (spy)": 1.3394851330556337,
+  "HL book (actual): alpha (/yr)": -0.0007697675136703214,
+  "HL book (actual): alpha t-stat": -0.004221374899315493,
+  "IB book (actual): alpha (/yr)": -0.23051778280244817,
+  "IB book (actual): alpha t-stat": -1.1528372003169944
  },
  "assets": [
-  "NEAR",
-  "IMX",
-  "USELESS",
+  "io:IONQ",
   "INJ",
   "TRX",
-  "RUNE",
-  "ZRO",
   "RSR",
-  "GOAT",
-  "PENGU",
-  "PONS",
+  "xyz:AAPL",
   "xyz:MU",
+  "xyz:QNT",
   "HYPE",
   "DPI",
-  "VVV",
-  "GOOGL",
-  "KYIV",
-  "META",
-  "NET",
-  "NVDA",
-  "SWMR"
+  "VVV"
  ]
 }

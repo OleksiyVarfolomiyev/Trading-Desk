@@ -270,6 +270,45 @@ class RealizedPnlTests(unittest.TestCase):
         self.assertAlmostEqual(tables["Perp Crypto"]["Total PnL"].iloc[-1], -45.0)
         self.assertAlmostEqual(net_pnl, -35.0)
 
+    def liquidated_fills(self):
+        def fill(time, coin, direction, closed_pnl, liquidation=None):
+            row = {"time": time, "coin": coin, "dir": direction, "side": "A", "px": "100", "sz": "1",
+                   "closedPnl": str(closed_pnl), "fee": "0.1", "feeToken": "USDC"}
+            if liquidation:
+                row["liquidation"] = liquidation
+            return row
+        forced = {"liquidatedUser": "0xabc", "markPx": "100", "method": "market"}
+        return self.account.normalize_fills([
+            fill(1_000, "BTC", "Open Long", 0),
+            fill(2_000, "BTC", "Close Long", 5),
+            fill(3_000, "BTC", "Close Long", -40, forced),
+            fill(3_000, "KAITO", "Close Long", -10, forced),
+            fill(4_000, "PUMP", "Close Long", -20, forced),
+        ])
+
+    def test_liquidations_are_read_from_the_fill_flag_not_dir(self):
+        perp, _ = self.account.split_realized_fills(self.liquidated_fills())
+        stats = self.account.liquidation_stats(perp)
+        self.assertEqual(stats["liquidations"], 3)
+        self.assertEqual(stats["closes"], 4)
+        self.assertAlmostEqual(stats["pnl"], -70.3)
+
+    def test_positions_closed_together_form_one_liquidation_event(self):
+        events = self.account.liquidation_events(self.liquidated_fills())
+        self.assertEqual(len(events), 2)
+        self.assertEqual(list(events["Positions"]), [2, 1])
+        self.assertAlmostEqual(events["Realized PnL"].iloc[0], -50.2)
+        self.assertIn("BTC (-$40.10)", events["Assets"].iloc[0])
+        self.assertTrue(self.account.liquidation_events(self.fills()).empty)
+
+    def test_attribution_shows_liquidations_per_asset(self):
+        tables, _ = self.account.build_pnl_attribution(self.liquidated_fills(), [])
+        table = tables["Perp Crypto"].set_index("Asset")
+        self.assertEqual(table.loc["BTC", "Liquidations"], 1)
+        self.assertAlmostEqual(table.loc["BTC", "Liquidation PnL"], -40.1)
+        self.assertEqual(table.loc["Net/total", "Liquidations"], 3)
+        self.assertAlmostEqual(table.loc["Net/total", "Liquidation PnL"], -70.3)
+
     def test_live_account_value_counts_unified_perp_equity_once(self):
         self.assertEqual(self.account.live_account_value(1_000.0, 700.0, unified=True), 1_000.0)
         self.assertEqual(self.account.live_account_value(1_000.0, 700.0, unified=False), 1_700.0)
@@ -933,6 +972,19 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertEqual(changes["Opened"], ["NEW short (w)"])
         self.assertEqual(changes["Closed"], ["GONE short (w)"])
         self.assertEqual(changes["Resized"], ["CUT short (w)"])
+
+    def test_highlights_flag_a_liquidation_first(self):
+        now = pd.Timestamp("2026-01-10 12:00", tz="UTC")
+        fills = pd.DataFrame({
+            "ts": [now - pd.Timedelta(hours=1)] * 2, "coin": ["BTC", "ETH"],
+            "closedPnl": [-40.0, 5.0], "grossPnl": [-39.9, 5.1], "liquidation": [True, False],
+        })
+        _, attention = build_highlights(
+            now, None, [], fills, pd.DataFrame(), 0.0, -35.0, 100.0, 0.0, 10.0, 50.0, 100.0, [],
+        )
+        self.assertEqual(attention[0]["Update"], "Liquidated")
+        self.assertIn("BTC -$40.00", attention[0]["Detail"])
+        self.assertNotIn("ETH", attention[0]["Detail"])
 
     def test_asset_class_gives_each_market_one_group(self):
         self.assertEqual(asset_class("", None), "Crypto")
