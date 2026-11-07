@@ -223,6 +223,7 @@ class Dashboard:
         self.payload: dict | None = None
         self.payload_json = b""
         self.risk_table: pd.DataFrame | None = None
+        self.risk_accounts: tuple[str, ...] = ()
         self.last_history = 0.0
         self.last_ib_record = 0.0
         self.last_seen: dict[str, str] = {}
@@ -249,8 +250,11 @@ class Dashboard:
             self._publish()
         try:
             self.desk.fetch_data(refresh_history=history, record_ib_history=record)
-            if history or self.risk_table is None:
+            # Risk statistics are hourly, but recomputed at once when an account drops out or returns.
+            accounts_in_history = tuple(self.desk.histories)
+            if history or self.risk_table is None or accounts_in_history != self.risk_accounts:
                 self.risk_table = self.desk.risk_metrics()
+                self.risk_accounts = accounts_in_history
             payload = build_payload(self.desk, self.risk_table)
             payload["accounts_status"] = self.account_status(payload["problems"])
             with self.lock:

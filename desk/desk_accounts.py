@@ -81,6 +81,7 @@ class DeskAccounts:
         self.accounts = load_accounts()
         self.overview = DeskOverview(self.accounts, data_dir=self.data_dir)
         self.histories: dict[str, pd.DataFrame] = {}
+        self.excluded: list[str] = []
         # Accounts whose history starts where a data window starts (IB Flex keeps a year), as
         # opposed to HL wallets, whose history starts when they were funded.
         self.windowed: set[str] = set()
@@ -120,8 +121,9 @@ class DeskAccounts:
                 label = f"IB {path.stem.rsplit('_', 1)[-1]}"
                 self.histories[label] = ib_history(pd.read_csv(path))
                 self.windowed.add(label)
+        self.excluded = self._drop_unreadable()
         if not self.histories:
-            raise RuntimeError("No account has value history yet.")
+            raise RuntimeError("No readable account has value history yet.")
         # The combined desk starts where every account's value is known. An HL wallet's history
         # starts when it was funded (it was worth nothing before), so it can join later as an
         # inflow; an IB history starts where the Flex window starts, which limits the desk start.
@@ -151,13 +153,37 @@ class DeskAccounts:
                 days |= set(pd.date_range(start.normalize(), first - pd.Timedelta(days=1), freq="D", tz="UTC"))
             self.daily_days = days if self.daily_days is None else self.daily_days & days
         self.daily_days = pd.DatetimeIndex(sorted(self.daily_days or []))
-        if refresh_history or self.benchmarks.empty:
+        # Reload benchmarks when the desk start moves earlier (an account dropped out of the window).
+        if refresh_history or self.benchmarks.empty or self.benchmarks.index.min() > start - pd.Timedelta(days=5):
             self.benchmarks = self._benchmarks(start - pd.Timedelta(days=10))
         if any(account.venue == "hl" and account.onchain for account in self.accounts):
             self.notes.append("Wallet tokens on other chains have no value history; they count in current totals only.")
         for note in self.notes:
             print(f"note: {note}")
         return self.index
+
+    def _drop_unreadable(self) -> list[str]:
+        """Leave accounts the overview could not read out of the combined history, as they are out of
+        every current total: a saved IB history while TWS is down would otherwise still show IB in the
+        charts and performance with stale values."""
+        failed = {problem.split(":")[0].strip() for problem in self.overview.problems}
+        dropped = []
+        for account in self.accounts:
+            if account.name not in failed:
+                continue
+            if account.venue == "hl":
+                labels = [account.name] if account.name in self.histories else []
+            else:  # IB histories are labelled by account number; an account without an ID owns them all
+                labels = [label for label in self.histories if label.startswith(f"{account.venue.upper()} ")
+                          and (not account.id or label.endswith(account.id))]
+            for label in labels:
+                self.histories.pop(label)
+                self.windowed.discard(label)
+                dropped.append(label)
+        if dropped:
+            self.notes.append(f"Left out of history, performance and risk because the account could not be read "
+                              f"this time: {', '.join(dropped)}.")
+        return dropped
 
     def _benchmarks(self, start: pd.Timestamp) -> pd.DataFrame:
         """Daily BTC and SPY closes for the comparison period."""

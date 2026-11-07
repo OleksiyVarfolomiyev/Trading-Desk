@@ -1198,5 +1198,24 @@ class IBKRLinkTests(unittest.TestCase):
         self.assertEqual(describe_failure(SimpleNamespace(), ValueError("bad contract")), "bad contract")
 
 
+class DeskAccountsUnreadableTests(unittest.TestCase):
+    def test_unreadable_accounts_leave_the_combined_history(self):
+        from types import SimpleNamespace
+
+        from desk.accounts import Account
+        from desk.desk_accounts import DeskAccounts
+
+        desk = DeskAccounts.__new__(DeskAccounts)
+        desk.accounts = [Account("hl", "0x" + "1" * 40, "HL a"), Account("ib", "U123", "IB")]
+        desk.overview = SimpleNamespace(problems=["IB: Could not connect to TWS", "HL a wallet: base skipped"])
+        desk.histories = {"HL a": "hl history", "IB U123": "ib history"}
+        desk.windowed = {"IB U123"}
+        desk.notes = []
+        self.assertEqual(desk._drop_unreadable(), ["IB U123"])
+        self.assertEqual(list(desk.histories), ["HL a"])  # the wallet's on-chain problem does not drop HL a
+        self.assertEqual(desk.windowed, set())
+        self.assertIn("IB U123", desk.notes[0])
+
+
 if __name__ == "__main__":
     unittest.main()
