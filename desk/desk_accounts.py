@@ -64,7 +64,7 @@ def period_returns(index: pd.Series, rule: str, valid_days: pd.DatetimeIndex | N
     closes = index.resample(rule).last().dropna()
     closes.index = closes.index.normalize()
     step = pd.Timedelta(days=1) if rule == "1D" else pd.Timedelta(days=7)
-    returns = closes.pct_change()
+    returns = closes.pct_change(fill_method=None)
     keep = closes.index.to_series().diff().eq(step)
     if valid_days is not None:
         days = set(valid_days)
@@ -308,7 +308,7 @@ class DeskAccounts:
         sharpe = beta_spy = beta_btc = np.nan
         if len(weekly) >= 8 and weekly.std() > 0:
             sharpe = float(weekly.mean() / weekly.std() * math.sqrt(52))
-            bench = self.benchmarks.resample("W-SUN").last().pct_change() if len(self.benchmarks) else pd.DataFrame()
+            bench = self.benchmarks.resample("W-SUN").last().pct_change(fill_method=None) if len(self.benchmarks) else pd.DataFrame()
             betas = {}
             for name in ("BTC", "SPY"):
                 if name in bench:
@@ -332,8 +332,8 @@ class DeskAccounts:
         """Volatility, Sharpe, drawdown, VaR and benchmark betas, weekly and (where possible) daily."""
         equity = sum(float(history["accountValue"].iloc[-1]) for history in self.histories.values())
         rows = []
-        bench_weekly = self.benchmarks.resample("W-SUN").last().pct_change() if len(self.benchmarks) else pd.DataFrame()
-        bench_daily = self.benchmarks.pct_change() if len(self.benchmarks) else pd.DataFrame()
+        bench_weekly = self.benchmarks.resample("W-SUN").last().pct_change(fill_method=None) if len(self.benchmarks) else pd.DataFrame()
+        bench_daily = self.benchmarks.pct_change(fill_method=None) if len(self.benchmarks) else pd.DataFrame()
         for label, returns, periods, bench in (
             ("Weekly", period_returns(self.index, "W-SUN"), 52, bench_weekly),
             ("Daily", period_returns(self.index, "1D", self.daily_days), 365, bench_daily),

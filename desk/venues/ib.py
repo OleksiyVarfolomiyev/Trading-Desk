@@ -107,11 +107,13 @@ def ibkr_link_down(errors: list[str]) -> bool:
 
 def describe_failure(ib, exc: Exception) -> str:
     """A readable reason for a failed IB read, naming IBKR maintenance when that is the likely cause."""
+    import asyncio
+
     errors = getattr(ib, "desk_errors", None) or []
     if ibkr_link_down(errors):
         return ("TWS has lost its connection to IBKR's servers (error 1100), usually IBKR's nightly reset or "
                 "weekend maintenance")
-    if isinstance(exc, TimeoutError):
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):  # distinct classes before Python 3.11
         return (f"TWS did not answer within {READ_REQUEST_TIMEOUT_SECONDS}s; IBKR may be in maintenance or TWS "
                 "may be disconnected from IBKR")
     return str(exc) or type(exc).__name__

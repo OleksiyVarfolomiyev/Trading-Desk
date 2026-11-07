@@ -23,6 +23,7 @@ import faulthandler
 import json
 import math
 import signal
+import sys
 import threading
 import time
 import traceback
@@ -370,8 +371,17 @@ def main(argv: list[str] | None = None) -> int:
 
     # `kill -USR1 <pid>` writes every thread's stack to the log: shows where a slow refresh is waiting.
     faulthandler.register(signal.SIGUSR1, all_threads=True)
-    dashboard = Dashboard(args.interval, args.data_dir, args.wallet_data_dir)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(dashboard, args.port))
+    try:
+        dashboard = Dashboard(args.interval, args.data_dir, args.wallet_data_dir)
+    except ValueError as exc:  # no accounts.json, or an invalid one
+        print(f"Cannot start the dashboard: {exc}", file=sys.stderr)
+        return 2
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(dashboard, args.port))
+    except OSError as exc:
+        print(f"Cannot listen on 127.0.0.1:{args.port} ({exc.strerror or exc}); is the dashboard already running? "
+              "Use --port to pick another port.", file=sys.stderr)
+        return 2
     threading.Thread(target=dashboard.run_forever, name="desk-refresh", daemon=True).start()
     url = f"http://127.0.0.1:{args.port}"
     print(f"Desk dashboard on {url} (refresh every {dashboard.interval}s; Ctrl+C stops). Read-only.", flush=True)

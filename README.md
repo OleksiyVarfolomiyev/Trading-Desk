@@ -96,6 +96,15 @@ IB's API has no account-value history, so beta and alpha to SPY, Sharpe, volatil
 
 From the repository root, `python -m desk.dashboard --open` does the same.
 
+On another machine: clone the repository, install `python -m pip install -r requirements-dashboard.txt` (Python 3.10 or newer), copy `accounts.example.json` to `accounts.json` with the accounts to show, and run `python run_dashboard.py --open` from the clone. Without anything else configured it shows every HL wallet (balances, positions, value history downloaded from HL on the first refresh, which takes about a minute) and the wallets' main tokens on other chains. What needs local setup:
+
+| Missing | Effect |
+|---|---|
+| TWS running and logged in | The IB account shows as unreadable in a red banner and is left out of totals; SPY comes from the saved research prices |
+| IB Flex token (`python -m desk.venues.ib_flex --store-token`) | No IB value history; the desk history starts at the first HL wallet's funding instead of IB's Flex window |
+| Etherscan key (`python -m desk.venues.onchain --store-key`) | Arbitrum and Polygon wallet holdings are skipped (listed in Data notes) |
+| Alchemy or Blockscout PRO key | Base shows main tokens only |
+
 It serves http://127.0.0.1:8050 (`--port` to change) and re-reads every account every 3 minutes (`--interval` in seconds, minimum 30); the **Refresh now** button refreshes immediately. The page shows key-number tiles (desk value, unrealized PnL, returns, drawdown, leverage, open risk against the cap, largest position), which accounts were read, highlights, desk value by account and the desk return against BTC and SPY, and the performance, accounts, risk-metrics, positions, exposure, open-risk, winners-and-losers and wallet tables. HL value history, IB Flex history, benchmark prices and risk statistics refresh hourly; IB account snapshots are added to the saved IB history at most every 30 minutes. An unreadable account is named in a red banner and left out of every total; a failed refresh keeps the last good data on screen and says how old it is. During IBKR maintenance, IB reads give up after 30 seconds instead of hanging.
 
 The server listens on 127.0.0.1 only and has no login, because the page shows balances. It is read-only and never places orders. `kill -USR1 <pid>` writes every thread's stack to its output if a refresh seems stuck. Code: `desk/dashboard.py`, page in `desk/dashboard_static/`.

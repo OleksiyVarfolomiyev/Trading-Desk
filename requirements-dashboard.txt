@@ -1,0 +1,8 @@
+# Live dashboard and desk analytics (python run_dashboard.py). Python 3.10 or newer.
+numpy
+pandas
+plotly
+requests
+ipython
+ib_async   # IB through TWS; without TWS the IB account is shown as unreadable
+keyring    # optional: Etherscan/Alchemy keys and the IB Flex token from the OS keychain
