@@ -36,7 +36,9 @@ from factor_model import (
     btc_momentum_factor,
     btc_realized_vol,
     fit_factor_regression,
+    fit_regime_interaction,
     independent_factors,
+    rolling_betas,
     split_in_half,
 )
 from portfolio_risk import calculate_portfolio_risk_metrics
@@ -195,6 +197,32 @@ def _signed_table(frame, formatters=None):
                     return 'color: #c62828;'
         return ''
     return frame.style.format(formatters or {}, na_rep='N/A').map(sign_color)
+
+
+def compound_factors(factors, ends):
+    """Compound each daily factor into the periods ending on ``ends``.
+
+    A period after a factor's last published day is left empty rather than half-compounded.
+    """
+    compounded=pd.DataFrame(index=ends)
+    for name in factors.columns:
+        daily=factors[name].dropna()
+        series=compound_to_calendar(daily,ends)
+        compounded[name]=series.where(ends<=daily.index.max()) if len(daily) else np.nan
+    return compounded
+
+
+REGIME_FACTORS=('BTC market excess','Alt market - BTC','Funding (low - high)','SPY market excess')
+REGIME_COLORS=('rgba(37,99,235,0.08)','rgba(234,88,12,0.08)','rgba(22,163,74,0.08)','rgba(147,51,234,0.08)')
+
+
+def shade_regimes(fig, regimes, period=pd.Timedelta(days=7)):
+    """Shade each contiguous regime on a time-axis figure and label it at the top."""
+    for index,(name,dates) in enumerate(regimes.groupby(regimes,sort=False)):
+        start,end=dates.index.min()-period,dates.index.max()
+        fig.add_vrect(x0=start,x1=end,fillcolor=REGIME_COLORS[index%len(REGIME_COLORS)],line_width=0,layer='below',
+                      annotation_text=name.split(' (')[0],annotation_position='top left',
+                      annotation_font_size=10)
 
 
 class _TableStyleMixin:
@@ -1689,12 +1717,7 @@ class _FactorModelMixin(_TableStyleMixin):
             unit='week' if 5<=spacing<=9 else 'period' if spacing>1.5 else 'day'
             # Compound each daily factor into the book's periods; a period after a factor's last
             # published day is left empty rather than half-compounded.
-            compounded=pd.DataFrame(index=ends)
-            for name in factors.columns:
-                daily=factors[name].dropna()
-                series=compound_to_calendar(daily,ends)
-                compounded[name]=series.where(ends<=daily.index.max()) if len(daily) else np.nan
-            factors=compounded
+            factors=compound_factors(factors,ends)
             rf_daily=rf.dropna()
             rf=compound_to_calendar(rf_daily,ends).where(ends<=rf_daily.index.max())
             excess=(returns-rf.fillna(self.risk_free_daily*spacing)).rename('Book excess')
@@ -1824,7 +1847,203 @@ class _FactorModelMixin(_TableStyleMixin):
               'HL book: no saved history yet; run the HL account notebooks first.')
         if returns.empty:
             return None
-        return self.fit_style_model(returns,label='HL book (actual)')
+        result=self.fit_style_model(returns,label='HL book (actual)')
+        print('These betas are pooled over every period in the sample. The HL book has changed what it holds '
+              '(see style_regimes_hl_book() for exposure per leg and betas per regime), so read them as an '
+              'average across regimes, not as the current book\'s risk.')
+        return result
+
+    def _hl_book_equity(self, desk_data_dir=None):
+        """Daily value of the HL book (every configured wallet), from the saved HL history."""
+        folder=Path(desk_data_dir) if desk_data_dir else DESK_DATA_DIR
+        values=[]
+        for wallet in self.wallet_addresses:
+            path=folder/f'hl_portfolio_history_{wallet.lower()}.csv'
+            if path.exists():
+                history=pd.read_csv(path)
+                history['ts']=pd.to_datetime(history['ts'],utc=True,format='mixed')
+                values.append(history.set_index('ts')['accountValue'].resample('1D').last())
+        if not values:
+            return pd.Series(dtype=float)
+        equity=pd.concat(values,axis=1).ffill().fillna(0.0).sum(axis=1)
+        equity.index=equity.index.normalize()
+        return equity
+
+    def style_regimes_hl_book(self, factors=None, threshold=0.10, leverage=1.0, min_run=6,
+                              window=12, desk_data_dir=None):
+        """Style betas of the HL book per regime, instead of one pooled beta across regimes.
+
+        A pooled beta over a book that was long alts in one stretch and short them in another is
+        a weighted average of opposite exposures and describes neither. This report:
+
+        1. rebuilds the book's net and gross exposure per leg (BTC, alts, TradFi) every week from
+           fills, token transfers and today's balances, so the positions are visible directly;
+        2. splits the weeks into contiguous regimes by the sign of each leg's net exposure and
+           whether gross exposure is above ``leverage`` x equity (legs under ``threshold`` x
+           equity count as flat; runs under ``min_run`` weeks fold into their neighbor);
+        3. fits the factor betas separately in each regime, and once with a regime interaction
+           (separate intercept and betas per regime, pooled Newey-West errors) to test whether
+           each beta actually differs between regimes;
+        4. shows rolling ``window``-week betas, so sign changes are visible rather than averaged.
+
+        The current regime is often too short for weekly betas; it is then also fit on daily
+        returns, where the saved daily history covers it.
+        """
+        from desk.hl import book_exposure
+
+        weekly_returns=self.hl_book_returns('W',desk_data_dir)
+        daily_returns=self.hl_book_returns('D',desk_data_dir)
+        equity=self._hl_book_equity(desk_data_dir)
+        if weekly_returns.empty or equity.empty:
+            print('HL book: no saved history yet; run the HL account notebooks first.')
+            return None
+        daily_exposure,notes=book_exposure.fetch_book_exposure(
+            self.wallet_addresses,equity,start=weekly_returns.index.min()-pd.Timedelta(days=7))
+        exposure=book_exposure.weekly_exposure(daily_exposure)
+        exposure['Regime']=book_exposure.label_regimes(exposure,threshold,leverage,min_run)
+        regimes=exposure['Regime']
+
+        # 1. Exposure per leg, per week.
+        print(f'=== HL BOOK EXPOSURE BY LEG ({len(exposure)} weeks, average of daily exposure / equity) ===')
+        fig=go.Figure()
+        for leg,color in zip(book_exposure.LEGS,('#f59e0b','#2563eb','#16a34a')):
+            fig.add_trace(go.Bar(x=exposure.index,y=exposure[f'Net {leg}'],name=f'Net {leg}',marker_color=color))
+        fig.add_trace(go.Scatter(x=exposure.index,y=exposure['Gross total'],name='Gross total',
+                                 line={'color':'#111827','width':2,'dash':'dot'}))
+        shade_regimes(fig,regimes)
+        fig.update_layout(title='HL book: net exposure per leg and gross exposure (x equity), by regime',
+                          barmode='relative',yaxis_tickformat='.1f',yaxis_title='x equity',
+                          template='plotly_white',hovermode='x unified')
+        fig.show()
+        summary=exposure.groupby('Regime',sort=False).agg(
+            Weeks=('Equity','size'),
+            **{f'Net {leg}':(f'Net {leg}','mean') for leg in book_exposure.LEGS},
+            **{f'Gross {leg}':(f'Gross {leg}','mean') for leg in book_exposure.LEGS},
+            **{'Gross total':('Gross total','mean'),'Peak gross':('Gross total','max'),'Equity (end)':('Equity','last')})
+        print('Average exposure per regime (x equity):')
+        self.show_table(summary,{'Weeks':'{:.0f}','Equity (end)':'${:,.0f}',
+                                 **{column:'{:+.2f}' for column in summary.columns if column.startswith('Net')},
+                                 **{column:'{:.2f}' for column in summary.columns
+                                    if column.startswith(('Gross','Peak'))}})
+        recent=exposure.drop(columns='Equity').tail(12)
+        print('Last 12 weeks (x equity):')
+        self.show_table(recent,{column:'{:+.2f}' if column.startswith('Net') else '{:.2f}'
+                                for column in recent.columns if column!='Regime'})
+
+        # 2. Betas per regime, against the pooled fit.
+        available=getattr(self,'factor_returns_all',None)
+        if available is None:
+            raise RuntimeError('Run fit_factor_model() first: the regime model reuses its crypto factors.')
+        available=_normalize_daily_index(available)
+        names=[name for name in (factors or REGIME_FACTORS) if name in available]
+        weekly_factors=compound_factors(available[names],weekly_returns.index)
+        rf_weekly=(1+self.risk_free_daily)**7-1
+        excess=(weekly_returns-rf_weekly).rename('Book excess')
+        data=pd.concat([excess,weekly_factors,regimes],axis=1).dropna()
+        left_out=sorted(set(regimes.dropna().unique())-set(data['Regime'].unique()))
+        if left_out:
+            notes.append('Before the factors begin (CoinGecko market data covers about a year), so exposure '
+                         'only: '+'; '.join(left_out)+'.')
+        if len(data)<len(names)+5:
+            print(f'Only {len(data)} weeks overlap the factors; too few for regime betas.')
+            return {'exposure':exposure,'daily_exposure':daily_exposure}
+        names=[name for name in names if data[name].std()>0]
+        minimum=len(names)+6
+        rows,fits={},{}
+        def add_fit(column,frame,unit,periods):
+            fit=fit_factor_regression(frame['Book excess'],frame[names])
+            fits[column]=fit
+            column_values={}
+            for name in names:
+                column_values[(name,'Beta')]=fit.betas[name]
+                column_values[(name,'t')]=fit.t_stats[name]
+            column_values[('Alpha (/yr)','Beta')]=fit.alpha*periods
+            column_values[('Alpha (/yr)','t')]=fit.alpha_t_stat
+            column_values[('R-squared','Beta')]=fit.r_squared
+            column_values[('Observations','Beta')]=f'{fit.observations} {unit}s'
+            column_values[('Dates','Beta')]=f'{frame.index.min():%Y-%m-%d} to {frame.index.max():%Y-%m-%d}'
+            rows[column]=column_values
+        add_fit('Pooled (all weeks)',data,'week',52)
+        too_short=[]
+        for regime,frame in data.groupby('Regime',sort=False):
+            if len(frame)>=minimum:
+                add_fit(regime,frame,'week',52)
+            else:
+                too_short.append((regime,len(frame)))
+        # The current regime on daily returns, when the weekly sample is too short.
+        current=regimes.iloc[-1]
+        if current not in fits and not daily_returns.empty:
+            start=regimes[regimes==current].index.min()-pd.Timedelta(days=6)
+            calendar=available.index[available.index>=start]
+            book=compound_to_calendar(daily_returns,calendar) if len(calendar) else pd.Series(dtype=float)
+            spacing=pd.Series(calendar).diff().dt.days.fillna(1).to_numpy()
+            daily_data=pd.concat([(book-self.risk_free_daily*spacing).rename('Book excess'),
+                                  available.loc[calendar,names]],axis=1).dropna()
+            if len(daily_data)>=minimum:
+                add_fit(f'{current}, daily',daily_data,'day',self.trading_days_per_year)
+        table=pd.DataFrame(rows)
+        table.index=pd.MultiIndex.from_tuples(table.index)
+        table=table.unstack(1)
+        table=table.reindex(columns=pd.MultiIndex.from_product([list(rows),['Beta','t']]))
+        table=table.reindex(names+['Alpha (/yr)','R-squared','Observations','Dates'])
+        table=table.loc[:,table.notna().any()]
+        print('=== STYLE BETAS PER REGIME (HAC t-stats) ===')
+        def cell(value,row,column):
+            if isinstance(value,str) or pd.isna(value):
+                return '' if pd.isna(value) else value
+            if column[1]=='t':
+                return f'{value:.2f}'
+            return f'{value:.1%}' if row in ('Alpha (/yr)','R-squared') else f'{value:+.3f}'
+        shown=pd.DataFrame({column:[cell(table.loc[row,column],row,column) for row in table.index]
+                            for column in table.columns},index=table.index)
+        display(shown)
+        for regime,count in too_short:
+            print(f'{regime}: only {count} weeks with factor data, too few for {len(names)} betas.')
+
+        # 3. One model with regime interactions: are the betas actually different?
+        eligible=data[data['Regime'].isin([r for r in data['Regime'].unique() if (data['Regime']==r).sum()>=minimum])]
+        interaction=None
+        if eligible['Regime'].nunique()>=2:
+            interaction,observations=fit_regime_interaction(eligible['Book excess'],eligible[names],eligible['Regime'])
+            reference=interaction['Regime'].iloc[0]
+            pivot=interaction[interaction['Term']!='Alpha']
+            compare=pivot.pivot(index='Term',columns='Regime',values='Estimate').reindex(names)
+            compare=compare[list(dict.fromkeys(interaction['Regime']))]
+            for regime in compare.columns[1:]:
+                part=pivot[pivot['Regime']==regime].set_index('Term').reindex(names)
+                compare[f'Change vs {reference.split(" (")[0]}: t ({regime.split(" (")[0]})']=part['Difference t-stat']
+            print(f'=== REGIME INTERACTION MODEL ({observations} weeks; betas per regime, t of the change) ===')
+            self.show_table(compare,{column:('{:.2f}' if column.startswith('Change') else '{:+.3f}')
+                                     for column in compare.columns})
+            changed=[term for term in names
+                     if (pivot.loc[pivot['Term']==term,'Difference t-stat'].abs()>=2).any()]
+            print('Betas that change significantly between regimes (|t| >= 2): '
+                  +(', '.join(changed) if changed else 'none at this sample size')+'.')
+
+        else:
+            print('Regime interaction model not run: it needs two regimes with at least '
+                  f'{minimum} weeks of factor data each.')
+
+        # 4. Rolling betas.
+        rolling=rolling_betas(data['Book excess'],data[names],window,min_periods=max(8,len(names)+3))
+        if not rolling.empty:
+            fig=go.Figure()
+            for name in names:
+                fig.add_trace(go.Scatter(x=rolling.index,y=rolling[name],name=name,mode='lines'))
+            fig.add_hline(y=0,line_color='#9ca3af',line_width=1)
+            shade_regimes(fig,regimes.reindex(rolling.index).dropna())
+            fig.update_layout(title=f'HL book: rolling {window}-week betas (each point uses the trailing {window} weeks)',
+                              template='plotly_white',hovermode='x unified',yaxis_title='beta')
+            fig.show()
+        for note in notes:
+            print(note)
+        print('Exposure is rebuilt from fills (perps) and from balances, spot fills and transfers (spot tokens); '
+              'it is the average of daily exposure over each week. A pooled beta mixes the regimes; use the '
+              'per-regime and interaction betas for risk, and the exposure table for what was actually held.')
+        result={'exposure':exposure,'daily_exposure':daily_exposure,'betas':table,'fits':fits,
+                'interaction':interaction,'rolling':rolling}
+        self.style_regime_results=result
+        return result
 
     def ib_book_returns(self, frequency='W', ib_dir=None, refresh=True):
         """Time-weighted returns of the actual IB account, from IB Flex NAV history.
@@ -2228,6 +2447,13 @@ class _OutputMixin:
             result['summary'].to_csv(data/f'style_model_fit_{slug}.csv')
             result['attribution'].to_csv(data/f'style_attribution_{slug}.csv')
             result['specific'].rename('specific_return').to_csv(data/f'style_specific_returns_{slug}.csv',header=True)
+        regimes=getattr(self,'style_regime_results',None)
+        if regimes is not None:  # only if style_regimes_hl_book() ran
+            regimes['exposure'].to_csv(data/'hl_book_exposure_weekly.csv')
+            if 'betas' in regimes:
+                regimes['betas'].to_csv(data/'style_betas_by_regime_hl_book.csv')
+            if regimes.get('interaction') is not None:
+                regimes['interaction'].to_csv(data/'style_regime_interaction_hl_book.csv',index=False)
         if getattr(self,'factor_premia',None) is not None:
             self.factor_premia.to_csv(data/'factor_premia.csv')
         if getattr(self,'factor_premia_joint',None) is not None:

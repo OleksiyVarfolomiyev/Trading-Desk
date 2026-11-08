@@ -43,6 +43,19 @@ def btc_realized_vol(
     return btc_returns.rolling(window_days, min_periods=window_days).std().shift(1) * np.sqrt(periods_per_year)
 
 
+def hac_covariance(X: np.ndarray, residuals: np.ndarray, max_lags: int = HAC_MAX_LAGS) -> np.ndarray:
+    """Newey-West (Bartlett) covariance of OLS coefficients."""
+    scores = X * residuals[:, None]
+    meat = scores.T @ scores
+    lags = min(max_lags, len(residuals) - 1)
+    for lag in range(1, lags + 1):
+        weight = 1.0 - lag / (lags + 1.0)
+        cross = scores[lag:].T @ scores[:-lag]
+        meat += weight * (cross + cross.T)
+    bread = np.linalg.pinv(X.T @ X)
+    return bread @ meat @ bread
+
+
 def fit_factor_regression(
     dependent: pd.Series, factors: pd.DataFrame, state_factors: tuple[str, ...] = ()
 ) -> FactorFit:
@@ -70,15 +83,7 @@ def fit_factor_regression(
     residuals = y - X @ coefficients
     r_squared = 1.0 - (residuals @ residuals) / np.sum((y - y.mean()) ** 2)
     adjusted = 1.0 - (1.0 - r_squared) * (len(y) - 1) / (len(y) - X.shape[1])
-    scores = X * residuals[:, None]
-    meat = scores.T @ scores
-    lags = min(HAC_MAX_LAGS, len(y) - 1)
-    for lag in range(1, lags + 1):
-        weight = 1.0 - lag / (lags + 1.0)
-        cross = scores[lag:].T @ scores[:-lag]
-        meat += weight * (cross + cross.T)
-    bread = np.linalg.pinv(X.T @ X)
-    standard_errors = np.sqrt(np.maximum(np.diag(bread @ meat @ bread), 0.0))
+    standard_errors = np.sqrt(np.maximum(np.diag(hac_covariance(X, residuals)), 0.0))
     t_stats = np.divide(coefficients, standard_errors, out=np.full_like(coefficients, np.nan), where=standard_errors > 0)
     return FactorFit(
         names=names,
@@ -200,3 +205,76 @@ def sort_spread(signal: pd.DataFrame, returns: pd.DataFrame, min_assets: int = 4
         half = len(ranked) // 2
         spread.loc[date] = ranked["return"].iloc[-half:].mean() - ranked["return"].iloc[:half].mean()
     return spread
+
+
+def fit_regime_interaction(
+    dependent: pd.Series, factors: pd.DataFrame, regimes: pd.Series, reference: str | None = None,
+) -> tuple[pd.DataFrame, int]:
+    """One regression with a separate intercept and beta per regime, and Newey-West errors.
+
+    excess = a + sum_r c_r D_r + sum_k b_k F_k + sum_r sum_k d_rk (F_k x D_r) + e, where D_r is
+    1 in regime r (every regime except ``reference``, which defaults to the most frequent).
+    Because the residual variance and its autocorrelation are pooled, this tests whether each
+    beta differs between regimes more efficiently than separate fits do.
+
+    Returns (table, observations). The table has one row per (regime, term), term being
+    'Alpha' or a factor name, with columns Estimate, t-stat, Difference vs reference and
+    Difference t-stat (empty for the reference regime). Alpha is per period, as estimated.
+    """
+    data = pd.concat([dependent.rename("__y__"), factors, regimes.rename("__regime__")], axis=1)
+    data = data.replace([np.inf, -np.inf], np.nan).dropna()
+    names = list(factors.columns)
+    labels = list(data["__regime__"].value_counts().index)
+    if len(labels) < 2:
+        raise ValueError("Need at least two regimes in the sample.")
+    reference = reference if reference in labels else labels[0]
+    others = [label for label in labels if label != reference]
+    base = np.column_stack([np.ones(len(data)), data[names].to_numpy(dtype=float)])
+    blocks = [base]
+    for label in others:
+        dummy = (data["__regime__"] == label).to_numpy(dtype=float)[:, None]
+        blocks.append(base * dummy)
+    X = np.column_stack(blocks)
+    y = data["__y__"].to_numpy(dtype=float)
+    if len(y) <= X.shape[1] + 2:
+        raise ValueError(f"Only {len(y)} observations for {X.shape[1]} coefficients.")
+    coefficients, _, rank, _ = np.linalg.lstsq(X, y, rcond=None)
+    if rank < X.shape[1]:
+        raise ValueError("Regime model is rank-deficient: a factor does not vary within some regime.")
+    covariance = hac_covariance(X, y - X @ coefficients)
+    width = base.shape[1]
+    terms = ["Alpha"] + names
+    rows = []
+    for position, label in enumerate([reference] + others):
+        for index, term in enumerate(terms):
+            weights = np.zeros(X.shape[1])
+            weights[index] = 1.0
+            difference = difference_t = np.nan
+            if position:
+                offset = position * width + index
+                weights[offset] = 1.0
+                difference = coefficients[offset]
+                spread = np.sqrt(max(covariance[offset, offset], 0.0))
+                difference_t = difference / spread if spread > 0 else np.nan
+            estimate = float(weights @ coefficients)
+            spread = np.sqrt(max(float(weights @ covariance @ weights), 0.0))
+            rows.append({"Regime": label, "Term": term, "Estimate": estimate,
+                         "t-stat": estimate / spread if spread > 0 else np.nan,
+                         "Difference vs reference": difference, "Difference t-stat": difference_t})
+    return pd.DataFrame(rows), len(y)
+
+
+def rolling_betas(dependent: pd.Series, factors: pd.DataFrame, window: int, min_periods: int) -> pd.DataFrame:
+    """OLS betas over a trailing window, dated at the window's last period."""
+    data = pd.concat([dependent.rename("__y__"), factors], axis=1).replace([np.inf, -np.inf], np.nan).dropna()
+    names = list(factors.columns)
+    rows = {}
+    for end in range(len(data)):
+        chunk = data.iloc[max(0, end - window + 1): end + 1]
+        if len(chunk) < max(min_periods, len(names) + 3):
+            continue
+        X = np.column_stack([np.ones(len(chunk)), chunk[names].to_numpy(dtype=float)])
+        coefficients, _, rank, _ = np.linalg.lstsq(X, chunk["__y__"].to_numpy(dtype=float), rcond=None)
+        if rank == X.shape[1]:
+            rows[data.index[end]] = coefficients[1:]
+    return pd.DataFrame.from_dict(rows, orient="index", columns=names)
