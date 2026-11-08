@@ -309,6 +309,18 @@ class RealizedPnlTests(unittest.TestCase):
         self.assertEqual(table.loc["Net/total", "Liquidations"], 3)
         self.assertAlmostEqual(table.loc["Net/total", "Liquidation PnL"], -70.3)
 
+    def test_fill_paging_returns_every_fill_in_either_page_order(self):
+        # 4,500 fills, three to a millisecond so pages split a shared timestamp.
+        fills = [{"time": 1_000 + i // 3, "tid": i, "coin": "BTC", "hash": f"h{i}"} for i in range(4_500)]
+        for newest_first in (False, True):
+            def post(payload, newest_first=newest_first):
+                window = [f for f in fills if payload["startTime"] <= f["time"] <= payload["endTime"]]
+                return (window[::-1] if newest_first else window)[:2000]
+            with patch.object(self.account, "post", side_effect=post):
+                result = self.account.fetch_user_fills("0xabc")
+            self.assertEqual(len(result), 4_500, f"newest_first={newest_first}")
+            self.assertEqual([f["tid"] for f in result], list(range(4_500)))
+
     def test_live_account_value_counts_unified_perp_equity_once(self):
         self.assertEqual(self.account.live_account_value(1_000.0, 700.0, unified=True), 1_000.0)
         self.assertEqual(self.account.live_account_value(1_000.0, 700.0, unified=False), 1_700.0)

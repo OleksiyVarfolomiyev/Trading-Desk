@@ -25,10 +25,17 @@ DEFAULT_FLAT_THRESHOLD = 0.10
 DEFAULT_LEVERAGE = 1.0
 # Gold and other real-world assets listed on the main dex are TradFi, not alts.
 TRADFI_MAIN_DEX = {"PAXG", "XAUT"}
+# A spot balance change smaller than this (USD) is dust, not trading activity.
+MIN_ACTIVITY_USD = 1.0
 
 
 def _ts(milliseconds: Any) -> pd.Timestamp:
     return pd.Timestamp(int(milliseconds), unit="ms", tz="UTC")
+
+
+def is_spot_market(coin: str) -> bool:
+    """Spot markets are ``@<index>`` or a named pair such as ``PURR/USDC``; perps are neither."""
+    return coin.startswith("@") or "/" in coin
 
 
 def perp_position_path(fills: Iterable[dict[str, Any]], wallet: str) -> pd.DataFrame:
@@ -36,7 +43,7 @@ def perp_position_path(fills: Iterable[dict[str, Any]], wallet: str) -> pd.DataF
     rows = []
     for fill in fills:
         coin = str(fill.get("coin", ""))
-        if not coin or coin.startswith("@") or fill.get("time") is None:
+        if not coin or is_spot_market(coin) or fill.get("time") is None:
             continue
         signed = float(fill["sz"]) if fill.get("side") == "B" else -float(fill["sz"])
         rows.append({"ts": _ts(fill["time"]), "wallet": wallet, "kind": "perp", "asset": coin,
@@ -57,9 +64,9 @@ def _token_deltas(
     rows = []
     for fill in fills:
         coin = str(fill.get("coin", ""))
-        if not coin.startswith("@") or fill.get("time") is None:
+        if not is_spot_market(coin) or fill.get("time") is None:
             continue
-        token = spot_token(coin)
+        token = coin.split("/")[0] if "/" in coin else spot_token(coin)
         signed = float(fill["sz"]) if fill.get("side") == "B" else -float(fill["sz"])
         if str(fill.get("feeToken", "")) == token:
             signed -= float(fill.get("fee") or 0.0)
@@ -134,6 +141,17 @@ def daily_holdings(paths: pd.DataFrame, days: pd.DatetimeIndex) -> pd.DataFrame:
     return frame
 
 
+def spot_pairs(spot_meta: dict) -> dict[str, str]:
+    """Each spot token's USDC market on HL, e.g. ``{"HYPE": "@107", "PURR": "PURR/USDC"}``."""
+    tokens = {token["index"]: token["name"] for token in spot_meta.get("tokens", [])}
+    pairs = {}
+    for market in spot_meta.get("universe", []):
+        base, quote = (market.get("tokens") or [None, None])[:2]
+        if tokens.get(quote) == "USDC" and base in tokens:
+            pairs.setdefault(tokens[base], market.get("name") or f"@{market.get('index')}")
+    return pairs
+
+
 def price_symbol(kind: str, asset: str) -> str:
     """The perp market used to price a holding (wrapped tokens use the coin they wrap)."""
     return WRAPPED.get(asset, asset) if kind == "spot" else asset
@@ -162,13 +180,14 @@ def exposure_by_leg(
     ``closes`` is days x price symbol. Returns columns ``Net <leg>``, ``Gross <leg>``,
     ``Net total``, ``Gross total`` and ``Equity``; days with no positive equity are dropped.
     """
-    values = pd.DataFrame(index=holdings.index)
-    legs = {}
+    columns, legs = {}, {}
     for kind, asset in holdings.columns:
         symbol = price_symbol(kind, asset)
         price = closes[symbol] if symbol in closes else pd.Series(np.nan, index=holdings.index)
-        values[(kind, asset)] = holdings[(kind, asset)] * price.reindex(holdings.index).ffill()
+        columns[(kind, asset)] = holdings[(kind, asset)] * price.reindex(holdings.index).ffill()
         legs[(kind, asset)] = leg_of(kind, asset, market_group)
+    # One construction, not a column at a time: a book with ~100 assets would fragment the frame.
+    values = pd.DataFrame(columns, index=holdings.index)
     out = pd.DataFrame(index=holdings.index)
     for leg in LEGS:
         members = [column for column, name in legs.items() if name == leg]
@@ -262,6 +281,7 @@ def label_regimes(
         names.iloc[first:last + 1] = f"{label} ({start:%b %Y}–{end:%b %Y})"
     return names.rename("Regime")
 
+
 def fetch_book_exposure(
     wallets: Iterable[str], equity: pd.Series, start: pd.Timestamp | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
@@ -276,7 +296,11 @@ def fetch_book_exposure(
 
     equity = equity.copy()
     equity.index = pd.to_datetime(equity.index, utc=True).normalize()
-    first = equity.index.min() if start is None else pd.Timestamp(start).tz_convert("UTC").normalize()
+    if start is None:
+        first = equity.index.min()
+    else:
+        first = pd.Timestamp(start)
+        first = (first.tz_localize("UTC") if first.tz is None else first.tz_convert("UTC")).normalize()
     days = pd.date_range(first, pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=1), freq="D")
     spot_token = spot_base_token_names()
     paths, notes = [], []
@@ -300,20 +324,75 @@ def fetch_book_exposure(
     holdings = holdings[held]
     closes, unpriced = {}, []
     lookback = int((pd.Timestamp.now(tz="UTC") - first).days) + 5
+    spot_symbols = {price_symbol(kind, asset) for kind, asset in held if kind == "spot"}
+    pairs = spot_pairs(post({"type": "spotMeta"}) or {}) if spot_symbols else {}
     for symbol in sorted({price_symbol(kind, asset) for kind, asset in held}):
-        try:
-            candles = fetch_daily_candles(symbol, lookback_days=lookback)
+        # A perp's candles where one exists; a spot token without a perp uses its spot pair's.
+        markets = [symbol] + ([pairs[symbol]] if symbol in spot_symbols and symbol in pairs else [])
+        for market in markets:
+            try:
+                candles = fetch_daily_candles(market, lookback_days=lookback)
+            except Exception as exc:
+                error = type(exc).__name__
+                continue
             closes[symbol] = pd.Series(candles["close"].astype(float).to_numpy(),
                                        index=pd.to_datetime(candles["time"], utc=True).dt.normalize())
-        except Exception as exc:
-            unpriced.append(f"{symbol} ({type(exc).__name__})")
+            break
+        else:
+            unpriced.append(f"{symbol} ({error})")
     if unpriced:
         notes.append("No HL price history, so left out of exposure: " + ", ".join(unpriced) + ".")
     closes = pd.DataFrame(closes).reindex(days).ffill()
     exposure = exposure_by_leg(holdings, closes, equity.reindex(days).ffill(), perp_market_group)
-    # Days the book was traded: a perp fill, or a change to a spot balance that has a price.
-    # Charts use them to clip long idle stretches, as the HL account charts do.
     if not paths.empty:
-        priced = paths["kind"].eq("perp") | paths["asset"].map(lambda asset: price_symbol("spot", asset)).isin(closes.columns)
-        exposure.attrs["activity_days"] = pd.DatetimeIndex(paths.loc[priced, "ts"]).normalize().unique().sort_values()
+        exposure.attrs["activity_days"] = activity_days(paths, closes)
     return exposure, notes
+
+
+def activity_days(paths: pd.DataFrame, closes: pd.DataFrame, min_usd: float = MIN_ACTIVITY_USD) -> pd.DatetimeIndex:
+    """Days the book was traded: any perp fill, or a spot balance change worth at least ``min_usd``.
+
+    Charts use them to clip long idle stretches, as the HL account charts do. A dust airdrop
+    or an unpriced token does not count, so it cannot split an idle stretch in two.
+    """
+    days = paths["ts"].dt.normalize()
+    traded = paths["kind"].eq("perp").to_numpy().copy()  # writable: pandas 3 returns read-only arrays
+    spot = ~traded
+    if spot.any() and len(closes):
+        symbols = paths.loc[spot, "asset"].map(lambda asset: price_symbol("spot", asset))
+        prices = [closes[symbol].asof(day) if symbol in closes and day >= closes.index[0] else np.nan
+                  for symbol, day in zip(symbols, days[spot])]
+        moved = (paths.loc[spot, "size"] - paths.loc[spot, "start"]).abs().to_numpy() * np.asarray(prices, dtype=float)
+        traded[spot] = np.nan_to_num(moved) >= min_usd
+    return pd.DatetimeIndex(days[traded]).unique().sort_values()
+
+
+def book_regimes(
+    wallets: Iterable[str],
+    equity: pd.Series,
+    threshold: float = DEFAULT_FLAT_THRESHOLD,
+    leverage: float = DEFAULT_LEVERAGE,
+    min_run: int = 6,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Daily exposure, weekly exposure with a ``Regime`` column, and notes, over the whole history.
+
+    The one place regimes are detected, so the desk dashboard and the research notebook always
+    agree. It starts at the book's first funded day: a shorter window would cut the first
+    regime and could move where the current one begins.
+    """
+    funded = equity[equity > 0]
+    start = funded.index.min() if len(funded) else None
+    daily, notes = fetch_book_exposure(wallets, equity, start=start)
+    weekly = weekly_exposure(daily)
+    weekly["Regime"] = label_regimes(weekly, threshold, leverage, min_run)
+    return daily, weekly, notes
+
+
+def current_regime(weekly: pd.DataFrame) -> tuple[pd.Timestamp | None, str]:
+    """First day of the latest regime in ``book_regimes``' weekly frame, and its name."""
+    if weekly.empty or "Regime" not in weekly:
+        return None, ""
+    labels = weekly["Regime"]
+    current = labels.iloc[-1]
+    # Weeks are labelled by their Sunday; the first week starts six days earlier.
+    return labels[labels == current].index.min() - pd.Timedelta(days=6), current.split(" (")[0]

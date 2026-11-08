@@ -145,6 +145,34 @@ class BookExposureTests(unittest.TestCase):
         self.assertEqual([round(v, 2) for v in held], [2.01, 1.01, 1.01, 5.0, 5.0])
         self.assertNotIn("USDC", set(path["asset"]))
 
+    def test_current_regime_starts_on_the_monday_of_its_first_week(self):
+        weeks = pd.date_range("2026-01-04", periods=4, freq="W-SUN", tz="UTC")
+        weekly = pd.DataFrame({"Regime": ["Long alts (a)", "Long alts (a)", "Short alts (b)", "Short alts (b)"]},
+                              index=weeks)
+        start, name = book_exposure.current_regime(weekly)
+        self.assertEqual(start, weeks[2] - pd.Timedelta(days=6))
+        self.assertEqual(name, "Short alts")
+        self.assertEqual(book_exposure.current_regime(pd.DataFrame()), (None, ""))
+
+    def test_dust_spot_changes_are_not_activity(self):
+        ts = lambda day: pd.Timestamp(day, tz="UTC")
+        paths = pd.DataFrame({
+            "ts": [ts("2026-01-02 10:00"), ts("2026-03-01 10:00"), ts("2026-04-01 10:00")],
+            "wallet": "w", "kind": ["perp", "spot", "spot"], "asset": ["ETH", "MAX", "HYPE"],
+            "size": [1.0, 2000.0, 3.0], "start": [0.0, 0.0, 1.0]})
+        days = pd.date_range("2026-01-01", "2026-04-30", freq="D", tz="UTC")
+        closes = pd.DataFrame({"MAX": 2e-7, "HYPE": 40.0}, index=days)
+        active = book_exposure.activity_days(paths, closes)
+        self.assertEqual([day.date().isoformat() for day in active], ["2026-01-02", "2026-04-01"])
+
+    def test_named_spot_pairs_are_spot_not_perps(self):
+        fills = [{"coin": "PURR/USDC", "side": "B", "sz": "100", "startPosition": "0", "fee": "0",
+                  "feeToken": "USDC", "time": self.ms("2026-01-02 12:00")}]
+        self.assertTrue(book_exposure.perp_position_path(fills, self.wallet).empty)
+        path = book_exposure.spot_balance_path(self.wallet, fills, [], {"PURR": 100.0}, lambda coin: coin)
+        self.assertEqual(path["asset"].tolist(), ["PURR"])
+        self.assertEqual(path["start"].tolist(), [0.0])
+
     def test_exposure_splits_legs_and_scales_by_equity(self):
         days = pd.date_range("2026-01-01", periods=2, freq="D", tz="UTC")
         holdings = pd.DataFrame({("perp", "BTC"): [0.01, 0.01], ("perp", "SOL"): [-2.0, -2.0],

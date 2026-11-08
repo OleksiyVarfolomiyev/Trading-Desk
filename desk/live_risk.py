@@ -5,8 +5,8 @@ held. A live view needs two things instead:
 
 * ex-ante risk: today's positions (every venue, plus HL spot tokens) run through recent daily
   price moves, giving the volatility, VaR, drawdown and BTC/SPY betas of the book as it stands;
-* the start of the current regime, so realized statistics can be limited to the period in
-  which the book looked like it does now (see ``desk.hl.book_exposure``).
+* realized statistics limited to the current regime, the period in which the book looked
+  like it does now (detected by ``desk.hl.book_exposure.book_regimes``).
 """
 
 from __future__ import annotations
@@ -22,18 +22,22 @@ from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var
 EX_ANTE_DAYS = 90
 # Sharpe and alpha are not quoted from fewer days than this: a shorter stretch is an episode.
 MIN_RATIO_DAYS = 40
-REGIME_LOOKBACK_DAYS = 240
 
 
-def position_values(snapshots: Iterable, hl_spot: dict[str, float] | None = None) -> pd.DataFrame:
-    """One row per priced holding: key, venue, symbol, ref, value (signed USD)."""
+def position_values(snapshots: Iterable, hl_spot: Iterable[dict] | None = None) -> pd.DataFrame:
+    """One row per holding: key, venue, symbol, ref, value (signed USD).
+
+    ``hl_spot`` rows come from ``hl_spot_values``; their ``ref`` is the HL market that prices
+    them (the perp where one exists, otherwise the token's spot pair).
+    """
     rows = []
     for snapshot in snapshots:
         for position in snapshot.positions:
             rows.append({"key": f"{position.venue}:{position.account}:{position.symbol}", "venue": position.venue,
                          "symbol": position.symbol, "ref": position.ref, "value": position.notional_usd})
-    for token, value in (hl_spot or {}).items():
-        rows.append({"key": f"hl-spot:{token}", "venue": "hl-spot", "symbol": token, "ref": "", "value": value})
+    for holding in hl_spot or ():
+        rows.append({"key": f"hl-spot:{holding['token']}", "venue": "hl-spot", "symbol": holding["token"],
+                     "ref": holding["market"], "value": holding["value"]})
     frame = pd.DataFrame(rows, columns=["key", "venue", "symbol", "ref", "value"])
     return frame[frame["value"].abs() > 0].reset_index(drop=True)
 
@@ -47,10 +51,30 @@ def hl_closes(symbol: str, dex: str, days: int) -> pd.Series:
                      index=pd.to_datetime(candles["time"], utc=True).dt.normalize())
 
 
-def hl_spot_values(wallets: Iterable[str]) -> dict[str, float]:
-    """USD value of each non-stable spot token across HL wallets, at today's perp mark."""
+def price_spot_holdings(units: dict[str, float], mids: dict[str, str], pairs: dict[str, str]) -> tuple[list[dict], list[str]]:
+    """Value spot balances: at the token's perp mid where a perp exists, else its spot pair's mid.
+
+    Returns (holdings, unpriced): each holding is ``{"token", "market", "value"}``, where
+    ``market`` is the HL market that also supplies its price history; ``unpriced`` lists
+    tokens with neither price.
+    """
+    from desk.hl.book_exposure import WRAPPED
+
+    holdings, unpriced = [], []
+    for token, amount in sorted(units.items()):
+        perp = WRAPPED.get(token, token)
+        market = perp if perp in mids else pairs.get(token)
+        if market is None or market not in mids:
+            unpriced.append(token)
+            continue
+        holdings.append({"token": perp, "market": market, "value": amount * float(mids[market])})
+    return holdings, unpriced
+
+
+def hl_spot_values(wallets: Iterable[str]) -> tuple[list[dict], list[str]]:
+    """Non-stable spot tokens across HL wallets, valued now; and the tokens that have no HL price."""
     from desk.hl.account_analytics import post
-    from desk.hl.book_exposure import STABLECOINS, WRAPPED
+    from desk.hl.book_exposure import STABLECOINS
 
     units: dict[str, float] = {}
     for wallet in wallets:
@@ -60,14 +84,10 @@ def hl_spot_values(wallets: Iterable[str]) -> dict[str, float]:
             if token and token not in STABLECOINS and amount:
                 units[token] = units.get(token, 0.0) + amount
     if not units:
-        return {}
-    marks = post({"type": "allMids"}) or {}
-    values = {}
-    for token, amount in units.items():
-        mark = marks.get(WRAPPED.get(token, token))
-        if mark is not None:
-            values[WRAPPED.get(token, token)] = values.get(WRAPPED.get(token, token), 0.0) + amount * float(mark)
-    return values
+        return [], []
+    from desk.hl.book_exposure import spot_pairs
+
+    return price_spot_holdings(units, post({"type": "allMids"}) or {}, spot_pairs(post({"type": "spotMeta"}) or {}))
 
 
 def holding_returns(
@@ -93,7 +113,7 @@ def holding_returns(
             if row.venue == "hl":
                 series = hl_closes(row.symbol, row.ref, days)
             elif row.venue == "hl-spot":
-                series = hl_closes(row.symbol, "", days)
+                series = hl_closes(row.ref, "", days)
             elif row.venue == "ib":
                 series = ib_series[row.ref]
             else:
@@ -105,6 +125,34 @@ def holding_returns(
         closes[row.key] = series.reindex(series.index.union(calendar)).ffill().reindex(calendar)
     frame = pd.DataFrame(closes, index=calendar)
     return frame.pct_change(fill_method=None).iloc[1:], missing
+
+
+def paired_returns(book: pd.Series, closes: pd.Series) -> pd.DataFrame:
+    """A daily book return series and a benchmark's returns over the same intervals.
+
+    The benchmark's return runs between its own consecutive closes (Friday to Monday for SPY),
+    and the book's daily returns are compounded over exactly those days. Computing returns on a
+    frame that joins SPY to every-day BTC would divide Monday by Sunday's missing close and drop
+    every Monday. An interval with any book day missing is left out rather than half-compounded.
+    """
+    closes = closes.dropna().sort_index()
+    closes = closes[~closes.index.duplicated(keep="last")]
+    bench = closes.pct_change(fill_method=None).iloc[1:]
+    book = book.dropna().sort_index()
+    if bench.empty or book.empty:
+        return pd.DataFrame(columns=["book", "bench"])
+    # Each book day belongs to the first benchmark date on or after it.
+    position = bench.index.searchsorted(book.index, side="left")
+    inside = position < len(bench)
+    labels = bench.index[position[inside]]
+    days = book[inside]
+    compounded = (1 + days).groupby(labels).prod() - 1
+    counts = days.groupby(labels).size()
+    previous = closes.index[:-1]
+    span = pd.Series((bench.index - previous).days, index=bench.index)
+    complete = counts.reindex(bench.index).eq(span)
+    frame = pd.DataFrame({"book": compounded.reindex(bench.index), "bench": bench})
+    return frame[complete].dropna()
 
 
 def ex_ante_row(
@@ -126,32 +174,14 @@ def ex_ante_row(
                 "Max drawdown": float((path / path.cummax() - 1).min())})
     for confidence in (0.95, 0.99):
         row[f"VaR {confidence:.0%} ($)"] = bootstrap_var(book, confidence)["var"] * equity
-    daily = benchmarks.pct_change(fill_method=None) if len(benchmarks) else pd.DataFrame()
     for name in ("BTC", "SPY"):
-        if name in daily:
-            pair = pd.concat([book.rename("book"), daily[name].rename(name)], axis=1).dropna()
-            if name == "SPY":  # only days SPY traded, so weekend crypto moves are not read as zero beta
-                pair = pair[pair[name] != 0]
+        if name in benchmarks:
+            pair = paired_returns(book, benchmarks[name])
             if len(pair) >= 20:
-                stats = bootstrap_btc_regression(pair["book"], pair[name], periods_per_year=365, samples=2000)
+                stats = bootstrap_btc_regression(pair["book"], pair["bench"], periods_per_year=365, samples=2000)
                 row[f"Beta {name}"] = stats["beta"]
                 row[f"Beta {name} 90% range"] = (f"{stats['beta_low']:.2f} to {stats['beta_high']:.2f}"
                                                  if np.isfinite(stats.get("beta_low", np.nan)) else "n/a")
     if missing:
         row["Not priced"] = ", ".join(sorted(set(missing)))
     return row
-
-
-def hl_regime_start(wallets: list[str], equity: pd.Series, lookback_days: int = REGIME_LOOKBACK_DAYS) -> tuple[pd.Timestamp | None, str]:
-    """First day of the HL book's current regime and its name (None if it cannot be told)."""
-    from desk.hl import book_exposure
-
-    start = pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=lookback_days)
-    daily, _ = book_exposure.fetch_book_exposure(wallets, equity, start=start)
-    weekly = book_exposure.weekly_exposure(daily)
-    if weekly.empty:
-        return None, ""
-    regimes = book_exposure.label_regimes(weekly)
-    current = regimes.iloc[-1]
-    first_week = regimes[regimes == current].index.min()
-    return first_week - pd.Timedelta(days=6), current.split(" (")[0]

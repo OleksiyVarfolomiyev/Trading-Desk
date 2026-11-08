@@ -154,15 +154,15 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
     else:
         tables["positions"] = table(positions, {})
     if overview.book:
-        tables["open_risk"] = table(overview.risk_frame(), {**money, "Positions": "int", "% of desk equity": "pct"},
-                                    total_last=True)
+        tables["open_risk"] = table(overview.risk_frame(), {**money, "Positions": "int", "Open risk": "rusd",
+                                                            "% of desk equity": "rpct"}, total_last=True)
     holdings = overview.wallet_holdings_frame()
     if len(holdings):
         # "HL 07f2 wallet" -> "HL 07f2": the table is already the wallets table. Notes go last.
         holdings = holdings.assign(Wallet=holdings["Wallet"].str.replace(r"\s+wallet$", "", regex=True))
         holdings = holdings.rename(columns={"Token": "Symbol"})
         holdings = holdings[[column for column in holdings.columns if column != "Note"] + ["Note"]]
-        tables["wallets"] = table(holdings, {"Amount": "num", "Price": "num", "Value": "usd", "% of desk": "pct"},
+        tables["wallets"] = table(holdings, {"Amount": "num", "Price": "num", "Value": "vusd", "% of desk": "vpct"},
                                   {"Wallet": "Total", "Value": holdings["Value"].sum(),
                                    "% of desk": holdings["% of desk"].sum()})
     if risk_table is not None and len(risk_table):
@@ -197,7 +197,10 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
         "kpis": kpis,
         "highlights": {"well": [list(row) for row in well], "attention": [list(row) for row in attention]},
         "tables": tables,
-        "charts": {"value": value_series, "twr": twr},
+        "charts": {"value": value_series, "twr": twr,
+                   # Stretches with no trading on any account, collapsed on the value chart.
+                   "value_idle": [[start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), (end - start).days]
+                                  for start, end in desk.idle_periods()]},
         "problems": list(overview.problems),
         "notes": notes,
     }

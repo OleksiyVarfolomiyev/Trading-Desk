@@ -1239,15 +1239,79 @@ class LiveRiskTests(unittest.TestCase):
         self.assertGreater(row["VaR 95% ($)"], 0)
         self.assertNotIn("Sharpe", row)
 
+    def test_paired_returns_keep_mondays_and_compound_the_weekend(self):
+        days = pd.date_range("2026-10-30", "2026-11-04", freq="D", tz="UTC")  # Fri .. Wed
+        book = pd.Series(0.01, index=days[1:])
+        spy = pd.Series([500.0, 505.0, 510.0, 515.0],
+                        index=pd.DatetimeIndex(["2026-10-30", "2026-11-02", "2026-11-03", "2026-11-04"], tz="UTC"))
+        pair = self.live_risk.paired_returns(book, spy)
+        self.assertEqual(len(pair), 3)  # Monday is kept
+        monday = pair.loc[pd.Timestamp("2026-11-02", tz="UTC")]
+        self.assertAlmostEqual(monday["bench"], 0.01)
+        self.assertAlmostEqual(monday["book"], 1.01 ** 3 - 1)  # Saturday + Sunday + Monday
+        # A missing book day leaves its interval out instead of half-compounding it.
+        gappy = self.live_risk.paired_returns(book.drop(pd.Timestamp("2026-11-01", tz="UTC")), spy)
+        self.assertNotIn(pd.Timestamp("2026-11-02", tz="UTC"), gappy.index)
+
     def test_position_values_include_spot_and_skip_empty(self):
         from desk.venues.base import VenuePosition
 
         position = VenuePosition(venue="hl", account="w", symbol="ETH", asset_class="crypto",
                                  quantity=-2.0, avg_price=3_000.0, mark_price=3_000.0, ref="")
         snapshot = type("Snapshot", (), {"positions": (position,)})()
-        frame = self.live_risk.position_values([snapshot], {"HYPE": 900.0, "MAX": 0.0})
+        spot = [{"token": "HYPE", "market": "HYPE", "value": 900.0}, {"token": "MAX", "market": "@591", "value": 0.0}]
+        frame = self.live_risk.position_values([snapshot], spot)
         self.assertEqual(frame["value"].tolist(), [-6_000.0, 900.0])
         self.assertEqual(frame["venue"].tolist(), ["hl", "hl-spot"])
+        self.assertEqual(frame["ref"].tolist(), ["", "HYPE"])
+
+    def test_spot_tokens_without_a_perp_are_priced_from_their_spot_pair(self):
+        from desk.hl.book_exposure import spot_pairs
+
+        meta = {"tokens": [{"index": 0, "name": "USDC"}, {"index": 150, "name": "HYPE"},
+                           {"index": 7, "name": "MAX"}, {"index": 1, "name": "PURR"}],
+                "universe": [{"name": "@107", "index": 107, "tokens": [150, 0]},
+                             {"name": "@591", "index": 591, "tokens": [7, 0]},
+                             {"name": "PURR/USDC", "index": 0, "tokens": [1, 0]}]}
+        pairs = spot_pairs(meta)
+        self.assertEqual(pairs, {"HYPE": "@107", "MAX": "@591", "PURR": "PURR/USDC"})
+        mids = {"HYPE": "80", "@591": "0.5", "ETH": "3000"}
+        holdings, unpriced = self.live_risk.price_spot_holdings(
+            {"HYPE": 2.0, "MAX": 10.0, "UETH": 0.1, "GHOST": 1.0}, mids, pairs)
+        by_token = {row["token"]: row for row in holdings}
+        self.assertEqual(by_token["HYPE"]["market"], "HYPE")  # the perp wins where one exists
+        self.assertEqual((by_token["MAX"]["market"], by_token["MAX"]["value"]), ("@591", 5.0))
+        self.assertAlmostEqual(by_token["ETH"]["value"], 300.0)  # wrapped ETH priced as ETH
+        self.assertEqual(unpriced, ["GHOST"])
+
+
+class DeskIdlePeriodTests(unittest.TestCase):
+    def make_desk(self, histories):
+        from desk.desk_accounts import DeskAccounts
+
+        desk = DeskAccounts.__new__(DeskAccounts)
+        desk.histories = histories
+        desk.index = pd.Series(1.0, index=pd.date_range("2025-05-01", periods=3, tz="UTC"))
+        desk.common_start = pd.Timestamp("2025-05-01", tz="UTC")
+        desk.hl_activity_days = pd.DatetimeIndex(["2025-05-10", "2025-08-25", "2026-09-29", "2026-10-02"], tz="UTC")
+        return desk
+
+    def test_hl_only_desk_clips_the_idle_year(self):
+        desk = self.make_desk({"HL 07f2": pd.DataFrame({"ts": [pd.Timestamp("2025-05-01", tz="UTC")]})})
+        periods = desk.idle_periods()
+        self.assertEqual([(start.date().isoformat(), end.date().isoformat()) for start, end in periods],
+                         [("2025-05-11", "2025-08-25"), ("2025-08-26", "2026-09-29")])
+
+    def test_an_ib_account_without_saved_fills_keeps_every_day_visible(self):
+        ib_days = pd.date_range("2025-05-01", "2026-11-01", freq="D", tz="UTC")
+        desk = self.make_desk({"HL 07f2": pd.DataFrame({"ts": [ib_days[0]]}),
+                               "IB U0000000": pd.DataFrame({"ts": ib_days})})
+        self.assertEqual(desk.idle_periods(), [])
+
+    def test_no_activity_record_means_no_clipping(self):
+        desk = self.make_desk({})
+        desk.hl_activity_days = None
+        self.assertEqual(desk.idle_periods(), [])
 
 
 if __name__ == "__main__":

@@ -416,24 +416,50 @@ def fetch_perp_states(user):
     return {dex: post({'type': 'clearinghouseState', 'user': user, 'dex': dex}) for dex in names}
 
 
-def fetch_user_fills(user, max_pages=5):
-    """Fetch up to 10,000 most recent fills, paging backward in time."""
-    fills = []
-    end_ms = int(pd.Timestamp.now(tz='UTC').timestamp() * 1000)
-    for _ in range(max_pages):
-        batch = post({'type': 'userFillsByTime', 'user': user, 'startTime': 0,
-                'endTime': end_ms, 'aggregateByTime': True})
-        if not isinstance(batch, list) or not batch:
+FILLS_PAGE_SIZE = 2000      # HL returns at most this many fills per userFillsByTime call
+FILLS_AVAILABLE = 10_000    # and keeps only the most recent this many
+
+
+def fetch_user_fills(user, max_pages=8):
+    """Every fill HL still keeps for ``user`` (its most recent 10,000), oldest first.
+
+    ``userFillsByTime`` answers with the oldest fills in the requested window, at most 2,000
+    of them, so pages run forward from the last fill returned. One backward request after
+    that catches anything older, in case a page ever comes back newest-first instead.
+    Fills are de-duplicated by trade ID, so overlapping pages are harmless.
+    """
+    now_ms = int(pd.Timestamp.now(tz='UTC').timestamp() * 1000)
+    seen = {}
+
+    def page(start_ms, end_ms):
+        batch = post({'type': 'userFillsByTime', 'user': user, 'startTime': int(start_ms),
+                'endTime': int(end_ms), 'aggregateByTime': True})
+        batch = [fill for fill in batch if fill.get('time') is not None] if isinstance(batch, list) else []
+        for fill in batch:
+            seen[(fill.get('tid'), fill.get('hash'), fill.get('time'), fill.get('coin'))] = fill
+        return batch
+
+    start_ms, pages = 0, 0
+    while pages < max_pages and len(seen) < FILLS_AVAILABLE:
+        batch = page(start_ms, now_ms)
+        pages += 1
+        if len(batch) < FILLS_PAGE_SIZE:
             break
-        fills.extend(batch)
-        times = [int(fill['time']) for fill in batch if fill.get('time') is not None]
-        if len(batch) < 2000 or not times or len(fills) >= 10000:
+        # Restart at the last time returned, not one past it: fills sharing that millisecond
+        # may straddle the page boundary. Stop if a page makes no progress.
+        latest = max(int(fill['time']) for fill in batch)
+        if latest <= start_ms:
             break
-        next_end_ms = min(times) - 1
-        if next_end_ms >= end_ms:
+        start_ms = latest
+    while pages < max_pages and seen and len(seen) < FILLS_AVAILABLE:
+        # Up to and including the oldest millisecond seen, which may hold fills cut off a page.
+        oldest = min(int(fill['time']) for fill in seen.values())
+        before = len(seen)
+        batch = page(0, oldest)
+        pages += 1
+        if len(batch) < FILLS_PAGE_SIZE or len(seen) == before:
             break
-        end_ms = next_end_ms
-    return fills
+    return sorted(seen.values(), key=lambda fill: (int(fill['time']), int(fill.get('tid') or 0)))
 
 
 def fetch_user_funding(user, start_ms=0):
@@ -517,7 +543,8 @@ def make_daily_funding_rows(funding_df):
 def normalize_fills(fills):
     """Create a consistent spot/perp fill table for PnL calculations."""
     rows = [{'time': int(fill['time']), 'coin': fill.get('coin', ''),
-            'assetType': 'spot' if str(fill.get('coin', '')).startswith('@') else 'perp',
+            # Spot markets are '@<index>' or a named pair such as 'PURR/USDC'.
+            'assetType': 'spot' if str(fill.get('coin', '')).startswith('@') or '/' in str(fill.get('coin', '')) else 'perp',
             'dir': fill.get('dir', ''), 'side': fill.get('side', ''),
             'crossed': bool(fill.get('crossed')),
             # HL marks a forced close with a ``liquidation`` object; ``dir`` still reads "Close Long".

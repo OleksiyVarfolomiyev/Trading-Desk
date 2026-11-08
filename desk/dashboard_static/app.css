@@ -15,8 +15,6 @@
   --critical: #d03b3b;
   --wash-critical: rgba(208, 59, 59, 0.08);
   --wash-warning: rgba(250, 178, 25, 0.12);
-  --meter-track: #cde2fb;
-  --meter-fill: #2a78d6;
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -38,8 +36,6 @@
     --bad-text: #e66767;
     --wash-critical: rgba(208, 59, 59, 0.16);
     --wash-warning: rgba(250, 178, 25, 0.14);
-    --meter-track: #184f95;
-    --meter-fill: #6da7ec;
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
@@ -61,8 +57,6 @@
   --bad-text: #e66767;
   --wash-critical: rgba(208, 59, 59, 0.16);
   --wash-warning: rgba(250, 178, 25, 0.14);
-  --meter-track: #184f95;
-  --meter-fill: #6da7ec;
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
@@ -140,10 +134,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 24px 48px; display: flex
 .tile .label { color: var(--ink-2); font-size: 12px; }
 .tile .value { font-size: 22px; font-weight: 600; margin: 2px 0; }
 .tile .sub { color: var(--muted); font-size: 12px; }
-.meter { height: 6px; border-radius: 3px; background: var(--meter-track); overflow: hidden; margin: 6px 0 4px; }
-.meter > span { display: block; height: 100%; border-radius: 3px; background: var(--meter-fill); }
-.meter.warning > span { background: var(--warning); }
-.meter.critical > span { background: var(--critical); }
 
 .accounts-status { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {

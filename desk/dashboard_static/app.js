@@ -41,6 +41,12 @@ function compactUsd(value) {
 const FORMATS = {
   usd: { text: usd, num: true },
   susd: { text: signedUsd, num: true, signed: true },
+  // Coloured by sign without a "+" prefix (holdings, values).
+  vusd: { text: usd, num: true, signed: true },
+  vpct: { text: (v) => pct(v, 1), num: true, signed: true },
+  // Money at risk: red whenever above zero.
+  rusd: { text: usd, num: true, tone: "neg" },
+  rpct: { text: (v) => pct(v, 1), num: true, tone: "neg" },
   pct: { text: (v) => pct(v, 1), num: true },
   spct: { text: (v) => pct(v, 2, true), num: true, signed: true },
   num: { text: number, num: true },
@@ -119,7 +125,8 @@ function renderTable(id, spec) {
   const cell = (row, column) => {
     const format = FORMATS[column.fmt] || FORMATS.text;
     const value = row[column.key];
-    const classes = [format.num ? "num" : "", format.signed ? signClass(value) : ""].filter(Boolean).join(" ");
+    const tone = format.signed ? signClass(value) : format.tone && isNum(value) && value > 0 ? format.tone : "";
+    const classes = [format.num ? "num" : "", tone].filter(Boolean).join(" ");
     return el("td", { class: classes, text: format.text(value) });
   };
   const body = el("tbody", {}, rows.map((row) => el("tr", {}, spec.columns.map((column) => cell(row, column)))));
@@ -135,7 +142,6 @@ function tile(label, value, sub, extra) {
   return el("div", { class: "tile" }, [
     el("div", { class: "label", text: label }),
     el("div", { class: "value " + (extra && extra.valueClass ? extra.valueClass : ""), text: value }),
-    extra && extra.meter ? extra.meter : null,
     sub ? el("div", { class: "sub", text: sub }) : null,
   ]);
 }
@@ -221,7 +227,20 @@ function renderCharts(charts) {
     line: { width: 2, color: colors[i % colors.length] }, fillcolor: withAlpha(colors[i % colors.length], 0.18),
     hovertemplate: "%{fullData.name}: $%{y:,.2f}<extra></extra>",
   }));
-  Plotly.react("chart-value", value, baseLayout({ yaxis: Object.assign(baseLayout().yaxis, { tickprefix: "$", separatethousands: true }) }), CONFIG);
+  // Collapse stretches with no trading on any account, as the HL account charts do, and say so.
+  const idle = charts.value_idle || [];
+  const month = (d) => new Date(d + "T00:00:00Z").toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+  const valueLayout = baseLayout({ yaxis: Object.assign(baseLayout().yaxis, { tickprefix: "$", separatethousands: true }) });
+  if (idle.length) {
+    valueLayout.xaxis = Object.assign(valueLayout.xaxis, { rangebreaks: idle.map((p) => ({ bounds: [p[0], p[1]] })) });
+    valueLayout.margin = Object.assign({}, valueLayout.margin, { b: 56 });
+    valueLayout.annotations = [{
+      xref: "paper", yref: "paper", x: 0.5, y: -0.16, xanchor: "center", yanchor: "top", showarrow: false,
+      text: idle.map((p) => `Inactive ${month(p[0])} to ${month(p[1])} (${p[2]} days hidden)`).join(" · "),
+      font: { color: token("--muted"), size: 11 },
+    }];
+  }
+  Plotly.react("chart-value", value, valueLayout, CONFIG);
 
   const twr = (charts.twr || []).map((s, i) => ({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,

@@ -238,12 +238,56 @@ REGIME_FACTORS=('BTC market excess','Alt market - BTC','Funding (low - high)','S
 REGIME_COLORS=('rgba(37,99,235,0.08)','rgba(234,88,12,0.08)','rgba(22,163,74,0.08)','rgba(147,51,234,0.08)')
 
 
+# Every chart's legend sits in one row above the plot, under the title.
+LEGEND_ON_TOP={'legend':{'orientation':'h','yanchor':'bottom','y':1.02,'xanchor':'left','x':0},
+               'margin':{'t':110}}
+
+
+# Gross exposure columns carried into the regime regressions (per leg, then total).
+GROSS_COLUMNS=['Gross BTC','Gross Alts','Gross TradFi','Gross total']
+# Each style factor and the legs whose gross exposure it should scale with.
+FACTOR_LEGS={'BTC market excess':['Gross BTC','Gross Alts'],'Alt market - BTC':['Gross Alts'],
+             'Funding (low - high)':['Gross Alts'],'SPY market excess':['Gross TradFi']}
+BETA_CONTEXT_ROWS=['Gross exposure (avg, x equity)','Gross range (x equity)']+[f'{leg} (avg)' for leg in GROSS_COLUMNS[:-1]]
+
+
+def _beta_table(rows, names, extra):
+    """Regime fits as a table: factor rows, then ``extra``, gross context and sample; (regime, Beta/t) columns."""
+    table=pd.DataFrame(rows)
+    if table.empty:
+        return table
+    table.index=pd.MultiIndex.from_tuples(table.index)
+    table=table.unstack(1)
+    table=table.reindex(columns=pd.MultiIndex.from_product([list(rows),['Beta','t']]))
+    table=table.reindex(names+extra+BETA_CONTEXT_ROWS+['Observations','Dates'])
+    return table.loc[:,table.notna().any()]
+
+
+def _show_beta_table(table):
+    """Display a regime beta table with betas, t-stats, percentages and context each formatted."""
+    def cell(value,row,column):
+        if isinstance(value,str) or pd.isna(value):
+            return '' if pd.isna(value) else value
+        if column[1]=='t':
+            return f'{value:.2f}'
+        if row in ('Alpha (/yr)','R-squared'):
+            return f'{value:.1%}'
+        return f'{value:.2f}' if row in BETA_CONTEXT_ROWS else f'{value:+.3f}'
+    display(pd.DataFrame({column:[cell(table.loc[row,column],row,column) for row in table.index]
+                          for column in table.columns},index=table.index))
+
+
 def shade_regimes(fig, regimes, period=pd.Timedelta(days=7)):
-    """Shade each contiguous regime on a time-axis figure and label it at the top."""
+    """Shade each contiguous regime on a time-axis figure and label it at the top.
+
+    Labels are split one part per line ("Short alts<br>long TradFi<br>levered"), so names of
+    neighbouring regimes do not run into each other or widen the figure.
+    """
     for index,(name,dates) in enumerate(regimes.groupby(regimes,sort=False)):
         start,end=dates.index.min()-period,dates.index.max()
+        label='<br>'.join(name.split(' (')[0].split(', '))
         fig.add_vrect(x0=start,x1=end,fillcolor=REGIME_COLORS[index%len(REGIME_COLORS)],line_width=0,layer='below',
-                      annotation_text=name.split(' (')[0],annotation_position='top left',
+                      annotation_text=label,annotation_position='top left',annotation_align='left',
                       annotation_font_size=10)
 
 
@@ -1315,7 +1359,7 @@ class _PerformanceMixin(_TableStyleMixin):
         fig.update_layout(title='Since-inception value: constrained long/short full-Kelly vs. BTC'
                           +(' and SPY' if has_spy else ''),
                           xaxis_title='Date',yaxis_title='Value of $100 invested',
-                          template='plotly_white',hovermode='x unified')
+                          template='plotly_white',hovermode='x unified',**LEGEND_ON_TOP)
         fig.show()
         as_of=portfolio_value.index[-1]
         def trailing_return(days=None,months=None):
@@ -1804,7 +1848,7 @@ class _FactorModelMixin(_TableStyleMixin):
                                        (specific.cumsum(),'Specific (alpha + residual)','#16a34a')):
             fig.add_trace(go.Scatter(x=series.index,y=series,name=line_name,line={'color':color,'width':2}))
         fig.update_layout(title=f'Cumulative return attribution, {label}: factors vs specific',yaxis_tickformat='.0%',
-                          template='plotly_white',hovermode='x unified')
+                          template='plotly_white',hovermode='x unified',**LEGEND_ON_TOP)
         fig.show()
         if dropped:
             notes.append('Dropped because another factor duplicates them in this sample: '+', '.join(dropped)+'.')
@@ -1864,8 +1908,6 @@ class _FactorModelMixin(_TableStyleMixin):
         returns the model stays empty; style_regimes_hl_book() shows per-regime betas meanwhile.
         Daily returns are used where the saved daily history covers the regime, weekly otherwise.
         """
-        from desk.live_risk import hl_regime_start
-
         label='HL book (actual)'
         self.style_results=getattr(self,'style_results',{})
         self.style_results.pop(label,None)  # never leave an earlier, wider fit standing in for this one
@@ -1878,7 +1920,10 @@ class _FactorModelMixin(_TableStyleMixin):
         if regime_start is not None:
             start,name=pd.Timestamp(regime_start,tz='UTC').normalize(),'set by hand'
         else:
-            start,name=hl_regime_start(self.wallet_addresses,self._hl_book_equity(desk_data_dir))
+            from desk.hl.book_exposure import current_regime
+
+            regimes=self._hl_book_regimes(desk_data_dir)
+            start,name=current_regime(regimes[1]) if regimes is not None else (None,'')
         if start is None:
             self.hl_style_status='current regime not detected, so the style model is not fit'
             print(f'HL book: {self.hl_style_status}.')
@@ -1903,6 +1948,26 @@ class _FactorModelMixin(_TableStyleMixin):
             self.hl_style_status=f'{regime}: {exc}'
             print(f'HL book: {self.hl_style_status} The style model stays empty until the factors cover more of it.')
             return None
+
+    def _hl_book_regimes(self, desk_data_dir=None, threshold=0.10, leverage=1.0, min_run=6):
+        """The HL book's daily exposure, weekly exposure with regimes, and notes; fetched once per session.
+
+        Both the regime section and the regime-limited style model use this, so they agree on
+        where the current regime starts, and the fills, ledger and candles are read only once.
+        """
+        from desk.hl import book_exposure
+
+        key=(str(desk_data_dir),threshold,leverage,min_run)
+        cache=getattr(self,'_hl_regime_cache',None)
+        if cache is not None and cache[0]==key:
+            return cache[1]
+        equity=self._hl_book_equity(desk_data_dir)
+        if equity.empty or not (equity>0).any():
+            return None
+        # The same detection as the desk dashboard, so both report the same current regime.
+        result=book_exposure.book_regimes(self.wallet_addresses,equity,threshold,leverage,min_run)
+        self._hl_regime_cache=(key,result)
+        return result
 
     def _hl_book_equity(self, desk_data_dir=None):
         """Daily value of the HL book (every configured wallet), from the saved HL history."""
@@ -1932,31 +1997,59 @@ class _FactorModelMixin(_TableStyleMixin):
         2. splits the weeks into contiguous regimes by the sign of each leg's net exposure and
            whether gross exposure is above ``leverage`` x equity (legs under ``threshold`` x
            equity count as flat; runs under ``min_run`` weeks fold into their neighbor);
-        3. fits the factor betas separately in each regime, and once with a regime interaction
-           (separate intercept and betas per regime, pooled Newey-West errors) to test whether
-           each beta actually differs between regimes;
-        4. shows rolling ``window``-week betas, so sign changes are visible rather than averaged.
+        3. fits the factor betas separately in each regime, never pooled across regimes, with each
+           column headed by its sample length and dates. The headline betas are de-levered: each
+           period's return is divided by that period's gross exposure, so betas are per 1x gross
+           and a sign flip reads as a change of positioning, not of leverage. Raw betas and betas
+           per unit of the matching leg's gross follow for context. Alpha is not quoted from
+           under MIN_ALPHA_DAYS days;
+        4. tests whether each de-levered beta differs between regimes with one regression that has
+           a separate intercept and betas per regime and pooled Newey-West errors (once two
+           regimes have enough weeks);
+        5. plots rolling ``window``-week de-levered betas against gross exposure.
 
-        The current regime is often too short for weekly betas; it is then also fit on daily
-        returns, where the saved daily history covers it.
+        The current regime is often too short for weekly betas; it is then fit on daily returns,
+        where the saved daily history covers it. Exposure and regimes are fetched once per session
+        and shared with fit_style_model_hl_book().
         """
+        weekly_returns=self.hl_book_returns('W',desk_data_dir)
+        daily_returns=self.hl_book_returns('D',desk_data_dir)
+        fetched=self._hl_book_regimes(desk_data_dir,threshold,leverage,min_run)
+        if fetched is None:
+            print('HL book: no saved history yet; run the HL account notebooks first.')
+            return None
+        daily_exposure,exposure,notes=fetched
+        exposure,notes=exposure.copy(),list(notes)
+        self._show_regime_exposure(exposure,daily_exposure)
+        prepared=self._regime_regression_data(weekly_returns,exposure,factors,notes)
+        if prepared is None:
+            return Results('HL book regime results',{'exposure':exposure,'daily_exposure':daily_exposure})
+        data,names,available=prepared
+        minimum=len(names)+6
+        tables,fits,too_short=self._regime_betas(data,names,available,daily_returns,daily_exposure,
+                                                 exposure['Regime'],minimum)
+        self._show_regime_betas(tables,names,too_short)
+        interaction=self._regime_interaction(data,names,minimum)
+        rolling=self._show_rolling_regime_betas(data,names,exposure['Regime'],window)
+        for note in notes:
+            print(note)
+        print('Exposure is rebuilt from fills (perps) and from balances, spot fills and transfers (spot tokens); '
+              'it is the average of daily exposure over each week. A pooled beta mixes the regimes; use the '
+              'per-regime and interaction betas for risk, and the exposure table for what was actually held.')
+        result=Results('HL book regime results',
+                       {'exposure':exposure,'daily_exposure':daily_exposure,'betas':tables['raw'],
+                        'betas_delevered':tables['delevered'],'betas_per_leg':tables['leg'],'fits':fits,
+                        'interaction':interaction,'rolling':rolling})
+        self.style_regime_results=result
+        return result
+
+    def _show_regime_exposure(self, exposure, daily_exposure):
+        """Chart and tables of net and gross exposure per leg, by regime."""
         from desk.hl import book_exposure
         from desk.hl.account_analytics import clip_inactive_periods
         from desk.hl.trade_analytics import inactive_periods
 
-        weekly_returns=self.hl_book_returns('W',desk_data_dir)
-        daily_returns=self.hl_book_returns('D',desk_data_dir)
-        equity=self._hl_book_equity(desk_data_dir)
-        if weekly_returns.empty or equity.empty:
-            print('HL book: no saved history yet; run the HL account notebooks first.')
-            return None
-        daily_exposure,notes=book_exposure.fetch_book_exposure(
-            self.wallet_addresses,equity,start=weekly_returns.index.min()-pd.Timedelta(days=7))
-        exposure=book_exposure.weekly_exposure(daily_exposure)
-        exposure['Regime']=book_exposure.label_regimes(exposure,threshold,leverage,min_run)
         regimes=exposure['Regime']
-
-        # 1. Exposure per leg, per week.
         print(f'=== HL BOOK EXPOSURE BY LEG ({len(exposure)} weeks, average of daily exposure / equity) ===')
         fig=go.Figure()
         for leg,color in zip(book_exposure.LEGS,('#f59e0b','#2563eb','#16a34a')):
@@ -1968,9 +2061,15 @@ class _FactorModelMixin(_TableStyleMixin):
         activity=daily_exposure.attrs.get('activity_days')
         idle=inactive_periods(activity) if activity is not None and len(activity) else []
         clip_inactive_periods(fig,idle)
-        fig.update_layout(title='HL book: net exposure per leg and gross exposure (x equity), by regime',
+        # Here the idle-period note sits centred under the x axis, clear of the regime labels at the top.
+        fig.for_each_annotation(lambda note: note.update(x=0.5,xref='paper',xanchor='center',y=-0.1,
+                                                         yref='paper',yanchor='top')
+                                if (note.text or '').startswith('Inactive') else None)
+        fig.update_layout(title={'text':'HL book: net exposure per leg and gross exposure (x equity), by regime','y':0.98},
                           barmode='relative',yaxis_tickformat='.1f',yaxis_title='x equity',
-                          template='plotly_white',hovermode='x unified')
+                          template='plotly_white',hovermode='x unified',
+                          # Legend in one row above the plot, clear of the title and the idle-period label.
+                          legend={**LEGEND_ON_TOP['legend'],'y':1.08},margin={'t':130,'b':90})
         fig.show()
         summary=exposure.groupby('Regime',sort=False).agg(
             Weeks=('Equity','size'),
@@ -1987,7 +2086,12 @@ class _FactorModelMixin(_TableStyleMixin):
         self.show_table(recent,{column:'{:+.2f}' if column.startswith('Net') else '{:.2f}'
                                 for column in recent.columns if column!='Regime'})
 
-        # 2. Betas per regime, against the pooled fit: as reported, and per 1x gross exposure.
+    def _regime_regression_data(self, weekly_returns, exposure, factors, notes):
+        """Weekly excess and de-levered returns, factors, regime and gross per leg; or None if too few weeks.
+
+        Returns (data, factor names, daily factor frame). Regimes before the factors begin are
+        added to ``notes`` as exposure-only.
+        """
         available=getattr(self,'factor_returns_all',None)
         if available is None:
             raise RuntimeError('Run fit_factor_model() first: the regime model reuses its crypto factors.')
@@ -1996,24 +2100,46 @@ class _FactorModelMixin(_TableStyleMixin):
         weekly_factors=compound_factors(available[names],weekly_returns.index)
         rf_weekly=(1+self.risk_free_daily)**7-1
         excess=(weekly_returns-rf_weekly).rename('Book excess')
-        legs=exposure[[f'Gross {leg}' for leg in book_exposure.LEGS]+['Gross total']]
-        data=pd.concat([excess,weekly_factors,regimes,legs],axis=1).dropna()
+        data=pd.concat([excess,weekly_factors,exposure['Regime'],exposure[GROSS_COLUMNS]],axis=1).dropna()
         # De-levered return: each period's return per 1x of that period's gross exposure, so
         # regimes run at different leverage are compared on the same footing.
         data['De-levered excess']=(data['Book excess']/data['Gross total']).where(data['Gross total']>=MIN_GROSS)
-        left_out=sorted(set(regimes.dropna().unique())-set(data['Regime'].unique()))
+        left_out=sorted(set(exposure['Regime'].dropna().unique())-set(data['Regime'].unique()))
         if left_out:
             notes.append('Before the factors begin (CoinGecko market data covers about a year), so exposure '
                          'only: '+'; '.join(left_out)+'.')
         if len(data)<len(names)+5:
             print(f'Only {len(data)} weeks overlap the factors; too few for regime betas.')
-            return Results('HL book regime results',{'exposure':exposure,'daily_exposure':daily_exposure})
-        names=[name for name in names if data[name].std()>0]
-        minimum=len(names)+6
-        raw_rows,delevered_rows,leg_rows,fits={},{},{},{}
-        # Factor -> the leg whose gross exposure it should scale with.
-        factor_legs={'BTC market excess':['Gross BTC','Gross Alts'],'Alt market - BTC':['Gross Alts'],
-                     'Funding (low - high)':['Gross Alts'],'SPY market excess':['Gross TradFi']}
+            return None
+        return data,[name for name in names if data[name].std()>0],available
+
+    def _current_regime_daily(self, daily_returns, daily_exposure, available, names, start):
+        """The current regime on daily returns, compounded onto the factors' calendar from ``start``."""
+        calendar=available.index[available.index>=start]
+        if not len(calendar):
+            return pd.DataFrame()
+        spacing=pd.Series(calendar).diff().dt.days.fillna(1).to_numpy()
+        # The exposure held through a day is the one at the end of the day before.
+        held=daily_exposure.shift(1).reindex(daily_returns.index)
+        book=compound_to_calendar(daily_returns,calendar)
+        delevered=compound_to_calendar((daily_returns/held['Gross total']).where(held['Gross total']>=MIN_GROSS),calendar)
+        # Each day belongs to the first factor date on or after it; days past the last one are dropped.
+        position=calendar.searchsorted(held.index)
+        inside=position<len(calendar)
+        held_legs=held.loc[inside,GROSS_COLUMNS].groupby(calendar[position[inside]]).mean().reindex(calendar)
+        rf=self.risk_free_daily*spacing
+        data=pd.concat([(book-rf).rename('Book excess'),available.loc[calendar,names],held_legs],axis=1)
+        data['De-levered excess']=delevered-rf/data['Gross total']
+        return data.dropna(subset=['Book excess','Gross total']+names)
+
+    def _regime_betas(self, data, names, available, daily_returns, daily_exposure, regimes, minimum):
+        """Fit every regime with enough data: as reported, de-levered and per matching leg.
+
+        Returns ({'raw', 'delevered', 'leg'} tables, fits keyed by (column, dependent), and the
+        regimes too short to fit). No column pools regimes.
+        """
+        rows={'raw':{},'delevered':{},'leg':{}}
+        fits={}
         def add_fit(regime,frame,unit,periods):
             days=len(frame)*(7 if unit=='week' else 1)
             # The header carries the regime's length and dates, so no column hides its sample.
@@ -2022,10 +2148,10 @@ class _FactorModelMixin(_TableStyleMixin):
             gross=frame['Gross total']
             context={('Gross exposure (avg, x equity)','Beta'):gross.mean(),
                      ('Gross range (x equity)','Beta'):f'{gross.min():.2f} to {gross.max():.2f}',
-                     **{(f'{leg} (avg)','Beta'):frame[leg].mean() for leg in legs.columns[:-1]},
+                     **{(f'{leg} (avg)','Beta'):frame[leg].mean() for leg in GROSS_COLUMNS[:-1]},
                      ('Observations','Beta'):f'{len(frame)} {unit}s',
                      ('Dates','Beta'):f'{frame.index.min():%Y-%m-%d} to {frame.index.max():%Y-%m-%d}'}
-            for target,dependent in ((raw_rows,'Book excess'),(delevered_rows,'De-levered excess')):
+            for kind,dependent in (('raw','Book excess'),('delevered','De-levered excess')):
                 usable=frame.dropna(subset=[dependent])
                 if len(usable)<len(names)+3:
                     continue
@@ -2041,14 +2167,14 @@ class _FactorModelMixin(_TableStyleMixin):
                 else:
                     values[('Alpha (/yr)','Beta')]=f'not quoted: {days} of {MIN_ALPHA_DAYS} days'
                 values[('R-squared','Beta')]=fit.r_squared
-                target[column]={**values,**context}
-                if dependent=='Book excess':
-                    leg_rows[column]={(name,'Beta'):(fit.betas[name]/frame[factor_legs[name]].sum(axis=1).mean()
-                                                     if name in factor_legs and frame[factor_legs[name]].sum(axis=1).mean()>=MIN_GROSS
-                                                     else np.nan) for name in names}
-                    leg_rows[column].update({(name,'t'):np.nan for name in names})
-                    leg_rows[column].update(context)
-        # No pooled column: a fit across regimes averages opposite books and describes neither.
+                rows[kind][column]={**values,**context}
+                if kind=='raw':
+                    leg={}
+                    for name in names:
+                        scale=frame[FACTOR_LEGS[name]].sum(axis=1).mean() if name in FACTOR_LEGS else np.nan
+                        leg[(name,'Beta')]=fit.betas[name]/scale if scale>=MIN_GROSS else np.nan
+                        leg[(name,'t')]=np.nan
+                    rows['leg'][column]={**leg,**context}
         too_short=[]
         for regime,frame in data.groupby('Regime',sort=False):
             if len(frame)>=minimum:
@@ -2057,114 +2183,79 @@ class _FactorModelMixin(_TableStyleMixin):
                 too_short.append((regime,len(frame)))
         # The current regime on daily returns, when the weekly sample is too short.
         current=regimes.iloc[-1]
-        if not any(column.startswith(current.split(' (')[0]+' |') for column in raw_rows) and not daily_returns.empty:
+        if not any(column.startswith(current.split(' (')[0]+' |') for column in rows['raw']) and not daily_returns.empty:
             start=regimes[regimes==current].index.min()-pd.Timedelta(days=6)
-            calendar=available.index[available.index>=start]
-            if len(calendar):
-                spacing=pd.Series(calendar).diff().dt.days.fillna(1).to_numpy()
-                # The exposure held through a day is the one at the end of the day before.
-                held=daily_exposure.shift(1).reindex(daily_returns.index)
-                book=compound_to_calendar(daily_returns,calendar)
-                delevered=compound_to_calendar((daily_returns/held['Gross total']).where(held['Gross total']>=MIN_GROSS),calendar)
-                labels=pd.Series(calendar[np.minimum(calendar.searchsorted(held.index),len(calendar)-1)],index=held.index)
-                held_legs=held[list(legs.columns)].groupby(labels).mean().reindex(calendar)
-                rf=self.risk_free_daily*spacing
-                daily_data=pd.concat([(book-rf).rename('Book excess'),available.loc[calendar,names],held_legs],axis=1)
-                daily_data['De-levered excess']=delevered-rf/daily_data['Gross total']
-                daily_data=daily_data.dropna(subset=['Book excess','Gross total']+names)
-                if len(daily_data)>=minimum:
-                    add_fit(current,daily_data,'day',self.trading_days_per_year)
+            daily=self._current_regime_daily(daily_returns,daily_exposure,available,names,start)
+            if len(daily)>=minimum:
+                add_fit(current,daily,'day',self.trading_days_per_year)
+        tables={kind:_beta_table(rows[kind],names,[] if kind=='leg' else ['Alpha (/yr)','R-squared'])
+                for kind in rows}
+        return tables,fits,too_short
 
-        context_rows=['Gross exposure (avg, x equity)','Gross range (x equity)']+[f'{leg} (avg)' for leg in legs.columns[:-1]]
-        def beta_table(rows,extra):
-            table=pd.DataFrame(rows)
-            table.index=pd.MultiIndex.from_tuples(table.index)
-            table=table.unstack(1)
-            table=table.reindex(columns=pd.MultiIndex.from_product([list(rows),['Beta','t']]))
-            table=table.reindex(names+extra+context_rows+['Observations','Dates'])
-            return table.loc[:,table.notna().any()]
-        def show(table):
-            def cell(value,row,column):
-                if isinstance(value,str) or pd.isna(value):
-                    return '' if pd.isna(value) else value
-                if column[1]=='t':
-                    return f'{value:.2f}'
-                if row in ('Alpha (/yr)','R-squared'):
-                    return f'{value:.1%}'
-                return f'{value:.2f}' if row in context_rows else f'{value:+.3f}'
-            display(pd.DataFrame({column:[cell(table.loc[row,column],row,column) for row in table.index]
-                                  for column in table.columns},index=table.index))
-        table=beta_table(raw_rows,['Alpha (/yr)','R-squared'])
-        delevered_table=beta_table(delevered_rows,['Alpha (/yr)','R-squared'])
-        leg_table=beta_table(leg_rows,[])
-        if delevered_table.empty:
+    def _show_regime_betas(self, tables, names, too_short):
+        if tables['delevered'].empty:
             print('No regime has enough factor data for betas yet.')
         print('=== STYLE BETAS PER REGIME, PER 1x GROSS EXPOSURE (each period\'s return / its gross; HAC t-stats) ===')
-        show(delevered_table)
+        _show_beta_table(tables['delevered'])
         print('Comparable across regimes: the beta a book with 1x gross exposure would have, with leverage '
               'changes inside a regime removed period by period, so a sign flip is a change of positioning, not '
               f'of leverage. Alpha is per 1x gross and is not quoted from under {MIN_ALPHA_DAYS} days.')
         print('=== AS REPORTED (not de-levered; scales with each regime\'s gross, so not comparable across regimes) ===')
-        show(table)
+        _show_beta_table(tables['raw'])
         print('=== PER 1x GROSS OF THE MATCHING LEG (raw beta / average gross of that leg) ===')
-        show(leg_table.drop(columns=[c for c in leg_table.columns if c[1]=='t']))
+        leg=tables['leg']
+        _show_beta_table(leg.drop(columns=[column for column in leg.columns if column[1]=='t']))
         print('SPY is scaled by TradFi gross, the alt and funding factors by alt gross, BTC by crypto (BTC + alts) '
               'gross. Blank where the leg was under 5% of equity: a beta to a factor the book held no position '
               'in is correlation through other holdings, not exposure.')
         for regime,count in too_short:
             print(f'{regime}: only {count} weeks with factor data, too few for {len(names)} betas.')
 
-        # 3. One model with regime interactions, on de-levered returns: are the betas actually different?
-        regime_counts=data.dropna(subset=['De-levered excess'])['Regime'].value_counts()
-        eligible=data.dropna(subset=['De-levered excess'])
-        eligible=eligible[eligible['Regime'].isin(regime_counts[regime_counts>=minimum].index)]
-        interaction=None
-        if eligible['Regime'].nunique()>=2:
-            interaction,observations=fit_regime_interaction(eligible['De-levered excess'],eligible[names],eligible['Regime'])
-            reference=interaction['Regime'].iloc[0]
-            pivot=interaction[interaction['Term']!='Alpha']
-            compare=pivot.pivot(index='Term',columns='Regime',values='Estimate').reindex(names)
-            compare=compare[list(dict.fromkeys(interaction['Regime']))]
-            for regime in compare.columns[1:]:
-                part=pivot[pivot['Regime']==regime].set_index('Term').reindex(names)
-                compare[f'Change vs {reference.split(" (")[0]}: t ({regime.split(" (")[0]})']=part['Difference t-stat']
-            print(f'=== REGIME INTERACTION MODEL, PER 1x GROSS ({observations} weeks; betas per regime, t of the change) ===')
-            self.show_table(compare,{column:('{:.2f}' if column.startswith('Change') else '{:+.3f}')
-                                     for column in compare.columns})
-            changed=[term for term in names
-                     if (pivot.loc[pivot['Term']==term,'Difference t-stat'].abs()>=2).any()]
-            print('De-levered betas that change significantly between regimes (|t| >= 2): '
-                  +(', '.join(changed) if changed else 'none at this sample size')+'.')
-        else:
+    def _regime_interaction(self, data, names, minimum):
+        """One regression with regime interactions on de-levered returns: did each beta change?"""
+        usable=data.dropna(subset=['De-levered excess'])
+        counts=usable['Regime'].value_counts()
+        eligible=usable[usable['Regime'].isin(counts[counts>=minimum].index)]
+        if eligible['Regime'].nunique()<2:
             print('Regime interaction model not run: it needs two regimes with at least '
                   f'{minimum} weeks of factor data each.')
+            return None
+        interaction,observations=fit_regime_interaction(eligible['De-levered excess'],eligible[names],eligible['Regime'])
+        reference=interaction['Regime'].iloc[0]
+        pivot=interaction[interaction['Term']!='Alpha']
+        compare=pivot.pivot(index='Term',columns='Regime',values='Estimate').reindex(names)
+        compare=compare[list(dict.fromkeys(interaction['Regime']))]
+        for regime in compare.columns[1:]:
+            part=pivot[pivot['Regime']==regime].set_index('Term').reindex(names)
+            compare[f'Change vs {reference.split(" (")[0]}: t ({regime.split(" (")[0]})']=part['Difference t-stat']
+        print(f'=== REGIME INTERACTION MODEL, PER 1x GROSS ({observations} weeks; betas per regime, t of the change) ===')
+        self.show_table(compare,{column:('{:.2f}' if column.startswith('Change') else '{:+.3f}')
+                                 for column in compare.columns})
+        changed=[term for term in names if (pivot.loc[pivot['Term']==term,'Difference t-stat'].abs()>=2).any()]
+        print('De-levered betas that change significantly between regimes (|t| >= 2): '
+              +(', '.join(changed) if changed else 'none at this sample size')+'.')
+        return interaction
 
-        # 4. Rolling betas, per 1x gross.
-        rolling_data=data.dropna(subset=['De-levered excess'])
-        rolling=rolling_betas(rolling_data['De-levered excess'],rolling_data[names],window,min_periods=max(8,len(names)+3))
-        if not rolling.empty:
-            fig=go.Figure()
-            for name in names:
-                fig.add_trace(go.Scatter(x=rolling.index,y=rolling[name],name=name,mode='lines'))
-            fig.add_trace(go.Scatter(x=data.index,y=data['Gross total'],name='Gross exposure (x equity)',
-                                     line={'color':'#111827','width':1,'dash':'dot'},yaxis='y2'))
-            fig.add_hline(y=0,line_color='#9ca3af',line_width=1)
-            shade_regimes(fig,regimes.reindex(rolling.index).dropna())
-            fig.update_layout(title=f'HL book: rolling {window}-week betas per 1x gross exposure',
-                              template='plotly_white',hovermode='x unified',yaxis_title='beta per 1x gross',
-                              yaxis2={'title':'gross (x equity)','overlaying':'y','side':'right','showgrid':False})
-            fig.show()
-        for note in notes:
-            print(note)
-        print('Exposure is rebuilt from fills (perps) and from balances, spot fills and transfers (spot tokens); '
-              'it is the average of daily exposure over each week. A pooled beta mixes the regimes; use the '
-              'per-regime and interaction betas for risk, and the exposure table for what was actually held.')
-        result=Results('HL book regime results',
-                       {'exposure':exposure,'daily_exposure':daily_exposure,'betas':table,
-                        'betas_delevered':delevered_table,'betas_per_leg':leg_table,'fits':fits,
-                        'interaction':interaction,'rolling':rolling})
-        self.style_regime_results=result
-        return result
+    def _show_rolling_regime_betas(self, data, names, regimes, window):
+        """Rolling de-levered betas against gross exposure, with regimes shaded; returns the betas."""
+        usable=data.dropna(subset=['De-levered excess'])
+        rolling=rolling_betas(usable['De-levered excess'],usable[names],window,min_periods=max(8,len(names)+3))
+        if rolling.empty:
+            return rolling
+        fig=go.Figure()
+        for name in names:
+            fig.add_trace(go.Scatter(x=rolling.index,y=rolling[name],name=name,mode='lines'))
+        fig.add_trace(go.Scatter(x=data.index,y=data['Gross total'],name='Gross exposure (x equity)',
+                                 line={'color':'#111827','width':1,'dash':'dot'},yaxis='y2'))
+        fig.add_hline(y=0,line_color='#9ca3af',line_width=1)
+        shade_regimes(fig,regimes.reindex(rolling.index).dropna())
+        fig.update_layout(title=f'HL book: rolling {window}-week betas per 1x gross exposure',
+                          template='plotly_white',hovermode='x unified',yaxis_title='beta per 1x gross',
+                          yaxis2={'title':'gross (x equity)','overlaying':'y','side':'right','showgrid':False},
+                          # Regime labels sit at the top of the plot, so the legend goes a little higher.
+                          legend={**LEGEND_ON_TOP['legend'],'y':1.08},margin={'t':130})
+        fig.show()
+        return rolling
 
     def ib_book_returns(self, frequency='W', ib_dir=None, refresh=True):
         """Time-weighted returns of the actual IB account, from IB Flex NAV history.

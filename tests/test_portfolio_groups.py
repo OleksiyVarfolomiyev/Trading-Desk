@@ -310,7 +310,10 @@ class ActualBookTests(unittest.TestCase):
         with patch.object(analysis, "hl_book_returns", side_effect=returns), \
                 patch.object(analysis, "_hl_book_equity", return_value=pd.Series(dtype=float)), \
                 patch.object(analysis, "fit_style_model", side_effect=lambda r, label: fitted.append(r) or {"ok": 1}), \
-                patch("desk.live_risk.hl_regime_start", return_value=(days[-30], "Short alts")), \
+                patch.object(analysis, "_hl_book_regimes", return_value=(None, pd.DataFrame(
+                    {"Regime": ["Long alts (a)", "Short alts (b)", "Short alts (b)"]},
+                    index=[days[-37] + pd.Timedelta(days=6), days[-30] + pd.Timedelta(days=6),
+                           days[-30] + pd.Timedelta(days=13)]), [])), \
                 redirect_stdout(io.StringIO()):
             self.assertIsNone(analysis.fit_style_model_hl_book())
             self.assertIn("30 days of returns, 40 days needed", analysis.hl_style_status)

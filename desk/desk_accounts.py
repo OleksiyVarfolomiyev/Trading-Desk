@@ -86,11 +86,13 @@ class DeskAccounts:
     def __init__(self, data_dir: str | Path = "data", wallet_data_dir: str | Path | None = None,
                  regime_start: str | pd.Timestamp | None = None):
         """``regime_start`` pins the start of the current regime; by default it is detected from
-        the HL book's exposure history (see ``desk.live_risk.hl_regime_start``)."""
+        the HL book's exposure history (see ``desk.hl.book_exposure.book_regimes``)."""
         self.data_dir = Path(data_dir)
         self.regime_start_override = pd.Timestamp(regime_start, tz="UTC") if regime_start else None
         self.regime_start: pd.Timestamp | None = self.regime_start_override
         self.regime_name = "set by hand" if regime_start else ""
+        # Days the HL book traded (fills and priced spot changes), from the regime detection.
+        self.hl_activity_days: pd.DatetimeIndex | None = None
         self.wallet_data_dir = Path(wallet_data_dir) if wallet_data_dir else ROOT_DATA
         self.accounts = load_accounts()
         self.overview = DeskOverview(self.accounts, data_dir=self.data_dir)
@@ -170,7 +172,7 @@ class DeskAccounts:
         # Reload benchmarks when the desk start moves earlier (an account dropped out of the window).
         if refresh_history or self.benchmarks.empty or self.benchmarks.index.min() > start - pd.Timedelta(days=5):
             self.benchmarks = self._benchmarks(start - pd.Timedelta(days=10))
-        if self.regime_start_override is None and (refresh_history or self.regime_start is None):
+        if refresh_history or self.hl_activity_days is None:
             self._detect_regime()
         if any(account.venue == "hl" and account.onchain for account in self.accounts):
             self.notes.append("Wallet tokens on other chains have no value history; they count in current totals only.")
@@ -179,12 +181,19 @@ class DeskAccounts:
         return self.index
 
     def _detect_regime(self):
-        """Find where the HL book's current regime began; risk statistics start there."""
+        """Find where the HL book's current regime began (risk statistics start there) and the days it traded.
+
+        A start pinned with ``regime_start`` is kept; the trading days are still read, for
+        clipping idle stretches out of the value chart.
+        """
         wallets = [account.id for account in accounts_for("hl", self.accounts)]
+        pinned = self.regime_start_override is not None
         if not wallets:
-            self.regime_start, self.regime_name = None, ""
+            if not pinned:
+                self.regime_start, self.regime_name = None, ""
+            self.hl_activity_days = pd.DatetimeIndex([], tz="UTC")
             return
-        from desk.live_risk import hl_regime_start
+        from desk.hl import book_exposure
 
         values = []
         for account in accounts_for("hl", self.accounts):
@@ -193,11 +202,45 @@ class DeskAccounts:
                 values.append(history.set_index("ts")["accountValue"].resample("1D").last())
         try:
             equity = pd.concat(values, axis=1).ffill().fillna(0.0).sum(axis=1)
-            self.regime_start, self.regime_name = hl_regime_start(wallets, equity)
+            daily, weekly, _ = book_exposure.book_regimes(wallets, equity)
+            self.hl_activity_days = daily.attrs.get("activity_days", pd.DatetimeIndex([], tz="UTC"))
+            if not pinned:
+                self.regime_start, self.regime_name = book_exposure.current_regime(weekly)
         except Exception as exc:
-            self.regime_start, self.regime_name = None, ""
+            self.hl_activity_days = None
+            if not pinned:
+                self.regime_start, self.regime_name = None, ""
             self.notes.append(f"Current regime not detected ({type(exc).__name__}: {exc}); "
-                              "risk statistics use the whole history.")
+                              "realized statistics use the recent daily history.")
+
+    def idle_periods(self, min_gap_days: int = 30) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+        """Stretches over ``min_gap_days`` in which no account in the desk history traded.
+
+        HL wallets count as active on days they traded (fills or priced spot changes). IB keeps
+        only about a week of executions, so an IB account counts as active on every day of its
+        history except after its first saved fill, where its saved fill days are used.
+        Returns half-open (start, end) day ranges, as ``inactive_periods`` gives for a chart.
+        """
+        from desk.hl.trade_analytics import inactive_periods
+
+        if self.hl_activity_days is None or self.index.empty:
+            return []
+        active = set(pd.DatetimeIndex(self.hl_activity_days).tz_convert("UTC").normalize())
+        for label, history in self.histories.items():
+            if not label.startswith("IB "):
+                continue
+            days = pd.DatetimeIndex(pd.to_datetime(history["ts"], utc=True)).normalize().unique()
+            fills_path = ib_data_dir() / f"ib_fills_{label.split(' ', 1)[1]}.csv"
+            fills = pd.read_csv(fills_path) if fills_path.exists() else pd.DataFrame()
+            if len(fills) and "time" in fills:
+                traded = pd.DatetimeIndex(pd.to_datetime(fills["time"], utc=True, errors="coerce").dropna()).normalize()
+                first = traded.min()
+                active |= set(days[days < first]) | set(traded)
+            else:
+                active |= set(days)
+        start = pd.Timestamp(self.common_start).normalize()
+        window = sorted(day for day in active if day >= start)
+        return inactive_periods(pd.DatetimeIndex(window), min_gap_days)
 
     def _ib_closes(self, refs: list[str]) -> dict[str, pd.Series]:
         """Daily closes for IB positions by conId, over about six months (one TWS connection)."""
@@ -399,7 +442,7 @@ class DeskAccounts:
         if risk is not None and len(risk):
             by_basis = risk.set_index("Basis")
             current = by_basis[by_basis.index.str.startswith("Current holdings")]
-            regime = by_basis[by_basis.index.str.contains("realized") & ~by_basis.index.str.startswith("Whole")]
+            regime = by_basis[by_basis.index.str.contains("realized")]
             parts = []
             if len(current):
                 row = current.iloc[0]
@@ -431,7 +474,7 @@ class DeskAccounts:
         return well, attention, metrics, items
 
     def risk_metrics(self) -> pd.DataFrame:
-        """Risk of the book as it is now, then realized statistics for the current regime and the whole history.
+        """Risk of the book as it is now, then realized statistics for the current regime.
 
         * Current holdings (ex-ante): today's positions on every venue, plus HL spot tokens, times
           each of the last 90 days' price moves. This is the live risk of what is held.
@@ -448,21 +491,22 @@ class DeskAccounts:
         try:
             wallets = [account.id for account in accounts_for("hl", self.accounts)
                        if account.name not in self.excluded]
-            holdings = live_risk.position_values(self.overview._trading(), live_risk.hl_spot_values(wallets))
+            spot, unpriced = live_risk.hl_spot_values(wallets)
+            holdings = live_risk.position_values(self.overview._trading(), spot)
             if len(holdings):
                 returns, missing = live_risk.holding_returns(holdings, live_risk.EX_ANTE_DAYS, self._ib_closes)
-                rows.append(live_risk.ex_ante_row(holdings, returns, equity, self.benchmarks, missing))
+                # Tokens with no HL price at all have no value to weigh, so they are named, not covered.
+                rows.append(live_risk.ex_ante_row(holdings, returns, equity, self.benchmarks, missing + unpriced))
         except Exception as exc:
             self.notes.append(f"Ex-ante risk unavailable ({type(exc).__name__}: {exc}).")
-        bench_daily = self.benchmarks.pct_change(fill_method=None) if len(self.benchmarks) else pd.DataFrame()
         daily = period_returns(self.index, "1D", self.daily_days)
         realized = []
         if self.regime_start is not None:
             name = f"Current regime: {self.regime_name}" if self.regime_name else "Current regime"
-            realized.append((f"{name} (realized, daily)", daily[daily.index >= self.regime_start], 365, bench_daily))
+            realized.append((f"{name} (realized, daily)", daily[daily.index >= self.regime_start], 365))
         else:
-            realized.append(("Recent days (realized, daily; regime not detected)", daily, 365, bench_daily))
-        for label, returns, periods, bench in realized:
+            realized.append(("Recent days (realized, daily; regime not detected)", daily, 365))
+        for label, returns, periods in realized:
             if len(returns) < 8:
                 continue
             path = (1 + returns).cumprod()
@@ -481,11 +525,11 @@ class DeskAccounts:
                     var = bootstrap_var(returns, confidence)
                     row[f"VaR {confidence:.0%} ($)"] = var["var"] * equity
             for name in ("BTC", "SPY"):
-                if name in bench:
-                    pair = pd.concat([returns.rename("desk"), bench[name].rename(name)], axis=1).dropna()
+                if name in self.benchmarks:
+                    pair = live_risk.paired_returns(returns, self.benchmarks[name])
                     if len(pair) < 8:
                         continue
-                    stats = bootstrap_btc_regression(pair["desk"], pair[name], periods_per_year=periods, samples=2000)
+                    stats = bootstrap_btc_regression(pair["book"], pair["bench"], periods_per_year=periods, samples=2000)
                     row[f"Beta {name}"] = stats["beta"]
                     row[f"Beta {name} 90% range"] = (f"{stats['beta_low']:.2f} to {stats['beta_high']:.2f}"
                                                      if np.isfinite(stats.get("beta_low", np.nan)) else "n/a")
