@@ -36,7 +36,6 @@ import numpy as np
 import pandas as pd
 
 from desk.desk_accounts import ROOT_DATA, WINDOWS, DeskAccounts
-from desk.risk import MAX_TOTAL_RISK_PCT, per_position_budget
 
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
 DEFAULT_PORT = 8050
@@ -122,14 +121,6 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
         "drawdown": float(desk.index.iloc[-1] / peak.iloc[-1] - 1),
         "peak_date": desk.index.idxmax(),
     }
-    if overview.book:
-        equity, used, cap = overview.risk_totals()
-        kpis.update(risk_used=used, risk_cap=cap, risk_cap_pct=MAX_TOTAL_RISK_PCT,
-                    position_budget=per_position_budget(equity))
-    if len(positions):
-        top = positions.loc[positions["Value (USD)"].abs().idxmax()]
-        kpis["largest"] = {"symbol": top["Symbol"], "side": top["Side"], "account": top["Account"],
-                           "value": abs(top["Value (USD)"]), "share": top["Exposure / desk value"]}
 
     well, attention, _, _ = desk.highlight_rows()
 
@@ -153,7 +144,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
     }
     if len(positions):
         ordered = positions.assign(_abs=positions["Value (USD)"].abs()).sort_values(
-            ["Asset class", "_abs"], ascending=[True, False]).drop(columns="_abs")
+            ["Asset class", "_abs"], ascending=[True, False]).drop(columns=["_abs", "Currency"], errors="ignore")
         total = {column: None for column in ordered.columns}
         total.update({"Asset class": "Total", "Value (USD)": ordered["Value (USD)"].sum(),
                       "Unrealized PnL": ordered["Unrealized PnL"].sum(), "Weight": ordered["Weight"].sum(),
@@ -167,6 +158,10 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
                                     total_last=True)
     holdings = overview.wallet_holdings_frame()
     if len(holdings):
+        # "HL 07f2 wallet" -> "HL 07f2": the table is already the wallets table. Notes go last.
+        holdings = holdings.assign(Wallet=holdings["Wallet"].str.replace(r"\s+wallet$", "", regex=True))
+        holdings = holdings.rename(columns={"Token": "Symbol"})
+        holdings = holdings[[column for column in holdings.columns if column != "Note"] + ["Note"]]
         tables["wallets"] = table(holdings, {"Amount": "num", "Price": "num", "Value": "usd", "% of desk": "pct"},
                                   {"Wallet": "Total", "Value": holdings["Value"].sum(),
                                    "% of desk": holdings["% of desk"].sum()})

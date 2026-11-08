@@ -1941,6 +1941,8 @@ class _FactorModelMixin(_TableStyleMixin):
         returns, where the saved daily history covers it.
         """
         from desk.hl import book_exposure
+        from desk.hl.account_analytics import clip_inactive_periods
+        from desk.hl.trade_analytics import inactive_periods
 
         weekly_returns=self.hl_book_returns('W',desk_data_dir)
         daily_returns=self.hl_book_returns('D',desk_data_dir)
@@ -1962,6 +1964,10 @@ class _FactorModelMixin(_TableStyleMixin):
         fig.add_trace(go.Scatter(x=exposure.index,y=exposure['Gross total'],name='Gross total',
                                  line={'color':'#111827','width':2,'dash':'dot'}))
         shade_regimes(fig,regimes)
+        # Collapse idle stretches (over 30 days without a trade), as the HL account charts do.
+        activity=daily_exposure.attrs.get('activity_days')
+        idle=inactive_periods(activity) if activity is not None and len(activity) else []
+        clip_inactive_periods(fig,idle)
         fig.update_layout(title='HL book: net exposure per leg and gross exposure (x equity), by regime',
                           barmode='relative',yaxis_tickformat='.1f',yaxis_title='x equity',
                           template='plotly_white',hovermode='x unified')

@@ -158,19 +158,6 @@ function renderTiles(k) {
     tile("Gross leverage", isNum(k.gross_leverage) ? k.gross_leverage.toFixed(2) + "×" : "n/a",
       isNum(k.net_leverage) ? `Net ${k.net_leverage >= 0 ? "+" : ""}${k.net_leverage.toFixed(2)}× trading equity` : ""),
   ];
-  if (isNum(k.risk_used) && isNum(k.risk_cap) && k.risk_cap > 0) {
-    const share = k.risk_used / k.risk_cap;
-    const level = share > 1 ? "critical" : share > 0.8 ? "warning" : "";
-    const meter = el("div", { class: "meter " + level, role: "meter", "aria-valuemin": "0", "aria-valuemax": "100",
-      "aria-valuenow": String(Math.round(share * 100)), "aria-label": "Open risk as a share of the cap" },
-      el("span", { style: `width:${Math.min(100, share * 100).toFixed(1)}%` }));
-    tiles.push(tile("Open risk vs cap", `${pct(share, 0)} of cap`,
-      `${usd(k.risk_used)} of ${usd(k.risk_cap)} · next position ${usd(k.position_budget)}`, { meter }));
-  }
-  if (k.largest) {
-    tiles.push(tile("Largest position", `${k.largest.symbol}`,
-      `${String(k.largest.side || "").toLowerCase()} ${compactUsd(k.largest.value)} · ${pct(k.largest.share, 0)} of desk · ${k.largest.account}`));
-  }
   document.getElementById("tiles").replaceChildren(...tiles);
 }
 

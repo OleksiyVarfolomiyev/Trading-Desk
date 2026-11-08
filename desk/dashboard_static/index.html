@@ -68,14 +68,8 @@
 
     <section class="card">
       <h2>Risk metrics</h2>
-      <p class="caption">Weekly over the whole shared history; daily over days every account has a daily value. VaR is one period's bootstrap loss on today's value. Updated hourly.</p>
+      <p class="caption">Current holdings: today's positions moved by the last 90 days' prices (the live risk). Current regime: realized daily returns since the book took its present shape; Sharpe and alpha appear after 40 days. Nothing is pooled across regimes. VaR is a one-day bootstrap loss on today's value. Updated hourly.</p>
       <div class="table-wrap" id="t-risk"></div>
-    </section>
-
-    <section class="card">
-      <h2>Open positions</h2>
-      <p class="caption">Value is signed (shorts negative). Weight is the share of gross exposure (sums to 100%); exposure / desk value sums to gross leverage.</p>
-      <div class="table-wrap" id="t-positions"></div>
     </section>
 
     <section class="grid two">
@@ -99,6 +93,12 @@
         <h2>Wallet holdings outside HL</h2>
         <div class="table-wrap" id="t-wallets"></div>
       </div>
+    </section>
+
+    <section class="card">
+      <h2>Open positions</h2>
+      <p class="caption">Value is signed (shorts negative). Weight is the share of gross exposure (sums to 100%); exposure / desk value sums to gross leverage.</p>
+      <div class="table-wrap" id="t-positions"></div>
     </section>
 
     <details class="card notes">

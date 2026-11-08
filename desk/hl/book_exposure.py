@@ -310,4 +310,10 @@ def fetch_book_exposure(
     if unpriced:
         notes.append("No HL price history, so left out of exposure: " + ", ".join(unpriced) + ".")
     closes = pd.DataFrame(closes).reindex(days).ffill()
-    return exposure_by_leg(holdings, closes, equity.reindex(days).ffill(), perp_market_group), notes
+    exposure = exposure_by_leg(holdings, closes, equity.reindex(days).ffill(), perp_market_group)
+    # Days the book was traded: a perp fill, or a change to a spot balance that has a price.
+    # Charts use them to clip long idle stretches, as the HL account charts do.
+    if not paths.empty:
+        priced = paths["kind"].eq("perp") | paths["asset"].map(lambda asset: price_symbol("spot", asset)).isin(closes.columns)
+        exposure.attrs["activity_days"] = pd.DatetimeIndex(paths.loc[priced, "ts"]).normalize().unique().sort_values()
+    return exposure, notes
