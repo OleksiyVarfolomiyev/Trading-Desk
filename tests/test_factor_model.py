@@ -161,7 +161,7 @@ class BookExposureTests(unittest.TestCase):
 
     def test_regimes_are_contiguous_and_short_detours_fold_in(self):
         weeks = pd.date_range("2026-01-04", periods=16, freq="W-SUN", tz="UTC")
-        alts = [0.4] * 7 + [1.3] + [0.4] * 2 + [0.0, 0.2, -0.6, -1.1, -1.0, -1.2]
+        alts = [0.4] * 7 + [1.3] + [0.4] * 2 + [0.0, 0.2, -0.6, -1.1, -1.2, -1.3]
         weekly = pd.DataFrame({"Net BTC": 0.0, "Net Alts": alts, "Net TradFi": 0.0}, index=weeks)
         weekly["Gross total"] = weekly["Net Alts"].abs()
         regimes = book_exposure.label_regimes(weekly, min_run=6)
@@ -169,6 +169,9 @@ class BookExposureTests(unittest.TestCase):
         self.assertTrue(regimes.iloc[0].startswith("Long alts ("))
         self.assertTrue(regimes.iloc[-1].startswith("Short alts, levered ("))
         self.assertEqual(regimes.iloc[12:].nunique(), 1)
+        # Named from the regime's average gross (1.05x), not from its latest week alone.
+        weekly.loc[weeks[-1], ["Net Alts", "Gross total"]] = [-0.5, 0.5]
+        self.assertTrue(book_exposure.label_regimes(weekly, min_run=6).iloc[-1].startswith("Short alts ("))
 
 
 if __name__ == "__main__":

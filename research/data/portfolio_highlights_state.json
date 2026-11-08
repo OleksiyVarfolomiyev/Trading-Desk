@@ -1,13 +1,11 @@
 {
- "ts": "2026-11-08T00:20:12.445932+00:00",
+ "ts": "2026-11-08T01:21:27.905563+00:00",
  "metrics": {
   "Assets analysed": 11,
   "Assets in Kelly": 9,
   "Kelly Sharpe (in-sample)": 2.8657053895310005,
   "Kelly beta (btc)": 0.6421064904369669,
   "Kelly beta (spy)": 1.5104721901987272,
-  "HL book (actual): alpha (/yr)": -0.05256409435851641,
-  "HL book (actual): alpha t-stat": -0.27084094252941737,
   "IB book (actual): alpha (/yr)": -0.22833669334139758,
   "IB book (actual): alpha t-stat": -1.1296967822447386
  },

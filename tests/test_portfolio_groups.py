@@ -297,6 +297,31 @@ class ActualBookTests(unittest.TestCase):
         self.assertLess(daily.max(), 0.011)
         self.assertAlmostEqual(daily.loc["2026-01-03"], 10 / 2010, places=6)
 
+    def test_hl_style_model_uses_only_the_current_regime_and_waits_for_40_days(self):
+        from unittest.mock import patch
+
+        analysis = portfolio.PortfolioAnalytics("data", ["0x" + "a" * 40], assets=["ETH"])
+        days = pd.date_range("2026-08-01", periods=100, freq="D", tz="UTC")
+        daily = pd.Series(0.001, index=days)
+        weekly = pd.Series(0.007, index=pd.date_range("2026-01-04", periods=40, freq="W-SUN", tz="UTC"))
+        fitted = []
+        def returns(frequency, folder=None):
+            return daily if frequency == "D" else weekly
+        with patch.object(analysis, "hl_book_returns", side_effect=returns), \
+                patch.object(analysis, "_hl_book_equity", return_value=pd.Series(dtype=float)), \
+                patch.object(analysis, "fit_style_model", side_effect=lambda r, label: fitted.append(r) or {"ok": 1}), \
+                patch("desk.live_risk.hl_regime_start", return_value=(days[-30], "Short alts")), \
+                redirect_stdout(io.StringIO()):
+            self.assertIsNone(analysis.fit_style_model_hl_book())
+            self.assertIn("30 days of returns, 40 days needed", analysis.hl_style_status)
+            analysis.style_results = {"HL book (actual)": "stale"}
+            self.assertIsNone(analysis.fit_style_model_hl_book())
+            self.assertNotIn("HL book (actual)", analysis.style_results)
+            self.assertEqual(analysis.fit_style_model_hl_book(regime_start="2026-09-15"), {"ok": 1})
+        self.assertEqual(len(fitted), 1)
+        self.assertEqual(fitted[0].index.min(), pd.Timestamp("2026-09-15", tz="UTC"))
+        self.assertIsNone(analysis.hl_style_status)
+
     def test_flex_statement_parses_nav_and_deposits_into_twr(self):
         from desk.venues import ib_flex
 

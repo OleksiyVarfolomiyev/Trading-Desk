@@ -174,7 +174,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
         tables["risk"] = table(risk_table, {
             **money, "Periods": "int", "Return (total)": "spct", "Volatility (/yr)": "pct", "Sharpe": "num2",
             "Max drawdown": "spct", "Beta BTC": "num2", "Beta SPY": "num2",
-            "Alpha vs BTC (/yr)": "spct", "Alpha vs SPY (/yr)": "spct"})
+            "Alpha vs BTC (/yr)": "spct", "Alpha vs SPY (/yr)": "spct", "Coverage": "pct"})
 
     start = desk.common_start
     value_series = []
@@ -215,9 +215,9 @@ class Dashboard:
     """Holds the latest payload and refreshes it in a background thread."""
 
     def __init__(self, interval: int = DEFAULT_INTERVAL_SECONDS, data_dir: Path | str = ROOT_DATA,
-                 wallet_data_dir: Path | str | None = None):
+                 wallet_data_dir: Path | str | None = None, regime_start: str | None = None):
         self.interval = max(MIN_INTERVAL_SECONDS, int(interval))
-        self.desk = DeskAccounts(data_dir=data_dir, wallet_data_dir=wallet_data_dir)
+        self.desk = DeskAccounts(data_dir=data_dir, wallet_data_dir=wallet_data_dir, regime_start=regime_start)
         self.lock = threading.Lock()
         self.wake = threading.Event()
         self.payload: dict | None = None
@@ -371,12 +371,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", default=str(ROOT_DATA), help="desk data folder (default: the repo's data/)")
     parser.add_argument("--wallet-data-dir", default=None, help="HL history folder (default: the repo's data/)")
     parser.add_argument("--open", action="store_true", help="open the dashboard in the default browser")
+    parser.add_argument("--regime-start", default=None,
+                        help="start of the current regime (YYYY-MM-DD) for risk statistics; detected from the HL "
+                             "book's exposure by default")
     args = parser.parse_args(argv)
 
     # `kill -USR1 <pid>` writes every thread's stack to the log: shows where a slow refresh is waiting.
     faulthandler.register(signal.SIGUSR1, all_threads=True)
     try:
-        dashboard = Dashboard(args.interval, args.data_dir, args.wallet_data_dir)
+        dashboard = Dashboard(args.interval, args.data_dir, args.wallet_data_dir, args.regime_start)
     except ValueError as exc:  # no accounts.json, or an invalid one
         print(f"Cannot start the dashboard: {exc}", file=sys.stderr)
         return 2

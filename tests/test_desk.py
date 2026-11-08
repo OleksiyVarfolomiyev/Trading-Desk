@@ -1217,5 +1217,38 @@ class DeskAccountsUnreadableTests(unittest.TestCase):
         self.assertIn("IB U123", desk.notes[0])
 
 
+class LiveRiskTests(unittest.TestCase):
+    def setUp(self):
+        from desk import live_risk
+        self.live_risk = live_risk
+        rng = np.random.default_rng(3)
+        self.days = pd.date_range("2026-08-01", periods=90, freq="D", tz="UTC")
+        btc = pd.Series(rng.normal(0, 0.03, 90), index=self.days)
+        self.benchmarks = pd.DataFrame({"BTC": 100 * (1 + btc).cumprod()})
+        self.returns = pd.DataFrame({"hl:w:BTC": btc, "hl:w:SOL": 1.5 * btc + rng.normal(0, 0.01, 90)})
+
+    def test_ex_ante_row_uses_todays_signed_positions(self):
+        holdings = pd.DataFrame({"key": ["hl:w:BTC", "hl:w:SOL", "ib:U1:KYIV"], "venue": ["hl", "hl", "ib"],
+                                 "symbol": ["BTC", "SOL", "KYIV"], "ref": ["", "", "1"],
+                                 "value": [2_000.0, -1_000.0, 1_000.0]})
+        row = self.live_risk.ex_ante_row(holdings, self.returns, 1_000.0, self.benchmarks, ["KYIV"])
+        # +2x BTC and -1x SOL (beta 1.5) on 1,000 of equity: about +0.5 BTC beta.
+        self.assertAlmostEqual(row["Beta BTC"], 0.5, delta=0.1)
+        self.assertAlmostEqual(row["Coverage"], 0.75)
+        self.assertEqual(row["Not priced"], "KYIV")
+        self.assertGreater(row["VaR 95% ($)"], 0)
+        self.assertNotIn("Sharpe", row)
+
+    def test_position_values_include_spot_and_skip_empty(self):
+        from desk.venues.base import VenuePosition
+
+        position = VenuePosition(venue="hl", account="w", symbol="ETH", asset_class="crypto",
+                                 quantity=-2.0, avg_price=3_000.0, mark_price=3_000.0, ref="")
+        snapshot = type("Snapshot", (), {"positions": (position,)})()
+        frame = self.live_risk.position_values([snapshot], {"HYPE": 900.0, "MAX": 0.0})
+        self.assertEqual(frame["value"].tolist(), [-6_000.0, 900.0])
+        self.assertEqual(frame["venue"].tolist(), ["hl", "hl-spot"])
+
+
 if __name__ == "__main__":
     unittest.main()

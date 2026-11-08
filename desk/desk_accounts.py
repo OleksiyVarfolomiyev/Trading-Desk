@@ -23,6 +23,7 @@ from IPython.display import display
 from desk.accounts import accounts_for, ib_data_dir, load_accounts
 from desk.hl.account_analytics import display_interactive_table, fetch_btc_candles, update_portfolio_history
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var, time_weighted_index
+from desk.live_risk import MIN_RATIO_DAYS
 from desk.notebook_highlights import HighlightsState, percent, signed_money
 from desk.notebook_highlights import show as show_highlights
 from desk.overview import DeskOverview
@@ -72,11 +73,24 @@ def period_returns(index: pd.Series, rule: str, valid_days: pd.DatetimeIndex | N
     return returns[keep].dropna()
 
 
+RISK_NOTE = ("Current holdings (ex-ante) is the live risk: today's positions on every venue and HL spot tokens, "
+             "valued now and moved by each of the last 90 days' prices (Coverage is the share of gross exposure "
+             "with a price history). Current regime is the desk's realized daily return since the book took its "
+             f"present shape; Sharpe and alpha appear once it has {MIN_RATIO_DAYS} days. Nothing is pooled across "
+             "regimes. VaR is one day's bootstrap loss on today's desk value; betas use 2,000 bootstrap resamples.")
+
+
 class DeskAccounts:
     """Every account in accounts.json as one desk: current state, performance and risk."""
 
-    def __init__(self, data_dir: str | Path = "data", wallet_data_dir: str | Path | None = None):
+    def __init__(self, data_dir: str | Path = "data", wallet_data_dir: str | Path | None = None,
+                 regime_start: str | pd.Timestamp | None = None):
+        """``regime_start`` pins the start of the current regime; by default it is detected from
+        the HL book's exposure history (see ``desk.live_risk.hl_regime_start``)."""
         self.data_dir = Path(data_dir)
+        self.regime_start_override = pd.Timestamp(regime_start, tz="UTC") if regime_start else None
+        self.regime_start: pd.Timestamp | None = self.regime_start_override
+        self.regime_name = "set by hand" if regime_start else ""
         self.wallet_data_dir = Path(wallet_data_dir) if wallet_data_dir else ROOT_DATA
         self.accounts = load_accounts()
         self.overview = DeskOverview(self.accounts, data_dir=self.data_dir)
@@ -156,11 +170,61 @@ class DeskAccounts:
         # Reload benchmarks when the desk start moves earlier (an account dropped out of the window).
         if refresh_history or self.benchmarks.empty or self.benchmarks.index.min() > start - pd.Timedelta(days=5):
             self.benchmarks = self._benchmarks(start - pd.Timedelta(days=10))
+        if self.regime_start_override is None and (refresh_history or self.regime_start is None):
+            self._detect_regime()
         if any(account.venue == "hl" and account.onchain for account in self.accounts):
             self.notes.append("Wallet tokens on other chains have no value history; they count in current totals only.")
         for note in self.notes:
             print(f"note: {note}")
         return self.index
+
+    def _detect_regime(self):
+        """Find where the HL book's current regime began; risk statistics start there."""
+        wallets = [account.id for account in accounts_for("hl", self.accounts)]
+        if not wallets:
+            self.regime_start, self.regime_name = None, ""
+            return
+        from desk.live_risk import hl_regime_start
+
+        values = []
+        for account in accounts_for("hl", self.accounts):
+            history = self.histories.get(account.name)
+            if history is not None:
+                values.append(history.set_index("ts")["accountValue"].resample("1D").last())
+        try:
+            equity = pd.concat(values, axis=1).ffill().fillna(0.0).sum(axis=1)
+            self.regime_start, self.regime_name = hl_regime_start(wallets, equity)
+        except Exception as exc:
+            self.regime_start, self.regime_name = None, ""
+            self.notes.append(f"Current regime not detected ({type(exc).__name__}: {exc}); "
+                              "risk statistics use the whole history.")
+
+    def _ib_closes(self, refs: list[str]) -> dict[str, pd.Series]:
+        """Daily closes for IB positions by conId, over about six months (one TWS connection)."""
+        ib = accounts_for("ib", self.accounts)
+        if not ib:
+            return {}
+        from desk.venues import ib as ib_venue
+
+        def read():
+            from ib_async import Contract
+
+            client = ib_venue.connect(ib[0], "analytics", readonly=True, timeout=20)
+            closes = {}
+            try:
+                for ref in dict.fromkeys(refs):
+                    try:
+                        contract = client.qualifyContracts(Contract(conId=int(ref)))[0]
+                        series = ib_venue.adjusted_daily_closes(client, contract, "6 M")
+                        series.index = pd.to_datetime(series.index, utc=True).normalize()
+                        closes[ref] = series
+                    except Exception:
+                        if getattr(client, "desk_history_down", False):
+                            break
+            finally:
+                client.disconnect()
+            return closes
+        return ib_venue.run_off_event_loop(read)
 
     def _drop_unreadable(self) -> list[str]:
         """Leave accounts the overview could not read out of the combined history, as they are out of
@@ -330,49 +394,88 @@ class DeskAccounts:
         peak_day = self.index.idxmax()
         text = f"{percent(drawdown)} below the peak of {peak_day:%Y-%m-%d}." if drawdown < 0 else "At its peak."
         (attention if drawdown <= DEEP_DRAWDOWN else well).append(("Drawdown now", text))
-        weekly = period_returns(self.index, "W-SUN")
         sharpe = beta_spy = beta_btc = np.nan
-        if len(weekly) >= 8 and weekly.std() > 0:
-            sharpe = float(weekly.mean() / weekly.std() * math.sqrt(52))
-            bench = self.benchmarks.resample("W-SUN").last().pct_change(fill_method=None) if len(self.benchmarks) else pd.DataFrame()
-            betas = {}
-            for name in ("BTC", "SPY"):
-                if name in bench:
-                    pair = pd.concat([weekly, bench[name]], axis=1).dropna()
-                    if len(pair) >= 8 and pair.iloc[:, 1].var() > 0:
-                        betas[name] = float(pair.cov().iloc[0, 1] / pair.iloc[:, 1].var())
-            beta_btc, beta_spy = betas.get("BTC", np.nan), betas.get("SPY", np.nan)
-            text = (f"Weekly Sharpe {sharpe:.2f}, volatility {weekly.std() * math.sqrt(52):.0%}/yr over "
-                    f"{len(weekly)} weeks" + "".join(f"; beta {name} {value:.2f}" for name, value in betas.items()) + ".")
-            (well if sharpe > 0 else attention).append(("Risk-adjusted", text))
+        risk = getattr(self, "risk_table", None)
+        if risk is not None and len(risk):
+            by_basis = risk.set_index("Basis")
+            current = by_basis[by_basis.index.str.startswith("Current holdings")]
+            regime = by_basis[by_basis.index.str.contains("realized") & ~by_basis.index.str.startswith("Whole")]
+            parts = []
+            if len(current):
+                row = current.iloc[0]
+                beta_btc, beta_spy = row.get("Beta BTC", np.nan), row.get("Beta SPY", np.nan)
+                betas = "".join(f"; beta {name} {value:.2f}" for name, value in (("BTC", beta_btc), ("SPY", beta_spy))
+                                if pd.notna(value))
+                if pd.notna(row.get("Volatility (/yr)", np.nan)):
+                    parts.append(f"Current book: volatility {row['Volatility (/yr)']:.0%}/yr, 1-day VaR 95% "
+                                 f"{signed_money(-row.get('VaR 95% ($)', np.nan)) if pd.notna(row.get('VaR 95% ($)', np.nan)) else 'n/a'}"
+                                 + betas)
+            if len(regime):
+                row = regime.iloc[0]
+                sharpe = row.get("Sharpe", np.nan)
+                if pd.notna(sharpe):
+                    parts.append(f"since {row['From']}: Sharpe {sharpe:.2f} over {int(row['Periods'])} days")
+                else:
+                    parts.append(f"current regime {int(row['Periods'])} days old, too short for a Sharpe "
+                                 f"(needs {MIN_RATIO_DAYS})")
+            if parts:
+                text = "; ".join(parts) + "."
+                (well if not pd.notna(sharpe) or sharpe > 0 else attention).append(("Risk-adjusted", text))
         for note in self.notes:
             if "not refreshed" in note or ": no value history" in note:
                 attention.append(("History", note))
         metrics.update({"Desk return since start": (returns["since start"], "pct"),
                         "Desk return 30D": (returns.get("30D", np.nan), "pct"),
-                        "Drawdown now": (drawdown, "pct"), "Weekly Sharpe": (sharpe, "num"),
-                        "Beta SPY (weekly)": (beta_spy, "num"), "Beta BTC (weekly)": (beta_btc, "num")})
+                        "Drawdown now": (drawdown, "pct"), "Sharpe (current regime)": (sharpe, "num"),
+                        "Beta SPY (current book)": (beta_spy, "num"), "Beta BTC (current book)": (beta_btc, "num")})
         return well, attention, metrics, items
 
     def risk_metrics(self) -> pd.DataFrame:
-        """Volatility, Sharpe, drawdown, VaR and benchmark betas, weekly and (where possible) daily."""
-        equity = sum(float(history["accountValue"].iloc[-1]) for history in self.histories.values())
+        """Risk of the book as it is now, then realized statistics for the current regime and the whole history.
+
+        * Current holdings (ex-ante): today's positions on every venue, plus HL spot tokens, times
+          each of the last 90 days' price moves. This is the live risk of what is held.
+        * Current regime (realized): the desk's own daily returns since the current regime began.
+          Sharpe and alpha are left out until it has MIN_RATIO_DAYS days: a shorter stretch is an episode.
+
+        There is no whole-history row: a statistic pooled across regimes averages books the desk
+        no longer holds.
+        """
+        from desk import live_risk
+
+        equity = self.overview.desk_equity
         rows = []
-        bench_weekly = self.benchmarks.resample("W-SUN").last().pct_change(fill_method=None) if len(self.benchmarks) else pd.DataFrame()
+        try:
+            wallets = [account.id for account in accounts_for("hl", self.accounts)
+                       if account.name not in self.excluded]
+            holdings = live_risk.position_values(self.overview._trading(), live_risk.hl_spot_values(wallets))
+            if len(holdings):
+                returns, missing = live_risk.holding_returns(holdings, live_risk.EX_ANTE_DAYS, self._ib_closes)
+                rows.append(live_risk.ex_ante_row(holdings, returns, equity, self.benchmarks, missing))
+        except Exception as exc:
+            self.notes.append(f"Ex-ante risk unavailable ({type(exc).__name__}: {exc}).")
         bench_daily = self.benchmarks.pct_change(fill_method=None) if len(self.benchmarks) else pd.DataFrame()
-        for label, returns, periods, bench in (
-            ("Weekly", period_returns(self.index, "W-SUN"), 52, bench_weekly),
-            ("Daily", period_returns(self.index, "1D", self.daily_days), 365, bench_daily),
-        ):
+        daily = period_returns(self.index, "1D", self.daily_days)
+        realized = []
+        if self.regime_start is not None:
+            name = f"Current regime: {self.regime_name}" if self.regime_name else "Current regime"
+            realized.append((f"{name} (realized, daily)", daily[daily.index >= self.regime_start], 365, bench_daily))
+        else:
+            realized.append(("Recent days (realized, daily; regime not detected)", daily, 365, bench_daily))
+        for label, returns, periods, bench in realized:
             if len(returns) < 8:
                 continue
             path = (1 + returns).cumprod()
-            row = {"Frequency": label, "Periods": len(returns),
+            long_enough = len(returns) >= live_risk.MIN_RATIO_DAYS
+            row = {"Basis": label, "Periods": len(returns),
                    "From": f"{returns.index.min():%Y-%m-%d}", "To": f"{returns.index.max():%Y-%m-%d}",
                    "Return (total)": float(path.iloc[-1] - 1),
                    "Volatility (/yr)": float(returns.std() * math.sqrt(periods)),
-                   "Sharpe": float(returns.mean() / returns.std() * math.sqrt(periods)) if returns.std() > 0 else np.nan,
+                   "Sharpe": (float(returns.mean() / returns.std() * math.sqrt(periods))
+                              if long_enough and returns.std() > 0 else np.nan),
                    "Max drawdown": float((path / path.cummax() - 1).min())}
+            if not long_enough:
+                row["Note"] = (f"{len(returns)} of {live_risk.MIN_RATIO_DAYS} days: too short for Sharpe or alpha")
             if len(returns) >= 20:
                 for confidence in (0.95, 0.99):
                     var = bootstrap_var(returns, confidence)
@@ -380,13 +483,18 @@ class DeskAccounts:
             for name in ("BTC", "SPY"):
                 if name in bench:
                     pair = pd.concat([returns.rename("desk"), bench[name].rename(name)], axis=1).dropna()
+                    if len(pair) < 8:
+                        continue
                     stats = bootstrap_btc_regression(pair["desk"], pair[name], periods_per_year=periods, samples=2000)
                     row[f"Beta {name}"] = stats["beta"]
                     row[f"Beta {name} 90% range"] = (f"{stats['beta_low']:.2f} to {stats['beta_high']:.2f}"
                                                      if np.isfinite(stats.get("beta_low", np.nan)) else "n/a")
-                    row[f"Alpha vs {name} (/yr)"] = stats["alpha"] / 100
+                    if long_enough:
+                        row[f"Alpha vs {name} (/yr)"] = stats["alpha"] / 100
             rows.append(row)
-        return pd.DataFrame(rows)
+        table = pd.DataFrame(rows)
+        self.risk_table = table
+        return table
 
     def show_risk_metrics(self):
         if not self._require():
@@ -398,10 +506,9 @@ class DeskAccounts:
         formats = {"Return (total)": "{:+.1%}", "Volatility (/yr)": "{:.1%}", "Sharpe": "{:.2f}", "Max drawdown": "{:.1%}",
                    "VaR 95% ($)": "${:,.2f}", "VaR 99% ($)": "${:,.2f}", "Beta BTC": "{:.2f}", "Beta SPY": "{:.2f}",
                    "Alpha vs BTC (/yr)": "{:+.1%}", "Alpha vs SPY (/yr)": "{:+.1%}", "Periods": "{:.0f}"}
-        display(table.set_index("Frequency").style.format({k: v for k, v in formats.items() if k in table}, na_rep="n/a"))
-        print("Weekly statistics cover the whole shared history; daily ones only the days every account has a daily "
-              "value (HL keeps detailed history for about a month). VaR is one period's bootstrap loss on today's desk "
-              "value. Betas use 2,000 bootstrap resamples; alpha is versus each benchmark alone.")
+        formats["Coverage"] = "{:.0%}"
+        display(table.set_index("Basis").style.format({k: v for k, v in formats.items() if k in table}, na_rep="n/a"))
+        print(RISK_NOTE)
         self.risk_table = table
 
     def plot_value(self):

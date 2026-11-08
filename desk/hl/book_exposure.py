@@ -219,8 +219,9 @@ def label_regimes(
     Each week gets a label from ``regime_label``. A run of the same label shorter than
     ``min_run`` weeks is folded into the regime before it (or, at the start, the one after),
     so a single odd week does not become a regime. Short runs after the last long one form
-    the current regime, named after its latest week, however short it is (runs up to the last
-    one that returns to the previous regime's label still belong to that regime).
+    the current regime, however short it is (runs up to the last one that returns to the
+    previous regime's label still belong to that regime). Each regime is named from its
+    average net and gross exposure.
     """
     labels = weekly.apply(regime_label, axis=1, threshold=threshold, leverage=leverage)
     if labels.empty:
@@ -252,11 +253,11 @@ def label_regimes(
                     segments[-1][2] = run[2]
             elif segments:
                 segments[-1][2] = run[2]
-        for segment in segments:
-            if segment[0] == "__current__":
-                segment[0] = labels.iloc[segment[2]]
     names = pd.Series(index=labels.index, dtype=object)
-    for label, first, last in segments:
+    for _, first, last in segments:
+        # Name each regime from its average exposure, so "levered" means the regime as a whole
+        # ran above ``leverage`` x equity, not just its latest week.
+        label = regime_label(weekly.iloc[first:last + 1].mean(numeric_only=True), threshold, leverage)
         start, end = labels.index[first], labels.index[last]
         names.iloc[first:last + 1] = f"{label} ({start:%b %Y}–{end:%b %Y})"
     return names.rename("Regime")
