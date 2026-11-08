@@ -31,7 +31,7 @@ def positions_from_states(wallet: str, states: dict[str, dict]) -> list[VenuePos
                 venue=VENUE,
                 account=wallet,
                 symbol=coin,
-                asset_class="crypto" if perp_market_group(coin) == "Perp Crypto" else "tradfi perp",
+                asset_class="crypto perp" if perp_market_group(coin) == "Perp Crypto" else "tradfi perp",
                 quantity=quantity,
                 avg_price=as_float(position.get("entryPx")),
                 mark_price=value / abs(quantity),

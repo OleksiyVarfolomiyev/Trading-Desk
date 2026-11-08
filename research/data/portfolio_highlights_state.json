@@ -1,25 +1,23 @@
 {
- "ts": "2026-11-08T03:32:02.793816+00:00",
+ "ts": "2026-11-08T21:38:25.639386+00:00",
  "metrics": {
-  "Assets analysed": 11,
-  "Assets in Kelly": 9,
-  "Kelly Sharpe (in-sample)": 2.8657053895310005,
-  "Kelly beta (btc)": 0.6421064904369669,
-  "Kelly beta (spy)": 1.5104721901987272,
-  "IB book (actual): alpha (/yr)": -0.22833669334139758,
-  "IB book (actual): alpha t-stat": -1.1296967822447386
+  "Assets analysed": 9,
+  "Assets in Kelly": 7,
+  "Kelly Sharpe (in-sample)": 3.2599166667592243,
+  "Kelly beta (btc)": 0.3886907130880916,
+  "Kelly beta (spy)": 1.1752662502966673,
+  "IB book (actual): alpha (/yr)": -0.2413935641967237,
+  "IB book (actual): alpha t-stat": -1.2138794179598638
  },
  "assets": [
   "io:IONQ",
+  "BTC",
   "INJ",
   "TRX",
-  "RSR",
-  "MET",
   "xyz:AAPL",
   "xyz:MU",
   "xyz:QNT",
   "HYPE",
-  "DPI",
   "VVV"
  ]
 }

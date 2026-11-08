@@ -112,8 +112,18 @@ def trending_markets(markets: pd.DataFrame) -> pd.DataFrame:
 
 
 def rank_markets(markets: pd.DataFrame, metric: str, top: bool, count: int = TOP_N) -> pd.DataFrame:
-    """Return the highest or lowest markets by ``metric``, skipping missing values."""
-    return markets.dropna(subset=[metric]).sort_values(metric, ascending=not top).head(count)
+    """Return the highest or lowest markets by ``metric``, skipping missing values.
+
+    The top and bottom lists never share a market: with fewer than ``2 * count`` markets the
+    ranking is split in half (the top gets the extra one), so a small view is not shown twice
+    in opposite orders.
+    """
+    ranked = markets.dropna(subset=[metric]).sort_values(metric, ascending=False)
+    top_count = min(count, (len(ranked) + 1) // 2)
+    if top:
+        return ranked.head(top_count)
+    bottom_count = min(count, len(ranked) - top_count)
+    return ranked.tail(bottom_count).iloc[::-1] if bottom_count else ranked.iloc[0:0]
 
 
 HIGH_FUNDING_8H = 0.05  # % per 8h; about 55% a year, which makes carrying the paying side expensive
@@ -133,8 +143,18 @@ def market_highlights(universe: pd.DataFrame, view: str) -> tuple[list, list]:
         up = (changes[CHANGE] > 0).mean()
         well.append(("Breadth", f"{up:.0%} of {len(changes):,} markets are up over 24h; median change "
                                 f"{changes[CHANGE].median():+.2f}%."))
-        well.append(("Biggest gainers", names(changes.nlargest(3, CHANGE), CHANGE, "+.2f") + " (%)."))
-        attention.append(("Biggest losers", names(changes.nsmallest(3, CHANGE), CHANGE, "+.2f") + " (%)."))
+        # Gainers must be up and losers down: in a falling market the "top 3" are only the smallest
+        # declines, and a small view could otherwise list one market as both.
+        gainers, losers = changes[changes[CHANGE] > 0], changes[changes[CHANGE] < 0]
+        if len(gainers):
+            well.append(("Biggest gainers", names(gainers.nlargest(3, CHANGE), CHANGE, "+.2f") + " (%)."))
+        else:
+            attention.append(("No gainers", f"none of {len(changes):,} markets is up over 24h; the smallest "
+                                            f"declines are {names(changes.nlargest(3, CHANGE), CHANGE, '+.2f')} (%)."))
+        if len(losers):
+            attention.append(("Biggest losers", names(losers.nsmallest(3, CHANGE), CHANGE, "+.2f") + " (%)."))
+        else:
+            well.append(("No losers", f"none of {len(changes):,} markets is down over 24h."))
     funding = universe.dropna(subset=[FUNDING])
     if len(funding):
         hot = funding[funding[FUNDING].abs() >= HIGH_FUNDING_8H].sort_values(FUNDING, key=abs, ascending=False)
@@ -196,10 +216,12 @@ def show_market_research(view: str) -> None:
         print(f"Trending lists the biggest loser and three biggest gainers with over "
               f"${TRENDING_MIN_VOLUME:,.0f} 24h volume. The ranked tables below use that same pool.")
         show("HL TRENDING", trending_markets(markets))
-    for title, metric, top in (
-        (f"TOP {TOP_N} BY 24H CHANGE", CHANGE, True),
-        (f"BOTTOM {TOP_N} BY 24H CHANGE", CHANGE, False),
-        (f"TOP {TOP_N} BY 8H FUNDING", FUNDING, True),
-        (f"BOTTOM {TOP_N} BY 8H FUNDING", FUNDING, False),
+    for name, metric, top in (
+        ("24H CHANGE", CHANGE, True), ("24H CHANGE", CHANGE, False),
+        ("8H FUNDING", FUNDING, True), ("8H FUNDING", FUNDING, False),
     ):
-        show(title, rank_markets(universe, metric, top))
+        ranked = rank_markets(universe, metric, top)
+        available = int(universe[metric].notna().sum())
+        # Real counts in the title: a small view is split between its top and bottom tables.
+        scope = f" OF {available}" if available < 2 * TOP_N else ""
+        show(f"{'TOP' if top else 'BOTTOM'} {len(ranked)}{scope} BY {name}", ranked)

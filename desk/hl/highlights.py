@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 STATE_FILE_NAME = "hl_highlights_state.json"
@@ -24,10 +25,18 @@ def _position_key(row: dict[str, Any]) -> str:
     return f"{row['Wallet']}|{row['Coin']}|{row['Side']}"
 
 
-def _ticker_list(amounts: pd.Series) -> str:
-    """List the largest amounts by ticker, noting how many were left out."""
+def _pct(share: float) -> str:
+    return f" ({share:+.1%})" if pd.notna(share) and np.isfinite(share) else ""
+
+
+def _ticker_list(amounts: pd.Series, bases: pd.Series | None = None) -> str:
+    """List the largest amounts by ticker, each with its % of ``bases`` (its notional), noting how many were left out."""
     ordered = amounts.reindex(amounts.abs().sort_values(ascending=False).index)
-    listed = ", ".join(f"{ticker} {_usd(value)}" for ticker, value in ordered.head(MAX_TICKERS_LISTED).items())
+    def share(ticker, value):
+        base = abs(bases.get(ticker, np.nan)) if bases is not None else np.nan
+        return _pct(value / base) if base and pd.notna(base) else ""
+    listed = ", ".join(f"{ticker} {_usd(value)}{share(ticker, value)}"
+                       for ticker, value in ordered.head(MAX_TICKERS_LISTED).items())
     hidden = len(ordered) - MAX_TICKERS_LISTED
     return f"{listed}, +{hidden} more" if hidden > 0 else listed
 
@@ -96,17 +105,19 @@ def _window_rows(
         # Opening fills only carry a fee, so gross PnL identifies actual closes.
         closes = fills.loc[(pd.to_datetime(fills["ts"], utc=True) >= start) & (fills["grossPnl"] != 0)]
         by_ticker = closes.groupby("coin")["closedPnl"].sum()
+        # Each ticker's % is its realized PnL over the notional it closed.
+        notional = closes.groupby("coin")["notional"].sum() if "notional" in closes else None
         winners, losers = by_ticker[by_ticker > 0], by_ticker[by_ticker < 0]
         if not winners.empty:
-            add("Closed at a profit", 1.0, f"{_usd(winners.sum())}: {_ticker_list(winners)}")
+            add("Closed at a profit", 1.0, f"{_usd(winners.sum())}: {_ticker_list(winners, notional)}")
         if not losers.empty:
-            add("Closed at a loss", -1.0, f"{_usd(losers.sum())}: {_ticker_list(losers)}")
+            add("Closed at a loss", -1.0, f"{_usd(losers.sum())}: {_ticker_list(losers, notional)}")
         if "liquidation" in closes:
             liquidated = closes.loc[closes["liquidation"].fillna(False).astype(bool)]
             if not liquidated.empty:
                 attention.insert(0, {"Window": window, "Update": "Liquidated",
                     "Detail": f"{_usd(liquidated['closedPnl'].sum())}: "
-                              f"{_ticker_list(liquidated.groupby('coin')['closedPnl'].sum())}"})
+                              f"{_ticker_list(liquidated.groupby('coin')['closedPnl'].sum(), notional)}"})
     if not funding.empty:
         net = float(funding.loc[pd.to_datetime(funding["ts"], utc=True) >= start, "fundingPnl"].sum())
         if net:
@@ -142,13 +153,16 @@ def build_highlights(
             for key, row in current.items() if key in baseline["positions"]
         }, dtype=float)
         moves = moves[moves.abs() >= MIN_MOVE_USD]
+        # A move's % is its change over the position's current value.
+        values = pd.Series({f"{row['Coin']} ({row['Wallet']})": float(row.get("Pos") or np.nan)
+                            for row in current.values()}, dtype=float)
         gains, losses = moves[moves > 0].nlargest(3), moves[moves < 0].nsmallest(3)
         if not gains.empty:
             run_well.append({"Window": "Since last run", "Update": "Biggest open-position gains",
-                             "Detail": _ticker_list(gains)})
+                             "Detail": _ticker_list(gains, values)})
         if not losses.empty:
             run_attention.append({"Window": "Since last run", "Update": "Biggest open-position losses",
-                                  "Detail": _ticker_list(losses)})
+                                  "Detail": _ticker_list(losses, values)})
         well, attention = run_well + well, run_attention + attention
 
     def now_row(update: str, detail: str) -> dict[str, str]:

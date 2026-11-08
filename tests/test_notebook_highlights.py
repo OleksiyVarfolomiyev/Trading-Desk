@@ -57,5 +57,31 @@ class ReportHighlightTests(unittest.TestCase):
         self.assertIn("stop 75%", dict(well)["Exits"])
 
 
+
+class MarketMoverSignTests(unittest.TestCase):
+    def universe(self, changes):
+        from desk.hl import market_research as research
+        return pd.DataFrame({"Ticker": [f"T{i}" for i in range(len(changes))], research.CHANGE: changes,
+                             research.FUNDING: float("nan"), research.VOLUME: float("nan")})
+
+    def test_a_falling_market_has_no_gainers(self):
+        from desk.hl.market_research import market_highlights
+
+        well, attention = market_highlights(self.universe([-0.35, -1.2, -2.5, -4.0]), "crypto")
+        updates = {area: text for area, text in well + attention}
+        self.assertNotIn("Biggest gainers", updates)
+        self.assertIn("none of 4 markets is up", updates["No gainers"])
+        self.assertIn("T0 -0.35", updates["No gainers"])
+        self.assertIn("T3 -4.00", updates["Biggest losers"])
+
+    def test_gainers_are_only_rising_markets(self):
+        from desk.hl.market_research import market_highlights
+
+        well, attention = market_highlights(self.universe([3.0, 1.0, -0.5]), "crypto")
+        updates = {area: text for area, text in well + attention}
+        self.assertEqual(updates["Biggest gainers"], "T0 +3.00, T1 +1.00 (%).")
+        self.assertEqual(updates["Biggest losers"], "T2 -0.50 (%).")
+
+
 if __name__ == "__main__":
     unittest.main()

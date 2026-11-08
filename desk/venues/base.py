@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-ASSET_CLASSES = ("crypto", "equity", "futures", "options", "fx", "bonds", "tradfi perp", "other")
+ASSET_CLASSES = ("crypto perp", "crypto spot", "equity", "futures", "options", "fx", "bonds", "tradfi perp", "other")
 
 
 @dataclass(frozen=True)

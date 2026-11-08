@@ -26,7 +26,7 @@ INFO_CODES = {2103, 2104, 2105, 2106, 2107, 2108, 2119, 2158}
 ASSET_CLASS_BY_SEC_TYPE = {
     "STK": "equity", "ETF": "equity", "FUT": "futures", "CONTFUT": "futures",
     "OPT": "options", "FOP": "options", "WAR": "options", "CASH": "fx",
-    "CRYPTO": "crypto", "BOND": "bonds", "BILL": "bonds", "CFD": "equity",
+    "CRYPTO": "crypto spot", "BOND": "bonds", "BILL": "bonds", "CFD": "equity",
 }
 # Live (1) or, without a live subscription, delayed (3) data; IB returns live data
 # on type 3 whenever the account is subscribed.

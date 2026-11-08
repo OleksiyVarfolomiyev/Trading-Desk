@@ -1130,18 +1130,29 @@ class _CorrelationPlotMixin(_TableStyleMixin):
             group=self.asset_group.get(ticker,CRYPTO)
             benchmark=self._benchmark_for(group)
             frame=self.group_returns[group]
-            pair=frame[[ticker,benchmark]].dropna()
             periods=PERIODS_PER_YEAR[group] if benchmark==BENCHMARKS[group] else PERIODS_PER_YEAR[CRYPTO]
-            stats=bootstrap_btc_regression(pair[ticker],pair[benchmark],periods_per_year=periods,samples=2000)
+            if ticker==benchmark:
+                # The benchmark itself (held, e.g. a BTC hedge): beta and correlation are 1 by definition,
+                # and frame[[ticker, benchmark]] would be one column twice.
+                own=frame[ticker].dropna()
+                pair=pd.DataFrame({'asset':own,'benchmark':own})
+                stats={'beta':1.0,'beta_low':np.nan,'beta_high':np.nan,'alpha':0.0,
+                       'sharpe':own.mean()/own.std()*np.sqrt(periods) if own.std()>0 else np.nan}
+                ticker_column='asset'
+            else:
+                pair=frame[[ticker,benchmark]].dropna()
+                stats=bootstrap_btc_regression(pair[ticker],pair[benchmark],periods_per_year=periods,samples=2000)
+                ticker_column=ticker
             other='SPY' if benchmark=='BTC' else 'BTC'
             other_corr=(self.universe_returns[[ticker,other]].dropna().corr().iloc[0,1]
                         if other in self.universe_returns and ticker in self.universe_returns else np.nan)
             rows.append({
                 'Asset':ticker,'Group':group,'Source':self.asset_source.get(ticker,''),'Benchmark':benchmark,
                 'Returns':len(pair),'Correlation':pair.corr().iloc[0,1],'Beta':stats['beta'],
-                'Beta 90% range':(f"{stats['beta_low']:.2f} to {stats['beta_high']:.2f}"
+                'Beta 90% range':('benchmark itself' if ticker==benchmark else
+                                  f"{stats['beta_low']:.2f} to {stats['beta_high']:.2f}"
                                   if np.isfinite(stats.get('beta_low',np.nan)) else 'n/a'),
-                'Alpha (/yr)':stats['alpha']/100,'Volatility (/yr)':pair[ticker].std()*np.sqrt(periods),
+                'Alpha (/yr)':stats['alpha']/100,'Volatility (/yr)':pair[ticker_column].std()*np.sqrt(periods),
                 'Sharpe':stats['sharpe'],f'Corr to other benchmark':other_corr,
                 'In Kelly':'yes' if ticker in self.assets else f'no ({self.short_history_assets.get(ticker,0)} days)',
             })

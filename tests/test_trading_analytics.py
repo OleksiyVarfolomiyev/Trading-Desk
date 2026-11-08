@@ -1042,6 +1042,30 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertIn("BTC -$40.00", attention[0]["Detail"])
         self.assertNotIn("ETH", attention[0]["Detail"])
 
+    def test_winner_and_loser_highlights_show_a_percent_next_to_each_dollar_value(self):
+        now = pd.Timestamp("2026-01-10 12:00", tz="UTC")
+        fills = pd.DataFrame({"ts": [now - pd.Timedelta(hours=1)] * 2, "coin": ["ETH", "SOL"],
+                              "closedPnl": [20.0, -5.0], "grossPnl": [20.5, -4.5], "notional": [1000.0, 250.0]})
+        baseline = make_state(now - pd.Timedelta(hours=2), 0.0,
+                              [{"Wallet": "w", "Coin": "INJ", "Side": "SHORT", "Sz": -10, "uPnL": 0.0, "Liq %": 80.0}])
+        positions = [{"Wallet": "w", "Coin": "INJ", "Side": "SHORT", "Sz": -10, "uPnL": 30.0, "Liq %": 80.0, "Pos": -600.0}]
+        well, attention = build_highlights(now, baseline, positions, fills, pd.DataFrame(), 30.0, 15.0,
+                                           1000.0, 0.0, 100.0, 50.0, 100.0, [])
+        details = {row["Update"]: row["Detail"] for row in well + attention}
+        self.assertIn("ETH +$20.00 (+2.0%)", details["Closed at a profit"])
+        self.assertIn("SOL -$5.00 (-2.0%)", details["Closed at a loss"])
+        self.assertIn("INJ (w) +$30.00 (+5.0%)", details["Biggest open-position gains"])
+
+    def test_top_and_bottom_lists_never_share_a_market(self):
+        small = pd.DataFrame({"Ticker": list("ABCDE"), CHANGE: [5.0, 3.0, 1.0, -2.0, -4.0]})
+        top = rank_markets(small, CHANGE, top=True)["Ticker"].tolist()
+        bottom = rank_markets(small, CHANGE, top=False)["Ticker"].tolist()
+        self.assertEqual((top, bottom), (["A", "B", "C"], ["E", "D"]))
+        large = pd.DataFrame({"Ticker": [f"T{i}" for i in range(50)], CHANGE: [float(i) for i in range(50)]})
+        self.assertEqual(len(rank_markets(large, CHANGE, top=True)), 20)
+        self.assertEqual(rank_markets(large, CHANGE, top=False)["Ticker"].iloc[0], "T0")
+        self.assertFalse(set(rank_markets(large, CHANGE, True)["Ticker"]) & set(rank_markets(large, CHANGE, False)["Ticker"]))
+
     def test_asset_class_gives_each_market_one_group(self):
         self.assertEqual(asset_class("", None), "Crypto")
         self.assertEqual(asset_class(None, None), "Crypto")

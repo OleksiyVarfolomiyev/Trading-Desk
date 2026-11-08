@@ -519,12 +519,15 @@ class DeskOverview:
             (well if unrealized >= 0 else attention).append(
                 ("Unrealized PnL", f"{signed_money(unrealized)} on {money(gross)} of positions "
                                    f"({percent(unrealized / gross, signed=True) if gross else 'n/a'})."))
+            def mover(position):
+                # The % is unrealized PnL over the position's entry value, as in the movers table.
+                share = _pnl_share(position)
+                return (f"{position.symbol} {signed_money(position.unrealized_usd)}"
+                        + (f" ({share:+.1%})" if math.isfinite(share) else ""))
             if winners:
-                well.append(("Largest winners", ", ".join(f"{p.symbol} {signed_money(p.unrealized_usd)}"
-                                                          for _, p in winners) + "."))
+                well.append(("Largest winners", ", ".join(mover(p) for _, p in winners) + "."))
             if losers:
-                attention.append(("Largest losers", ", ".join(f"{p.symbol} {signed_money(p.unrealized_usd)}"
-                                                              for _, p in losers) + "."))
+                attention.append(("Largest losers", ", ".join(mover(p) for _, p in losers) + "."))
             label, largest = max(positions, key=lambda item: abs(item[1].notional_usd))
             share = abs(largest.notional_usd) / self.desk_equity if self.desk_equity else float("nan")
             if share > CONCENTRATION_PCT:
