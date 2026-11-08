@@ -57,7 +57,12 @@ class Account:
             return self.label
         if self.venue == "hl":
             return f"HL {self.id[-4:].lower()}"
-        return f"IB {self.id}" if self.id else "IB"
+        return f"IB {short_id(self.id)}" if self.id else "IB"  # only the last four characters are shown
+
+
+def short_id(account_id: str) -> str:
+    """The last four characters of an account ID, the only part shown on screen (``U...8440`` -> ``8440``)."""
+    return str(account_id or "")[-4:]
 
 
 def parse_accounts(items: list[dict]) -> list[Account]:

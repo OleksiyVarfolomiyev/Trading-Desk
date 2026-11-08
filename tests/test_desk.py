@@ -106,7 +106,7 @@ class AccountsTests(unittest.TestCase):
             {"venue": "IB", "id": "U1234567", "port": 7497},
         ])
         self.assertEqual(accounts[0].name, "HL 07f2")
-        self.assertEqual((accounts[1].venue, accounts[1].port, accounts[1].name), ("ib", 7497, "IB U1234567"))
+        self.assertEqual((accounts[1].venue, accounts[1].port, accounts[1].name), ("ib", 7497, "IB 4567"))  # only the last four characters are shown
 
     def test_rejects_bad_entries(self):
         for item in ({"venue": "binance", "id": "x"}, {"venue": "hl", "id": "0x12"},
@@ -1339,11 +1339,15 @@ class DeskIdlePeriodTests(unittest.TestCase):
         self.assertEqual([(start.date().isoformat(), end.date().isoformat()) for start, end in periods],
                          [("2025-05-11", "2025-08-25"), ("2025-08-26", "2026-09-29")])
 
-    def test_an_ib_account_without_saved_fills_keeps_every_day_visible(self):
+    def test_ib_counts_as_active_while_its_nav_moves_and_idle_while_flat(self):
         ib_days = pd.date_range("2025-05-01", "2026-11-01", freq="D", tz="UTC")
+        nav = pd.Series(range(len(ib_days)), index=ib_days, dtype=float) + 1000.0
+        flat = (ib_days >= "2026-04-01") & (ib_days <= "2026-05-10")
+        nav[flat] = nav[~flat & (ib_days < "2026-04-01")].iloc[-1]  # NAV unchanged for 40 days
         desk = self.make_desk({"HL 07f2": pd.DataFrame({"ts": [ib_days[0]]}),
-                               "IB U0000000": pd.DataFrame({"ts": ib_days})})
-        self.assertEqual(desk.idle_periods(), [])
+                               "IB U0000000": pd.DataFrame({"ts": ib_days, "accountValue": nav.to_numpy()})})
+        periods = [(start.date().isoformat(), end.date().isoformat()) for start, end in desk.idle_periods()]
+        self.assertEqual(periods, [("2026-04-01", "2026-05-11")])
 
     def test_no_activity_record_means_no_clipping(self):
         desk = self.make_desk({})

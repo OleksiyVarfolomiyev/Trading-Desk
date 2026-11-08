@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from desk.accounts import IB_CLIENT_IDS, Account
+from desk.accounts import IB_CLIENT_IDS, Account, short_id
 from desk.venues.base import VenueAccount, VenuePosition
 
 VENUE = "ib"
@@ -162,7 +162,8 @@ def connect(account: Account, purpose: str = "overview", readonly: bool = True, 
     managed = ib.managedAccounts()
     if account.id and account.id not in managed:
         ib.disconnect()
-        raise IBConnectionError(f"TWS does not manage account {account.id}; it manages {managed}.")
+        shown = ", ".join(f"...{short_id(item)}" for item in managed)
+        raise IBConnectionError(f"TWS does not manage account ...{short_id(account.id)}; it manages {shown}.")
     if readonly:
         ib.RequestTimeout = READ_REQUEST_TIMEOUT_SECONDS
         if ibkr_link_down(errors):
@@ -241,7 +242,7 @@ def snapshot_from_ib(ib, account: Account) -> VenueAccount:
     summary = ib.accountSummary(acct)
     equity = _summary_value(summary, "NetLiquidation")
     if not math.isfinite(equity):
-        raise ValueError(f"IB account {acct} returned no NetLiquidation value.")
+        raise ValueError(f"IB account ...{short_id(acct)} returned no NetLiquidation value.")
     positions = []
     notes = []
     for item in ib.portfolio(acct):
@@ -273,7 +274,7 @@ def snapshot_from_ib(ib, account: Account) -> VenueAccount:
     return VenueAccount(
         venue=VENUE,
         account=acct,
-        label=account.name if account.id else f"IB {acct}",
+        label=account.name if account.id else f"IB {short_id(acct)}",
         equity_usd=equity * to_usd,
         cash_usd=_summary_value(summary, "TotalCashValue") * to_usd,
         margin_used_usd=(init_margin if math.isfinite(init_margin) else 0.0) * to_usd,

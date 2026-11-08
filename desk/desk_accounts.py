@@ -20,7 +20,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from IPython.display import display
 
-from desk.accounts import accounts_for, ib_data_dir, load_accounts
+from desk.accounts import accounts_for, ib_data_dir, load_accounts, short_id
 from desk.hl.account_analytics import display_interactive_table, fetch_btc_candles, update_portfolio_history
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var, time_weighted_index
 from desk.live_risk import MIN_RATIO_DAYS
@@ -122,6 +122,7 @@ class DeskAccounts:
         self._highlights_state = None  # a fresh fetch compares with the last saved run
         self.overview.fetch_data(record_ib_history=record_ib_history)
         self.histories, self.windowed = {}, set()
+        self.ib_ids: dict[str, str] = {}  # history label ("IB 8440") -> full IB account ID
         for account in accounts_for("hl", self.accounts):
             try:
                 history = (update_portfolio_history(account.id, self.wallet_data_dir) if refresh_history else
@@ -139,7 +140,10 @@ class DeskAccounts:
                 except Exception as exc:
                     self.notes.append(f"{account.name}: IB Flex not refreshed ({str(exc) or type(exc).__name__}).")
             for path in sorted(ib_data_dir().glob("ib_nav_history_*.csv")):
-                label = f"IB {path.stem.rsplit('_', 1)[-1]}"
+                account_id = path.stem.rsplit('_', 1)[-1]
+                # Shown as "IB 8440": only the last four characters of an account ID reach the screen.
+                label = f"IB {short_id(account_id)}"
+                self.ib_ids[label] = account_id
                 self.histories[label] = ib_history(pd.read_csv(path))
                 self.windowed.add(label)
         self.excluded = self._drop_unreadable()
@@ -222,8 +226,9 @@ class DeskAccounts:
         """Stretches over ``min_gap_days`` in which no account in the desk history traded.
 
         HL wallets count as active on days they traded (fills or priced spot changes). IB keeps
-        only about a week of executions, so an IB account counts as active on every day of its
-        history except after its first saved fill, where its saved fill days are used.
+        only about a week of executions, so an IB account counts as active on days its NAV
+        changed (any PnL, deposit or withdrawal) plus its saved fill days: a flat NAV, as when
+        it held nothing, is idle.
         Returns half-open (start, end) day ranges, as ``inactive_periods`` gives for a chart.
         """
         from desk.hl.trade_analytics import inactive_periods
@@ -234,15 +239,13 @@ class DeskAccounts:
         for label, history in self.histories.items():
             if not label.startswith("IB "):
                 continue
-            days = pd.DatetimeIndex(pd.to_datetime(history["ts"], utc=True)).normalize().unique()
-            fills_path = ib_data_dir() / f"ib_fills_{label.split(' ', 1)[1]}.csv"
+            ordered = history.assign(ts=pd.to_datetime(history["ts"], utc=True)).sort_values("ts")
+            moved = ordered["accountValue"].diff().abs().fillna(np.inf) > 0.005  # the first day counts
+            active |= set(pd.DatetimeIndex(ordered.loc[moved, "ts"]).normalize())
+            fills_path = ib_data_dir() / f"ib_fills_{getattr(self, 'ib_ids', {}).get(label, label.split(' ', 1)[1])}.csv"
             fills = pd.read_csv(fills_path) if fills_path.exists() else pd.DataFrame()
             if len(fills) and "time" in fills:
-                traded = pd.DatetimeIndex(pd.to_datetime(fills["time"], utc=True, errors="coerce").dropna()).normalize()
-                first = traded.min()
-                active |= set(days[days < first]) | set(traded)
-            else:
-                active |= set(days)
+                active |= set(pd.DatetimeIndex(pd.to_datetime(fills["time"], utc=True, errors="coerce").dropna()).normalize())
         start = pd.Timestamp(self.common_start).normalize()
         window = sorted(day for day in active if day >= start)
         return inactive_periods(pd.DatetimeIndex(window), min_gap_days)
@@ -287,7 +290,8 @@ class DeskAccounts:
                 labels = [account.name] if account.name in self.histories else []
             else:  # IB histories are labelled by account number; an account without an ID owns them all
                 labels = [label for label in self.histories if label.startswith(f"{account.venue.upper()} ")
-                          and (not account.id or label.endswith(account.id))]
+                          and (not account.id or getattr(self, "ib_ids", {}).get(label, label[3:]) in
+                               {account.id, short_id(account.id)})]
             for label in labels:
                 self.histories.pop(label)
                 self.windowed.discard(label)
@@ -602,9 +606,13 @@ class DeskAccounts:
         if not self._require():
             return
         figure = go.Figure()
-        for name, history in self.histories.items():
-            series = history.set_index(pd.to_datetime(history["ts"], utc=True))["accountValue"].sort_index()
-            series = series.resample("1D").last().ffill()
+        daily = {name: history.set_index(pd.to_datetime(history["ts"], utc=True))["accountValue"].sort_index()
+                 .resample("1D").last().ffill() for name, history in self.histories.items()}
+        # Each layer runs to the last day of any account: a stacked layer with no point reads as $0,
+        # and IB's Flex NAV stops at the last completed session. A layer starts at its own first day.
+        last_day = max(series.index.max() for series in daily.values())
+        for name, series in daily.items():
+            series = series.reindex(pd.date_range(series.index.min(), last_day, freq="D")).ffill()
             figure.add_trace(go.Scatter(x=series.index, y=series, name=name, stackgroup="value", mode="lines"))
         # Collapse stretches in which no account traded, as the dashboard and HL account charts do.
         from desk.hl.account_analytics import clip_inactive_periods

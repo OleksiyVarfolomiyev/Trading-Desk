@@ -95,6 +95,48 @@ def _daily(series: pd.Series) -> pd.Series:
     return series.resample("1D").last().ffill().dropna()
 
 
+def _wallet_value_series(desk: DeskAccounts, start: pd.Timestamp) -> dict | None:
+    """One stacked series for the HL wallets' tokens on other chains, from the saved value snapshots.
+
+    That history only builds from run to run (nothing else records balances), so the series
+    starts at the first saved snapshot; the name says when.
+    """
+    from desk.overview import wallet_history_path
+
+    parts = []
+    for account in desk.accounts:
+        if account.venue != "hl" or not account.onchain:
+            continue
+        path = wallet_history_path(desk.data_dir, account.id)
+        if not path.exists():
+            continue
+        saved = pd.read_csv(path)
+        if saved.empty:
+            continue
+        series = saved.assign(ts=pd.to_datetime(saved["ts"], utc=True, format="mixed")).set_index("ts")["value_usd"]
+        parts.append(_daily(series.sort_index()))
+    if not parts:
+        return None
+    total = pd.concat(parts, axis=1).ffill().sum(axis=1, min_count=1).dropna()
+    total = total[total.index >= start.normalize()]
+    if total.empty:
+        return None
+    return {"name": f"Wallets outside HL (recorded since {total.index[0]:%Y-%m-%d})",
+            "x": [ts.strftime("%Y-%m-%d") for ts in total.index], "y": total.round(2).tolist()}
+
+
+def _value_with_wallets(value_series: list[dict], wallets: dict | None, min_days: int = 2) -> dict | None:
+    """Desk value (the stacked accounts) plus wallet tokens, on the days wallet values were recorded."""
+    if wallets is None or len(wallets["x"]) < min_days:
+        return None
+    accounts = [pd.Series(series["y"], index=pd.to_datetime(series["x"])) for series in value_series]
+    stacked = pd.concat(accounts, axis=1).ffill().fillna(0.0).sum(axis=1) if accounts else pd.Series(dtype=float)
+    wallet = pd.Series(wallets["y"], index=pd.to_datetime(wallets["x"]))
+    total = (stacked.reindex(wallet.index, method="ffill").fillna(0.0) + wallet).round(2)
+    return {"name": "Desk value incl. wallets outside HL", "x": [ts.strftime("%Y-%m-%d") for ts in total.index],
+            "y": total.tolist()}
+
+
 def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
     """The page's data from a fetched DeskAccounts: tiles, highlights, tables and chart series."""
     overview = desk.overview
@@ -174,11 +216,21 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
 
     start = desk.common_start
     value_series = []
-    for name, history in desk.histories.items():
-        series = _daily(history.set_index(pd.to_datetime(history["ts"], utc=True))["accountValue"])
+    daily_values = {name: _daily(history.set_index(pd.to_datetime(history["ts"], utc=True))["accountValue"])
+                    for name, history in desk.histories.items()}
+    # Every layer runs to the chart's last day: a stacked layer with no point on a date reads as $0,
+    # and IB's Flex NAV stops at the last completed session (Friday, on a weekend). The last known
+    # value carries forward; a layer still starts at its own first day.
+    last_day = max(series.index.max() for series in daily_values.values()) if daily_values else None
+    for name, series in daily_values.items():
+        series = series.reindex(pd.date_range(series.index.min(), last_day, freq="D")).ffill()
         series = series[series.index >= start.normalize()]
         value_series.append({"name": name, "x": [ts.strftime("%Y-%m-%d") for ts in series.index],
                              "y": series.round(2).tolist()})
+    # Wallet tokens are not a stacked layer: a stacked layer reads as zero wherever it has no data,
+    # and their values are only recorded from run to run. Once two days exist, a separate line shows
+    # the desk value including them, from the first recorded day only.
+    with_wallets = _value_with_wallets(value_series, _wallet_value_series(desk, start))
     index = _daily(desk.index)
     index.index = index.index.normalize()
     twr = [{"name": "Desk (net of deposits)",
@@ -198,7 +250,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
         "kpis": kpis,
         "highlights": {"well": [list(row) for row in well], "attention": [list(row) for row in attention]},
         "tables": tables,
-        "charts": {"value": value_series, "twr": twr,
+        "charts": {"value": value_series, "value_with_wallets": with_wallets, "twr": twr,
                    # Stretches with no trading on any account, collapsed on the value chart.
                    "value_idle": [[start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), (end - start).days]
                                   for start, end in desk.idle_periods()]},

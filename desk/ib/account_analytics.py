@@ -17,7 +17,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from IPython.display import display
 
-from desk.accounts import Account, accounts_for, ib_data_dir, load_accounts
+from desk.accounts import Account, accounts_for, ib_data_dir, load_accounts, short_id
 from desk.hl.account_analytics import display_interactive_table
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var, wilder_atr
 from desk.notebook_highlights import HighlightsState, signed_money
@@ -360,7 +360,7 @@ class IBAccountAnalytics:
             ("Saved account snapshots", f"{len(self.history)}"),
         ]
         display_interactive_table(pd.DataFrame(rows, columns=["Metric", "Value"]), cell_style=_neutral,
-                                  title=f"IB ACCOUNT {snap.account}: PNL AND RISK")
+                                  title=f"IB ACCOUNT {short_id(snap.account)}: PNL AND RISK")
         print(f"Risk statistics price today's holdings over the past year of IB daily closes, against {BENCHMARK}; "
               "they describe the current book, not past account performance, because IB's API has no "
               "account-value history. Ranges come from bootstrap resamples. Open risk is each position's "

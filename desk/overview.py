@@ -72,6 +72,27 @@ def save_ib_history(snapshot: VenueAccount, data_dir: Path) -> Path:
     return path
 
 
+WALLET_HISTORY_COLUMNS = ["ts", "value_usd"]
+
+
+def wallet_history_path(data_dir: Path, wallet: str) -> Path:
+    return Path(data_dir) / f"onchain_value_history_{wallet.lower()}.csv"
+
+
+def save_wallet_history(snapshot: VenueAccount, data_dir: Path) -> Path:
+    """Append this run's on-chain wallet value to ``onchain_value_history_<wallet>.csv``.
+
+    Wallet tokens have no value history anywhere else (block explorers give transfers, not
+    balances), so it builds from run to run, like the IB snapshots.
+    """
+    path = wallet_history_path(data_dir, snapshot.account)
+    row = pd.DataFrame([{"ts": snapshot.as_of.isoformat(), "value_usd": snapshot.equity_usd}],
+                       columns=WALLET_HISTORY_COLUMNS)
+    frame = pd.concat([pd.read_csv(path), row], ignore_index=True) if path.exists() else row
+    frame.to_csv(path, index=False)
+    return path
+
+
 def merge_ib_fills(fills: pd.DataFrame, data_dir: Path, account: str) -> pd.DataFrame:
     """Merge fills into ``ib_fills_<account>.csv`` by execution ID and return all saved fills.
 
@@ -108,7 +129,8 @@ class DeskOverview:
         """Read balances and positions (and, by default, ATR risk) for every account.
 
         Wallet transfer history is the slowest read, so it is fetched only on request.
-        ``record_ib_history=False`` skips appending this read to the saved IB account history,
+        ``record_ib_history=False`` skips appending this read to the saved IB account history (and
+        the on-chain wallet value history),
         for callers that refresh every few minutes.
         """
         snapshots = ib_venue.run_off_event_loop(self._fetch_data, include_risk, include_wallet_activity,
@@ -163,6 +185,8 @@ class DeskOverview:
             try:
                 snapshot, _ = onchain.wallet_snapshot(account)
                 self.snapshots.append(snapshot)
+                if record_ib_history:  # the same throttled "record this read" switch as IB
+                    save_wallet_history(snapshot, self.data_dir)
             except Exception as exc:
                 self.problems.append(f"{account.name} wallet: {type(exc).__name__}: {exc}")
             if not include_wallet_activity:
