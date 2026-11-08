@@ -259,14 +259,8 @@ function renderBanners(doc, now) {
   const host = document.getElementById("banners");
   const banners = [];
   const status = doc.status || {};
-  const data = doc.data;
-  if (data && data.problems && data.problems.length) {
-    banners.push(el("div", { class: "banner critical", role: "alert" }, [
-      el("span", { class: "icon bad", "aria-hidden": "true", text: "!" }),
-      el("div", {}, [el("strong", { text: "Unreadable accounts are left out of every total. " }),
-        el("span", { text: data.problems.join(" · ") })]),
-    ]));
-  }
+  // Unreadable accounts are shown by the account status chips (the error is in each chip's tooltip),
+  // so they get no banner of their own.
   if (status.error) {
     banners.push(el("div", { class: "banner warning", role: "alert" }, [
       el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }),

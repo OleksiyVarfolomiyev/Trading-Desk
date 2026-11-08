@@ -13,7 +13,6 @@
   --good: #0ca30c;
   --warning: #fab219;
   --critical: #d03b3b;
-  --wash-critical: rgba(208, 59, 59, 0.08);
   --wash-warning: rgba(250, 178, 25, 0.12);
   --series-1: #2a78d6;
   --series-2: #eb6834;
@@ -34,7 +33,6 @@
     --border: rgba(255, 255, 255, 0.10);
     --good-text: #0ca30c;
     --bad-text: #e66767;
-    --wash-critical: rgba(208, 59, 59, 0.16);
     --wash-warning: rgba(250, 178, 25, 0.14);
     --series-1: #3987e5;
     --series-2: #d95926;
@@ -55,7 +53,6 @@
   --border: rgba(255, 255, 255, 0.10);
   --good-text: #0ca30c;
   --bad-text: #e66767;
-  --wash-critical: rgba(208, 59, 59, 0.16);
   --wash-warning: rgba(250, 178, 25, 0.14);
   --series-1: #3987e5;
   --series-2: #d95926;
@@ -117,7 +114,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 24px 48px; display: flex
   border-radius: 8px; padding: 10px 14px;
   border: 1px solid var(--border);
 }
-.banner.critical { background: var(--wash-critical); border-color: var(--critical); }
 .banner.warning { background: var(--wash-warning); border-color: var(--warning); }
 .banner strong { font-weight: 600; }
 .icon {
