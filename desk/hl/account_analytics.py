@@ -338,6 +338,27 @@ def merge_portfolio_history(saved, fresh):
     return pd.concat([part for part in parts if not part.empty], ignore_index=True)
 
 
+def anchor_to_all_time(history, periods):
+    """Pin a stitched or merged PnL history to HL's allTime PnL, the authoritative cumulative figure.
+
+    Joining fresh points onto saved ones at an interpolated PnL can leave a small error that
+    then carries forward into every later point. At each allTime point the history is moved to
+    HL's own value; between allTime points the correction is interpolated, so finer points keep
+    their shape and saved drift is repaired on the next refresh.
+    """
+    reference = _period_history(periods, 'allTime')
+    if reference.empty or history.empty:
+        return history
+    reference = reference.loc[(reference['ts'] >= history['ts'].min()) & (reference['ts'] <= history['ts'].max())]
+    if reference.empty:
+        return history
+    epoch = pd.Timestamp(0, tz='UTC')
+    seconds = ((history['ts'] - epoch) / pd.Timedelta(seconds=1)).to_numpy()
+    anchors = ((reference['ts'] - epoch) / pd.Timedelta(seconds=1)).to_numpy()
+    offsets = reference['pnl'].to_numpy() - np.interp(anchors, seconds, history['pnl'].to_numpy())
+    return history.assign(pnl=history['pnl'] + np.interp(seconds, anchors, offsets))
+
+
 def update_portfolio_history(user, data_dir):
     """Merge new HL value and PnL points into the wallet's saved history file."""
     path = Path(data_dir) / f'hl_portfolio_history_{user.lower()}.csv'
@@ -346,7 +367,9 @@ def update_portfolio_history(user, data_dir):
         saved = pd.read_csv(path)
         # Timestamps on an exact second are saved without fractional seconds.
         saved['ts'] = pd.to_datetime(saved['ts'], utc=True, format='ISO8601').dt.tz_convert(ACCOUNTING_TIMEZONE)
-    history = merge_portfolio_history(saved, stitch_portfolio_periods(_fetch_portfolio_periods(user)))
+    periods = _fetch_portfolio_periods(user)
+    history = merge_portfolio_history(saved, stitch_portfolio_periods(periods))
+    history = anchor_to_all_time(history.sort_values('ts', kind='stable').reset_index(drop=True), periods)
     history.to_csv(path, index=False)
     return history
 
@@ -540,15 +563,35 @@ def make_daily_funding_rows(funding_df):
     return daily.reindex(columns=HISTORY_COLUMNS)
 
 
-def normalize_fills(fills):
-    """Create a consistent spot/perp fill table for PnL calculations."""
+def own_liquidation(fill, wallet=None):
+    """True when ``fill`` is the wallet's own position being liquidated.
+
+    HL attaches the ``liquidation`` object to both sides of a liquidation trade, so a resting
+    order that filled against someone else's forced close carries it too. ``liquidatedUser``
+    names the account liquidated; without a wallet to compare, the taker side (``crossed``)
+    is taken as the liquidated one.
+    """
+    liquidation = fill.get('liquidation')
+    if not liquidation:
+        return False
+    victim = str(liquidation.get('liquidatedUser') or '').lower() if isinstance(liquidation, dict) else ''
+    if wallet and victim:
+        return victim == str(wallet).lower()
+    return bool(fill.get('crossed', True))
+
+
+def normalize_fills(fills, wallet=None):
+    """Create a consistent spot/perp fill table for PnL calculations.
+
+    ``wallet`` tells the wallet's own liquidations apart from fills against other accounts' ones.
+    """
     rows = [{'time': int(fill['time']), 'coin': fill.get('coin', ''),
             # Spot markets are '@<index>' or a named pair such as 'PURR/USDC'.
             'assetType': 'spot' if str(fill.get('coin', '')).startswith('@') or '/' in str(fill.get('coin', '')) else 'perp',
             'dir': fill.get('dir', ''), 'side': fill.get('side', ''),
             'crossed': bool(fill.get('crossed')),
-            # HL marks a forced close with a ``liquidation`` object; ``dir`` still reads "Close Long".
-            'liquidation': bool(fill.get('liquidation')),
+            # A forced close of this wallet's own position; ``dir`` still reads "Close Long".
+            'liquidation': own_liquidation(fill, wallet),
             'size': abs(as_float(fill.get('sz'))),
             'notional': abs(as_float(fill.get('px')) * as_float(fill.get('sz'))),
             'closedPnl': as_float(fill.get('closedPnl')), 'fee': as_float(fill.get('fee'),
@@ -994,7 +1037,11 @@ class _AccountPnLMixin:
 
 
 def clip_inactive_periods(fig, periods, axis_selector=None):
-    """Collapse inactive periods on a figure's date axes and label each one."""
+    """Collapse inactive periods on a figure's date axes and note what is hidden under the chart.
+
+    The note is centred below the plot area (offset in pixels, so it clears the tick labels at
+    any figure height); the caller's bottom margin must leave about 80px for it.
+    """
     if not periods:
         return
     times = pd.concat([
@@ -1007,12 +1054,12 @@ def clip_inactive_periods(fig, periods, axis_selector=None):
         tickvals=visible_month_starts(times.min(), times.max(), periods),
         **(axis_selector or {}),
     )
-    for start, end in periods:
-        fig.add_annotation(
-            x=end, xref='x', y=1, yref='y domain', yanchor='bottom', xanchor='left', showarrow=False,
-            text=f'Inactive {start:%b %Y} to {end:%b %Y} ({(end-start).days} days hidden)',
-            font={'size': 11, 'color': '#52514e'},
-        )
+    fig.add_annotation(
+        x=0.5, xref='paper', xanchor='center', y=0, yref='paper', yanchor='top', yshift=-42, showarrow=False,
+        text=' · '.join(f'Inactive {start:%b %Y} to {end:%b %Y} ({(end-start).days} days hidden)'
+                        for start, end in periods),
+        font={'size': 11, 'color': '#52514e'},
+    )
 
 
 def plot_account_dashboard(metrics):
@@ -1041,9 +1088,10 @@ def plot_account_dashboard(metrics):
         np.asarray(metrics.daily_realized.values) != 0
     ]) if not metrics.daily_realized.empty else []
     returns = drop_inactive_weeks(metrics.weekly_return_pct, periods)
+    notes = []  # printed under the chart, not above it
     if len(returns) < len(metrics.weekly_return_pct):
-        print(f'Weekly return chart omits {len(metrics.weekly_return_pct) - len(returns)} '
-              'inactive weeks; statistics still include them.')
+        notes.append(f'Weekly return chart omits {len(metrics.weekly_return_pct) - len(returns)} '
+                     'inactive weeks; statistics still include them.')
     if not returns.empty:
         display_returns = returns[returns >= -100]
         excluded = len(returns) - len(display_returns)
@@ -1055,8 +1103,8 @@ def plot_account_dashboard(metrics):
                 line_color='#e76f51', annotation_text='Average', row=4, col=1)
             fig.add_vline(x=0, line_color='#555', row=4, col=1)
             if excluded:
-                print(f'Weekly return chart omits {excluded} return(s) below -100%; \
-                    other data and stats are unchanged.')
+                notes.append(f'Weekly return chart omits {excluded} return(s) below -100%; '
+                             'other data and stats are unchanged.')
         else:
             fig.add_annotation(text='No valid monthly returns to display', x=0.5, y=0.5,
                 xref='x4 domain', yref='y4 domain', showarrow=False)
@@ -1074,8 +1122,10 @@ def plot_account_dashboard(metrics):
     fig.update_xaxes(matches='x3', showticklabels=False, row=2, col=1)
     clip_inactive_periods(fig, periods, {'selector': lambda axis: axis.anchor != 'y4'})
     fig.update_layout(height=1000, template='plotly_white', barmode='overlay',
-        hovermode='x unified', showlegend=False, margin={'l': 65, 'r': 25, 't': 95, 'b': 50})
+        hovermode='x unified', showlegend=False, margin={'l': 65, 'r': 25, 't': 95, 'b': 100})
     fig.show()
+    for note in notes:
+        print(note)
 
 
 class _AccountChartsMixin:
@@ -1139,7 +1189,8 @@ def plot_value_added_index(metrics, chart_df, account_index):
             fig.add_hline(y=100, line_dash='dash', line_color='#777')
             fig.update_layout(title='Value Added Index ($100 start): Account (time-weighted) vs BTC',
                 yaxis_title='Value of $100', template='plotly_white', height=480,
-                    hovermode='x unified')
+                hovermode='x unified', margin={'t': 100, 'b': 90},
+                legend={'orientation': 'h', 'y': 1.02, 'yanchor': 'bottom', 'x': 0, 'xanchor': 'left'})
             clip_inactive_periods(fig, periods)
             fig.show()
             print('The account line is a time-weighted return: deposits, withdrawals, and '
@@ -1739,7 +1790,7 @@ class _OpenPositionsMixin:
             template='plotly_white',height=480,hovermode='x unified',
             yaxis_title='Net funding APR (positive = received)',yaxis_ticksuffix='%',
             legend={'orientation':'h','y':1.02,'yanchor':'bottom','x':0,'xanchor':'left'},
-            margin={'t':90},
+            margin={'t':90,'b':90},
         )
         fig.update_xaxes(showgrid=False)
         clip_inactive_periods(fig,periods)
@@ -1962,6 +2013,11 @@ def liquidation_events(realized_df):
     return events[order]
 
 
+def _signed_usd_plain(value):
+    """``-$91.95`` for a loss, ``$0.16`` otherwise (no plus sign)."""
+    return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
+
+
 def _signed_usd(value):
     return f"{'-' if value < 0 else '+'}${abs(value):,.2f}"
 
@@ -1980,10 +2036,13 @@ def display_liquidation_events(realized_df, title='LIQUIDATIONS'):
     def style(row_index, column, value, row):
         if column == 'Realized PnL' and pd.notna(value):
             return 'color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else ''
-        return ''
+        if column == 'Fees' and pd.notna(value) and value > 0:
+            return 'color:#c62828;'  # fees are a cost, stored as positive amounts
+        # Counts and sizes are not gains: keep them neutral instead of the helper's sign colours.
+        return 'color:inherit;'
     display_interactive_table(table, formatters={
         'Positions': lambda value: f'{value:,.0f}', 'Notional': lambda value: f'${value:,.0f}',
-        'Realized PnL': lambda value: f'${value:,.2f}', 'Fees': lambda value: f'${value:,.2f}',
+        'Realized PnL': _signed_usd_plain, 'Fees': _signed_usd_plain,
     }, cell_style=style, bold_last=True, title=title)
     print('Each row is one forced close: positions sharing cross margin are liquidated together. '
           'Realized PnL is closedPnl on the liquidation fills after fees (Fees shows that part); losses '
@@ -2230,6 +2289,18 @@ def summarize_volume_pnl(daily_data):
     return pd.DataFrame(rows)
 
 
+def volume_window(fills):
+    """The span the volume table covers, e.g. ``all fills, 2025-05-16 to 2026-11-07``."""
+    if fills.empty or 'ts' not in fills:
+        return 'no fills'
+    times = pd.to_datetime(fills['ts'], utc=True).dt.tz_convert(ACCOUNTING_TIMEZONE)
+    return f'all fills, {times.min():%Y-%m-%d} to {times.max():%Y-%m-%d}'
+
+
+VOLUME_WINDOW_NOTE = ('The table covers every fill since the account opened, not one period, so it differs from '
+                      'the realized PnL windows above (YTD, QTD, 30D), which also add funding.')
+
+
 def volume_total_blank_cells(summary):
     """Blank, rather than n/a, the correlations on a volume summary's Net/total row."""
     return {(len(summary) - 1, column) for column in ('Daily Pearson r', 'Daily Spearman r')}
@@ -2298,7 +2369,7 @@ class _VolumeSummaryMixin:
         data = self._require_data()
         daily_volume_pnl = build_daily_volume_pnl(data.realized_df)
         volume_pnl_summary = summarize_volume_pnl(daily_volume_pnl)
-        print("=== TRADED VOLUME VS REALIZED PNL ===")
+        print(f"=== TRADED VOLUME VS REALIZED PNL ({volume_window(data.realized_df)}) ===")
         if volume_pnl_summary.empty:
             print("No fill volume or realized PnL data is available.")
             return
@@ -2316,10 +2387,8 @@ class _VolumeSummaryMixin:
             "Daily Spearman r": lambda value: f"{value:.3f}",
         }, cell_style=volume_style, bold_last=True,
             blank_missing_cells=volume_total_blank_cells(volume_pnl_summary))
-        print('Volume is one-sided fill notional (price ? ' \
-            'size), counted once per fill. Realized PnL is' \
-            ' HL closedPnl less USDC ' \
-            'trading fees; funding is excluded.')
+        print('Volume is one-sided fill notional (price x size), counted once per fill. Realized PnL is HL '
+              'closedPnl less USDC trading fees; funding is excluded. ' + VOLUME_WINDOW_NOTE)
         print('Correlation describes co-movement, not ' \
             'causation. Daily observations with no fills ' \
             'are omitted.')
@@ -2491,6 +2560,142 @@ def display_pnl_attribution_tables(tables, title):
                 ('Realized (% gross)', 'uPnL (% gross)', 'Total (% gross)')})
 
 
+def net_pnl_breakdown(realized_df, funding_history=None, positions=None):
+    """Net PnL of the account(s), built up from its parts.
+
+    Net PnL = trading PnL before fees - trading fees +/- funding + unrealized PnL of open perps.
+    Liquidations are not a separate deduction: a liquidation is a fill, so its loss is already
+    in trading PnL; it is reported below as "of which". Returns (rows, liquidation losses,
+    non-USDC fee tokens), rows being (component, amount) ending with Net PnL.
+    """
+    fills = realized_df if realized_df is not None else pd.DataFrame()
+    perp, spot = split_realized_fills(fills)
+    def gross(frame):
+        return float(frame['grossPnl'].sum()) if not frame.empty and 'grossPnl' in frame else 0.0
+    usdc = fills['feeToken'].eq('USDC') if not fills.empty and 'feeToken' in fills else pd.Series(dtype=bool)
+    fees = float(fills.loc[usdc, 'fee'].fillna(0.0).sum()) if len(usdc) else 0.0
+    other_tokens = sorted(set(fills.loc[~usdc & fills['fee'].fillna(0).ne(0), 'feeToken'])) if len(usdc) else []
+    funding = float(funding_history['fundingPnl'].sum()) if funding_history is not None and len(funding_history) else 0.0
+    unrealized = float(sum(float(row.get('uPnL') or 0.0) for row in positions or []))
+    rows = [('Perp trading PnL before fees', gross(perp))]
+    if not spot.empty:
+        rows.append(('Spot trading PnL before fees', gross(spot)))
+    rows += [('Trading fees (USDC)', -fees), ('Funding (received +, paid -)', funding)]
+    realized = sum(amount for _, amount in rows)
+    rows += [('Realized PnL', realized), ('Unrealized PnL (open perps)', unrealized),
+             ('Net PnL', realized + unrealized)]
+    liquidated = perp.loc[liquidation_mask(perp)] if not perp.empty else perp
+    liquidation_loss = float(liquidated['closedPnl'].sum()) if not liquidated.empty else 0.0
+    return rows, liquidation_loss, other_tokens
+
+
+class _NetPnLMixin:
+    def show_net_pnl(self):
+        """One clear number: net PnL from fills, fees, funding and open positions, checked against HL's own figure."""
+        data = self._require_data()
+        positions = self._load_positions()
+        rows, liquidation_loss, other_tokens = net_pnl_breakdown(data.realized_df, data.funding_history_df, positions)
+        net = rows[-1][1]
+        times = pd.to_datetime(data.realized_df['ts'], utc=True) if not data.realized_df.empty else pd.Series(dtype=object)
+        since = f' since {times.min().tz_convert(ACCOUNTING_TIMEZONE):%Y-%m-%d}' if len(times) else ''
+        scope = 'all wallets' if len(self.wallet_addresses) > 1 else 'this wallet'
+        print(f"=== NET PNL ({scope}{since}): {'-' if net < 0 else ''}${abs(net):,.2f} ===")
+        table = pd.DataFrame(rows, columns=['Component', 'Amount ($)'])
+        subtotal = {'Realized PnL', 'Net PnL'}
+        def style(row_index, column, value, row):
+            weight = 'font-weight:700;' if row['Component'] in subtotal else ''
+            if column == 'Amount ($)' and pd.notna(value):
+                return weight + ('color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else '')
+            return weight + 'color:inherit;'
+        display_interactive_table(table, formatters={'Amount ($)': lambda value: (
+            f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")}, cell_style=style, title='NET PNL')
+        print(f"Net PnL = trading PnL before fees - fees +/- funding + unrealized PnL. Liquidations are already "
+              f"inside trading PnL (of which liquidation losses: {'-' if liquidation_loss < 0 else ''}"
+              f"${abs(liquidation_loss):,.2f}), so they are not subtracted again.")
+        if other_tokens:
+            print(f"Fees paid in {', '.join(other_tokens)} (spot buys) are not valued in USD and are left out.")
+        try:
+            reported = sum(fetch_pnl_windows(wallet)[1] for wallet in self.wallet_addresses)
+        except Exception as exc:
+            print(f'HL\'s all-time PnL could not be read for a cross-check ({type(exc).__name__}).')
+            return
+        print(f"Cross-check: HL reports all-time PnL of {'-' if reported < 0 else ''}${abs(reported):,.2f}; the "
+              f"{'-' if reported - net < 0 else ''}${abs(reported - net):,.2f} difference is what fills and "
+              'funding do not capture: spot holdings revaluing (e.g. HYPE held), vaults, staking and timing.')
+
+
+class _BtcExposureMixin:
+    def show_btc_exposure(self, windows=None):
+        """Beta-weighted BTC exposure of the HL book and the wallets' own tokens, and how far a BTC hedge offsets it.
+
+        Each holding's exposure is its value times its beta to BTC (daily returns over 60 and 90
+        days); a BTC position counts at its full notional. IB is left out: these are the HL
+        wallets and their on-chain tokens.
+        """
+        from desk import live_risk
+        from desk.accounts import load_accounts
+        from desk.venues import onchain
+        from desk.venues.hl import positions_from_states
+
+        windows = tuple(windows or live_risk.BTC_BETA_WINDOWS)
+        perps = [type('Snapshot', (), {'positions': tuple(positions_from_states(wallet, fetch_perp_states(wallet)))})()
+                 for wallet in self.wallet_addresses]
+        spot, unpriced = live_risk.hl_spot_values(self.wallet_addresses)
+        mids, pairs = live_risk.hl_markets()
+        ids = {wallet.lower() for wallet in self.wallet_addresses}
+        wallet_snapshots, notes = [], []
+        for account in load_accounts():
+            if account.venue == 'hl' and account.onchain and account.id.lower() in ids:
+                try:
+                    wallet_snapshots.append(onchain.wallet_snapshot(account)[0])
+                except Exception as exc:
+                    notes.append(f'{account.name} wallet tokens unavailable ({type(exc).__name__}); left out.')
+        holdings = live_risk.position_values(perps, spot + live_risk.wallet_token_holdings(wallet_snapshots, mids, pairs))
+        if holdings.empty:
+            print('No HL positions or wallet tokens to measure.')
+            return None
+        returns, _ = live_risk.holding_returns(holdings, max(windows) + 5)
+        btc = live_risk.hl_closes('BTC', '', max(windows) + 5).pct_change(fill_method=None)
+        table = live_risk.btc_exposure(holdings, returns, btc, windows)
+        legs = live_risk.btc_exposure_by_leg(table, windows)
+        net = legs.set_index('Leg').loc['Net']
+        hedge = float(table.loc[table['Leg'] == 'BTC hedge', 'Value'].sum())
+        price = float(mids.get('BTC') or 0.0)
+        first, last = windows[0], windows[-1]
+        def money(value):
+            return f"{'-' if value < 0 else '+'}${abs(value):,.0f}" if pd.notna(value) else 'n/a'
+        print(f"=== NET BTC EXPOSURE, BETA-WEIGHTED (HL + wallet tokens, excl. IB): {money(net[f'BTC-eq {first}d'])} "
+              f"({first}d) / {money(net[f'BTC-eq {last}d'])} ({last}d) ===")
+        formats = {'Value': lambda value: money(value)}
+        formats.update({f'BTC-eq {days}d': (lambda value: money(value)) for days in windows})
+        formats.update({f'Beta {days}d': (lambda value: f'{value:.2f}' if pd.notna(value) else '') for days in windows})
+        def style(row_index, column, value, row):
+            if column.startswith('BTC-eq') and pd.notna(value):
+                return 'color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else ''
+            return 'color:inherit;'
+        display_interactive_table(legs, formatters=formats, cell_style=style, bold_last=True,
+                                  title='BTC EXPOSURE BY LEG')
+        detail = table.assign(_size=table[f'BTC-eq {last}d'].abs()).sort_values('_size', ascending=False).drop(columns='_size')
+        display_interactive_table(detail, formatters=formats, cell_style=style, title='BTC EXPOSURE BY HOLDING')
+        for days in windows:
+            residual = float(net[f'BTC-eq {days}d'])
+            if pd.notna(residual) and price:
+                before = residual - hedge
+                share = f', offsetting {-hedge / before:.0%} of the {money(before)} before it' if hedge and before > 0 else ''
+                print(f"{days}d betas: hedge {money(hedge)}{share}; still {'long' if residual > 0 else 'short'} "
+                      f"{money(residual)} of BTC, about {abs(residual) / price:.4f} BTC "
+                      f"{'more short' if residual > 0 else 'less short'} to be neutral.")
+        missing = table.loc[table[f'Beta {last}d'].isna(), 'Holding'].tolist()
+        if missing or unpriced:
+            print('No price history, so not measured: ' + ', '.join(missing + unpriced) + '.')
+        for note in notes:
+            print(note)
+        print('BTC-eq = value x beta to BTC from daily returns; a BTC position counts at its full notional. Betas '
+              'are noisy (alt-to-BTC correlations are often 0.3-0.6), so read the two windows as a range. Staked '
+              'tokens are measured through the token they stake (sVVV as VVV). IB positions are not included.')
+        return table
+
+
 class _PnLAttributionMixin:
     def show_pnl_attribution(self):
         data = self._require_data()
@@ -2552,7 +2757,7 @@ def collect_wallet_data(wallet_address, data_dir="data"):
         balance_total, perp_equity, is_unified_account(wallet_address.lower())
     )
     realized_fills = fetch_user_fills(wallet_address)
-    realized_df = normalize_fills(realized_fills)
+    realized_df = normalize_fills(realized_fills, wallet_address)
     # Rebuild daily fill and funding rows from the API so a wrong saved row cannot persist.
     funding_events = fetch_user_funding(wallet_address)
     funding_df = normalize_funding(funding_events)
@@ -2640,6 +2845,7 @@ class _AnalyticsCore:
 class HLAnalytics(
     _HighlightsMixin, _AccountPnLMixin, _AccountChartsMixin, _AccountVsBTCMixin,
     _VolumeChartMixin, _OpenPositionsMixin, _RealizedPnLMixin,
-    _VolumeSummaryMixin, _ExecutionQualityMixin, _PnLAttributionMixin, _AnalyticsCore,
+    _VolumeSummaryMixin, _ExecutionQualityMixin, _PnLAttributionMixin, _NetPnLMixin, _BtcExposureMixin,
+    _AnalyticsCore,
 ):
     """Public facade used by the dashboard notebook."""

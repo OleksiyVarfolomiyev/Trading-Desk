@@ -73,7 +73,12 @@ def period_returns(index: pd.Series, rule: str, valid_days: pd.DatetimeIndex | N
     return returns[keep].dropna()
 
 
-RISK_NOTE = ("Current holdings (ex-ante) is the live risk: today's positions on every venue and HL spot tokens, "
+# Chart legends sit in one row above the plot, under the title.
+LEGEND_ON_TOP = {"legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+                 "margin": {"t": 110}}
+
+RISK_NOTE = ("Current holdings (ex-ante) is the live risk: today's positions on every venue, HL spot tokens and "
+             "on-chain wallet tokens (staking receipts priced as the token they stake), "
              "valued now and moved by each of the last 90 days' prices (Coverage is the share of gross exposure "
              "with a price history). Current regime is the desk's realized daily return since the book took its "
              f"present shape; Sharpe and alpha appear once it has {MIN_RATIO_DAYS} days. Nothing is pooled across "
@@ -405,6 +410,38 @@ class DeskAccounts:
             returns[label] = float(self.index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
         return returns
 
+    def money_weighted(self) -> dict[str, float]:
+        """Dollar PnL and the money-weighted (Modified Dietz) return since the desk start.
+
+        The time-weighted return in ``desk_returns`` chains each period's percentage, so it ignores
+        how much money was in the desk; this one weighs every dollar by how long it was invested,
+        so a loss on a small balance and a gain on a large one net out as they do in dollars.
+        Both come from the same value and PnL histories over the same window. Deposits and
+        withdrawals are the value changes that PnL does not explain; an account joining after the
+        start enters as a deposit.
+        """
+        start = pd.Timestamp(self.common_start).normalize()
+        values, pnls = [], []
+        for history in self.histories.values():
+            frame = history.assign(ts=pd.to_datetime(history["ts"], utc=True)).set_index("ts").sort_index()
+            frame = frame[frame.index >= start]
+            if frame.empty:
+                continue
+            daily = frame[["accountValue", "pnl"]].resample("1D").last()
+            values.append(daily["accountValue"])
+            pnls.append(daily["pnl"] - daily["pnl"].dropna().iloc[0])
+        if not values:
+            return {"pnl": np.nan, "return": np.nan, "flows": np.nan}
+        # Before an account's first point it held nothing; after, its last value carries forward.
+        value = pd.concat(values, axis=1).ffill().fillna(0.0).sum(axis=1)
+        pnl = pd.concat(pnls, axis=1).ffill().fillna(0.0).sum(axis=1)
+        flows = (value.diff() - pnl.diff()).fillna(0.0)
+        days = (value.index[-1] - value.index[0]).days or 1
+        weight = (value.index[-1] - value.index).days / days  # share of the period each flow was invested
+        capital = float(value.iloc[0] + (flows * weight).sum())
+        total = float(pnl.iloc[-1])
+        return {"pnl": total, "return": total / capital if capital > 0 else np.nan, "flows": float(flows.sum())}
+
     def show_highlights(self):
         """Desk performance and risk highlights plus the overview's current-state ones, with changes since the last run."""
         if not self._require():
@@ -476,8 +513,9 @@ class DeskAccounts:
     def risk_metrics(self) -> pd.DataFrame:
         """Risk of the book as it is now, then realized statistics for the current regime.
 
-        * Current holdings (ex-ante): today's positions on every venue, plus HL spot tokens, times
-          each of the last 90 days' price moves. This is the live risk of what is held.
+        * Current holdings (ex-ante): today's positions on every venue, plus HL spot tokens and
+          on-chain wallet tokens, times each of the last 90 days' price moves. This is the live
+          risk of what is held, on the same desk equity that includes those wallets.
         * Current regime (realized): the desk's own daily returns since the current regime began.
           Sharpe and alpha are left out until it has MIN_RATIO_DAYS days: a shorter stretch is an episode.
 
@@ -492,6 +530,10 @@ class DeskAccounts:
             wallets = [account.id for account in accounts_for("hl", self.accounts)
                        if account.name not in self.excluded]
             spot, unpriced = live_risk.hl_spot_values(wallets)
+            # On-chain wallet tokens (staked VVV and the like) are part of desk equity, so their
+            # risk is too.
+            mids, pairs = live_risk.hl_markets()
+            spot += live_risk.wallet_token_holdings(self.overview._wallets(), mids, pairs)
             holdings = live_risk.position_values(self.overview._trading(), spot)
             if len(holdings):
                 returns, missing = live_risk.holding_returns(holdings, live_risk.EX_ANTE_DAYS, self._ib_closes)
@@ -564,8 +606,13 @@ class DeskAccounts:
             series = history.set_index(pd.to_datetime(history["ts"], utc=True))["accountValue"].sort_index()
             series = series.resample("1D").last().ffill()
             figure.add_trace(go.Scatter(x=series.index, y=series, name=name, stackgroup="value", mode="lines"))
+        # Collapse stretches in which no account traded, as the dashboard and HL account charts do.
+        from desk.hl.account_analytics import clip_inactive_periods
+
+        clip_inactive_periods(figure, self.idle_periods())
         figure.update_layout(title="Desk value by account (USD; wallet tokens excluded)", template="plotly_white",
-                             hovermode="x unified", yaxis_tickprefix="$")
+                             hovermode="x unified", yaxis_tickprefix="$", legend=LEGEND_ON_TOP["legend"],
+                             margin={**LEGEND_ON_TOP["margin"], "b": 90})
         figure.show()
         index = self.index.resample("1D").last().dropna()
         index.index = index.index.normalize()
@@ -578,5 +625,5 @@ class DeskAccounts:
                     comparison.add_trace(go.Scatter(x=prices.index, y=100 * prices / prices.iloc[0], name=name,
                                                     line={"color": color}))
         comparison.update_layout(title=f"Desk time-weighted return vs BTC and SPY (start = 100, from {index.index[0]:%Y-%m-%d})",
-                                 template="plotly_white", hovermode="x unified")
+                                 template="plotly_white", hovermode="x unified", **LEGEND_ON_TOP)
         comparison.show()

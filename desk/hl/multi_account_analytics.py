@@ -15,12 +15,16 @@ from desk.hl.account_analytics import (
     HLAnalytics,
     _ExecutionQualityMixin,
     _HighlightsMixin,
+    _NetPnLMixin,
+    _BtcExposureMixin,
     _OpenPositionsMixin,
     breakdown_style,
     build_daily_volume_pnl,
     build_pnl_attribution,
     calculate_account_metrics,
     display_interactive_table,
+    volume_window,
+    VOLUME_WINDOW_NOTE,
     display_pnl_attribution_tables,
     fetch_non_perp_pnl,
     liquidation_stats,
@@ -302,7 +306,7 @@ class _MultiWalletVolumeMixin:
     def show_volume_summary(self):
         data=self._require_data()
         summary=summarize_volume_pnl(build_daily_volume_pnl(data.realized_df))
-        print('=== TRADED VOLUME VS REALIZED PNL (ALL WALLETS) ===')
+        print(f'=== TRADED VOLUME VS REALIZED PNL (ALL WALLETS; {volume_window(data.realized_df)}) ===')
         if summary.empty:
             print('No fill volume or realized PnL data is available.')
             return
@@ -316,6 +320,7 @@ class _MultiWalletVolumeMixin:
             'PnL / $1k volume ($)':lambda v:f'${v:,.2f}',
             'Daily Pearson r':lambda v:f'{v:.3f}','Daily Spearman r':lambda v:f'{v:.3f}',
         },cell_style=style,bold_last=True,blank_missing_cells=volume_total_blank_cells(summary))
+        print('Realized PnL is HL closedPnl less USDC trading fees; funding is excluded. '+VOLUME_WINDOW_NOTE)
 
 
 # ----------------------------------------------------------------------------
@@ -357,6 +362,7 @@ class MultiWalletAnalytics(
     _HighlightsMixin,
     _MultiWalletDataMixin,_MultiWalletAccountMixin,_OpenPositionsMixin,
     _MultiWalletRealizedMixin,_MultiWalletVolumeMixin,_ExecutionQualityMixin,_MultiWalletAttributionMixin,
+    _NetPnLMixin,_BtcExposureMixin,
 ):
     def __init__(self,wallet_addresses,data_dir='data'):
         self.wallet_addresses=list(dict.fromkeys(wallet_addresses))

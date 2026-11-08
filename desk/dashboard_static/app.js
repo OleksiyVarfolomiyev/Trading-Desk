@@ -148,16 +148,20 @@ function tile(label, value, sub, extra) {
 
 function renderTiles(k) {
   const r = k.returns || {};
+  const mw = k.money_weighted || {};
   const tiles = [
     tile("Desk value", compactUsd(k.desk_value),
       `Trading ${compactUsd(k.trading_equity)} · wallets ${compactUsd(k.wallet_value)}`),
-    tile("Unrealized PnL", signedUsd(k.unrealized),
-      isNum(k.unrealized_share) ? `${pct(k.unrealized_share, 1, true)} of ${compactUsd(k.gross)} in ${k.positions} positions` : "",
-      { valueClass: signClass(k.unrealized) }),
+    // Dollars and the money-weighted return, next to the time-weighted return: a loss on a small
+    // balance and a gain on a large one net out here, but not in the time-weighted figure.
+    tile("Net PnL since start", signedUsd(mw.pnl),
+      [isNum(mw.return) ? `Money-weighted ${pct(mw.return, 1, true)}` : "",
+       isNum(k.unrealized) ? `unrealized ${signedUsd(k.unrealized)}` : ""].filter(Boolean).join(" · "),
+      { valueClass: signClass(mw.pnl) }),
     tile("Return 30D", pct(r["30D"], 1, true),
       `7D ${pct(r["7D"], 1, true) || "n/a"} · 90D ${pct(r["90D"], 1, true) || "n/a"}`,
       { valueClass: signClass(r["30D"]) }),
-    tile("Return since start", pct(r.since_start, 1, true), `Net of deposits, since ${day(k.since)}`,
+    tile("Return since start", pct(r.since_start, 1, true), `Time-weighted, since ${day(k.since)}`,
       { valueClass: signClass(r.since_start) }),
     tile("Drawdown now", pct(k.drawdown, 1), k.drawdown < 0 ? `Below the peak of ${day(k.peak_date)}` : "At the peak",
       { valueClass: k.drawdown <= -0.10 ? "neg" : "" }),

@@ -2061,10 +2061,6 @@ class _FactorModelMixin(_TableStyleMixin):
         activity=daily_exposure.attrs.get('activity_days')
         idle=inactive_periods(activity) if activity is not None and len(activity) else []
         clip_inactive_periods(fig,idle)
-        # Here the idle-period note sits centred under the x axis, clear of the regime labels at the top.
-        fig.for_each_annotation(lambda note: note.update(x=0.5,xref='paper',xanchor='center',y=-0.1,
-                                                         yref='paper',yanchor='top')
-                                if (note.text or '').startswith('Inactive') else None)
         fig.update_layout(title={'text':'HL book: net exposure per leg and gross exposure (x equity), by regime','y':0.98},
                           barmode='relative',yaxis_tickformat='.1f',yaxis_title='x equity',
                           template='plotly_white',hovermode='x unified',

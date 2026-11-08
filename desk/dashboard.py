@@ -117,6 +117,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
         "net_leverage": net / trading_equity if trading_equity else None,
         "positions": int(sum(len(snapshot.positions) for snapshot in trading)),
         "returns": {"since_start": returns.get("since start"), **{label: returns.get(label) for label in WINDOWS}},
+        "money_weighted": desk.money_weighted(),
         "since": desk.common_start,
         "drawdown": float(desk.index.iloc[-1] / peak.iloc[-1] - 1),
         "peak_date": desk.index.idxmax(),

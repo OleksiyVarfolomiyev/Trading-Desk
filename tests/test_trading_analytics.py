@@ -286,6 +286,18 @@ class RealizedPnlTests(unittest.TestCase):
             fill(4_000, "PUMP", "Close Long", -20, forced),
         ])
 
+    def test_fills_against_someone_elses_liquidation_are_not_ours(self):
+        mine = {"coin": "BTC", "dir": "Close Long", "side": "A", "px": "100", "sz": "1", "closedPnl": "-40",
+                "fee": "0.1", "feeToken": "USDC", "time": 1_000, "crossed": True,
+                "liquidation": {"liquidatedUser": "0xABC", "markPx": "100", "method": "market"}}
+        theirs = {**mine, "coin": "TRUMP", "closedPnl": "19.5", "time": 2_000, "crossed": False,
+                  "liquidation": {"liquidatedUser": "0x333", "markPx": "9", "method": "market"}}
+        frame = self.account.normalize_fills([mine, theirs], wallet="0xabc")
+        self.assertEqual(frame.set_index("coin")["liquidation"].to_dict(), {"BTC": True, "TRUMP": False})
+        # Without the wallet, the taker side is taken as the liquidated one.
+        frame = self.account.normalize_fills([mine, theirs])
+        self.assertEqual(frame.set_index("coin")["liquidation"].to_dict(), {"BTC": True, "TRUMP": False})
+
     def test_liquidations_are_read_from_the_fill_flag_not_dir(self):
         perp, _ = self.account.split_realized_fills(self.liquidated_fills())
         stats = self.account.liquidation_stats(perp)
@@ -320,6 +332,38 @@ class RealizedPnlTests(unittest.TestCase):
                 result = self.account.fetch_user_fills("0xabc")
             self.assertEqual(len(result), 4_500, f"newest_first={newest_first}")
             self.assertEqual([f["tid"] for f in result], list(range(4_500)))
+
+    def test_net_pnl_adds_fees_funding_and_upnl_without_double_counting_liquidations(self):
+        fills = self.account.normalize_fills([
+            {"coin": "BTC", "dir": "Close Long", "side": "A", "px": "100", "sz": "1", "closedPnl": "50",
+             "fee": "1", "feeToken": "USDC", "time": 1_000},
+            {"coin": "ETH", "dir": "Close Long", "side": "A", "px": "100", "sz": "1", "closedPnl": "-30",
+             "fee": "0.5", "feeToken": "USDC", "time": 2_000, "crossed": True,
+             "liquidation": {"liquidatedUser": "0xabc", "method": "market"}},
+        ], wallet="0xabc")
+        funding = pd.DataFrame({"ts": [pd.Timestamp("2026-01-01", tz="UTC")], "coin": ["BTC"], "fundingPnl": [-4.0]})
+        rows, liquidation_loss, other = self.account.net_pnl_breakdown(fills, funding, [{"uPnL": 10.0}])
+        table = dict(rows)
+        self.assertAlmostEqual(table["Perp trading PnL before fees"], 20.0)
+        self.assertAlmostEqual(table["Trading fees (USDC)"], -1.5)
+        self.assertAlmostEqual(table["Realized PnL"], 14.5)
+        self.assertAlmostEqual(table["Net PnL"], 24.5)
+        self.assertAlmostEqual(liquidation_loss, -30.5)  # reported, already inside trading PnL
+        self.assertEqual(rows[-1][0], "Net PnL")
+        self.assertEqual(other, [])
+
+    def test_saved_pnl_drift_is_pinned_back_to_hl_all_time(self):
+        times = pd.date_range("2026-11-01", periods=7, freq="12h", tz="UTC")
+        true_pnl = [0.0, 10.0, 20.0, 15.0, 40.0, 60.0, 70.0]
+        # From the fourth point on, the saved series runs 25 short (a bad join on an earlier run).
+        saved = pd.DataFrame({"ts": times, "accountValue": 1000.0,
+                              "pnl": [p - (25.0 if i >= 3 else 0.0) for i, p in enumerate(true_pnl)]})
+        all_time = [[int(ts.timestamp() * 1000), str(p)] for ts, p in zip(times[::2], true_pnl[::2])]
+        periods = {"allTime": {"pnlHistory": all_time, "accountValueHistory": [[t, "1000"] for t, _ in all_time]}}
+        fixed = self.account.anchor_to_all_time(saved, periods)
+        self.assertEqual(fixed["pnl"].iloc[::2].round(6).tolist(), true_pnl[::2])
+        self.assertAlmostEqual(fixed["pnl"].iloc[-1], 70.0)
+        self.assertAlmostEqual(fixed["pnl"].iloc[5], 60.0)
 
     def test_live_account_value_counts_unified_perp_equity_once(self):
         self.assertEqual(self.account.live_account_value(1_000.0, 700.0, unified=True), 1_000.0)

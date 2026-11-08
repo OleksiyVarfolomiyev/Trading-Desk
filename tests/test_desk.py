@@ -1265,6 +1265,43 @@ class LiveRiskTests(unittest.TestCase):
         self.assertEqual(frame["venue"].tolist(), ["hl", "hl-spot"])
         self.assertEqual(frame["ref"].tolist(), ["", "HYPE"])
 
+    def test_btc_exposure_weights_by_beta_and_counts_the_hedge_in_full(self):
+        holdings = pd.DataFrame({"key": ["hl:w:SOL", "hl:w:BTC", "wallet:w:sVVV", "hl:w:xyz:AAPL"],
+                                 "venue": ["hl", "hl", "wallet", "hl"], "symbol": ["SOL", "BTC", "sVVV", "xyz:AAPL"],
+                                 "ref": ["", "", "VVV", "xyz"], "value": [-1_000.0, -500.0, 800.0, 300.0]})
+        btc = self.returns["hl:w:BTC"]
+        returns = pd.DataFrame({"hl:w:SOL": self.returns["hl:w:SOL"], "wallet:w:sVVV": 1.0 * btc})
+        group = lambda name: "Perp TradFi" if name.startswith("xyz:") else "Perp Crypto"
+        table = self.live_risk.btc_exposure(holdings, returns, btc, (60,), group)
+        by_leg = self.live_risk.btc_exposure_by_leg(table, (60,)).set_index("Leg")
+        self.assertAlmostEqual(by_leg.loc["Alt shorts", "BTC-eq 60d"], -1_500.0, delta=150)  # SOL beta ~1.5
+        self.assertAlmostEqual(by_leg.loc["BTC hedge", "BTC-eq 60d"], -500.0)
+        self.assertAlmostEqual(by_leg.loc["Wallet tokens", "BTC-eq 60d"], 800.0)
+        self.assertTrue(pd.isna(table.set_index("Holding").loc["xyz:AAPL", "Beta 60d"]))  # no price history
+        self.assertEqual(by_leg.index[-1], "Net")
+
+    def test_wallet_tokens_are_priced_by_their_underlying_and_stablecoins_skipped(self):
+        from desk.venues.base import VenuePosition
+
+        def position(symbol, value):
+            return VenuePosition(venue="onchain", account="0xw", symbol=symbol, asset_class="crypto spot",
+                                 quantity=1.0, avg_price=float("nan"), mark_price=value)
+        snapshot = type("Snapshot", (), {"positions": (
+            position("sVVV (VVV staked on Venice, base)", 2000.0),
+            position("VVV (unclaimed staking rewards, base)", 1.2),
+            position("WETH (base)", 30.0), position("USDC (ethereum)", 22.5), position("DPI (ethereum)", 18.0),
+        )})()
+        rows = self.live_risk.wallet_token_holdings([snapshot], {"VVV": "20", "ETH": "2200"}, {})
+        by_token = {row["token"]: row for row in rows}
+        self.assertEqual(by_token["sVVV (VVV staked on Venice, base)"]["market"], "VVV")
+        self.assertEqual(by_token["VVV (unclaimed staking rewards, base)"]["market"], "VVV")
+        self.assertEqual(by_token["WETH (base)"]["market"], "ETH")
+        self.assertEqual(by_token["DPI (ethereum)"]["market"], "")  # kept, so it counts against coverage
+        self.assertNotIn("USDC (ethereum)", by_token)
+        frame = self.live_risk.position_values([], rows)
+        self.assertEqual(set(frame["venue"]), {"wallet"})
+        self.assertEqual(len(set(frame["key"])), len(frame))
+
     def test_spot_tokens_without_a_perp_are_priced_from_their_spot_pair(self):
         from desk.hl.book_exposure import spot_pairs
 

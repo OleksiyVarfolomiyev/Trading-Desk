@@ -3,7 +3,8 @@
 Realized statistics over the desk's whole history describe an average of every book it has
 held. A live view needs two things instead:
 
-* ex-ante risk: today's positions (every venue, plus HL spot tokens) run through recent daily
+* ex-ante risk: today's positions (every venue, HL spot tokens and on-chain wallet tokens) run
+  through recent daily
   price moves, giving the volatility, VaR, drawdown and BTC/SPY betas of the book as it stands;
 * realized statistics limited to the current regime, the period in which the book looked
   like it does now (detected by ``desk.hl.book_exposure.book_regimes``).
@@ -36,8 +37,9 @@ def position_values(snapshots: Iterable, hl_spot: Iterable[dict] | None = None) 
             rows.append({"key": f"{position.venue}:{position.account}:{position.symbol}", "venue": position.venue,
                          "symbol": position.symbol, "ref": position.ref, "value": position.notional_usd})
     for holding in hl_spot or ():
-        rows.append({"key": f"hl-spot:{holding['token']}", "venue": "hl-spot", "symbol": holding["token"],
-                     "ref": holding["market"], "value": holding["value"]})
+        venue = holding.get("venue", "hl-spot")
+        rows.append({"key": holding.get("key", f"{venue}:{holding['token']}"), "venue": venue,
+                     "symbol": holding["token"], "ref": holding["market"], "value": holding["value"]})
     frame = pd.DataFrame(rows, columns=["key", "venue", "symbol", "ref", "value"])
     return frame[frame["value"].abs() > 0].reset_index(drop=True)
 
@@ -69,6 +71,47 @@ def price_spot_holdings(units: dict[str, float], mids: dict[str, str], pairs: di
             continue
         holdings.append({"token": perp, "market": market, "value": amount * float(mids[market])})
     return holdings, unpriced
+
+
+# Wallet tokens priced as the coin they wrap or stake, and wallet stablecoins (cash, no exposure).
+WALLET_ALIASES = {"WETH": "ETH", "WBTC": "BTC", "CBBTC": "BTC", "CBETH": "ETH", "WSTETH": "ETH",
+                  "STETH": "ETH", "WEETH": "ETH", "RETH": "ETH"}
+WALLET_STABLECOINS = {"USDC", "USDT", "USDT0", "DAI", "EURC", "USDS", "PYUSD", "USDBC", "USDE", "FDUSD", "GHO"}
+
+
+def wallet_token_holdings(snapshots: Iterable, mids: dict[str, str], pairs: dict[str, str]) -> list[dict]:
+    """On-chain wallet tokens as ex-ante holdings, each priced by the HL market of its underlying.
+
+    Position symbols read ``sVVV (VVV staked on Venice, base)``, ``VVV (unclaimed staking rewards,
+    base)`` or ``ETH (arbitrum)``. A staking receipt is priced as the token it stakes (sVVV as
+    VVV), a wrapped token as the coin it wraps; stablecoins are cash and are left out. A token
+    with no HL market keeps its value with an empty market, so it counts against coverage and is
+    listed as not priced instead of disappearing.
+    """
+    from desk.hl.book_exposure import STABLECOINS, WRAPPED
+
+    holdings = []
+    for snapshot in snapshots:
+        for position in snapshot.positions:
+            text = position.symbol
+            token, _, detail = text.partition(" (")
+            detail = detail.rstrip(")")
+            underlying = detail.split(" staked", 1)[0] if " staked " in detail else token
+            symbol = WALLET_ALIASES.get(underlying.upper(), WRAPPED.get(underlying, underlying))
+            if symbol.upper() in WALLET_STABLECOINS | STABLECOINS or not position.notional_usd:
+                continue
+            market = symbol if symbol in mids else pairs.get(symbol, "")
+            holdings.append({"key": f"wallet:{position.account}:{text}", "venue": "wallet", "token": text,
+                             "market": market if market in mids else "", "value": position.notional_usd})
+    return holdings
+
+
+def hl_markets() -> tuple[dict[str, str], dict[str, str]]:
+    """HL mid prices and each spot token's USDC pair, for pricing holdings outside the perp book."""
+    from desk.hl.account_analytics import post
+    from desk.hl.book_exposure import spot_pairs
+
+    return post({"type": "allMids"}) or {}, spot_pairs(post({"type": "spotMeta"}) or {})
 
 
 def hl_spot_values(wallets: Iterable[str]) -> tuple[list[dict], list[str]]:
@@ -112,8 +155,8 @@ def holding_returns(
         try:
             if row.venue == "hl":
                 series = hl_closes(row.symbol, row.ref, days)
-            elif row.venue == "hl-spot":
-                series = hl_closes(row.ref, "", days)
+            elif row.venue in ("hl-spot", "wallet"):
+                series = hl_closes(row.ref, "", days)  # an empty market raises: counted as not priced
             elif row.venue == "ib":
                 series = ib_series[row.ref]
             else:
@@ -185,3 +228,60 @@ def ex_ante_row(
     if missing:
         row["Not priced"] = ", ".join(sorted(set(missing)))
     return row
+
+
+BTC_BETA_WINDOWS = (60, 90)
+
+
+def exposure_leg(row, market_group: Callable[[str], str]) -> str:
+    """Which part of the book a holding belongs to, for the BTC exposure summary."""
+    if row["venue"] == "hl" and row["symbol"] == "BTC":
+        return "BTC hedge" if row["value"] < 0 else "BTC long"
+    if row["venue"] == "hl":
+        if market_group(row["symbol"]) != "Perp Crypto":
+            return "TradFi perps"
+        return "Alt shorts" if row["value"] < 0 else "Alt longs"
+    if row["venue"] == "hl-spot":
+        return "HL spot tokens"
+    if row["venue"] == "wallet":
+        return "Wallet tokens"
+    return "Other venues"
+
+
+def btc_exposure(holdings: pd.DataFrame, returns: pd.DataFrame, btc: pd.Series,
+                 windows: tuple[int, ...] = BTC_BETA_WINDOWS,
+                 market_group: Callable[[str], str] | None = None) -> pd.DataFrame:
+    """Beta-weighted BTC exposure of each holding: value x its beta to BTC over each window.
+
+    ``returns`` are daily returns per holding key (``holding_returns``) and ``btc`` BTC's daily
+    returns. BTC itself has a beta of exactly 1, so a BTC short reads as its full notional. A
+    holding without a price history keeps its value with no beta, so it shows as unmeasured.
+    """
+    if market_group is None:
+        from desk.hl.account_analytics import perp_market_group as market_group
+    rows = []
+    for row in holdings.to_dict("records"):
+        record = {"Leg": exposure_leg(row, market_group), "Holding": row["symbol"], "Value": row["value"]}
+        for days in windows:
+            if row["venue"] == "hl" and row["symbol"] == "BTC":
+                beta = 1.0
+            elif row["key"] in returns:
+                pair = pd.concat([returns[row["key"]].rename("asset"), btc.rename("btc")], axis=1).dropna().tail(days)
+                beta = float(pair["asset"].cov(pair["btc"]) / pair["btc"].var()) if len(pair) >= 20 and pair["btc"].var() > 0 else np.nan
+            else:
+                beta = np.nan
+            record[f"Beta {days}d"] = beta
+            record[f"BTC-eq {days}d"] = row["value"] * beta
+        rows.append(record)
+    return pd.DataFrame(rows)
+
+
+def btc_exposure_by_leg(table: pd.DataFrame, windows: tuple[int, ...] = BTC_BETA_WINDOWS) -> pd.DataFrame:
+    """Sum the per-holding BTC exposure by leg, with a net row last."""
+    columns = ["Value"] + [f"BTC-eq {days}d" for days in windows]
+    order = ["Alt shorts", "Alt longs", "HL spot tokens", "Wallet tokens", "TradFi perps", "Other venues",
+             "BTC long", "BTC hedge"]
+    legs = table.groupby("Leg")[columns].sum(min_count=1)
+    legs = legs.reindex([leg for leg in order if leg in legs.index])
+    legs.loc["Net"] = legs[columns].sum(min_count=1)
+    return legs.reset_index()
