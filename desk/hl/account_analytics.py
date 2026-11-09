@@ -46,6 +46,8 @@ from desk.hl.highlights import (
     position_changes,
     save_state,
 )
+from desk import emphasis
+from desk.charts import show as show_chart
 from IPython.display import HTML, display
 from plotly.subplots import make_subplots
 API = "https://api.hyperliquid.xyz/info"
@@ -68,19 +70,30 @@ HISTORY_COLUMNS = [
 
 
 def display_interactive_table(frame, formatters=None, cell_style=None, bold_last=False,
-    columns=None, blank_missing_cells=None, html_columns=(), title=None):
+    columns=None, blank_missing_cells=None, html_columns=(), title=None, key_columns=None, key_rows=None):
     'Display a self-contained HTML table with text' \
         ' filtering and sortable columns. Cells in html_columns are trusted' \
         ' markup and are not escaped.'
     formatters = formatters or {}
     table_id = f'interactive-{uuid.uuid4().hex}'
     headers = list(columns) if columns is not None else list(frame.columns)
+    # The column(s) that answer the table's question are tinted, and their standout value more so
+    # (see desk/emphasis.py); headline rows of metric tables are tinted by their first-column label.
+    keys = {column: mode for column, mode in emphasis.normalize(key_columns).items() if column in headers}
+    skip = {len(frame) - 1} if bold_last and len(frame) else set()
+    standouts = {column: emphasis.standout_position(frame[column].tolist(), mode, skip)
+                 for column, mode in keys.items()}
+    headline = {str(label) for label in key_rows or ()}
+    first_column = headers[0] if headers else None
     header_html = ''.join(
-        f"<th tabindex='0' aria-sort='none'>{html.escape(str(column))}</th>"
+        f"<th tabindex='0' aria-sort='none'"
+        f"{' style=' + chr(39) + emphasis.KEY_HEADER + chr(39) if column in keys else ''}>"
+        f"{html.escape(str(column))}</th>"
         for column in headers
     )
     body_rows = []
     for row_index, row in enumerate(frame.to_dict(orient='records')):
+        headline_row = bool(headline) and str(row.get(first_column)) in headline
         cells = []
         for column in headers:
             value = row[column]
@@ -103,6 +116,13 @@ def display_interactive_table(frame, formatters=None, cell_style=None, bold_last
             style = style.strip()
             if style and not style.endswith(';'):
                 style += ';'
+            # The tables are black, so the light-page greens and reds are swapped for brighter ones.
+            for dark, bright in emphasis.DARK_SIGN_COLORS.items():
+                style = style.replace(dark, bright)
+            if column in keys:
+                style += emphasis.TOP_TINT if standouts[column] == row_index else emphasis.KEY_TINT
+            elif headline_row:
+                style += emphasis.ROW_TINT
             weight = 'font-weight:700;' if bold_last and row_index == len(frame) - 1 else ''
             sort_attribute = html.escape(sort_value, quote=True)
             style_attribute = html.escape(style + weight, quote=True)
@@ -1011,7 +1031,8 @@ def print_account_metrics(metrics, new_api_rows, fill_count, rolling_24h, book_b
     gap_warning = account_history_gap_warning(history_value, account_value)
     if gap_warning:
         print(gap_warning)
-    display_interactive_table(table, cell_style=sign_style)
+    display_interactive_table(table, cell_style=sign_style, key_rows={
+        'Account value', 'Unrealized PnL', 'Account maximum drawdown', '24H bootstrap VaR 95%'})
     print('Current book BTC beta sums each open position\'s signed notional times its 60-day '
           'beta to BTC, per dollar of account value: today\'s book, not past returns. Alpha, '
           'beta, and Sharpe use completed US Eastern days with BTC priced at the same local '
@@ -1106,7 +1127,7 @@ def plot_account_dashboard(metrics):
                         showlegend=False), row=4, col=1)
             fig.add_vline(x=float(display_returns.mean()), line_dash='dash',
                 line_color='#e76f51', annotation_text='Average', row=4, col=1)
-            fig.add_vline(x=0, line_color='#555', row=4, col=1)
+            fig.add_vline(x=0, line_color='#9ca3af', row=4, col=1)
             if excluded:
                 notes.append(f'Weekly return chart omits {excluded} return(s) below -100%; '
                              'other data and stats are unchanged.')
@@ -1126,9 +1147,9 @@ def plot_account_dashboard(metrics):
     fig.update_xaxes(matches='x3', showticklabels=False, row=1, col=1)
     fig.update_xaxes(matches='x3', showticklabels=False, row=2, col=1)
     clip_inactive_periods(fig, periods, {'selector': lambda axis: axis.anchor != 'y4'})
-    fig.update_layout(height=1000, template='plotly_white', barmode='overlay',
+    fig.update_layout(height=1000, template='plotly_dark', barmode='overlay',
         hovermode='x unified', showlegend=False, margin={'l': 65, 'r': 25, 't': 95, 'b': 100})
-    fig.show()
+    show_chart(fig)
     for note in notes:
         print(note)
 
@@ -1193,11 +1214,11 @@ def plot_value_added_index(metrics, chart_df, account_index):
                     mode='lines+markers', line={'color': '#e76f51'}))
             fig.add_hline(y=100, line_dash='dash', line_color='#777')
             fig.update_layout(title='Value Added Index ($100 start): Account (time-weighted) vs BTC',
-                yaxis_title='Value of $100', template='plotly_white', height=480,
+                yaxis_title='Value of $100', template='plotly_dark', height=480,
                 hovermode='x unified', margin={'t': 100, 'b': 90},
                 legend={'orientation': 'h', 'y': 1.02, 'yanchor': 'bottom', 'x': 0, 'xanchor': 'left'})
             clip_inactive_periods(fig, periods)
-            fig.show()
+            show_chart(fig)
             print('The account line is a time-weighted return: deposits, withdrawals, and '
                   'transfers do not move it. BTC is shown on the same dates.')
         else:
@@ -1263,10 +1284,8 @@ def plot_volume_pnl(realized_df):
         fig.update_xaxes(title_text="Daily traded volume ($)", row=1, col=column)
         fig.update_yaxes(title_text="Daily realized PnL ($)", row=1, col=column)
     fig.update_layout(height=520, width=max(760, 650 * len(market_types)),
-        template="plotly_white", title="Daily Traded Volume vs Realized PnL", showlegend=False)
-    fig.show()
-
-
+        template="plotly_dark", title="Daily Traded Volume vs Realized PnL", showlegend=False)
+    show_chart(fig)
 class _VolumeChartMixin:
     def show_volume_chart(self):
         data = self._require_data()
@@ -1545,7 +1564,9 @@ def display_positions(rows,show_wallet=False):
         for columns in (pnl_columns,position_columns):
             display_interactive_table(table,columns=columns,cell_style=style,formatters=formatters,
                                       bold_last=True,blank_missing_cells=blank_total_cells,
-                                      title=f'OPEN POSITIONS: {group.upper()}')
+                                      title=f'OPEN POSITIONS: {group.upper()}',
+                                      # Risk view: nearest liquidation and PnL; sizing view: biggest share.
+                                      key_columns={'Liq %':'min','uPnL':'abs','Position / Account (%)':'max'})
     print(f"All positions: notional ${frame['Pos'].abs().sum():,.0f} | "
           f"margin ${frame['Margin'].sum():,.0f} | uPnL {usd(frame['uPnL'].sum())}.")
     print('Net/total Funding (1h) and APR are net cash flow on covered notional at current '
@@ -1584,7 +1605,7 @@ def display_exposure_and_funding(rows):
         'Gross Notional': lambda value: f'${value:,.2f}',
         'Net Notional': lambda value: f'${abs(value):,.2f}',
         'Net Exposure / Gross (%)': lambda value: f'{abs(value):.2f}%' if pd.notna(value) else 'n/a',
-    })
+    }, key_columns={'Net Notional': None, 'Net Exposure / Gross (%)': None})
     print('Net direction compares long and short USD notionals; it is not delta- or beta-adjusted.')
     print('=== FUNDING BY ASSET AND SIDE ===')
     frame = pd.DataFrame(funding_rows)
@@ -1625,7 +1646,8 @@ def display_exposure_and_funding(rows):
         'Estimated Funding PnL / hour': lambda value: f'${value:,.4f}',
         'Estimated Funding PnL / day': lambda value: f'${value:,.2f}',
         'Funding Coverage (%)': lambda value: f'{value:.1f}%' if pd.notna(value) else 'n/a',
-    }, bold_last=True, blank_missing_cells={(len(frame) - 1, column) for column in columns})
+    }, bold_last=True, blank_missing_cells={(len(frame) - 1, column) for column in columns},
+        key_columns={'Estimated Funding PnL / day': 'abs'})
     print('Funding rates are current hourly rates, weighted by position notional. '
           'Positive rates are paid by longs and received by shorts; estimated cash flows '
           'assume the current rate stays constant. APR is simple annualization, not a forecast. '
@@ -1792,7 +1814,7 @@ class _OpenPositionsMixin:
         fig.add_hline(y=0,line_color='#52514e',line_width=1)
         fig.update_layout(
             title='Net Funding APR (%) (simple, covered) over time'+(', all wallets' if len(self.wallet_addresses)>1 else ''),
-            template='plotly_white',height=480,hovermode='x unified',
+            template='plotly_dark',height=480,hovermode='x unified',
             yaxis_title='Net funding APR (positive = received)',yaxis_ticksuffix='%',
             legend={'orientation':'h','y':1.02,'yanchor':'bottom','x':0,'xanchor':'left'},
             margin={'t':90,'b':90},
@@ -1805,7 +1827,7 @@ class _OpenPositionsMixin:
               f"({history.index[-1]:%Y-%m-%d}, {ACCOUNTING_TIMEZONE} days). "
               f"Lifetime: {history['funding_pnl'].sum()/history['notional_hours'].sum()*24*365*100:.2f}% "
               f"on ${history['funding_pnl'].sum():,.2f} net funding.")
-        fig.show()
+        show_chart(fig)
         return history
 
     def show_open_positions(self):
@@ -1893,7 +1915,8 @@ class _OpenPositionsMixin:
             if isinstance(value,str) and value!='n/a':
                 return 'color:#188038;font-weight:600;'
             return ''
-        display_interactive_table(summary,cell_style=style)
+        display_interactive_table(summary,cell_style=style,key_rows={
+            'Position value','uPnL','Aggregate risk room','Leverage (Pos / Margin)'})
         print('ROE is unrealized PnL divided by used margin; a negative ROE means the open positions '
               'are currently at an unrealized loss relative to the margin supporting them.')
 
@@ -2048,7 +2071,7 @@ def display_liquidation_events(realized_df, title='LIQUIDATIONS'):
     display_interactive_table(table, formatters={
         'Positions': lambda value: f'{value:,.0f}', 'Notional': lambda value: f'${value:,.0f}',
         'Realized PnL': _signed_usd_plain, 'Fees': _signed_usd_plain,
-    }, cell_style=style, bold_last=True, title=title)
+    }, cell_style=style, bold_last=True, title=title, key_columns={'Realized PnL': 'min'})
     print('Each row is one forced close: positions sharing cross margin are liquidated together. '
           'Realized PnL is closedPnl on the liquidation fills after fees (Fees shows that part); losses '
           'booked by earlier partial closes of the same positions are in the attribution, not here.')
@@ -2146,7 +2169,8 @@ def print_realized_stats(frame, label, funding_history=None, account_value=float
             return 'color:#c62828;font-weight:600;'
         return 'color:#c62828;' if str(value).startswith('-') or '$-' in str(value) else \
             'color:#188038;'
-    display_interactive_table(table, cell_style=stats_style, title=f'REALIZED {label}')
+    display_interactive_table(table, cell_style=stats_style, title=f'REALIZED {label}',
+                              key_rows={'Realized PnL', '30D', 'Win %', 'EV / close'})
 
 
 def perp_pnl_breakdown(perp_fills, funding_history=None):
@@ -2211,7 +2235,7 @@ class _RealizedPnLMixin:
         display_interactive_table(perp_breakdown, formatters={
             "Amount": lambda value: f"${value:,.2f}",
                     "Contribution (% of |net PnL|)": lambda value: f"{value:.2f}%",
-        }, cell_style=breakdown_style, bold_last=True,
+        }, cell_style=breakdown_style, bold_last=True, key_columns={"Amount": None},
             blank_missing_cells={(net_row_index, "Contribution (% of |net PnL|)")})
         if non_usd_fee_tokens:
             print('Trading and fee dollar contributions are n/a ' \
@@ -2362,7 +2386,7 @@ class _ExecutionQualityMixin:
             'Fees': lambda value: f'${value:,.2f}',
             'Fees (bps)': lambda value: f'{value:.2f}',
         }, cell_style=lambda *cell: 'color:#c62828;' if cell[1] in {'Fees', 'Fees (bps)'} else '',
-            bold_last=True, title=f'EXECUTION QUALITY: LAST {days} DAYS')
+            bold_last=True, title=f'EXECUTION QUALITY: LAST {days} DAYS', key_columns={'Fees (bps)': 'max'})
         excess = taker_fee_excess(summary)
         if pd.notna(excess):
             print(f'Taking liquidity cost about ${excess:,.2f} more in fees than the maker rate would have. '
@@ -2391,7 +2415,8 @@ class _VolumeSummaryMixin:
             "Daily Pearson r": lambda value: f"{value:.3f}",
             "Daily Spearman r": lambda value: f"{value:.3f}",
         }, cell_style=volume_style, bold_last=True,
-            blank_missing_cells=volume_total_blank_cells(volume_pnl_summary))
+            blank_missing_cells=volume_total_blank_cells(volume_pnl_summary),
+            key_columns={"Realized PnL excl. funding (trading + fees)": "abs"})
         print('Volume is one-sided fill notional (price x size), counted once per fill. Realized PnL is HL '
               'closedPnl less USDC trading fees; funding is excluded. ' + VOLUME_WINDOW_NOTE)
         print('Correlation describes co-movement, not ' \
@@ -2561,6 +2586,7 @@ def display_pnl_attribution_tables(tables, title):
             'uPnL (% gross)': lambda value: f'{value:.2f}%',
             'Total (% gross)': lambda value: f'{value:.2f}%',
         }, cell_style=style, bold_last=True, title=f'{title}: {label.upper()}',
+            key_columns={'Total PnL' if 'Total PnL' in table.columns else 'Realized': 'abs'},
             blank_missing_cells={(len(table) - 1, column) for column in
                 ('Realized (% gross)', 'uPnL (% gross)', 'Total (% gross)')})
 
@@ -2613,7 +2639,8 @@ class _NetPnLMixin:
                 return weight + ('color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else '')
             return weight + 'color:inherit;'
         display_interactive_table(table, formatters={'Amount': lambda value: (
-            f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")}, cell_style=style, title='NET PNL')
+            f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")}, cell_style=style, title='NET PNL',
+            key_rows={'Net PnL'})
         print(f"Net PnL = trading PnL before fees - fees +/- funding + unrealized PnL. Liquidations are already "
               f"inside trading PnL (of which liquidation losses: {'-' if liquidation_loss < 0 else ''}"
               f"${abs(liquidation_loss):,.2f}), so they are not subtracted again.")
@@ -2679,9 +2706,10 @@ class _BtcExposureMixin:
                 return 'color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else ''
             return 'color:inherit;'
         display_interactive_table(legs, formatters=formats, cell_style=style, bold_last=True,
-                                  title='BTC EXPOSURE BY LEG')
+                                  title='BTC EXPOSURE BY LEG', key_columns={'BTC-eq 90d': 'abs'})
         detail = table.assign(_size=table[f'BTC-eq {last}d'].abs()).sort_values('_size', ascending=False).drop(columns='_size')
-        display_interactive_table(detail, formatters=formats, cell_style=style, title='BTC EXPOSURE BY HOLDING')
+        display_interactive_table(detail, formatters=formats, cell_style=style, title='BTC EXPOSURE BY HOLDING',
+                                  key_columns={'BTC-eq 90d': 'abs'})
         for days in windows:
             residual = float(net[f'BTC-eq {days}d'])
             if pd.notna(residual) and price:

@@ -1506,3 +1506,44 @@ class YahooQuoteTests(unittest.TestCase):
             self.assertFalse(ib_trade.yahoo_quote("NET", now=2_500).live)  # after the session
         with patch("requests.get", return_value=self.reply(currency="EUR")), self.assertRaises(ValueError):
             ib_trade.yahoo_quote("SAP", now=1_100)
+
+
+class ReduceSignalTests(unittest.TestCase):
+    def plan(self, held, requested, bid=8.40, ask=8.45):
+        quote = ib_venue.Quote(bid=bid, ask=ask, last=8.42, close=8.3, live=True)
+        position = SimpleNamespace(quantity=held) if held is not None else None
+        signal = ib_trade.Signal(ib_venue.ContractSpec("SWMR"), "REDUCE", requested)
+        contract = SimpleNamespace(currency="USD", symbol="SWMR", secType="STK", localSymbol="SWMR")
+        with patch.object(ib_venue, "contract_symbol", return_value="SWMR"):
+            return ib_trade.plan_reduction(signal, contract, "equity", quote, quote.reference, 1.3, 0.01, 1.0,
+                                           1.0, 1.0, position, False)
+
+    def test_sells_part_of_a_long_never_more_than_held(self):
+        plan = self.plan(160, 140)
+        self.assertEqual((plan.reduce_action, plan.quantity, plan.remaining, plan.block_reason), ("SELL", 140, 20, ""))
+        self.assertAlmostEqual(plan.entry_limit, 8.38)  # two ticks under the bid, within the slippage cap
+        capped = self.plan(30, 140)
+        self.assertEqual((capped.quantity, capped.remaining), (30, 0))
+        self.assertIn("only 30 held", capped.warnings[0])
+        self.assertEqual(self.plan(None, 10).block_reason, "no position to reduce")
+
+    def test_reduce_rows_need_a_quantity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "signals.csv"
+            path.write_text("symbol,side,quantity\nSWMR,REDUCE,\n")
+            with self.assertRaises(ValueError):
+                ib_trade.read_signals(path)
+            path.write_text("symbol,side,quantity\nSWMR,REDUCE,140\nNET,LONG,1\n")
+            self.assertEqual([s.side for s in ib_trade.read_signals(path)], ["REDUCE", "LONG"])
+
+
+class IntradayReturnTests(unittest.TestCase):
+    def test_moves_since_last_close_weighted_by_position_value_over_account(self):
+        from desk.ib.account_analytics import intraday_return
+
+        values = {"NET": 600.0, "NVDA": 400.0, "OLD": 100.0}
+        closes = {"NET": 300.0, "NVDA": 200.0}           # OLD has no last close
+        prices = {"NET": 303.0, "NVDA": 198.0, "OLD": 5.0}
+        # (600 * 1% + 400 * -1%) / 2,000 = +0.1%
+        self.assertAlmostEqual(intraday_return(values, closes, prices, 2_000.0), 0.001)
+        self.assertTrue(np.isnan(intraday_return(values, {}, prices, 2_000.0)))

@@ -68,7 +68,6 @@ extended_hours = True
 # Where entry prices come from: IB's own quotes (needs a real-time data subscription for live
 # entries) or Yahoo Finance's free quotes (--quote-source yahoo; US stocks only).
 quote_source = "ib"
-YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
 YAHOO_MAX_AGE_SECONDS = 600  # a regular-session last trade older than this is not used for a live entry
 # With only a last price (no bid/ask), the entry limit sits this far through it, still capped by
 # MAX_ENTRY_SLIPPAGE_PCT: a marketable limit that fills at the best offer, never beyond the cap.
@@ -112,6 +111,9 @@ class IBPlan:
     block_reason: str = ""
     warnings: list[str] = field(default_factory=list)
     contract: object = None
+    # REDUCE plans: the closing order's side and the units left afterwards.
+    reduce_action: str = ""
+    remaining: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,11 @@ def commission_per_unit_usd(asset_class: str, price: float, multiplier: float, f
     return 0.0002 * price * multiplier * fx_to_usd
 
 
+# Signals side that closes part of an existing position (quantity = units to close); it never
+# opens or reverses a position.
+REDUCE = "REDUCE"
+
+
 def side_direction(side: str) -> int:
     side = side.strip().upper()
     if side not in {"LONG", "SHORT"}:
@@ -151,7 +158,11 @@ def read_signals(path: Path) -> list[Signal]:
         row = {str(key).strip().lower(): str(value or "").strip() for key, value in row.items()}
         if not row.get("symbol") or not row.get("side"):
             raise ValueError(f"{path} line {number}: symbol and side are required.")
-        side_direction(row["side"])
+        reduce = row["side"].strip().upper() == REDUCE
+        if reduce and not row.get("quantity"):
+            raise ValueError(f"{path} line {number}: REDUCE needs a quantity (units to close).")
+        if not reduce:
+            side_direction(row["side"])
         spec = ContractSpec(
             symbol=row["symbol"].upper(),
             sec_type=(row.get("sec_type") or "STK").upper(),
@@ -181,26 +192,19 @@ def yahoo_quote(symbol: str, now: float | None = None) -> ib_venue.Quote:
     It has no bid/ask, so bid and ask are set EXTERNAL_QUOTE_CROSS_PCT either side of the last
     price; ``live`` means the session is open and the last trade is under YAHOO_MAX_AGE_SECONDS old.
     """
-    import requests
+    import pandas as pd
 
-    response = requests.get(YAHOO_CHART_URL + symbol, params={"interval": "1m", "range": "1d"}, timeout=15,
-                            headers={"User-Agent": "trading-desk/1.0 (read-only quote)"})
-    if not response.ok:
-        raise ValueError(f"Yahoo Finance quote for {symbol} failed (HTTP {response.status_code})")
-    try:
-        meta = response.json()["chart"]["result"][0]["meta"]
-        last, stamp = float(meta["regularMarketPrice"]), int(meta["regularMarketTime"])
-    except (KeyError, IndexError, TypeError, ValueError):
-        raise ValueError(f"Yahoo Finance returned no price for {symbol}") from None
-    if meta.get("currency", "USD") != "USD":
-        raise ValueError(f"Yahoo Finance prices {symbol} in {meta.get('currency')}, not USD")
-    now = time.time() if now is None else now
-    session = (meta.get("currentTradingPeriod") or {}).get("regular") or {}
-    in_session = session.get("start", 0) <= now <= session.get("end", 0)
-    live = last > 0 and in_session and now - stamp <= YAHOO_MAX_AGE_SECONDS
-    close = float(meta.get("chartPreviousClose") or meta.get("previousClose") or 0.0)
-    return ib_venue.Quote(bid=last * (1 - EXTERNAL_QUOTE_CROSS_PCT), ask=last * (1 + EXTERNAL_QUOTE_CROSS_PCT),
-                          last=last, close=close, live=live)
+    from desk.venues import yahoo
+
+    last = yahoo.last_price(symbol)
+    if last.currency != "USD":
+        raise ValueError(f"Yahoo Finance prices {symbol} in {last.currency}, not USD")
+    moment = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now, unit="s", tz="UTC")
+    live = (last.price > 0 and last.in_session(moment)
+            and (moment - last.time).total_seconds() <= YAHOO_MAX_AGE_SECONDS)
+    return ib_venue.Quote(bid=last.price * (1 - EXTERNAL_QUOTE_CROSS_PCT),
+                          ask=last.price * (1 + EXTERNAL_QUOTE_CROSS_PCT),
+                          last=last.price, close=last.previous_close, live=live)
 
 
 def get_quote(ib, contract) -> ib_venue.Quote:
@@ -268,6 +272,60 @@ def size_bracket(
     elif quantity * reference * multiplier * fx_to_usd < MIN_ORDER_VALUE_USD:
         reason = f"order value is below ${MIN_ORDER_VALUE_USD:g}"
     return Sizing(quantity, stop, target, limit, quantity * risk_per_unit, reason)
+
+
+def plan_reduction(signal: Signal, contract, klass: str, quote, reference: float, atr: float, tick: float,
+                   step: float, multiplier: float, fx: float, position, closed_price: bool) -> "IBPlan":
+    """Close ``signal.quantity`` units of a held position: never more than held, never a reversal."""
+    plan = IBPlan(symbol=ib_venue.contract_symbol(contract), side=REDUCE, asset_class=klass, reference=reference,
+                  stop_price=0.0, target_price=0.0, atr=atr, multiplier=multiplier, fx_to_usd=fx,
+                  currency=contract.currency, tick=tick, live_quote=quote.live, contract=contract)
+    if position is None or not position.quantity:
+        plan.block_reason = "no position to reduce"
+        return plan
+    held = abs(position.quantity)
+    plan.reduce_action = "SELL" if position.quantity > 0 else "BUY"
+    wanted = min(float(signal.quantity), held)
+    quantity = round(math.floor(wanted / step + 1e-9) * step, 8)
+    if wanted < float(signal.quantity):
+        plan.warnings.append(f"requested {signal.quantity:g} but only {held:g} held; closing {quantity:g}")
+    if quantity <= 0:
+        plan.block_reason = f"reduction below one size step ({step:g})"
+        return plan
+    direction = -1 if plan.reduce_action == "SELL" else 1
+    far = quote.bid if direction < 0 else quote.ask
+    far = far if far > 0 else reference
+    limit = far + direction * ENTRY_CROSS_TICKS * tick
+    bound = reference * (1 + direction * MAX_ENTRY_SLIPPAGE_PCT)
+    limit = max(limit, bound) if direction < 0 else min(limit, bound)
+    plan.entry_limit = ib_venue.round_to_tick(limit, tick, "down" if direction < 0 else "up")
+    plan.quantity = quantity
+    plan.notional_usd = -direction * quantity * reference * multiplier * fx  # value taken off the book
+    plan.remaining = held - quantity
+    if closed_price:
+        plan.warnings.append("no quote; planned from the last daily close. A live run needs a real-time quote")
+    elif not quote.live:
+        plan.warnings.append("quote is delayed or from the prior close; a live run needs real-time data")
+    return plan
+
+
+def submit_reduction(ib, plan: "IBPlan", account: str) -> str:
+    """Close part of a position with a marketable limit; nothing is left resting."""
+    try:
+        fresh = get_quote(ib, plan.contract)
+    except ValueError as exc:
+        return f"{plan.symbol}: skipped, {exc}."
+    if not fresh.live:
+        return f"{plan.symbol}: skipped, no real-time quote."
+    selling = plan.reduce_action == "SELL"
+    far = fresh.bid if selling else fresh.ask
+    limit = plan.entry_limit
+    if far > 0:
+        moved = ib_venue.round_to_tick(far + (-1 if selling else 1) * ENTRY_CROSS_TICKS * plan.tick, plan.tick,
+                                       "down" if selling else "up")
+        # Never give up more than the planned limit allows.
+        limit = max(moved, plan.entry_limit) if selling else min(moved, plan.entry_limit)
+    return submit_entry_only(ib, plan, plan.reduce_action, limit, account)
 
 
 def requested_size(sizing: Sizing, requested: float | None, step: float, plan: "IBPlan") -> Sizing:
@@ -349,6 +407,10 @@ def plan_ib_trades(ib, account: Account, signals: list[Signal], external: DeskBo
         # IB's API rejects fractional stock orders even where the desktop app allows them.
         step = max(1.0, ib_venue.size_step(details)) if klass == "equity" else ib_venue.size_step(details)
         position = held.get(str(contract.conId))
+        if signal.side == REDUCE:
+            plans.append(plan_reduction(signal, contract, klass, quote, reference, atr, tick, step, mult, fx,
+                                        position, closed_price))
+            continue
         plan = IBPlan(
             symbol=ib_venue.contract_symbol(contract), side=signal.side, asset_class=klass,
             reference=reference, stop_price=0, target_price=0, atr=atr, multiplier=mult,
@@ -406,7 +468,7 @@ def plan_ib_trades(ib, account: Account, signals: list[Signal], external: DeskBo
 
 def print_plans(plans: list[IBPlan], summary: dict) -> None:
     print(f"IB account: {summary['account']} (base currency {summary['base']})")
-    print(f"IB net liquidation: ${summary['ib_equity']:,.2f}; initial margin used ${summary['ib_margin_used']:,.2f}")
+    print(f"IB account value: ${summary['ib_equity']:,.2f}; initial margin used ${summary['ib_margin_used']:,.2f}")
     print_book(summary["external"])
     print(f"Desk equity (all venues): ${summary['desk_equity']:,.2f}")
     print(f"Estimated desk open risk: ${summary['current_risk']:,.2f} "
@@ -425,6 +487,13 @@ def print_plans(plans: list[IBPlan], summary: dict) -> None:
             print(f"{plan.symbol} {plan.side}: BLOCKED: {plan.block_reason}")
             continue
         money = "" if plan.currency == "USD" else f" {plan.currency}"
+        if plan.side == REDUCE:
+            print(f"{plan.symbol} REDUCE: {plan.reduce_action or 'close'} {plan.quantity:g} at limit "
+                  f"{plan.entry_limit:,.6g} (reference {plan.reference:,.6g}{money}), value ${abs(plan.notional_usd):,.2f}, "
+                  f"leaves {plan.remaining:g}" + (f" — BLOCKED: {plan.block_reason}" if plan.block_reason else ""))
+            for warning in plan.warnings:
+                print(f"  note: {warning}")
+            continue
         print(
             f"{plan.symbol} {plan.side} ({plan.asset_class}): quantity={plan.quantity:g}, "
             f"reference={plan.reference:,.6g}{money}, entry limit={plan.entry_limit:,.6g}, "
@@ -481,6 +550,8 @@ def _wait_for_parent(ib, trade, timeout: float) -> None:
 
 def submit_bracket(ib, plan: IBPlan, account: str) -> str:
     """Send one bracket, wait for the entry, and tidy partial fills. Returns a status line."""
+    if plan.side == REDUCE:
+        return submit_reduction(ib, plan, account)
     try:
         fresh = get_quote(ib, plan.contract)
     except ValueError as exc:
@@ -556,8 +627,10 @@ def submit_entry_only(ib, plan: IBPlan, action: str, limit: float, account: str)
         reasons = "; ".join(entry.message for entry in trade.log if entry.message)
         return f"{plan.symbol}: entry not filled ({trade.orderStatus.status}){': ' + reasons if reasons else ''}.{left}"
     partial = f" of {plan.quantity:g} (the rest was cancelled)" if filled < plan.quantity else ""
+    what = (f"{action} to reduce; {plan.remaining + (plan.quantity - filled):g} left"
+            if plan.side == REDUCE else "no exit orders (--no-exits)")
     return (f"{plan.symbol}: filled {filled:g}{partial} at {trade.orderStatus.avgFillPrice:,.6g}; "
-            f"no exit orders (--no-exits), so nothing is resting.{left}")
+            f"{what}, so nothing is resting.{left}")
 
 
 # ---------------------------------------------------------------------------
@@ -1351,6 +1424,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Refreshed preflight immediately before submission:")
             print_plans(plans, summary)
             sendable = [plan for plan in plans if plan.quantity > 0 and not plan.block_reason]
+            sendable.sort(key=lambda plan: plan.side != REDUCE)  # reductions first: they free cash and risk
             if not sendable:
                 print("The refreshed check blocks every order; no order was sent.")
                 return 2

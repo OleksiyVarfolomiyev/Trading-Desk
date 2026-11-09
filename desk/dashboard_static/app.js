@@ -113,7 +113,8 @@ function renderTable(id, spec) {
   const head = el("tr", {}, spec.columns.map((column) => {
     const format = FORMATS[column.fmt] || FORMATS.text;
     const sorted = state && state.key === column.key ? (state.dir > 0 ? "ascending" : "descending") : "none";
-    const th = el("th", { class: format.num ? "num" : "", "aria-sort": sorted, tabindex: "0", text: column.key });
+    const th = el("th", { class: [format.num ? "num" : "", column.emphasis ? "key" : ""].filter(Boolean).join(" "),
+      "aria-sort": sorted, tabindex: "0", text: column.key });
     const toggle = () => {
       const current = sortState[id];
       const dir = current && current.key === column.key ? -current.dir : (format.num ? -1 : 1);
@@ -124,14 +125,28 @@ function renderTable(id, spec) {
     th.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
     return th;
   }));
-  const cell = (row, column) => {
+  // Key columns (desk/emphasis.py): tinted, with the standout value of each picked by its mode.
+  const standout = {};
+  spec.columns.forEach((column) => {
+    if (!column.emphasis || column.emphasis === "none") return;
+    let best = null, bestScore = null;
+    rows.forEach((row, index) => {
+      const value = row[column.key];
+      if (!isNum(value)) return;
+      const score = column.emphasis === "abs" ? Math.abs(value) : column.emphasis === "max" ? value : -value;
+      if (bestScore === null || score > bestScore) { best = index; bestScore = score; }
+    });
+    standout[column.key] = best;
+  });
+  const cell = (row, column, index) => {
     const format = FORMATS[column.fmt] || FORMATS.text;
     const value = row[column.key];
     const tone = format.signed ? signClass(value) : format.tone && isNum(value) && value > 0 ? format.tone : "";
-    const classes = [format.num ? "num" : "", tone].filter(Boolean).join(" ");
+    const key = column.emphasis ? (index !== undefined && standout[column.key] === index ? "key key-top" : "key") : "";
+    const classes = [format.num ? "num" : "", tone, key].filter(Boolean).join(" ");
     return el("td", { class: classes, text: format.text(value) });
   };
-  const body = el("tbody", {}, rows.map((row) => el("tr", {}, spec.columns.map((column) => cell(row, column)))));
+  const body = el("tbody", {}, rows.map((row, index) => el("tr", {}, spec.columns.map((column) => cell(row, column, index)))));
   const parts = [el("thead", {}, head), body];
   if (spec.total) {
     parts.push(el("tfoot", {}, el("tr", { class: "total" }, spec.columns.map((column) => cell(spec.total, column)))));
@@ -245,7 +260,7 @@ function renderCharts(charts) {
   // Collapse stretches with no trading on any account, as the HL account charts do, and say so.
   const idle = charts.value_idle || [];
   const month = (d) => new Date(d + "T00:00:00Z").toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
-  const valueLayout = baseLayout({ yaxis: Object.assign(baseLayout().yaxis, { tickprefix: "$", separatethousands: true }) });
+  const valueLayout = baseLayout({ yaxis: Object.assign(baseLayout().yaxis, { tickformat: "$,.1f" }) });
   if (idle.length) {
     valueLayout.xaxis = Object.assign(valueLayout.xaxis, { rangebreaks: idle.map((p) => ({ bounds: [p[0], p[1]] })) });
     valueLayout.margin = Object.assign({}, valueLayout.margin, { b: 56 });

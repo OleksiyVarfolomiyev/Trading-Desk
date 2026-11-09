@@ -104,5 +104,25 @@ class InteractiveTableStyleTests(unittest.TestCase):
                 else "color:#c62828" if column == "Net" else "color:inherit", bold_last=True)
         styles = re.findall(r"style='([^']*)'", shown[0])
         # Without a ';' between them the browser drops "color:#188038font-weight:700;" whole.
-        self.assertIn("color:#188038;font-weight:700;", styles)
+        self.assertIn("color:#4ade80;font-weight:700;", styles)  # green, brightened for the black table
         self.assertFalse(any(re.search(r"[0-9a-z]font-weight", style) for style in styles))
+
+
+class ReloadDeskTests(unittest.TestCase):
+    def test_stale_helper_imported_by_another_module_is_replaced(self):
+        import inspect
+
+        import desk.hl.account_analytics as analytics
+        import desk.overview as overview
+        from desk.reloading import reload_desk
+
+        def old_table(frame, formatters=None, cell_style=None, bold_last=False, columns=None,
+                      blank_missing_cells=None, html_columns=(), title=None):
+            """The table helper as a kernel loaded it before key_columns existed."""
+
+        # A kernel that loaded the overview before the helper changed: both hold the old function.
+        analytics.display_interactive_table = old_table
+        overview.display_interactive_table = old_table
+        reload_desk()
+        self.assertIn("key_columns", inspect.signature(overview.display_interactive_table).parameters)
+        self.assertIs(overview.display_interactive_table, analytics.display_interactive_table)

@@ -35,6 +35,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from desk import emphasis
 from desk.desk_accounts import ROOT_DATA, WINDOWS, DeskAccounts
 
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
@@ -79,14 +80,21 @@ def json_safe(value):
 
 
 def table(frame: pd.DataFrame, formats: dict[str, str], total: dict | None = None,
-          total_last: bool = False) -> dict:
-    """A table for the page: column formats, body rows, and an optional total row."""
+          total_last: bool = False, key: dict | None = None) -> dict:
+    """A table for the page: column formats, body rows, an optional total row, and key columns.
+
+    ``key`` maps the column(s) that answer the table's question to how their standout value is
+    picked ("abs", "max", "min" or None); the page tints them (see desk/emphasis.py).
+    """
     if frame is None or frame.empty:
         return {"columns": [], "rows": [], "total": None}
     rows = frame.to_dict(orient="records")
     if total_last:
         rows, total = rows[:-1], rows[-1]
-    return {"columns": [{"key": column, "fmt": formats.get(column, "text")} for column in frame.columns],
+    keys = emphasis.normalize(key)
+    return {"columns": [{"key": column, "fmt": formats.get(column, "text"),
+                         **({"emphasis": keys[column] or "none"} if column in keys else {})}
+                        for column in frame.columns],
             "rows": rows, "total": total}
 
 
@@ -185,14 +193,17 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
                                            "Open risk", "Long", "Short", "VaR 95%", "VaR 99%")}
     signed = {column: "susd" for column in ("Unrealized PnL", "Net", "Value")}
     tables = {
-        "accounts": table(accounts, {**money, **signed, "Positions": "int", "% of desk": "pct"}, account_total),
+        "accounts": table(accounts, {**money, **signed, "Positions": "int", "% of desk": "pct"}, account_total,
+                          key={"Equity": "max"}),
         "performance": table(desk.performance_frame(),
                              {"Value": "usd", **{f"PnL {label}": "susd" for label in WINDOWS},
-                              **{f"Return {label}": "spct" for label in WINDOWS}}, total_last=True),
+                              **{f"Return {label}": "spct" for label in WINDOWS}}, total_last=True,
+                             key={"Return 30D": "abs"}),
         "exposure": table(overview.exposure_frame(), {**money, "Net": "susd", "Gross / equity": "pct",
-                                                      "Net / equity": "spct"}, total_last=True),
+                                                      "Net / equity": "spct"}, total_last=True,
+                          key={"Net / equity": "abs"}),
         "movers": table(overview.movers_frame(MOVERS), {"Value": "susd", "Unrealized PnL": "susd",
-                                                        "% of position": "spct"}),
+                                                        "% of position": "spct"}, key={"Unrealized PnL": "abs"}),
     }
     if len(positions):
         ordered = positions.assign(_abs=positions["Value"].abs()).sort_values(
@@ -202,12 +213,14 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
                       "Unrealized PnL": ordered["Unrealized PnL"].sum(), "Weight": ordered["Weight"].sum(),
                       "Exposure / desk value": ordered["Exposure / desk value"].sum()})
         tables["positions"] = table(ordered, {"Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
-                                              "Weight": "pct", "Exposure / desk value": "pct"}, total)
+                                              "Weight": "pct", "Exposure / desk value": "pct"}, total,
+                                    key={"Weight": "max"})
     else:
         tables["positions"] = table(positions, {})
     if overview.book:
         tables["open_risk"] = table(overview.risk_frame(), {**money, "Positions": "int", "Open risk": "rusd",
-                                                            "% of desk equity": "rpct"}, total_last=True)
+                                                            "% of desk equity": "rpct"}, total_last=True,
+                                    key={"% of desk equity": "max"})
     holdings = overview.wallet_holdings_frame()
     if len(holdings):
         # "HL 07f2 wallet" -> "HL 07f2": the table is already the wallets table. Notes go last.
@@ -216,12 +229,13 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
         holdings = holdings[[column for column in holdings.columns if column != "Note"] + ["Note"]]
         tables["wallets"] = table(holdings, {"Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct"},
                                   {"Wallet": "Total", "Value": holdings["Value"].sum(),
-                                   "% of desk": holdings["% of desk"].sum()})
+                                   "% of desk": holdings["% of desk"].sum()}, key={"Value": "max"})
     if risk_table is not None and len(risk_table):
         tables["risk"] = table(risk_table, {
             **money, "Periods": "int", "Return (total)": "spct", "Volatility (/yr)": "pct", "Sharpe": "num2",
             "Max drawdown": "spct", "Beta BTC": "num2", "Beta SPY": "num2",
-            "Alpha vs BTC (/yr)": "spct", "Alpha vs SPY (/yr)": "spct", "Coverage": "pct"})
+            "Alpha vs BTC (/yr)": "spct", "Alpha vs SPY (/yr)": "spct", "Coverage": "pct"},
+            key={"VaR 95%": None, "Beta BTC": None})
 
     start = desk.common_start
     value_series = []

@@ -25,6 +25,7 @@ from desk.notebook_highlights import show as show_highlights
 from desk.overview import merge_ib_fills, save_ib_history
 from desk.risk import ATR_PERIOD, REWARD_RISK_RATIO, STOP_ATR_MULTIPLE, ib_position_risk
 from desk.venues import ib as ib_venue
+from desk.charts import show as show_chart
 
 BENCHMARK = "SPY"
 TRADING_DAYS = 252
@@ -72,7 +73,7 @@ def book_returns(values: dict[str, float], returns: dict[str, pd.Series], equity
     """Daily returns of the account if it had held today's positions over the sample.
 
     Each day's PnL is the sum of current position values times that symbol's return, over
-    net liquidation (so cash dilutes it). A symbol without a price that day contributes 0.
+    account value (so cash dilutes it). A symbol without a price that day contributes 0.
     """
     notes = []
     priced = {symbol: series for symbol, series in returns.items() if symbol in values and len(series)}
@@ -87,6 +88,22 @@ def book_returns(values: dict[str, float], returns: dict[str, pd.Series], equity
         notes.append(f"shorter price history for {', '.join(short_history)}; missing days count as 0")
     pnl = frame.fillna(0.0).mul(pd.Series({symbol: values[symbol] for symbol in frame}), axis=1).sum(axis=1)
     return pnl / equity, notes
+
+
+def intraday_return(values: dict[str, float], last_closes: dict[str, float], prices: dict[str, float],
+                    equity: float) -> float:
+    """Today's return of the current holdings since each symbol's last completed close.
+
+    Weighted like ``book_returns`` (position value over account value); symbols without a last
+    close or a current price are left out. NaN when nothing can be priced.
+    """
+    pnl, priced = 0.0, 0
+    for symbol, value in values.items():
+        close, price = last_closes.get(symbol), prices.get(symbol)
+        if close and price and close > 0 and price > 0:
+            pnl += value * (price / close - 1)
+            priced += 1
+    return pnl / equity if priced and equity > 0 else float("nan")
 
 
 def max_drawdown(returns: pd.Series) -> float:
@@ -125,6 +142,9 @@ class IBAccountAnalytics:
         self.fills = pd.DataFrame()
         self.history = pd.DataFrame()
         self.book = pd.Series(dtype=float)
+        # The book chart's last point, from live prices since the last completed close (or None).
+        self.live: dict | None = None
+        self.benchmark_close = float("nan")
         self.notes: list[str] = []
         self._highlights_state = None
 
@@ -166,7 +186,9 @@ class IBAccountAnalytics:
                     self.notes.append(f"{position.symbol}: no daily history ({str(exc) or type(exc).__name__})")
             try:
                 spy, _ = ib_venue.resolve_contract(ib, ib_venue.ContractSpec(BENCHMARK))
-                self.benchmark = _returns(ib_venue.daily_bars(ib, spy, "1 Y"))
+                spy_bars = ib_venue.daily_bars(ib, spy, "1 Y")
+                self.benchmark = _returns(spy_bars)
+                self.benchmark_close = float(spy_bars["close"].iloc[-1]) if len(spy_bars) else float("nan")
             except ib_venue.HistoryUnavailable as exc:
                 skipped.append(BENCHMARK)
                 outage = outage or str(exc)
@@ -187,7 +209,51 @@ class IBAccountAnalytics:
         returns = {symbol: _returns(bars) for symbol, bars in self.bars.items() if len(bars) > 1}
         self.book, notes = book_returns(values, returns, snapshot.equity_usd)
         self.notes.extend(notes)
+        self.live = self._live_point(snapshot, values)
         return snapshot
+
+    def _live_point(self, snapshot, values: dict[str, float]) -> dict | None:
+        """Today's move of the current holdings and SPY since the last completed close.
+
+        IB's daily bars stop at the last completed session, so the chart would end there. Prices
+        come from Yahoo Finance's free real-time quotes (IB's own mark if Yahoo has none). None
+        when nothing is newer than the last close (weekend, holiday, before the open).
+        """
+        if self.book.empty:
+            return None
+        from desk.venues import yahoo
+
+        last_day = pd.Timestamp(self.book.index.max()).normalize()
+        closes = {symbol: float(bars["close"].iloc[-1]) for symbol, bars in self.bars.items() if len(bars)}
+        prices, times, sources = {}, [], set()
+        for position in snapshot.positions:
+            try:
+                quote = yahoo.last_price(position.symbol)
+                if quote.currency != position.currency:
+                    raise ValueError("currency differs")
+                prices[position.symbol] = quote.price
+                times.append(quote.time)
+                sources.add("Yahoo")
+            except Exception:  # Yahoo lacks it: IB's own mark (may be delayed without a data subscription)
+                if np.isfinite(position.mark_price) and position.mark_price > 0:
+                    prices[position.symbol] = position.mark_price
+                    sources.add("IB mark")
+        if not times:
+            return None
+        newest = max(times).tz_convert(ib_venue.ACCOUNTING_TIMEZONE)
+        if newest.tz_localize(None).normalize() <= last_day:
+            return None  # nothing traded since the last completed close
+        book = intraday_return(values, closes, prices, snapshot.equity_usd)
+        benchmark = float("nan")
+        try:
+            spy = yahoo.last_price(BENCHMARK)
+            if spy.time.tz_convert(ib_venue.ACCOUNTING_TIMEZONE).tz_localize(None).normalize() > last_day and self.benchmark_close > 0:
+                benchmark = spy.price / self.benchmark_close - 1
+        except Exception:
+            pass
+        if not np.isfinite(book):
+            return None
+        return {"time": newest, "book": book, "benchmark": benchmark, "source": " and ".join(sorted(sources))}
 
     def _daily_pnl(self, ib, acct: str, to_usd: float) -> dict[str, float]:
         """Today's PnL from IB's account PnL subscription (empty if TWS does not send it)."""
@@ -251,7 +317,7 @@ class IBAccountAnalytics:
         snap, well, attention = self.snapshot, [], []
         equity = snap.equity_usd
         today = self.pnl.get("dailyPnL", np.nan)
-        text = f"Net liquidation {_money(equity)}, {len(self.positions)} open positions"
+        text = f"Account value {_money(equity)}, {len(self.positions)} open positions"
         if np.isfinite(today):
             text += f"; today {signed_money(today)} ({today / (equity - today):+.2%})" if equity - today else ""
         (well if not np.isfinite(today) or today >= 0 else attention).append(("Account", text + "."))
@@ -301,7 +367,7 @@ class IBAccountAnalytics:
                     ("Last 7 days of fills", f"{len(week)} fills, realized {signed_money(realized_7d)} after commission."))
         for note in self.notes:
             attention.append(("Data", note))
-        metrics = {"Net liquidation": (equity, "usd"), "Unrealized PnL": (snap.unrealized_usd, "usd"),
+        metrics = {"Account value": (equity, "usd"), "Unrealized PnL": (snap.unrealized_usd, "usd"),
                    "Open risk to stops": (float(positions["Risk to stop"].sum()) if not positions.empty else 0.0, "usd"),
                    f"Beta to {BENCHMARK}": (stats.get("beta", np.nan), "num"),
                    "Gross position value": (snap.gross_usd, "usd")}
@@ -310,7 +376,7 @@ class IBAccountAnalytics:
             self._highlights_state = HighlightsState(self.data_dir / f"ib_highlights_state_{snap.account}.json")
         since = self._highlights_state.compare(metrics, items)
         show_highlights(well, attention, since,
-                        footnote="Changes in net liquidation include deposits and withdrawals.")
+                        footnote="Changes in account value include deposits and withdrawals.")
 
     def show_account(self):
         """Balances, today's PnL, and current-book risk statistics."""
@@ -336,7 +402,8 @@ class IBAccountAnalytics:
                     f"{_money(result['low'] * equity)}-{_money(result['high'] * equity)})")
 
         rows = [
-            ("Net liquidation", _money(equity)),
+            # IB calls this net liquidation value: cash plus positions at market, what the account is worth.
+            ("Account value", _money(equity)),
             ("Cash", _money(summary.get("TotalCashValue", snap.cash_usd))),
             ("Buying power", _money(summary.get("BuyingPower", np.nan))),
             ("Gross position value", _money(summary.get("GrossPositionValue", snap.gross_usd))),
@@ -360,7 +427,9 @@ class IBAccountAnalytics:
             ("Saved account snapshots", f"{len(self.history)}"),
         ]
         display_interactive_table(pd.DataFrame(rows, columns=["Metric", "Value"]), cell_style=_neutral,
-                                  title=f"IB ACCOUNT {short_id(snap.account)}: PNL AND RISK")
+                                  title=f"IB ACCOUNT {short_id(snap.account)}: PNL AND RISK",
+                                  key_rows={"Account value", "Today's PnL", "Unrealized PnL", "Open risk to ATR stops",
+                                            "Maximum drawdown (current book, 1 year)"})
         print(f"Risk statistics price today's holdings over the past year of IB daily closes, against {BENCHMARK}; "
               "they describe the current book, not past account performance, because IB's API has no "
               "account-value history. Ranges come from bootstrap resamples. Open risk is each position's "
@@ -388,7 +457,8 @@ class IBAccountAnalytics:
         formatters.update({column: _percent for column in ("% of account", "Unrealized PnL %", "1D change")})
         formatters[f"Beta {BETA_LOOKBACK_DAYS}d"] = lambda value: "n/a" if not np.isfinite(value) else f"{value:.2f}"
         display_interactive_table(frame, formatters=formatters, cell_style=_pnl_style, bold_last=True,
-                                  blank_missing_cells=blanks, title="IB OPEN POSITIONS")
+                                  blank_missing_cells=blanks, title="IB OPEN POSITIONS",
+                                  key_columns={"Unrealized PnL": "abs", "Risk to stop": "max"})
         print(f"Stop and target are {STOP_ATR_MULTIPLE:g} x ATR({ATR_PERIOD}) from the current mark (1:1), as the "
               f"executor would place them now; they are not orders. 1D change compares the mark with the last "
               f"completed daily close. Beta uses the last {BETA_LOOKBACK_DAYS} trading days against {BENCHMARK}.")
@@ -399,27 +469,46 @@ class IBAccountAnalytics:
             print("No book returns to chart.")
             return
         book = 100 * (1 + self.book).cumprod()
-        figure = go.Figure(go.Scatter(x=book.index, y=book, name="Current book"))
+        bench = None
         if not self.benchmark.empty:
-            bench = self.benchmark.reindex(book.index).fillna(0.0)
-            figure.add_trace(go.Scatter(x=book.index, y=100 * (1 + bench).cumprod(), name=BENCHMARK))
-        figure.update_layout(title="Current IB holdings over the past year (hypothetical: today's positions held throughout)",
-                             yaxis_title="Index (start = 100)", template="plotly_dark", height=420)
-        figure.show()
-
+            bench = 100 * (1 + self.benchmark.reindex(book.index).fillna(0.0)).cumprod()
+        live = self.live
+        if live:
+            # Today's move since the last close, from live prices: the line runs to now.
+            when = live["time"].tz_localize(None)
+            book = pd.concat([book, pd.Series([book.iloc[-1] * (1 + live["book"])], index=[when])])
+            if bench is not None and np.isfinite(live["benchmark"]):
+                bench = pd.concat([bench, pd.Series([bench.iloc[-1] * (1 + live["benchmark"])], index=[when])])
+        colors = ("#636efa", "#ef553b")
+        figure = go.Figure(go.Scatter(x=book.index, y=book, name="Current book", line={"color": colors[0]}))
+        if bench is not None:
+            figure.add_trace(go.Scatter(x=bench.index, y=bench, name=BENCHMARK, line={"color": colors[1]}))
+        title = "Current IB holdings over the past year (hypothetical: today's positions held throughout)"
+        if live:
+            stamp = f"{live['time']:%Y-%m-%d %H:%M} ET"
+            for series, color, name in ((book, colors[0], "Current book"), (bench, colors[1], BENCHMARK)):
+                if series is not None and series.index[-1] == live["time"].tz_localize(None):
+                    figure.add_trace(go.Scatter(
+                        x=[series.index[-1]], y=[series.iloc[-1]], mode="markers", showlegend=False,
+                        marker={"color": color, "size": 8, "line": {"color": "#ffffff", "width": 1}},
+                        hovertemplate=f"{name} live {stamp}: %{{y:.2f}}<extra></extra>"))
+            title += f"; last point live at {stamp} ({live['source']} prices)"
+        else:
+            title += f"; through the {book.index[-1]:%Y-%m-%d} close"
+        figure.update_layout(title=title, yaxis_title="Index (start = 100)", template="plotly_dark", height=420)
+        show_chart(figure)
     def show_account_history(self):
-        """Saved net-liquidation snapshots (one per run of this notebook or the desk overview)."""
+        """Saved account-value snapshots (one per run of this notebook or the desk overview)."""
         if not self._require():
             return
         if len(self.history) < 2:
             print(f"{len(self.history)} saved snapshot(s); the history chart appears after the second run.")
             return
         history = self.history.assign(ts=pd.to_datetime(self.history["ts"], utc=True, format="mixed"))
-        figure = go.Figure(go.Scatter(x=history["ts"], y=history["equity_usd"], name="Net liquidation", mode="lines+markers"))
-        figure.update_layout(title="IB net liquidation (saved snapshots)", yaxis_title="USD",
+        figure = go.Figure(go.Scatter(x=history["ts"], y=history["equity_usd"], name="Account value", mode="lines+markers"))
+        figure.update_layout(title="IB account value (saved snapshots)", yaxis_title="USD",
                              template="plotly_dark", height=380)
-        figure.show()
-
+        show_chart(figure)
     def show_realized_pnl(self, days: int = 90):
         """Realized PnL and commissions from saved IB fills, by symbol."""
         if not self._require():
@@ -443,7 +532,8 @@ class IBAccountAnalytics:
         display_interactive_table(summary, formatters={"Commission": _money, "Realized PnL": _money,
                                                        "Net realized PnL": _money, "Fills": "{:.0f}".format,
                                                        "Bought": _number, "Sold": _number},
-                                  cell_style=_pnl_style, bold_last=True, title=f"IB REALIZED PNL: LAST {days} DAYS")
+                                  cell_style=_pnl_style, bold_last=True, title=f"IB REALIZED PNL: LAST {days} DAYS",
+                                  key_columns={"Net realized PnL": "abs"})
         print("From fills saved by this notebook and the desk overview. IB reports realized PnL on closing "
               "fills after commission.")
 
@@ -456,7 +546,16 @@ class IBAccountAnalytics:
             return
         fills = self.fills.assign(time=pd.to_datetime(self.fills["time"], utc=True, format="mixed"))
         fills = fills[fills["time"] >= pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)]
-        display(fills.sort_values("time", ascending=False).drop(columns=["exec_id"]).reset_index(drop=True))
+        if fills.empty:
+            print(f"No IB fills in the last {days} days.")
+            return
+        from desk.overview import ib_fills_table
+
+        table = ib_fills_table(fills.sort_values("time", ascending=False))
+        display_interactive_table(table, formatters={"Quantity": _number, "Price": _money, "Commission": _money,
+                                                     "Realized PnL": _money},
+                                  cell_style=_pnl_style, title=f"IB FILLS: LAST {days} DAYS",
+                                  key_columns={"Realized PnL": "abs"})
 
     def show_pnl_attribution(self):
         """Unrealized PnL of open positions plus saved realized PnL, by symbol."""
@@ -474,5 +573,6 @@ class IBAccountAnalytics:
         total = {"Symbol": "Total", **frame.drop(columns="Symbol").sum().to_dict()}
         frame = pd.concat([frame, pd.DataFrame([total])], ignore_index=True)
         display_interactive_table(frame, formatters={column: _money for column in ("Unrealized PnL", "Realized PnL", "Total PnL")},
-                                  cell_style=_pnl_style, bold_last=True, title="IB PNL ATTRIBUTION")
+                                  cell_style=_pnl_style, bold_last=True, title="IB PNL ATTRIBUTION",
+                                  key_columns={"Total PnL": "abs"})
         print("Realized PnL covers only fills saved so far (TWS keeps about a week of executions).")

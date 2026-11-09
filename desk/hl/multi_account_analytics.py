@@ -281,7 +281,7 @@ class _MultiWalletRealizedMixin:
         display_interactive_table(breakdown,formatters={
             'Amount':lambda v:f'${v:,.2f}',
             'Contribution (% of |net PnL|)':lambda v:f'{v:.2f}%',
-        },cell_style=breakdown_style,bold_last=True,
+        },cell_style=breakdown_style,bold_last=True,key_columns={'Amount':None},
           blank_missing_cells={(net_index,'Contribution (% of |net PnL|)')})
         liquidations=liquidation_stats(perp_df,funding_history=data.funding_history_df)
         print(f"Liquidations: {liquidations['liquidations']} of {liquidations['closes']} closes "
@@ -319,7 +319,8 @@ class _MultiWalletVolumeMixin:
             'Realized PnL / Volume (%)':lambda v:f'{v:.2f}%',
             'PnL / $1k volume':lambda v:f'${v:,.2f}',
             'Daily Pearson r':lambda v:f'{v:.3f}','Daily Spearman r':lambda v:f'{v:.3f}',
-        },cell_style=style,bold_last=True,blank_missing_cells=volume_total_blank_cells(summary))
+        },cell_style=style,bold_last=True,blank_missing_cells=volume_total_blank_cells(summary),
+          key_columns={'Realized PnL excl. funding (trading + fees)':'abs'})
         print('Realized PnL is HL closedPnl less USDC trading fees; funding is excluded. '+VOLUME_WINDOW_NOTE)
 
 

@@ -192,7 +192,7 @@ def show_market_research(view: str) -> None:
             return "color:#188038;" if value > 0 else "color:#c62828;" if value < 0 else ""
         return ""
 
-    def show(title: str, frame: pd.DataFrame) -> None:
+    def show(title: str, frame: pd.DataFrame, key: dict | None = None) -> None:
         print(f"=== {title} ===")
         display_interactive_table(
             frame,
@@ -204,6 +204,7 @@ def show_market_research(view: str) -> None:
                 VOLUME: lambda v: f"${v:,.0f}" if pd.notna(v) else "n/a",
                 OPEN_INTEREST: lambda v: f"${v:,.0f}" if pd.notna(v) else "n/a",
             },
+            key_columns=key,
         )
 
     from desk.notebook_highlights import show as show_highlights
@@ -215,7 +216,7 @@ def show_market_research(view: str) -> None:
     if view == "trending":
         print(f"Trending lists the biggest loser and three biggest gainers with over "
               f"${TRENDING_MIN_VOLUME:,.0f} 24h volume. The ranked tables below use that same pool.")
-        show("HL TRENDING", trending_markets(markets))
+        show("HL TRENDING", trending_markets(markets), {CHANGE: "abs"})
     for name, metric, top in (
         ("24H CHANGE", CHANGE, True), ("24H CHANGE", CHANGE, False),
         ("8H FUNDING", FUNDING, True), ("8H FUNDING", FUNDING, False),
@@ -224,4 +225,5 @@ def show_market_research(view: str) -> None:
         available = int(universe[metric].notna().sum())
         # Real counts in the title: a small view is split between its top and bottom tables.
         scope = f" OF {available}" if available < 2 * TOP_N else ""
-        show(f"{'TOP' if top else 'BOTTOM'} {len(ranked)}{scope} BY {name}", ranked)
+        # The ranking metric is the key column; its extreme (the top or bottom market) stands out.
+        show(f"{'TOP' if top else 'BOTTOM'} {len(ranked)}{scope} BY {name}", ranked, {metric: "max" if top else "min"})

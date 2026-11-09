@@ -274,7 +274,8 @@ class DeskOverview:
                                                 "Unrealized PnL", "Gross", "Net"]}
         display_interactive_table(_without_venue(frame),
                                   formatters={**money, "% of desk": _percent, "Positions": "{:.0f}".format},
-                                  cell_style=_signed_style, bold_last=True, title="DESK ACCOUNTS")
+                                  cell_style=_signed_style, bold_last=True, title="DESK ACCOUNTS",
+                                  key_columns={"Equity": "max"})
         for snapshot in self.snapshots:
             for note in snapshot.notes:
                 print(f"{snapshot.label}: {note}")
@@ -338,6 +339,7 @@ class DeskOverview:
                                    "Value": _money, "Unrealized PnL": _money, "Weight": _percent,
                                    "Exposure / desk value": _percent},
                 cell_style=_signed_style, bold_last=True, title=f"OPEN POSITIONS: {klass.upper()}",
+                key_columns={"Weight": "max"},
                 blank_missing_cells={(len(group) - 1, column) for column in ("Quantity", "Avg price", "Mark")},
             )
         frame = frame.assign(gross=frame["Value"].abs())
@@ -375,7 +377,8 @@ class DeskOverview:
         display_interactive_table(
             summary, formatters={**{column: _money for column in ["Long", "Short", "Net", "Gross"]},
                                  "Gross / equity": _percent, "Net / equity": _percent},
-            cell_style=_signed_style, bold_last=True, title="EXPOSURE BY ASSET CLASS")
+            cell_style=_signed_style, bold_last=True, title="EXPOSURE BY ASSET CLASS",
+            key_columns={"Net / equity": "abs"})
 
     def risk_totals(self) -> tuple[float, float, float]:
         """Executor risk equity, open risk used, and the aggregate cap."""
@@ -402,12 +405,13 @@ class DeskOverview:
             print("Risk was not computed; call fetch_data(include_risk=True).")
             return
         # Executor equity: HL margin collateral (USDC on unified accounts) plus IB
-        # net liquidation, so the cap shown here is the one the executors enforce.
+        # account value (net liquidation), so the cap shown here is the one the executors enforce.
         equity, used, cap = self.risk_totals()
         display_interactive_table(
             _without_venue(self.risk_frame()), formatters={"Risk equity": _money, "Open risk": _money,
                                             "% of desk equity": _percent, "Positions": "{:.0f}".format},
-            cell_style=lambda *args: "color:inherit", bold_last=True, title="DESK OPEN RISK")
+            cell_style=lambda *args: "color:inherit", bold_last=True, title="DESK OPEN RISK",
+            key_columns={"% of desk equity": "max"})
         if self.problems:
             print("WARNING: unreadable accounts are missing from this risk total.")
         print(f"Aggregate cap: {_money(cap)} ({MAX_TOTAL_RISK_PCT:.0%} of desk equity {_money(equity)}); "
@@ -448,7 +452,7 @@ class DeskOverview:
                                                      "% of desk": _percent},
                                   cell_style=lambda *args: "color:inherit", bold_last=True,
                                   blank_missing_cells={(last, "Amount"), (last, "Price")},
-                                  title="WALLET HOLDINGS OUTSIDE HL")
+                                  title="WALLET HOLDINGS OUTSIDE HL", key_columns={"Value": "max"})
         for snapshot in self._wallets():
             for note in snapshot.notes:
                 print(f"{snapshot.label}: {note}")
@@ -494,12 +498,14 @@ class DeskOverview:
         display_interactive_table(_without_venue(frame),
                                   formatters={"Unrealized PnL": _money, "% of account value": _percent,
                                               "% of position value": _percent, "Positions": "{:.0f}".format},
-                                  cell_style=_pnl_style, bold_last=True, title="UNREALIZED PNL BY ACCOUNT")
+                                  cell_style=_pnl_style, bold_last=True, title="UNREALIZED PNL BY ACCOUNT",
+                                  key_columns={"Unrealized PnL": "abs"})
         movers = self.movers_frame(top)
         if movers.empty:
             return
         display_interactive_table(movers, formatters={"Value": _money, "Unrealized PnL": _money, "% of position": _percent},
-                                  cell_style=_signed_style, title=f"LARGEST WINNERS AND LOSERS (TOP {top} EACH)")
+                                  cell_style=_signed_style, title=f"LARGEST WINNERS AND LOSERS (TOP {top} EACH)",
+                                  key_columns={"Unrealized PnL": "abs"})
         print("Unrealized PnL is on open trading positions (HL and IB); wallet tokens have no cost basis here. "
               "% of position compares the PnL with the position's value at entry.")
 
@@ -554,7 +560,8 @@ class DeskOverview:
         if self.problems:
             rows.append(("Unreadable accounts", "; ".join(problem.split(":")[0] for problem in self.problems)))
         display_interactive_table(pd.DataFrame(rows, columns=["Metric", "Value"]), cell_style=lambda *args: "color:inherit",
-                                  title="DESK METRICS")
+                                  title="DESK METRICS",
+                                  key_rows={"Desk value (all accounts)", "Unrealized PnL", "Open risk vs cap"})
 
     def highlight_rows(self) -> tuple[list, list, dict, dict]:
         """What stands out and what needs attention now, plus the key numbers compared run to run."""
@@ -657,7 +664,8 @@ class DeskOverview:
             "Tx": [f"{str(tx)[:10]}…" for tx in recent["hash"]],
         })
         display_interactive_table(table, formatters={"Amount": "{:,.6g}".format, "Value": _money},
-                                  cell_style=_signed_style, title=f"WALLET ACTIVITY OUTSIDE HYPERLIQUID: LAST {days} DAYS")
+                                  cell_style=_signed_style, title=f"WALLET ACTIVITY OUTSIDE HYPERLIQUID: LAST {days} DAYS",
+                                  key_columns={"Value": "abs"})
         labels = recent["label"].fillna("")
         kind = labels.map(lambda label: "the HL bridge" if label == "HL bridge"
                           else "other desk wallets" if label.startswith("Desk wallet") else "everyone else")
@@ -685,6 +693,6 @@ class DeskOverview:
         display_interactive_table(
             table, formatters={"Quantity": "{:,.6g}".format, "Price": _money if usd_only else "{:,.6g}".format,
                                "Commission": _money, "Realized PnL": _money},
-            cell_style=signed, title=f"RECENT IB FILLS: LAST {days} DAYS")
+            cell_style=signed, title=f"RECENT IB FILLS: LAST {days} DAYS", key_columns={"Realized PnL": "abs"})
         print("Times are US Eastern. " + ("Prices are in USD." if usd_only else
                                           "Prices are in each contract's currency; commission and PnL in USD."))

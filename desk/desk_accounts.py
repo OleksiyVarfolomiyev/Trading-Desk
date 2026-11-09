@@ -27,6 +27,8 @@ from desk.live_risk import MIN_RATIO_DAYS
 from desk.notebook_highlights import HighlightsState, percent, signed_money
 from desk.notebook_highlights import show as show_highlights
 from desk.overview import DeskOverview
+from desk import emphasis
+from desk.charts import show as show_chart
 
 ROOT_DATA = Path(__file__).resolve().parents[1] / "data"
 RESEARCH_PRICES = Path(__file__).resolve().parents[1] / "research" / "data" / "daily_prices_usd.csv"
@@ -400,6 +402,7 @@ class DeskAccounts:
         money = lambda value: "n/a" if not np.isfinite(value) else f"${value:,.2f}"
         percent = lambda value: "n/a" if not np.isfinite(value) else f"{value:+.2%}"
         display_interactive_table(table[columns], bold_last=True, title="DESK PERFORMANCE (NET OF DEPOSITS)",
+                                  key_columns={"Return 30D": "abs"},
                                   formatters={column: (percent if column.startswith("Return") else money)
                                               for column in columns[1:]})
         since = float(self.index.iloc[-1] / self.index.iloc[0] - 1)
@@ -599,7 +602,10 @@ class DeskAccounts:
                    "VaR 95%": "${:,.2f}", "VaR 99%": "${:,.2f}", "Beta BTC": "{:.2f}", "Beta SPY": "{:.2f}",
                    "Alpha vs BTC (/yr)": "{:+.1%}", "Alpha vs SPY (/yr)": "{:+.1%}", "Periods": "{:.0f}"}
         formats["Coverage"] = "{:.0%}"
-        display(table.set_index("Basis").style.format({k: v for k, v in formats.items() if k in table}, na_rep="n/a"))
+        basis = table.set_index("Basis")
+        styler = basis.style.format({k: v for k, v in formats.items() if k in table}, na_rep="n/a")
+        # Dollar VaR and the BTC beta are what the risk row is read for.
+        display(emphasis.style_frame(styler, basis, {"VaR 95%": None, "Beta BTC": None}))
         print(RISK_NOTE)
         self.risk_table = table
 
@@ -620,10 +626,10 @@ class DeskAccounts:
         from desk.hl.account_analytics import clip_inactive_periods
 
         clip_inactive_periods(figure, self.idle_periods())
-        figure.update_layout(title="Desk value by account (USD; wallet tokens excluded)", template="plotly_white",
+        figure.update_layout(title="Desk value by account (USD; wallet tokens excluded)", template="plotly_dark",
                              hovermode="x unified", yaxis_tickprefix="$", legend=LEGEND_ON_TOP["legend"],
                              margin={**LEGEND_ON_TOP["margin"], "b": 90})
-        figure.show()
+        show_chart(figure)
         index = self.index.resample("1D").last().dropna()
         index.index = index.index.normalize()
         comparison = go.Figure(go.Scatter(x=index.index, y=100 * index / index.iloc[0], name="Desk (net of deposits)"))
@@ -635,5 +641,5 @@ class DeskAccounts:
                     comparison.add_trace(go.Scatter(x=prices.index, y=100 * prices / prices.iloc[0], name=name,
                                                     line={"color": color}))
         comparison.update_layout(title=f"Desk time-weighted return vs BTC and SPY (start = 100, from {index.index[0]:%Y-%m-%d})",
-                                 template="plotly_white", hovermode="x unified", **LEGEND_ON_TOP)
-        comparison.show()
+                                 template="plotly_dark", hovermode="x unified", **LEGEND_ON_TOP)
+        show_chart(comparison)
