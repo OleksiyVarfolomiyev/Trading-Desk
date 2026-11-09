@@ -216,7 +216,7 @@ def ex_ante_row(
     row.update({"Volatility (/yr)": float(book.std() * math.sqrt(365)),
                 "Max drawdown": float((path / path.cummax() - 1).min())})
     for confidence in (0.95, 0.99):
-        row[f"VaR {confidence:.0%} ($)"] = bootstrap_var(book, confidence)["var"] * equity
+        row[f"VaR {confidence:.0%}"] = bootstrap_var(book, confidence)["var"] * equity
     for name in ("BTC", "SPY"):
         if name in benchmarks:
             pair = paired_returns(book, benchmarks[name])

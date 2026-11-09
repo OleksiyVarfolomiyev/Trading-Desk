@@ -479,3 +479,28 @@ class ExactFactorSetTests(unittest.TestCase):
                 analysis.fit_style_model(book, label="bad", factors=["Not a factor"])
         self.assertEqual(list(result["model"].index), ["Alt market - BTC", "Alpha (intercept)"])
         self.assertAlmostEqual(result["model"].loc["Alt market - BTC", "Beta"], 0.4, delta=0.06)  # 150 days: one s.e. is about 0.015
+
+
+class KellyOptimizerTests(unittest.TestCase):
+    def test_converges_when_the_optimum_sits_on_a_flat_ridge(self):
+        # Fourteen assets, most pinned at the +/-15% bounds, leave the log-growth objective almost
+        # flat along the free ones; the step size then grows into the thousands and a step-based
+        # stopping test never settled (the notebook raised "did not converge"). This sample,
+        # shaped like the desk's 163-day book, failed that way.
+        rng = np.random.default_rng(4)
+        vols = np.array([0.02, 0.06, 0.015, 0.017, 0.06, 0.05, 0.08, 0.06, 0.06, 0.023, 0.025, 0.03, 0.045, 0.12])
+        means = np.array([0.0004, 0.0077, 0.0003, 0.002, 0.0043, 0.0053, 0.0107, -0.0052, 0.0025, -0.0003,
+                          0.0014, 0.0003, 0.0025, -0.0025])
+        returns = rng.normal(means, vols, size=(163, 14))
+        weights = portfolio._optimize_full_kelly(returns, -0.15, 0.15, 0.0002)
+        self.assertTrue(np.all(weights >= -0.15 - 1e-12) and np.all(weights <= 0.15 + 1e-12))
+        self.assertLessEqual(weights.sum(), 1.0 + 1e-9)
+        # Optimal: no feasible move improves mean log growth.
+        def growth(w):
+            return np.log1p(returns @ w + (1 - w.sum()) * 0.0002).mean()
+        for index in range(len(weights)):
+            for move in (-1e-3, 1e-3):
+                trial = weights.copy()
+                trial[index] = np.clip(trial[index] + move, -0.15, 0.15)
+                if trial.sum() <= 1.0:
+                    self.assertLessEqual(growth(trial), growth(weights) + 1e-12)

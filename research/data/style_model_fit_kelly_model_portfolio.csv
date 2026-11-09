@@ -1,11 +1,11 @@
 ,Style model
 Book,Kelly model portfolio
-Periods,187 days
-From,2026-01-02
+Periods,135 days
+From,2026-03-19
 To,2026-09-30
-R-squared,0.48501300664584646
-Adjusted R-squared,0.4430954606751596
-Alpha (/yr),1.0111570588758068
-Alpha t-stat,2.4736139015122474
-Residual volatility (/yr),0.3165599528718617
-Information ratio,3.1942039721149014
+R-squared,0.4360727154220665
+Adjusted R-squared,0.4049901091854875
+Alpha (/yr),1.0706329573858187
+Alpha t-stat,2.717922885722449
+Residual volatility (/yr),0.3867098147264621
+Information ratio,2.7685693939346416

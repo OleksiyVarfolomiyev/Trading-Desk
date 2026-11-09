@@ -50,6 +50,8 @@ const FORMATS = {
   pct: { text: (v) => pct(v, 1), num: true },
   spct: { text: (v) => pct(v, 2, true), num: true, signed: true },
   num: { text: number, num: true },
+  // Prices in USD at full precision (small coins need more than two decimals).
+  price: { text: (v) => (isNum(v) ? "$" + number(v) : ""), num: true },
   num2: { text: (v) => (isNum(v) ? v.toFixed(2) : ""), num: true },
   int: { text: (v) => (isNum(v) ? Math.round(v).toLocaleString("en-US") : ""), num: true },
   text: { text: (v) => (v === null || v === undefined ? "" : String(v)), num: false },

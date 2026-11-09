@@ -1236,7 +1236,7 @@ class LiveRiskTests(unittest.TestCase):
         self.assertAlmostEqual(row["Beta BTC"], 0.5, delta=0.1)
         self.assertAlmostEqual(row["Coverage"], 0.75)
         self.assertEqual(row["Not priced"], "KYIV")
-        self.assertGreater(row["VaR 95% ($)"], 0)
+        self.assertGreater(row["VaR 95%"], 0)
         self.assertNotIn("Sharpe", row)
 
     def test_paired_returns_keep_mondays_and_compound_the_weekend(self):
@@ -1357,3 +1357,152 @@ class DeskIdlePeriodTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CancelTargetsTests(unittest.TestCase):
+    def resting(self, order_type, quantity, price, con_id, perm_id, aux=None, status="Submitted"):
+        order = SimpleNamespace(orderType=order_type, action="SELL", totalQuantity=quantity, orderRef="desk-protect",
+                                lmtPrice=price, auxPrice=aux if aux is not None else ib_venue.UNSET,
+                                orderId=perm_id, permId=perm_id)
+        return SimpleNamespace(contract=SimpleNamespace(conId=con_id), order=order,
+                               orderStatus=SimpleNamespace(status=status, filled=0), log=[])
+
+    def fake_ib(self, trades, positions):
+        cancelled = []
+
+        class FakeIB:
+            def reqAllOpenOrders(self):
+                pass
+
+            def sleep(self, seconds):
+                pass
+
+            def openTrades(self):
+                return [trade for trade in trades if trade.orderStatus.status not in ib_trade.DONE_STATUSES]
+
+            def portfolio(self, account):
+                return positions
+
+            def cancelOrder(self, order):
+                cancelled.append(order.permId)
+                for trade in trades:
+                    if trade.order is order:
+                        trade.orderStatus.status = "Cancelled"
+        return FakeIB(), cancelled
+
+    def test_cancels_only_take_profits_and_checks_stops_survive(self):
+        googl_stop = self.resting("STP LMT", 1, 266.65, 1, 185, aux=272.07)
+        googl_target = self.resting("LMT", 1, 299.16, 1, 186)
+        kyiv_stop = self.resting("STP LMT", 1, 12.36, 2, 187, aux=12.60)
+        kyiv_target = self.resting("LMT", 1, 13.77, 2, 188)
+        positions = [SimpleNamespace(contract=SimpleNamespace(conId=1, symbol="GOOGL", secType="STK", localSymbol="GOOGL"),
+                                     position=1.25, marketPrice=293.5),
+                     SimpleNamespace(contract=SimpleNamespace(conId=2, symbol="KYIV", secType="STK", localSymbol="KYIV"),
+                                     position=1.0, marketPrice=13.06),
+                     SimpleNamespace(contract=SimpleNamespace(conId=3, symbol="META", secType="STK", localSymbol="META"),
+                                     position=0.75, marketPrice=641.9)]
+        ib, cancelled = self.fake_ib([googl_stop, googl_target, kyiv_stop, kyiv_target], positions)
+        with redirect_stdout(io.StringIO()) as shown:
+            plans = ib_trade.collect_target_cancels(ib, "U1")
+            ib_trade.print_target_cancels(plans)
+        self.assertEqual([[t.order.permId for t in plan.targets] for plan in plans], [[186], [188], []])
+        self.assertEqual([[t.order.permId for t in plan.stops] for plan in plans], [[185], [187], []])
+        self.assertIn("stops cover 1 of 1.25", shown.getvalue())
+        self.assertIn("META (0.75):\n  no take-profit to cancel\n  WARNING: no stop", shown.getvalue())
+        with redirect_stdout(io.StringIO()) as shown:
+            self.assertTrue(ib_trade.cancel_targets(ib, [plan for plan in plans if plan.targets]))
+        self.assertEqual(cancelled, [186, 188])
+        self.assertEqual(shown.getvalue().count("-> Submitted"), 2)  # both stops still working
+
+    def test_reports_a_stop_that_went_with_its_target(self):
+        stop = self.resting("STP", 1, ib_venue.UNSET, 1, 5, aux=90.0)
+        target = self.resting("LMT", 1, 110.0, 1, 6)
+        positions = [SimpleNamespace(contract=SimpleNamespace(conId=1, symbol="X", secType="STK", localSymbol="X"),
+                                     position=1.0, marketPrice=100.0)]
+        ib, _ = self.fake_ib([stop, target], positions)
+        original_cancel = ib.cancelOrder
+
+        def cancel_both(order):  # as if IB cancelled the whole OCA group
+            original_cancel(order)
+            stop.orderStatus.status = "Cancelled"
+        ib.cancelOrder = cancel_both
+        plans = ib_trade.collect_target_cancels(ib, "U1")
+        with redirect_stdout(io.StringIO()) as shown:
+            self.assertFalse(ib_trade.cancel_targets(ib, plans))
+        self.assertIn("a stop is no longer working", shown.getvalue())
+
+
+class RequestedSizeTests(unittest.TestCase):
+    def sizing(self, quantity=10.0, risk=50.0, reason=""):
+        return ib_trade.Sizing(quantity, 90.0, 110.0, 100.0, risk, reason)
+
+    def test_requested_quantity_is_used_below_the_risk_size_and_capped_above(self):
+        plan = ib_trade.IBPlan("X", "LONG", "equity", 100.0, 0, 0, 4.0)
+        smaller = ib_trade.requested_size(self.sizing(), 2.6, 1.0, plan)
+        self.assertEqual((smaller.quantity, smaller.risk_usd), (2.0, 10.0))  # whole shares, risk per unit kept
+        self.assertIn("rounded down", plan.warnings[-1])
+        capped = ib_trade.requested_size(self.sizing(), 25, 1.0, plan)
+        self.assertEqual(capped.quantity, 10.0)
+        self.assertIn("capped at 10", plan.warnings[-1])
+        self.assertIn("below one size step", ib_trade.requested_size(self.sizing(), 0.5, 1.0, plan).block_reason)
+        blocked = self.sizing(reason="no margin")
+        self.assertIs(ib_trade.requested_size(blocked, 2, 1.0, plan), blocked)
+
+    def test_signals_read_an_optional_quantity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "signals.csv"
+            path.write_text("symbol,side,quantity\nNET,LONG,1\nSWMR,LONG,\n")
+            signals = ib_trade.read_signals(path)
+            self.assertEqual([signal.quantity for signal in signals], [1.0, None])
+            path.write_text("symbol,side,quantity\nNET,LONG,-1\n")
+            with self.assertRaises(ValueError):
+                ib_trade.read_signals(path)
+
+    def test_entry_only_leaves_nothing_resting(self):
+        placed, cancelled = [], []
+
+        class FakeIB:
+            def placeOrder(self, contract, order):
+                trade = SimpleNamespace(order=order, log=[], orderStatus=SimpleNamespace(
+                    status="Submitted", filled=1.0, avgFillPrice=297.0))
+                trade.isDone = lambda: trade.orderStatus.status in ib_trade.DONE_STATUSES
+                placed.append(trade)
+                return trade
+
+            def cancelOrder(self, order):
+                cancelled.append(order)
+                placed[-1].orderStatus.status = "Cancelled"
+
+            def sleep(self, seconds):
+                pass
+
+        plan = ib_trade.IBPlan("NET", "LONG", "equity", 297.0, 270.0, 324.0, 21.0, quantity=2, contract=object())
+        with patch.object(ib_trade, "ENTRY_TIMEOUT_SECONDS", 0):
+            line = ib_trade.submit_entry_only(FakeIB(), plan, "BUY", 297.5, "U1")
+        self.assertEqual(len(placed), 1)  # the entry only: no stop or target
+        self.assertEqual(len(cancelled), 1)  # the unfilled remainder
+        self.assertIn("filled 1 of 2", line)
+        self.assertIn("nothing is resting", line)
+
+
+class YahooQuoteTests(unittest.TestCase):
+    def reply(self, price=100.0, stamp=1_000, currency="USD", start=0, end=2_000):
+        response = SimpleNamespace(ok=True, status_code=200)
+        response.json = lambda: {"chart": {"result": [{"meta": {
+            "regularMarketPrice": price, "regularMarketTime": stamp, "currency": currency,
+            "chartPreviousClose": 99.0, "currentTradingPeriod": {"regular": {"start": start, "end": end}}}}]}}
+        return response
+
+    def test_fresh_in_session_price_is_live_with_a_bounded_spread(self):
+        with patch("requests.get", return_value=self.reply()):
+            quote = ib_trade.yahoo_quote("NET", now=1_100)
+        self.assertTrue(quote.live)
+        self.assertAlmostEqual(quote.reference, 100.0)
+        self.assertAlmostEqual(quote.ask, 100.0 * (1 + ib_trade.EXTERNAL_QUOTE_CROSS_PCT))
+
+    def test_stale_closed_or_foreign_prices_are_not_live(self):
+        with patch("requests.get", return_value=self.reply()):
+            self.assertFalse(ib_trade.yahoo_quote("NET", now=1_000 + ib_trade.YAHOO_MAX_AGE_SECONDS + 1).live)
+            self.assertFalse(ib_trade.yahoo_quote("NET", now=2_500).live)  # after the session
+        with patch("requests.get", return_value=self.reply(currency="EUR")), self.assertRaises(ValueError):
+            ib_trade.yahoo_quote("SAP", now=1_100)

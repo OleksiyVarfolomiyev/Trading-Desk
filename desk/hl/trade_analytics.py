@@ -506,15 +506,15 @@ def consolidate_current_funding(rows: list[dict[str, Any]]) -> list[dict[str, An
             {
                 "Positions": 0,
                 "Size": 0.0,
-                "Position Value ($)": 0.0,
-                "Funding-Covered Value ($)": 0.0,
+                "Position Value": 0.0,
+                "Funding-Covered Value": 0.0,
                 "Weighted Funding Rate": 0.0,
-                "Funding PnL / hour ($)": 0.0,
+                "Funding PnL / hour": 0.0,
             },
         )
         group["Positions"] += 1
         group["Size"] += size
-        group["Position Value ($)"] += notional
+        group["Position Value"] += notional
 
         try:
             rate_pct = float(row["Funding (1h)"])
@@ -522,31 +522,31 @@ def consolidate_current_funding(rows: list[dict[str, Any]]) -> list[dict[str, An
             continue
         if not np.isfinite(rate_pct):
             continue
-        group["Funding-Covered Value ($)"] += notional
+        group["Funding-Covered Value"] += notional
         group["Weighted Funding Rate"] += notional * rate_pct
-        group["Funding PnL / hour ($)"] += -direction * notional * rate_pct / 100.0
+        group["Funding PnL / hour"] += -direction * notional * rate_pct / 100.0
 
     consolidated = []
     for (coin, side), group in sorted(grouped.items()):
-        total_notional = float(group["Position Value ($)"])
-        covered_notional = float(group["Funding-Covered Value ($)"])
+        total_notional = float(group["Position Value"])
+        covered_notional = float(group["Funding-Covered Value"])
         funding_rate_pct = (
             float(group["Weighted Funding Rate"]) / covered_notional
             if covered_notional > 0
             else float("nan")
         )
-        hourly_funding_pnl = float(group["Funding PnL / hour ($)"])
+        hourly_funding_pnl = float(group["Funding PnL / hour"])
         consolidated.append(
             {
                 "Coin": coin,
                 "Side": side,
                 "Positions": int(group["Positions"]),
                 "Size": float(group["Size"]),
-                "Position Value ($)": total_notional,
+                "Position Value": total_notional,
                 "Current Funding / 1h (%)": funding_rate_pct,
                 "Funding APR (%)": funding_rate_pct * 24 * 365,
-                "Estimated Funding PnL / hour ($)": hourly_funding_pnl,
-                "Estimated Funding PnL / day ($)": hourly_funding_pnl * 24,
+                "Estimated Funding PnL / hour": hourly_funding_pnl,
+                "Estimated Funding PnL / day": hourly_funding_pnl * 24,
                 "Funding Coverage (%)": (
                     covered_notional / total_notional * 100.0
                     if total_notional > 0
@@ -883,18 +883,18 @@ def summarize_current_funding(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "Long Positions": long_positions,
         "Short Positions": short_positions,
-        "Long Notional ($)": long_notional,
-        "Short Notional ($)": short_notional,
-        "Gross Notional ($)": gross_notional,
-        "Net Notional ($)": net_notional,
+        "Long Notional": long_notional,
+        "Short Notional": short_notional,
+        "Gross Notional": gross_notional,
+        "Net Notional": net_notional,
         "Net Exposure / Gross (%)": (
             net_notional / gross_notional * 100.0 if gross_notional > 0 else float("nan")
         ),
         "Net Funding Rate / 1h (%) (covered)": net_funding_rate_pct,
         "Net Funding APR (%) (simple, covered)": net_funding_rate_pct * 24 * 365,
-        "Estimated Net Funding PnL / hour ($)": funding_pnl_per_hour,
-        "Estimated Net Funding PnL / day ($)": funding_pnl_per_hour * 24,
-        "Funding-Covered Notional ($)": funded_notional,
+        "Estimated Net Funding PnL / hour": funding_pnl_per_hour,
+        "Estimated Net Funding PnL / day": funding_pnl_per_hour * 24,
+        "Funding-Covered Notional": funded_notional,
         "Funding Coverage (%)": (
             funded_notional / gross_notional * 100.0 if gross_notional > 0 else float("nan")
         ),

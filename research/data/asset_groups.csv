@@ -3,8 +3,15 @@ io:IONQ,TradFi,HL perp,SPY,False
 BTC,Crypto,HL perp,BTC,True
 INJ,Crypto,HL perp,BTC,True
 TRX,Crypto,HL perp,BTC,True
+TRUMP,Crypto,HL perp,BTC,True
 xyz:AAPL,TradFi,HL perp,SPY,True
 xyz:MU,TradFi,HL perp,SPY,True
 xyz:QNT,TradFi,HL perp,SPY,False
 HYPE,Crypto,HL spot,BTC,True
+DPI,Crypto,Wallet,BTC,True
 VVV,Crypto,Wallet,BTC,True
+GOOGL,TradFi,IB,SPY,True
+KYIV,TradFi,IB,SPY,True
+META,TradFi,IB,SPY,True
+NET,TradFi,IB,SPY,True
+SWMR,TradFi,IB,SPY,True

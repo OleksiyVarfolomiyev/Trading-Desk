@@ -138,3 +138,20 @@ class WalletHistoryTests(unittest.TestCase):
         accounts = [{"x": ["2026-01-01", "2026-01-04"], "y": [100.0, 200.0]}]
         total = _value_with_wallets(accounts, series)
         self.assertEqual(total["y"], [110.0, 120.0, 130.0, 240.0])
+
+    def test_wallet_without_a_rebuilt_history_still_charts(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from desk.accounts import Account
+        from desk.dashboard import _wallet_value_series
+
+        wallet = "0x" + "2" * 40  # a new wallet: recorded snapshots, but no one-off rebuild yet
+        with tempfile.TemporaryDirectory() as folder:
+            pd.DataFrame({"ts": ["2026-01-03T05:00:00+00:00", "2026-01-04T05:00:00+00:00"], "value_usd": [30.0, 40.0]}) \
+                .to_csv(Path(folder) / f"onchain_value_history_{wallet}.csv", index=False)
+            desk = SimpleNamespace(accounts=[Account("hl", wallet)], data_dir=Path(folder))
+            series = _wallet_value_series(desk, pd.Timestamp("2026-01-01", tz="UTC"))
+        self.assertEqual(series["y"], [30.0, 40.0])
+        self.assertIn("recorded since", series["note"])

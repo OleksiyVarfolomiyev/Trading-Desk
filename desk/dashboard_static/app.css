@@ -72,7 +72,7 @@ body {
 .topbar {
   position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-  padding: 12px 24px;
+  padding: 12px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
@@ -95,7 +95,8 @@ h1 { font-size: 18px; font-weight: 600; margin: 0; }
 .button:hover { background: var(--border); }
 .button:disabled { opacity: 0.5; cursor: default; }
 
-main { max-width: 1400px; margin: 0 auto; padding: 16px 24px 48px; display: flex; flex-direction: column; gap: 16px; }
+/* Full window width: no centred max-width column, just a narrow gutter. */
+main { margin: 0; padding: 12px 12px 48px; display: flex; flex-direction: column; gap: 16px; }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);

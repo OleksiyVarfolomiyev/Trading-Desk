@@ -17,7 +17,7 @@ import csv
 import math
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -65,6 +65,16 @@ FALLBACK_STOP_PCT = 0.10
 DONE_STATUSES = {"Cancelled", "ApiCancelled", "Inactive", "Filled"}
 # Extended-hours orders on by default; --rth-only turns them off for the run.
 extended_hours = True
+# Where entry prices come from: IB's own quotes (needs a real-time data subscription for live
+# entries) or Yahoo Finance's free quotes (--quote-source yahoo; US stocks only).
+quote_source = "ib"
+YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
+YAHOO_MAX_AGE_SECONDS = 600  # a regular-session last trade older than this is not used for a live entry
+# With only a last price (no bid/ask), the entry limit sits this far through it, still capped by
+# MAX_ENTRY_SLIPPAGE_PCT: a marketable limit that fills at the best offer, never beyond the cap.
+EXTERNAL_QUOTE_CROSS_PCT = 0.003
+# Bracket each entry with a GTC stop and take-profit; --no-exits sends the entry alone.
+attach_exits = True
 # Aggregate cap for this run; --max-risk-pct overrides it.
 max_total_risk_pct = desk_risk.MAX_TOTAL_RISK_PCT
 
@@ -73,6 +83,8 @@ max_total_risk_pct = desk_risk.MAX_TOTAL_RISK_PCT
 class Signal:
     spec: ContractSpec
     side: str
+    # Requested size (for example from Kelly weights); the risk and margin sizing still caps it.
+    quantity: float | None = None
 
 
 @dataclass
@@ -151,8 +163,54 @@ def read_signals(path: Path) -> list[Signal]:
         if key in seen:
             raise ValueError(f"{path} line {number}: {spec.symbol} is listed twice.")
         seen.add(key)
-        signals.append(Signal(spec, row["side"].upper()))
+        quantity = None
+        if row.get("quantity"):
+            try:
+                quantity = float(row["quantity"])
+            except ValueError:
+                raise ValueError(f"{path} line {number}: quantity {row['quantity']!r} is not a number.") from None
+            if not quantity > 0:
+                raise ValueError(f"{path} line {number}: quantity must be positive.")
+        signals.append(Signal(spec, row["side"].upper(), quantity))
     return signals
+
+
+def yahoo_quote(symbol: str, now: float | None = None) -> ib_venue.Quote:
+    """Yahoo Finance's last regular-session price for a US stock, as a quote.
+
+    It has no bid/ask, so bid and ask are set EXTERNAL_QUOTE_CROSS_PCT either side of the last
+    price; ``live`` means the session is open and the last trade is under YAHOO_MAX_AGE_SECONDS old.
+    """
+    import requests
+
+    response = requests.get(YAHOO_CHART_URL + symbol, params={"interval": "1m", "range": "1d"}, timeout=15,
+                            headers={"User-Agent": "trading-desk/1.0 (read-only quote)"})
+    if not response.ok:
+        raise ValueError(f"Yahoo Finance quote for {symbol} failed (HTTP {response.status_code})")
+    try:
+        meta = response.json()["chart"]["result"][0]["meta"]
+        last, stamp = float(meta["regularMarketPrice"]), int(meta["regularMarketTime"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise ValueError(f"Yahoo Finance returned no price for {symbol}") from None
+    if meta.get("currency", "USD") != "USD":
+        raise ValueError(f"Yahoo Finance prices {symbol} in {meta.get('currency')}, not USD")
+    now = time.time() if now is None else now
+    session = (meta.get("currentTradingPeriod") or {}).get("regular") or {}
+    in_session = session.get("start", 0) <= now <= session.get("end", 0)
+    live = last > 0 and in_session and now - stamp <= YAHOO_MAX_AGE_SECONDS
+    close = float(meta.get("chartPreviousClose") or meta.get("previousClose") or 0.0)
+    return ib_venue.Quote(bid=last * (1 - EXTERNAL_QUOTE_CROSS_PCT), ask=last * (1 + EXTERNAL_QUOTE_CROSS_PCT),
+                          last=last, close=close, live=live)
+
+
+def get_quote(ib, contract) -> ib_venue.Quote:
+    """The entry quote from the source chosen for this run."""
+    if quote_source == "yahoo":
+        if contract.secType != "STK" or contract.currency != "USD":
+            raise ValueError(f"--quote-source yahoo covers USD stocks only, not {contract.secType} "
+                             f"{contract.currency}")
+        return yahoo_quote(contract.symbol)
+    return ib_venue.quote(ib, contract)
 
 
 def size_bracket(
@@ -212,6 +270,27 @@ def size_bracket(
     return Sizing(quantity, stop, target, limit, quantity * risk_per_unit, reason)
 
 
+def requested_size(sizing: Sizing, requested: float | None, step: float, plan: "IBPlan") -> Sizing:
+    """Use a requested quantity where the risk and margin sizing allows it; never more.
+
+    The requested quantity is rounded down to the size step. Above the risk/margin-limited
+    quantity it is capped there, with a note.
+    """
+    if requested is None or sizing.block_reason:
+        return sizing
+    wanted = round(math.floor(requested / step + 1e-9) * step, 8)
+    if wanted <= 0:
+        return replace(sizing, quantity=0.0, risk_usd=0.0,
+                       block_reason=f"requested {requested:g} is below one size step ({step:g})")
+    if wanted > sizing.quantity:
+        plan.warnings.append(f"requested {requested:g} capped at {sizing.quantity:g} by the risk and margin limits")
+        return sizing
+    per_unit = sizing.risk_usd / sizing.quantity if sizing.quantity else 0.0
+    if wanted < requested:
+        plan.warnings.append(f"requested {requested:g} rounded down to {wanted:g} (whole size steps)")
+    return replace(sizing, quantity=wanted, risk_usd=wanted * per_unit)
+
+
 def _what_if(ib, contract, side: str, quantity: float, limit: float, account: str):
     """IB's margin and commission estimate for an order, without sending it."""
     from ib_async import LimitOrder
@@ -254,7 +333,7 @@ def plan_ib_trades(ib, account: Account, signals: list[Signal], external: DeskBo
                 raise ValueError(f"no {contract.currency} exchange rate in the IB account")
             bars = ib_venue.daily_bars(ib, contract)
             atr = wilder_atr(bars, ATR_PERIOD)
-            quote = ib_venue.quote(ib, contract)
+            quote = get_quote(ib, contract)
             reference = quote.reference
             closed_price = not reference > 0
             if closed_price:
@@ -310,6 +389,7 @@ def plan_ib_trades(ib, account: Account, signals: list[Signal], external: DeskBo
                 plan.warnings.append("IB gave no margin estimate; full position value assumed")
             sizing = size_bracket(signal.side, reference, quote.bid, quote.ask, atr, tick, step, mult, fx,
                                   budget, headroom, margin_room, margin_unit, commission_unit)
+        sizing = requested_size(sizing, signal.quantity, step, plan)
         plan.quantity = sizing.quantity
         plan.stop_price, plan.target_price, plan.entry_limit = sizing.stop_price, sizing.target_price, sizing.entry_limit
         plan.risk_usd = sizing.risk_usd
@@ -337,6 +417,9 @@ def print_plans(plans: list[IBPlan], summary: dict) -> None:
     print(f"Aggregate risk cap: ${summary['risk_cap']:,.2f} ({max_total_risk_pct * 100:g}% of desk equity)")
     print(f"Per-position risk budget: ${summary['budget']:,.2f} (5% of the 80% usable-equity amount)")
     print(f"IB margin room above its {RESERVE_PCT:.0%} reserve: ${summary['margin_room']:,.2f}")
+    if not attach_exits:
+        print("--no-exits: entries only. No stop or take-profit will be placed; stop and target below are "
+              "the risk model's levels, not orders.")
     for plan in plans:
         if not plan.reference:
             print(f"{plan.symbol} {plan.side}: BLOCKED: {plan.block_reason}")
@@ -398,9 +481,13 @@ def _wait_for_parent(ib, trade, timeout: float) -> None:
 
 def submit_bracket(ib, plan: IBPlan, account: str) -> str:
     """Send one bracket, wait for the entry, and tidy partial fills. Returns a status line."""
-    fresh = ib_venue.quote(ib, plan.contract)
+    try:
+        fresh = get_quote(ib, plan.contract)
+    except ValueError as exc:
+        return f"{plan.symbol}: skipped, {exc}."
     if not fresh.live:
-        return f"{plan.symbol}: skipped, no real-time quote (market closed or no live data subscription)."
+        return (f"{plan.symbol}: skipped, no real-time quote (market closed or no live data subscription"
+                + ("; Yahoo's last trade is stale or the session is closed)." if quote_source == "yahoo" else ")."))
     direction = side_direction(plan.side)
     if (fresh.reference - plan.stop_price) * direction <= 0:
         return f"{plan.symbol}: skipped, the price {fresh.reference:,.6g} is already through the stop."
@@ -414,6 +501,8 @@ def submit_bracket(ib, plan: IBPlan, account: str) -> str:
     limit = min(limit, plan.entry_limit) if direction > 0 else max(limit, plan.entry_limit)
     from ib_async import LimitOrder
 
+    if not attach_exits:
+        return submit_entry_only(ib, plan, action, limit, account)
     exit_action = "SELL" if direction > 0 else "BUY"
     # Entry (DAY) bracketed by a GTC target and stop that cancel each other, all able to work
     # in extended sessions. Only the last child transmits, so IB activates the three together.
@@ -446,6 +535,29 @@ def submit_bracket(ib, plan: IBPlan, account: str) -> str:
     price = parent.orderStatus.avgFillPrice
     return (f"{plan.symbol}: filled {filled:g} at {price:,.6g}; GTC stop {plan.stop_price:,.6g} and "
             f"take-profit {plan.target_price:,.6g} are held by IB as one-cancels-other.")
+
+
+def submit_entry_only(ib, plan: IBPlan, action: str, limit: float, account: str) -> str:
+    """Send the entry with no exit orders; whatever has not filled in time is cancelled.
+
+    Nothing is left resting: the result is a plain open position (or nothing), with no stop.
+    """
+    from ib_async import LimitOrder
+
+    trade = ib.placeOrder(plan.contract, LimitOrder(action, plan.quantity, limit, tif="DAY",
+                                                     outsideRth=extended_hours, account=account))
+    _wait_for_parent(ib, trade, ENTRY_TIMEOUT_SECONDS)
+    if not trade.isDone():
+        ib.cancelOrder(trade.order)
+        _wait_until_done(ib, [trade], CANCEL_WAIT_SECONDS)
+    filled = trade.orderStatus.filled
+    left = "" if trade.isDone() else " WARNING: the unfilled rest did not confirm cancelled; check TWS."
+    if filled <= 0:
+        reasons = "; ".join(entry.message for entry in trade.log if entry.message)
+        return f"{plan.symbol}: entry not filled ({trade.orderStatus.status}){': ' + reasons if reasons else ''}.{left}"
+    partial = f" of {plan.quantity:g} (the rest was cancelled)" if filled < plan.quantity else ""
+    return (f"{plan.symbol}: filled {filled:g}{partial} at {trade.orderStatus.avgFillPrice:,.6g}; "
+            f"no exit orders (--no-exits), so nothing is resting.{left}")
 
 
 # ---------------------------------------------------------------------------
@@ -780,6 +892,104 @@ def submit_protection(ib, plan: ProtectionPlan, account: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Cancel take-profits, keeping stops
+# ---------------------------------------------------------------------------
+
+CANCEL_TARGETS_PHRASE = "CANCEL TARGETS"
+
+
+@dataclass
+class TargetCancel:
+    """One open position's resting take-profits to cancel, and the stops that stay."""
+
+    symbol: str
+    position: float
+    targets: list
+    stops: list
+
+    @property
+    def stop_quantity(self) -> float:
+        return sum(map(_remaining, self.stops))
+
+
+def collect_target_cancels(ib, account: str, symbols: set[str] | None = None) -> list[TargetCancel]:
+    """Each position's profit-side exit limits (take-profits), with the stops left in place."""
+    ib.reqAllOpenOrders()
+    ib.sleep(1)
+    trades = ib.openTrades()
+    plans = []
+    for item in ib.portfolio(account):
+        if not item.position:
+            continue
+        symbol = ib_venue.contract_symbol(item.contract)
+        if symbols and symbol.upper() not in symbols:
+            continue
+        direction = 1 if item.position > 0 else -1
+        mark = float(item.marketPrice) if ib_venue.is_set(item.marketPrice) else float("nan")
+        if not math.isfinite(mark):
+            print(f"{symbol}: no market price, so take-profits cannot be told from other limits; skipped.")
+            continue
+        stops, targets = exit_trades(trades, item.contract.conId, "SELL" if direction > 0 else "BUY", mark, direction)
+        plans.append(TargetCancel(symbol, float(item.position), targets, stops))
+    return plans
+
+
+def _order_text(trade) -> str:
+    order = trade.order
+    if order.orderType in STOP_ORDER_TYPES:
+        price = f"stop {order.auxPrice:,.4g}" + (f" limit {order.lmtPrice:,.4g}" if order.orderType == "STP LMT" else "")
+    else:
+        price = f"limit {order.lmtPrice:,.4g}"
+    placed = "desk" if str(order.orderRef or "").startswith(PROTECT_ORDER_REF) else "TWS/other"
+    return f"{order.orderType} {order.action} {_remaining(trade):g} at {price} (id {order.orderId}, {placed})"
+
+
+def print_target_cancels(plans: list[TargetCancel]) -> None:
+    if not plans:
+        print("No open IB positions.")
+        return
+    for plan in plans:
+        print(f"{plan.symbol} ({plan.position:g}):")
+        for trade in plan.targets:
+            print(f"  cancel  {_order_text(trade)}")
+        for trade in plan.stops:
+            print(f"  keep    {_order_text(trade)}")
+        if not plan.targets:
+            print("  no take-profit to cancel")
+        if not plan.stops:
+            print("  WARNING: no stop; this position stays unprotected")
+        elif plan.stop_quantity + 1e-9 < abs(plan.position):
+            print(f"  note: stops cover {plan.stop_quantity:g} of {abs(plan.position):g} "
+                  "(fractional shares cannot be protected through the API)")
+
+
+def cancel_targets(ib, plans: list[TargetCancel]) -> bool:
+    """Cancel the take-profits, then confirm every kept stop is still working."""
+    targets = [trade for plan in plans for trade in plan.targets]
+    for trade in targets:
+        ib.cancelOrder(trade.order)
+    done = _wait_until_done(ib, targets, CANCEL_WAIT_SECONDS)
+    for plan in plans:
+        for trade in plan.targets:
+            print(f"{plan.symbol}: {_order_text(trade)} -> {trade.orderStatus.status}")
+    # A stop shares its OCA group with the target it was placed with; check none went with it.
+    ib.reqAllOpenOrders()
+    ib.sleep(1)
+    live = {trade.order.permId: trade for trade in ib.openTrades()}
+    intact = True
+    for plan in plans:
+        for stop in plan.stops:
+            status = live[stop.order.permId].orderStatus.status if stop.order.permId in live else "not open"
+            print(f"{plan.symbol}: kept {_order_text(stop)} -> {status}")
+            intact &= status not in DONE_STATUSES and status != "not open"
+    if not done:
+        print("WARNING: not every take-profit confirmed cancelled; check TWS.")
+    if not intact:
+        print("WARNING: a stop is no longer working; rerun --protect-open --stops-only to restore it.")
+    return done and intact
+
+
+# ---------------------------------------------------------------------------
 # Kill switch
 # ---------------------------------------------------------------------------
 
@@ -1000,17 +1210,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replace", action="store_true",
                         help="With --protect-open: cancel the desk's own existing exit orders and place fresh ones "
                         "(for example to move them to extended hours or a new ladder).")
-    parser.add_argument("--symbols", help="With --protect-open: only these comma-separated symbols, e.g. NET,SWMR.")
+    parser.add_argument("--quote-source", choices=("ib", "yahoo"), default="ib",
+                        help="Entry prices from IB (default; live entries need a real-time IB data subscription) "
+                        "or Yahoo Finance's free last price (USD stocks only).")
+    parser.add_argument("--no-exits", action="store_true",
+                        help="With --signals: send entries only, with no stop or take-profit; an entry not filled "
+                        "within the timeout is cancelled, so nothing is left resting.")
+    parser.add_argument("--cancel-targets", action="store_true",
+                        help="Show (or with --live, execute) cancelling every open position's take-profit orders, "
+                        "leaving its stops in place.")
+    parser.add_argument("--symbols", help="With --protect-open or --cancel-targets: only these comma-separated "
+                        "symbols, e.g. NET,SWMR.")
     parser.add_argument("--rth-only", action="store_true",
                         help="Keep orders to regular trading hours (default: they also work in pre-market and "
                         "after-hours, with stops as stop-limits).")
     parser.add_argument("--live", action="store_true", help="Allow live orders after typing the confirmation phrases.")
     args = parser.parse_args(argv)
-    if (args.stops_only or args.ladder != 1 or args.replace or args.symbols) and not args.protect_open:
-        parser.error("--stops-only, --ladder, --replace and --symbols apply only to --protect-open.")
+    if (args.stops_only or args.ladder != 1 or args.replace) and not args.protect_open:
+        parser.error("--stops-only, --ladder and --replace apply only to --protect-open.")
+    if args.symbols and not (args.protect_open or args.cancel_targets):
+        parser.error("--symbols applies only to --protect-open and --cancel-targets.")
+    if args.cancel_targets and (args.protect_open or args.signals or args.kill_switch):
+        parser.error("--cancel-targets cannot be combined with --protect-open, --signals or --kill-switch.")
     symbols = {item.strip().upper() for item in args.symbols.split(",") if item.strip()} if args.symbols else None
-    global extended_hours
+    global extended_hours, attach_exits, quote_source
     extended_hours = not args.rth_only
+    quote_source = args.quote_source
+    attach_exits = not args.no_exits
+    if args.no_exits and not args.signals:
+        parser.error("--no-exits applies only to --signals.")
     if not 1 <= args.ladder <= 10:
         parser.error("--ladder must be between 1 and 10.")
     if args.protect_open and (args.signals or args.kill_switch):
@@ -1044,6 +1272,28 @@ def main(argv: list[str] | None = None) -> int:
                     print("Confirmation did not match; no order was sent.")
                     return 0
                 return 0 if run_kill_switch(ib, acct) else 2
+            if args.cancel_targets:
+                plans = collect_target_cancels(ib, acct, symbols)
+                print_target_cancels(plans)
+                if not any(plan.targets for plan in plans):
+                    print("No take-profit orders to cancel.")
+                    return 0
+                if not args.live:
+                    print("Dry run only. No order was cancelled.")
+                    return 0
+                if input("Type LIVE TRADING to review the take-profits to cancel: ").strip() != "LIVE TRADING":
+                    print("Confirmation did not match; nothing was cancelled.")
+                    return 0
+                plans = collect_target_cancels(ib, acct, symbols)
+                print("Refreshed check immediately before cancelling:")
+                print_target_cancels(plans)
+                if not any(plan.targets for plan in plans):
+                    print("The refreshed check found no take-profit; nothing was cancelled.")
+                    return 0
+                if input(f"Type {CANCEL_TARGETS_PHRASE} to cancel them: ").strip() != CANCEL_TARGETS_PHRASE:
+                    print("Confirmation did not match; nothing was cancelled.")
+                    return 0
+                return 0 if cancel_targets(ib, [plan for plan in plans if plan.targets]) else 2
             if args.protect_open:
                 # Protection only reduces risk, so it works even while the kill switch is engaged.
                 with_targets = not args.stops_only
@@ -1074,7 +1324,8 @@ def main(argv: list[str] | None = None) -> int:
                         print(submit_protection(ib, plan, acct))
                 return 0
             if args.signals is None:
-                parser.error("--signals is required unless --protect-open, --kill-switch or --clear-kill-switch is used.")
+                parser.error("--signals is required unless --protect-open, --cancel-targets, --kill-switch or "
+                             "--clear-kill-switch is used.")
             if args.live and kill_switch_engaged():
                 print("Kill switch is engaged; no order was sent. Use --clear-kill-switch to trade again.")
                 return 2

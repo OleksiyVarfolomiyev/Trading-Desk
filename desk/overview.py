@@ -11,7 +11,6 @@ import math
 from pathlib import Path
 
 import pandas as pd
-from IPython.display import display
 
 from desk.accounts import Account, accounts_for, ib_data_dir, load_accounts
 from desk.hl.account_analytics import display_interactive_table
@@ -47,10 +46,55 @@ def _percent(value):
 
 
 def _signed_style(row_index, column, value, row):
-    if isinstance(value, (int, float)) and math.isfinite(value) and column in {"Unrealized PnL", "Net", "Value (USD)"}:
-        return "color:#188038" if value > 0 else "color:#d93025" if value < 0 else "color:inherit"
+    if isinstance(value, (int, float)) and math.isfinite(value) and column in {"Unrealized PnL", "Net", "Value"}:
+        return "color:#188038;" if value > 0 else "color:#c62828;" if value < 0 else "color:inherit;"
     # Balances, quantities and prices are not gains or losses, so keep them uncoloured.
-    return "color:inherit"
+    return "color:inherit;"
+
+
+def _pnl_style(row_index, column, value, row):
+    """Signed colours for PnL and its shares, on every row including the total."""
+    if column in {"% of account value", "% of position value"}:
+        return _signed_style(row_index, "Unrealized PnL", value, row)
+    return _signed_style(row_index, column, value, row)
+
+
+def _without_venue(frame: pd.DataFrame) -> pd.DataFrame:
+    """Drop the Venue column for display: account names already say the venue (HL 07f2, IB 8440).
+
+    A total row labelled in Venue keeps its label, moved to Account.
+    """
+    if "Venue" not in frame.columns:
+        return frame
+    frame = frame.copy()
+    if "Account" in frame.columns:
+        frame.loc[frame["Venue"] == "Total", "Account"] = "Total"
+    return frame.drop(columns="Venue")
+
+
+US_EASTERN = "America/New_York"
+
+
+def ib_fills_table(fills: pd.DataFrame) -> pd.DataFrame:
+    """IB executions for display: US Eastern date and minute, last four digits of the account."""
+    from desk.accounts import short_id
+
+    times = pd.to_datetime(fills["time"], utc=True, format="mixed").dt.tz_convert(US_EASTERN)
+    table = pd.DataFrame({
+        "Time (ET)": times.dt.strftime("%Y-%m-%d %H:%M"),
+        "Account": fills["account"].map(lambda account: f"IB {short_id(account)}"),
+        "Symbol": fills["symbol"], "Type": fills["sec_type"], "Side": fills["side"],
+        "Quantity": fills["quantity"], "Price": fills["price"],
+    })
+    currency = fills["currency"].fillna("USD") if "currency" in fills else pd.Series("USD", index=fills.index)
+    if (currency != "USD").any():  # only then is the currency worth a column
+        table.insert(table.columns.get_loc("Price") + 1, "Currency", currency.to_numpy())
+    for column, label in (("multiplier", "Multiplier"), ("commission", "Commission"), ("realized_pnl", "Realized PnL")):
+        if column in fills:
+            table[label] = fills[column].to_numpy()
+    if "Multiplier" in table and (table["Multiplier"].fillna(1) == 1).all():
+        table = table.drop(columns="Multiplier")  # stocks only: always 1
+    return table.reset_index(drop=True)
 
 
 def _pnl_share(position) -> float:
@@ -103,7 +147,10 @@ def merge_ib_fills(fills: pd.DataFrame, data_dir: Path, account: str) -> pd.Data
     if fills.empty:
         return saved
     fills = fills.assign(time=fills["time"].astype(str))
-    merged = pd.concat([saved, fills], ignore_index=True).drop_duplicates("exec_id", keep="last")
+    merged = pd.concat([saved, fills], ignore_index=True)
+    # The newest read wins per execution, but a value it lacks (a commission report that had not
+    # arrived yet) keeps the one saved earlier.
+    merged = merged.groupby("exec_id", sort=False, dropna=False).last().reset_index()
     merged = merged.sort_values("time").reset_index(drop=True)
     merged.to_csv(path, index=False)
     return merged
@@ -225,7 +272,8 @@ class DeskOverview:
         frame.loc[len(frame)] = {"Venue": "Total", "Account": "", **total.to_dict(), "% of desk": 1.0}
         money = {column: _money for column in ["Equity", "Cash", "Margin used", "Available",
                                                 "Unrealized PnL", "Gross", "Net"]}
-        display_interactive_table(frame, formatters={**money, "% of desk": _percent, "Positions": "{:.0f}".format},
+        display_interactive_table(_without_venue(frame),
+                                  formatters={**money, "% of desk": _percent, "Positions": "{:.0f}".format},
                                   cell_style=_signed_style, bold_last=True, title="DESK ACCOUNTS")
         for snapshot in self.snapshots:
             for note in snapshot.notes:
@@ -253,16 +301,18 @@ class DeskOverview:
                 rows.append({
                     "Asset class": position.asset_class, "Venue": position.venue, "Account": snapshot.label,
                     "Symbol": position.symbol, "Side": position.side, "Quantity": position.quantity,
-                    "Avg price": position.avg_price, "Mark": position.mark_price, "Currency": position.currency,
-                    "Value (USD)": position.notional_usd, "Unrealized PnL": position.unrealized_usd,
+                    # Prices in USD like every other desk value, so no currency column is needed.
+                    "Avg price": position.avg_price * position.fx_to_usd,
+                    "Mark": position.mark_price * position.fx_to_usd,
+                    "Value": position.notional_usd, "Unrealized PnL": position.unrealized_usd,
                     "Exposure / desk value": abs(position.notional_usd) / equity if equity else float("nan"),
                 })
         frame = pd.DataFrame(rows)
         if len(frame):
             # Weight is the position's share of all gross exposure, so it sums to 100% across every
             # table; exposure / desk value sums to gross leverage, which leveraged perps push past 100%.
-            gross = frame["Value (USD)"].abs().sum()
-            frame.insert(len(frame.columns) - 1, "Weight", frame["Value (USD)"].abs() / gross if gross else float("nan"))
+            gross = frame["Value"].abs().sum()
+            frame.insert(len(frame.columns) - 1, "Weight", frame["Value"].abs() / gross if gross else float("nan"))
         return frame
 
     def show_positions(self):
@@ -274,21 +324,23 @@ class DeskOverview:
             print("No open positions.")
             return
         number = "{:,.6g}".format
+        usd_price = "${:,.6g}".format
         for klass, group in frame.groupby("Asset class", sort=True):
-            group = group.sort_values("Value (USD)", key=abs, ascending=False).drop(columns="Asset class")
+            group = group.sort_values("Value", key=abs, ascending=False).drop(columns="Asset class")
             total = {"Venue": "Total", "Account": "", "Symbol": "", "Side": "", "Quantity": float("nan"),
-                     "Avg price": float("nan"), "Mark": float("nan"), "Currency": "",
-                     "Value (USD)": group["Value (USD)"].sum(), "Unrealized PnL": group["Unrealized PnL"].sum(),
+                     "Avg price": float("nan"), "Mark": float("nan"),
+                     "Value": group["Value"].sum(), "Unrealized PnL": group["Unrealized PnL"].sum(),
                      "Weight": group["Weight"].sum(), "Exposure / desk value": group["Exposure / desk value"].sum()}
             group = pd.concat([group, pd.DataFrame([total])], ignore_index=True)
+            group = _without_venue(group)
             display_interactive_table(
-                group, formatters={"Quantity": number, "Avg price": number, "Mark": number,
-                                   "Value (USD)": _money, "Unrealized PnL": _money, "Weight": _percent,
+                group, formatters={"Quantity": number, "Avg price": usd_price, "Mark": usd_price,
+                                   "Value": _money, "Unrealized PnL": _money, "Weight": _percent,
                                    "Exposure / desk value": _percent},
                 cell_style=_signed_style, bold_last=True, title=f"OPEN POSITIONS: {klass.upper()}",
                 blank_missing_cells={(len(group) - 1, column) for column in ("Quantity", "Avg price", "Mark")},
             )
-        frame = frame.assign(gross=frame["Value (USD)"].abs())
+        frame = frame.assign(gross=frame["Value"].abs())
         leverage = frame["gross"].sum() / self.desk_equity if self.desk_equity else float("nan")
         print("Value is signed (shorts negative). Weight is each position's share of gross exposure (absolute "
               "values), so weights sum to 100% across all tables. Exposure / desk value is gross value over desk "
@@ -300,7 +352,7 @@ class DeskOverview:
         frame = self.positions_frame()
         if frame.empty:
             return frame
-        value = frame["Value (USD)"]
+        value = frame["Value"]
         summary = pd.DataFrame({
             "Long": value.clip(lower=0).groupby(frame["Asset class"]).sum(),
             "Short": value.clip(upper=0).groupby(frame["Asset class"]).sum(),
@@ -353,7 +405,7 @@ class DeskOverview:
         # net liquidation, so the cap shown here is the one the executors enforce.
         equity, used, cap = self.risk_totals()
         display_interactive_table(
-            self.risk_frame(), formatters={"Risk equity": _money, "Open risk": _money,
+            _without_venue(self.risk_frame()), formatters={"Risk equity": _money, "Open risk": _money,
                                             "% of desk equity": _percent, "Positions": "{:.0f}".format},
             cell_style=lambda *args: "color:inherit", bold_last=True, title="DESK OPEN RISK")
         if self.problems:
@@ -387,9 +439,12 @@ class DeskOverview:
         total = {"Wallet": "Total", "Chain": "", "Token": "", "Note": "", "Amount": float("nan"), "Price": float("nan"),
                  "Value": frame["Value"].sum(), "% of desk": frame["% of desk"].sum()}
         frame = pd.concat([frame, pd.DataFrame([total])], ignore_index=True)
+        # Every row here is a wallet, so the label's " wallet" suffix says nothing; notes go last.
+        frame["Wallet"] = frame["Wallet"].str.removesuffix(" wallet")
+        frame = frame[[column for column in frame.columns if column != "Note"] + ["Note"]]
         last = len(frame) - 1
         number = "{:,.6g}".format
-        display_interactive_table(frame, formatters={"Amount": number, "Price": number, "Value": _money,
+        display_interactive_table(frame, formatters={"Amount": number, "Price": "${:,.6g}".format, "Value": _money,
                                                      "% of desk": _percent},
                                   cell_style=lambda *args: "color:inherit", bold_last=True,
                                   blank_missing_cells={(last, "Amount"), (last, "Price")},
@@ -436,13 +491,14 @@ class DeskOverview:
                  "% of position value": frame["Unrealized PnL"].sum() / sum(s.gross_usd for s in self._trading()),
                  "Positions": frame["Positions"].sum()}
         frame = pd.concat([frame, pd.DataFrame([total])], ignore_index=True)
-        display_interactive_table(frame, formatters={"Unrealized PnL": _money, "% of account value": _percent,
-                                                     "% of position value": _percent, "Positions": "{:.0f}".format},
-                                  cell_style=_signed_style, bold_last=True, title="UNREALIZED PNL BY ACCOUNT")
+        display_interactive_table(_without_venue(frame),
+                                  formatters={"Unrealized PnL": _money, "% of account value": _percent,
+                                              "% of position value": _percent, "Positions": "{:.0f}".format},
+                                  cell_style=_pnl_style, bold_last=True, title="UNREALIZED PNL BY ACCOUNT")
         movers = self.movers_frame(top)
         if movers.empty:
             return
-        display_interactive_table(movers, formatters={"Value (USD)": _money, "Unrealized PnL": _money, "% of position": _percent},
+        display_interactive_table(movers, formatters={"Value": _money, "Unrealized PnL": _money, "% of position": _percent},
                                   cell_style=_signed_style, title=f"LARGEST WINNERS AND LOSERS (TOP {top} EACH)")
         print("Unrealized PnL is on open trading positions (HL and IB); wallet tokens have no cost basis here. "
               "% of position compares the PnL with the position's value at entry.")
@@ -451,7 +507,7 @@ class DeskOverview:
         """The largest winning and losing trading positions by unrealized PnL."""
         positions = pd.DataFrame([{
             "Account": snapshot.label, "Symbol": position.symbol, "Side": position.side,
-            "Value (USD)": position.notional_usd, "Unrealized PnL": position.unrealized_usd,
+            "Value": position.notional_usd, "Unrealized PnL": position.unrealized_usd,
             "% of position": _pnl_share(position),
         } for snapshot in self._trading() for position in snapshot.positions])
         if positions.empty:
@@ -595,12 +651,12 @@ class DeskOverview:
         table = pd.DataFrame({
             "Time": recent["time"].dt.tz_convert("America/New_York").dt.strftime("%Y-%m-%d %H:%M"),
             "Wallet": recent["Wallet"], "Chain": recent["chain"], "Direction": recent["direction"],
-            "Token": recent["symbol"], "Amount": recent["amount"], "Value (USD)": recent["value_usd"] * sign,
+            "Token": recent["symbol"], "Amount": recent["amount"], "Value": recent["value_usd"] * sign,
             "Counterparty": [label or f"{str(party)[:6]}…{str(party)[-4:]}"
                              for label, party in zip(recent["label"].fillna(""), recent["counterparty"])],
             "Tx": [f"{str(tx)[:10]}…" for tx in recent["hash"]],
         })
-        display_interactive_table(table, formatters={"Amount": "{:,.6g}".format, "Value (USD)": _money},
+        display_interactive_table(table, formatters={"Amount": "{:,.6g}".format, "Value": _money},
                                   cell_style=_signed_style, title=f"WALLET ACTIVITY OUTSIDE HYPERLIQUID: LAST {days} DAYS")
         labels = recent["label"].fillna("")
         kind = labels.map(lambda label: "the HL bridge" if label == "HL bridge"
@@ -619,4 +675,16 @@ class DeskOverview:
         fills["time"] = pd.to_datetime(fills["time"], utc=True, format="mixed")
         cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
         fills = fills[fills["time"] >= cutoff].sort_values("time", ascending=False)
-        display(fills.drop(columns=["exec_id"]).reset_index(drop=True))
+        if fills.empty:
+            print(f"No IB fills in the last {days} days.")
+            return
+        table = ib_fills_table(fills)
+        usd_only = "Currency" not in table
+        signed = lambda row_index, column, value, row: (  # noqa: E731
+            _signed_style(row_index, "Unrealized PnL", value, row) if column == "Realized PnL" else "color:inherit")
+        display_interactive_table(
+            table, formatters={"Quantity": "{:,.6g}".format, "Price": _money if usd_only else "{:,.6g}".format,
+                               "Commission": _money, "Realized PnL": _money},
+            cell_style=signed, title=f"RECENT IB FILLS: LAST {days} DAYS")
+        print("Times are US Eastern. " + ("Prices are in USD." if usd_only else
+                                          "Prices are in each contract's currency; commission and PnL in USD."))

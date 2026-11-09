@@ -16,8 +16,8 @@ TRADFI_CATEGORIES = {"stocks", "indices", "commodities", "fx", "preipo", "rates"
 TRENDING_MIN_VOLUME = 30_000_000.0
 CHANGE = "24h Change (%)"
 FUNDING = "8h Funding (%)"
-VOLUME = "24h Volume ($)"
-OPEN_INTEREST = "OI ($)"
+VOLUME = "24h Volume"
+OPEN_INTEREST = "OI"
 TABLE_COLUMNS = ["Ticker", CHANGE, FUNDING, VOLUME, OPEN_INTEREST]
 VIEW_LABELS = {"crypto": "Crypto", "tradfi": "Tradfi", "hip3": "HIP-3", "trending": "Trending"}
 

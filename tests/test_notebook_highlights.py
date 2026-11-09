@@ -85,3 +85,24 @@ class MarketMoverSignTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InteractiveTableStyleTests(unittest.TestCase):
+    def test_bold_total_row_keeps_its_colour(self):
+        import re
+        from unittest import mock
+
+        import pandas as pd
+
+        import desk.hl.account_analytics as analytics
+
+        frame = pd.DataFrame({"Asset class": ["a", "Total"], "Net": [-5.0, 7.0]})
+        shown = []
+        with mock.patch.object(analytics, "display", lambda markup: shown.append(markup.data)):
+            analytics.display_interactive_table(
+                frame, cell_style=lambda i, column, value, row: "color:#188038" if column == "Net" and value > 0
+                else "color:#c62828" if column == "Net" else "color:inherit", bold_last=True)
+        styles = re.findall(r"style='([^']*)'", shown[0])
+        # Without a ';' between them the browser drops "color:#188038font-weight:700;" whole.
+        self.assertIn("color:#188038;font-weight:700;", styles)
+        self.assertFalse(any(re.search(r"[0-9a-z]font-weight", style) for style in styles))

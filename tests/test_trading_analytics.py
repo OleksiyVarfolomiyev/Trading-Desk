@@ -401,7 +401,7 @@ class RealizedPnlTests(unittest.TestCase):
         })
         total = self.account.summarize_volume_pnl(daily).iloc[-1]
         self.assertEqual(total["Market"], "Net/total")
-        self.assertEqual(total["Volume ($)"], 200.0)
+        self.assertEqual(total["Volume"], 200.0)
         self.assertEqual(total["Active days"], 2)
         self.assertAlmostEqual(total["Realized PnL / Volume (%)"], 5.0)
 
@@ -605,7 +605,7 @@ class RealizedPnlTests(unittest.TestCase):
         summary = self.account.summarize_execution(fills, days=30, now=now)
         total = summary.iloc[-1]
         self.assertEqual(total["Count"], 2)
-        self.assertAlmostEqual(total["Notional ($)"], 2_000.0)
+        self.assertAlmostEqual(total["Notional"], 2_000.0)
         self.assertAlmostEqual(total["Fees (bps)"], 3.0)
         self.assertAlmostEqual(self.account.taker_fee_excess(summary), 0.30)
 
@@ -636,7 +636,7 @@ class RealizedPnlTests(unittest.TestCase):
         total = tables[-1].iloc[-1]
         # Pays 0.01 on the long and receives 0.06 on the short: $0.05/hour on $3,000.
         self.assertEqual(total["Coin"], "Net/total")
-        self.assertAlmostEqual(total["Estimated Funding PnL / hour ($)"], 0.05)
+        self.assertAlmostEqual(total["Estimated Funding PnL / hour"], 0.05)
         self.assertAlmostEqual(total["Current Funding / 1h (%)"], 0.05 / 3_000 * 100)
         self.assertAlmostEqual(total["Funding APR (%)"], 0.05 / 3_000 * 100 * 24 * 365)
 
@@ -650,7 +650,7 @@ class RealizedPnlTests(unittest.TestCase):
     def test_breakdown_reconciles_gross_trading_fees_and_funding(self):
         funding = pd.DataFrame({"fundingPnl": [-1.0]})
         breakdown, non_usd = self.account.perp_pnl_breakdown(self.fills(), funding)
-        amounts = breakdown.set_index("Component")["Amount ($)"]
+        amounts = breakdown.set_index("Component")["Amount"]
         self.assertIsNone(non_usd)
         self.assertAlmostEqual(amounts["Trading"], 7.2)
         self.assertAlmostEqual(amounts["Fees"], -2.2)
@@ -788,11 +788,11 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertEqual((long_row["Coin"], long_row["Side"]), ("BTC", "LONG"))
         self.assertAlmostEqual(long_row["Current Funding / 1h (%)"], 0.0175)
         self.assertAlmostEqual(long_row["Funding APR (%)"], 153.3)
-        self.assertAlmostEqual(long_row["Estimated Funding PnL / hour ($)"], -0.7)
-        self.assertAlmostEqual(long_row["Estimated Funding PnL / day ($)"], -16.8)
+        self.assertAlmostEqual(long_row["Estimated Funding PnL / hour"], -0.7)
+        self.assertAlmostEqual(long_row["Estimated Funding PnL / day"], -16.8)
         self.assertEqual(long_row["Funding Coverage (%)"], 100)
         self.assertEqual((short_row["Coin"], short_row["Side"]), ("BTC", "SHORT"))
-        self.assertAlmostEqual(short_row["Estimated Funding PnL / hour ($)"], 0.4)
+        self.assertAlmostEqual(short_row["Estimated Funding PnL / hour"], 0.4)
 
     def test_consolidated_current_funding_reports_rate_coverage(self):
         rows = [
@@ -801,7 +801,7 @@ class TradeAnalyticsTests(unittest.TestCase):
         ]
         [result] = consolidate_current_funding(rows)
         self.assertEqual(result["Funding Coverage (%)"], 25)
-        self.assertEqual(result["Estimated Funding PnL / hour ($)"], 0.025)
+        self.assertEqual(result["Estimated Funding PnL / hour"], 0.025)
 
     def test_account_funding_summary_reports_direction_and_net_carry(self):
         rows = [
@@ -813,12 +813,12 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertEqual(summary["Net Direction"], "NET LONG")
         self.assertEqual(summary["Long Positions"], 2)
         self.assertEqual(summary["Short Positions"], 1)
-        self.assertEqual(summary["Long Notional ($)"], 1500)
-        self.assertEqual(summary["Short Notional ($)"], 1200)
-        self.assertEqual(summary["Net Notional ($)"], 300)
-        self.assertEqual(summary["Gross Notional ($)"], 2700)
-        self.assertAlmostEqual(summary["Estimated Net Funding PnL / hour ($)"], 0.36)
-        self.assertAlmostEqual(summary["Estimated Net Funding PnL / day ($)"], 8.64)
+        self.assertEqual(summary["Long Notional"], 1500)
+        self.assertEqual(summary["Short Notional"], 1200)
+        self.assertEqual(summary["Net Notional"], 300)
+        self.assertEqual(summary["Gross Notional"], 2700)
+        self.assertAlmostEqual(summary["Estimated Net Funding PnL / hour"], 0.36)
+        self.assertAlmostEqual(summary["Estimated Net Funding PnL / day"], 8.64)
         self.assertAlmostEqual(
             summary["Net Funding Rate / 1h (%) (covered)"],
             0.36 / 2700 * 100,
@@ -833,7 +833,7 @@ class TradeAnalyticsTests(unittest.TestCase):
             ]
         )
         self.assertEqual(summary["Net Direction"], "FLAT")
-        self.assertEqual(summary["Funding-Covered Notional ($)"], 1000)
+        self.assertEqual(summary["Funding-Covered Notional"], 1000)
         self.assertEqual(summary["Funding Coverage (%)"], 50)
 
     def test_info_request_retries_rate_limit_using_retry_after(self):

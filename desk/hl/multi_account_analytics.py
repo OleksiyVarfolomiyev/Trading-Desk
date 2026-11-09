@@ -279,7 +279,7 @@ class _MultiWalletRealizedMixin:
         breakdown,non_usd_tokens=perp_pnl_breakdown(perp_df,data.funding_history_df)
         net_index=breakdown.index[breakdown['Component']=='Net perp PnL'][0]
         display_interactive_table(breakdown,formatters={
-            'Amount ($)':lambda v:f'${v:,.2f}',
+            'Amount':lambda v:f'${v:,.2f}',
             'Contribution (% of |net PnL|)':lambda v:f'{v:.2f}%',
         },cell_style=breakdown_style,bold_last=True,
           blank_missing_cells={(net_index,'Contribution (% of |net PnL|)')})
@@ -311,13 +311,13 @@ class _MultiWalletVolumeMixin:
             print('No fill volume or realized PnL data is available.')
             return
         def style(row_index,column,value,row):
-            if column in {'Realized PnL excl. funding (trading + fees) ($)','Realized PnL / Volume (%)','PnL / $1k volume ($)'} and pd.notna(value):
+            if column in {'Realized PnL excl. funding (trading + fees)','Realized PnL / Volume (%)','PnL / $1k volume'} and pd.notna(value):
                 return 'color:#188038;' if value>0 else 'color:#c62828;' if value<0 else ''
             return ''
         display_interactive_table(summary,formatters={
-            'Volume ($)':lambda v:f'${v:,.2f}','Realized PnL excl. funding (trading + fees) ($)':lambda v:f'${v:,.2f}',
+            'Volume':lambda v:f'${v:,.2f}','Realized PnL excl. funding (trading + fees)':lambda v:f'${v:,.2f}',
             'Realized PnL / Volume (%)':lambda v:f'{v:.2f}%',
-            'PnL / $1k volume ($)':lambda v:f'${v:,.2f}',
+            'PnL / $1k volume':lambda v:f'${v:,.2f}',
             'Daily Pearson r':lambda v:f'{v:.3f}','Daily Spearman r':lambda v:f'{v:.3f}',
         },cell_style=style,bold_last=True,blank_missing_cells=volume_total_blank_cells(summary))
         print('Realized PnL is HL closedPnl less USDC trading fees; funding is excluded. '+VOLUME_WINDOW_NOTE)

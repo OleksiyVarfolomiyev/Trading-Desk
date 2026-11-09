@@ -164,8 +164,11 @@ def connect(account: Account, purpose: str = "overview", readonly: bool = True, 
         ib.disconnect()
         shown = ", ".join(f"...{short_id(item)}" for item in managed)
         raise IBConnectionError(f"TWS does not manage account ...{short_id(account.id)}; it manages {shown}.")
+    # Every connection gets a request timeout: without one, a quote or history request IB never
+    # answers (seen with delayed data on an order-capable connection) blocks a live run forever.
+    # Placing and cancelling orders are not requests, so they are unaffected.
+    ib.RequestTimeout = READ_REQUEST_TIMEOUT_SECONDS
     if readonly:
-        ib.RequestTimeout = READ_REQUEST_TIMEOUT_SECONDS
         if ibkr_link_down(errors):
             ib.disconnect()
             raise IBConnectionError(
@@ -469,7 +472,13 @@ class Quote:
 
 def quote(ib, contract) -> Quote:
     """Snapshot bid/ask/last; ``live`` is False for delayed or frozen data."""
-    ticker = ib.reqTickers(contract)[0]
+    import asyncio
+
+    try:
+        ticker = ib.reqTickers(contract)[0]
+    except (asyncio.TimeoutError, TimeoutError):
+        raise ValueError(f"IB sent no quote for {contract_symbol(contract)} within "
+                         f"{READ_REQUEST_TIMEOUT_SECONDS}s (no market data for it on this connection)") from None
 
     def clean(value):
         return float(value) if is_set(value) and float(value) > 0 else float("nan")
@@ -540,13 +549,22 @@ def session_state(details, now: pd.Timestamp | None = None) -> str:
     return "closed"
 
 
+COMMISSION_REPORT_WAIT = 2.0  # seconds
+
+
 def recent_fills(ib, account: str) -> pd.DataFrame:
     """Executions TWS still holds (about the last 7 days), with commissions and realized PnL."""
     from ib_async import ExecutionFilter
 
+    fills = ib.reqExecutions(ExecutionFilter(acctCode=account))
+    # Commission reports arrive after the executions; until one does, ib_async holds a blank
+    # placeholder (no execId) whose zero commission and PnL must not be saved as real values.
+    if any(not getattr(fill.commissionReport, "execId", "") for fill in fills):
+        ib.sleep(COMMISSION_REPORT_WAIT)
     rows = []
-    for fill in ib.reqExecutions(ExecutionFilter(acctCode=account)):
-        execution, report = fill.execution, fill.commissionReport
+    for fill in fills:
+        execution = fill.execution
+        report = fill.commissionReport if getattr(fill.commissionReport, "execId", "") else None
         rows.append({
             "exec_id": execution.execId,
             "time": pd.Timestamp(execution.time).tz_convert("UTC") if pd.Timestamp(execution.time).tzinfo

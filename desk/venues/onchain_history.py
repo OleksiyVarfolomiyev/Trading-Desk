@@ -278,7 +278,7 @@ def load_backfill(data_dir: Path, wallet: str) -> pd.Series:
     """Saved rebuilt values for one wallet (empty if never rebuilt), indexed by UTC date."""
     path = backfill_path(data_dir, wallet)
     if not path.exists():
-        return pd.Series(dtype=float)
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([], tz="UTC"))
     saved = pd.read_csv(path)
     return pd.Series(saved["value_usd"].to_numpy(), index=pd.to_datetime(saved["date"], utc=True))
 

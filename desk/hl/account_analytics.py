@@ -98,6 +98,11 @@ def display_interactive_table(frame, formatters=None, cell_style=None, bold_last
             if not style and not missing and isinstance(value, (int, float, np.number)) \
                 and not isinstance(value, (bool, np.bool_)):
                 style = 'color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else ''
+            # A style without its closing ';' would swallow the weight below and void both, which
+            # left bold total rows uncoloured.
+            style = style.strip()
+            if style and not style.endswith(';'):
+                style += ';'
             weight = 'font-weight:700;' if bold_last and row_index == len(frame) - 1 else ''
             sort_attribute = html.escape(sort_value, quote=True)
             style_attribute = html.escape(style + weight, quote=True)
@@ -1567,58 +1572,58 @@ def display_exposure_and_funding(rows):
         **summary,
         'Long/Short Positions': _long_short_markup(
             summary['Long Positions'], summary['Short Positions']),
-        'Long/Short Notional ($)': _long_short_markup(
-            f"${summary['Long Notional ($)']:,.2f}", f"${summary['Short Notional ($)']:,.2f}"),
+        'Long/Short Notional': _long_short_markup(
+            f"${summary['Long Notional']:,.2f}", f"${summary['Short Notional']:,.2f}"),
     }])
     exposure_columns = [
-        'Net Direction', 'Long/Short Positions', 'Long/Short Notional ($)',
-        'Gross Notional ($)', 'Net Notional ($)', 'Net Exposure / Gross (%)',
+        'Net Direction', 'Long/Short Positions', 'Long/Short Notional',
+        'Gross Notional', 'Net Notional', 'Net Exposure / Gross (%)',
     ]
     display_interactive_table(account_summary, columns=exposure_columns,
-        html_columns={'Long/Short Positions', 'Long/Short Notional ($)'}, formatters={
-        'Gross Notional ($)': lambda value: f'${value:,.2f}',
-        'Net Notional ($)': lambda value: f'${abs(value):,.2f}',
+        html_columns={'Long/Short Positions', 'Long/Short Notional'}, formatters={
+        'Gross Notional': lambda value: f'${value:,.2f}',
+        'Net Notional': lambda value: f'${abs(value):,.2f}',
         'Net Exposure / Gross (%)': lambda value: f'{abs(value):.2f}%' if pd.notna(value) else 'n/a',
     })
     print('Net direction compares long and short USD notionals; it is not delta- or beta-adjusted.')
     print('=== FUNDING BY ASSET AND SIDE ===')
     frame = pd.DataFrame(funding_rows)
-    position_values = frame['Position Value ($)']
+    position_values = frame['Position Value']
     frame = pd.concat([frame, pd.DataFrame([{
-        'Coin': 'Net/total', 'Position Value ($)': position_values.sum(),
+        'Coin': 'Net/total', 'Position Value': position_values.sum(),
         'Current Funding / 1h (%)': summary['Net Funding Rate / 1h (%) (covered)'],
         'Funding APR (%)': summary['Net Funding APR (%) (simple, covered)'],
-        'Estimated Funding PnL / hour ($)': frame['Estimated Funding PnL / hour ($)'].sum(),
-        'Estimated Funding PnL / day ($)': frame['Estimated Funding PnL / day ($)'].sum(),
+        'Estimated Funding PnL / hour': frame['Estimated Funding PnL / hour'].sum(),
+        'Estimated Funding PnL / day': frame['Estimated Funding PnL / day'].sum(),
         'Funding Coverage (%)': (
             (frame['Funding Coverage (%)'] * position_values).sum() / position_values.sum()
             if position_values.sum() > 0 else float('nan')
         ),
     }])], ignore_index=True)
     columns = [
-        'Coin', 'Side', 'Size', 'Position Value ($)',
+        'Coin', 'Side', 'Size', 'Position Value',
         'Current Funding / 1h (%)', 'Funding APR (%)',
-        'Estimated Funding PnL / hour ($)',
-        'Estimated Funding PnL / day ($)', 'Funding Coverage (%)',
+        'Estimated Funding PnL / hour',
+        'Estimated Funding PnL / day', 'Funding Coverage (%)',
     ]
 
     def style(row_index, column, value, row):
         if column == 'Side':
             return 'color:#188038;font-weight:600;' if value == 'LONG' else \
                 'color:#c62828;font-weight:600;'
-        if column in {'Estimated Funding PnL / hour ($)',
-                      'Estimated Funding PnL / day ($)'} and pd.notna(value):
+        if column in {'Estimated Funding PnL / hour',
+                      'Estimated Funding PnL / day'} and pd.notna(value):
             return 'color:#188038;' if value > 0 else \
                 'color:#c62828;' if value < 0 else ''
         return ''
 
     display_interactive_table(frame, columns=columns, cell_style=style, formatters={
         'Size': lambda value: f'{value:,.4g}',
-        'Position Value ($)': lambda value: f'${value:,.2f}',
+        'Position Value': lambda value: f'${value:,.2f}',
         'Current Funding / 1h (%)': lambda value: f'{value:.6f}%' if pd.notna(value) else 'n/a',
         'Funding APR (%)': lambda value: f'{value:.2f}%' if pd.notna(value) else 'n/a',
-        'Estimated Funding PnL / hour ($)': lambda value: f'${value:,.4f}',
-        'Estimated Funding PnL / day ($)': lambda value: f'${value:,.2f}',
+        'Estimated Funding PnL / hour': lambda value: f'${value:,.4f}',
+        'Estimated Funding PnL / day': lambda value: f'${value:,.2f}',
         'Funding Coverage (%)': lambda value: f'{value:.1f}%' if pd.notna(value) else 'n/a',
     }, bold_last=True, blank_missing_cells={(len(frame) - 1, column) for column in columns})
     print('Funding rates are current hourly rates, weighted by position notional. '
@@ -2167,25 +2172,25 @@ def perp_pnl_breakdown(perp_fills, funding_history=None):
         fees_paid = float(fee_rows['fee'].sum()) if not fee_rows.empty else 0.0
         rows = [('Trading', closed_pnl + fees_paid), ('Fees', -fees_paid), ('Funding',
                 funding_pnl), ('Net perp PnL', net_pnl)]
-        data = pd.DataFrame(rows, columns=['Component', 'Amount ($)'])
-        data['Contribution (% of |net PnL|)'] = data['Amount ($)'] / abs(net_pnl) * 100 \
+        data = pd.DataFrame(rows, columns=['Component', 'Amount'])
+        data['Contribution (% of |net PnL|)'] = data['Amount'] / abs(net_pnl) * 100 \
             if abs(net_pnl) > 1e-12 else float('nan')
         data.loc[data['Component'] == 'Net perp PnL',
             'Contribution (% of |net PnL|)'] = float('nan')
         return (data, None)
     data = pd.DataFrame([('Trading', float('nan')), ('Fees', float('nan')), ('Funding',
-                funding_pnl), ('Net perp PnL', net_pnl)], columns=['Component', 'Amount ($)'])
-    data['Contribution (% of |net PnL|)'] = data['Amount ($)'] / abs(net_pnl) * 100 if \
+                funding_pnl), ('Net perp PnL', net_pnl)], columns=['Component', 'Amount'])
+    data['Contribution (% of |net PnL|)'] = data['Amount'] / abs(net_pnl) * 100 if \
         abs(net_pnl) > 1e-12 else float('nan')
     data.loc[data['Component'] == 'Net perp PnL', 'Contribution (% of |net PnL|)'] = float('nan')
     return (data, ', '.join(sorted(nonzero_tokens)))
 
 
 def breakdown_style(row_index, column, value, row):
-    if column == 'Amount ($)':
+    if column == 'Amount':
         color_value = value
     elif column == 'Contribution (% of |net PnL|)':
-        color_value = row['Amount ($)']
+        color_value = row['Amount']
     else:
         return ''
     if pd.isna(color_value):
@@ -2204,7 +2209,7 @@ class _RealizedPnLMixin:
         perp_breakdown, non_usd_fee_tokens = perp_pnl_breakdown(perp_df, data.funding_history_df)
         net_row_index = perp_breakdown.index[perp_breakdown["Component"] == "Net perp PnL"][0]
         display_interactive_table(perp_breakdown, formatters={
-            "Amount ($)": lambda value: f"${value:,.2f}",
+            "Amount": lambda value: f"${value:,.2f}",
                     "Contribution (% of |net PnL|)": lambda value: f"{value:.2f}%",
         }, cell_style=breakdown_style, bold_last=True,
             blank_missing_cells={(net_row_index, "Contribution (% of |net PnL|)")})
@@ -2269,9 +2274,9 @@ def summarize_volume_pnl(daily_data):
         total_pnl = part['realized_pnl'].sum()
         pnl_ratio = total_pnl / total_volume if total_volume else float('nan')
         rows.append({'Market': labels.get(asset_type, asset_type.title()),
-                'Volume ($)': total_volume, 'Realized PnL excl. funding (trading + fees) ($)': total_pnl,
+                'Volume': total_volume, 'Realized PnL excl. funding (trading + fees)': total_pnl,
                 'Realized PnL / Volume (%)': pnl_ratio * 100,
-                    'PnL / $1k volume ($)': pnl_ratio * 1000,
+                    'PnL / $1k volume': pnl_ratio * 1000,
                 'Active days': len(part), 'Daily Pearson r': part['volume'].corr(part[ \
                     'realized_pnl'],
                     method='pearson') if len(part) >= 2 else float('nan'),
@@ -2281,9 +2286,9 @@ def summarize_volume_pnl(daily_data):
         total_volume = daily_data['volume'].sum()
         total_pnl = daily_data['realized_pnl'].sum()
         pnl_ratio = total_pnl / total_volume if total_volume else float('nan')
-        rows.append({'Market': 'Net/total', 'Volume ($)': total_volume,
-            'Realized PnL excl. funding (trading + fees) ($)': total_pnl,
-            'Realized PnL / Volume (%)': pnl_ratio * 100, 'PnL / $1k volume ($)': pnl_ratio * 1000,
+        rows.append({'Market': 'Net/total', 'Volume': total_volume,
+            'Realized PnL excl. funding (trading + fees)': total_pnl,
+            'Realized PnL / Volume (%)': pnl_ratio * 100, 'PnL / $1k volume': pnl_ratio * 1000,
             'Active days': daily_data['day'].nunique(),
             'Daily Pearson r': float('nan'), 'Daily Spearman r': float('nan')})
     return pd.DataFrame(rows)
@@ -2308,7 +2313,7 @@ def volume_total_blank_cells(summary):
 
 def summarize_execution(fills, days=30, now=None):
     """Summarize recent perp notional and fees by opening/closing and maker/taker."""
-    columns = ['Fills', 'Type', 'Count', 'Notional ($)', 'Share (%)', 'Fees ($)', 'Fees (bps)']
+    columns = ['Fills', 'Type', 'Count', 'Notional', 'Share (%)', 'Fees', 'Fees (bps)']
     now = now or pd.Timestamp.now(tz='UTC')
     if fills.empty:
         return pd.DataFrame(columns=columns)
@@ -2321,9 +2326,9 @@ def summarize_execution(fills, days=30, now=None):
     total_notional = recent['notional'].sum()
     def row(label, kind, part):
         notional = part['notional'].sum()
-        return {'Fills': label, 'Type': kind, 'Count': len(part), 'Notional ($)': notional,
+        return {'Fills': label, 'Type': kind, 'Count': len(part), 'Notional': notional,
             'Share (%)': notional / total_notional * 100 if total_notional else float('nan'),
-            'Fees ($)': part['usdc_fee'].sum(),
+            'Fees': part['usdc_fee'].sum(),
             'Fees (bps)': part['usdc_fee'].sum() / notional * 1e4 if notional else float('nan')}
     rows = [
         row(label, kind, recent.loc[(opening == is_opening) & (recent['crossed'] == crossed)])
@@ -2338,10 +2343,10 @@ def taker_fee_excess(summary):
     """Estimate fees saved had taker fills paid the maker rate seen in the same summary."""
     fills = summary.loc[summary['Fills'] != 'Net/total']
     maker, taker = fills.loc[fills['Type'] == 'Maker'], fills.loc[fills['Type'] == 'Taker']
-    if not maker['Notional ($)'].sum() or not taker['Notional ($)'].sum():
+    if not maker['Notional'].sum() or not taker['Notional'].sum():
         return float('nan')
-    maker_rate = maker['Fees ($)'].sum() / maker['Notional ($)'].sum()
-    return taker['Fees ($)'].sum() - taker['Notional ($)'].sum() * maker_rate
+    maker_rate = maker['Fees'].sum() / maker['Notional'].sum()
+    return taker['Fees'].sum() - taker['Notional'].sum() * maker_rate
 
 
 class _ExecutionQualityMixin:
@@ -2352,11 +2357,11 @@ class _ExecutionQualityMixin:
             print(f'No perp fills in the last {days} days.')
             return
         display_interactive_table(summary, formatters={
-            'Notional ($)': lambda value: f'${value:,.2f}',
+            'Notional': lambda value: f'${value:,.2f}',
             'Share (%)': lambda value: f'{value:.1f}%',
-            'Fees ($)': lambda value: f'${value:,.2f}',
+            'Fees': lambda value: f'${value:,.2f}',
             'Fees (bps)': lambda value: f'{value:.2f}',
-        }, cell_style=lambda *cell: 'color:#c62828;' if cell[1] in {'Fees ($)', 'Fees (bps)'} else '',
+        }, cell_style=lambda *cell: 'color:#c62828;' if cell[1] in {'Fees', 'Fees (bps)'} else '',
             bold_last=True, title=f'EXECUTION QUALITY: LAST {days} DAYS')
         excess = taker_fee_excess(summary)
         if pd.notna(excess):
@@ -2374,15 +2379,15 @@ class _VolumeSummaryMixin:
             print("No fill volume or realized PnL data is available.")
             return
         def volume_style(row_index, column, value, row):
-            if column in {"Realized PnL excl. funding (trading + fees) ($)", "Realized PnL / Volume (%)",
-                "PnL / $1k volume ($)"} and pd.notna(value):
+            if column in {"Realized PnL excl. funding (trading + fees)", "Realized PnL / Volume (%)",
+                "PnL / $1k volume"} and pd.notna(value):
                 return "color:#188038;" if value > 0 else "color:#c62828;"
             return ""
         display_interactive_table(volume_pnl_summary, formatters={
-            "Volume ($)": lambda value: f"${value:,.2f}",
-            "Realized PnL excl. funding (trading + fees) ($)": lambda value: f"${value:,.2f}",
+            "Volume": lambda value: f"${value:,.2f}",
+            "Realized PnL excl. funding (trading + fees)": lambda value: f"${value:,.2f}",
             "Realized PnL / Volume (%)": lambda value: f"{value:.2f}%",
-            "PnL / $1k volume ($)": lambda value: f"${value:,.2f}",
+            "PnL / $1k volume": lambda value: f"${value:,.2f}",
             "Daily Pearson r": lambda value: f"{value:.3f}",
             "Daily Spearman r": lambda value: f"{value:.3f}",
         }, cell_style=volume_style, bold_last=True,
@@ -2600,14 +2605,14 @@ class _NetPnLMixin:
         since = f' since {times.min().tz_convert(ACCOUNTING_TIMEZONE):%Y-%m-%d}' if len(times) else ''
         scope = 'all wallets' if len(self.wallet_addresses) > 1 else 'this wallet'
         print(f"=== NET PNL ({scope}{since}): {'-' if net < 0 else ''}${abs(net):,.2f} ===")
-        table = pd.DataFrame(rows, columns=['Component', 'Amount ($)'])
+        table = pd.DataFrame(rows, columns=['Component', 'Amount'])
         subtotal = {'Realized PnL', 'Net PnL'}
         def style(row_index, column, value, row):
             weight = 'font-weight:700;' if row['Component'] in subtotal else ''
-            if column == 'Amount ($)' and pd.notna(value):
+            if column == 'Amount' and pd.notna(value):
                 return weight + ('color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else '')
             return weight + 'color:inherit;'
-        display_interactive_table(table, formatters={'Amount ($)': lambda value: (
+        display_interactive_table(table, formatters={'Amount': lambda value: (
             f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")}, cell_style=style, title='NET PNL')
         print(f"Net PnL = trading PnL before fees - fees +/- funding + unrealized PnL. Liquidations are already "
               f"inside trading PnL (of which liquidation losses: {'-' if liquidation_loss < 0 else ''}"

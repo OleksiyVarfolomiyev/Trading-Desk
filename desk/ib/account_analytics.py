@@ -49,13 +49,13 @@ def _number(value):
 
 
 def _neutral(row_index, column, value, row):
-    return "color:inherit"
+    return "color:inherit;"
 
 
 def _pnl_style(row_index, column, value, row):
     if isinstance(value, (int, float)) and np.isfinite(value) and ("PnL" in column or column == "1D change"):
-        return "color:#188038" if value > 0 else "color:#d93025" if value < 0 else "color:inherit"
-    return "color:inherit"
+        return "color:#188038;" if value > 0 else "color:#c62828;" if value < 0 else "color:inherit;"
+    return "color:inherit;"
 
 
 def _mover(row) -> str:

@@ -184,7 +184,9 @@ class DeskAccounts:
         if refresh_history or self.hl_activity_days is None:
             self._detect_regime()
         if any(account.venue == "hl" and account.onchain for account in self.accounts):
-            self.notes.append("Wallet tokens on other chains have no value history; they count in current totals only.")
+            self.notes.append("Wallet tokens on other chains are left out of returns (they have no deposit and "
+                              "withdrawal record); their value over time is the dotted desk-value line, from saved "
+                              "snapshots and the one-off rebuild (python -m desk.venues.onchain_history).")
         for note in self.notes:
             print(f"note: {note}")
         return self.index
@@ -492,7 +494,7 @@ class DeskAccounts:
                                 if pd.notna(value))
                 if pd.notna(row.get("Volatility (/yr)", np.nan)):
                     parts.append(f"Current book: volatility {row['Volatility (/yr)']:.0%}/yr, 1-day VaR 95% "
-                                 f"{signed_money(-row.get('VaR 95% ($)', np.nan)) if pd.notna(row.get('VaR 95% ($)', np.nan)) else 'n/a'}"
+                                 f"{signed_money(-row.get('VaR 95%', np.nan)) if pd.notna(row.get('VaR 95%', np.nan)) else 'n/a'}"
                                  + betas)
             if len(regime):
                 row = regime.iloc[0]
@@ -569,7 +571,7 @@ class DeskAccounts:
             if len(returns) >= 20:
                 for confidence in (0.95, 0.99):
                     var = bootstrap_var(returns, confidence)
-                    row[f"VaR {confidence:.0%} ($)"] = var["var"] * equity
+                    row[f"VaR {confidence:.0%}"] = var["var"] * equity
             for name in ("BTC", "SPY"):
                 if name in self.benchmarks:
                     pair = live_risk.paired_returns(returns, self.benchmarks[name])
@@ -594,7 +596,7 @@ class DeskAccounts:
             print("Not enough shared history for risk statistics yet.")
             return
         formats = {"Return (total)": "{:+.1%}", "Volatility (/yr)": "{:.1%}", "Sharpe": "{:.2f}", "Max drawdown": "{:.1%}",
-                   "VaR 95% ($)": "${:,.2f}", "VaR 99% ($)": "${:,.2f}", "Beta BTC": "{:.2f}", "Beta SPY": "{:.2f}",
+                   "VaR 95%": "${:,.2f}", "VaR 99%": "${:,.2f}", "Beta BTC": "{:.2f}", "Beta SPY": "{:.2f}",
                    "Alpha vs BTC (/yr)": "{:+.1%}", "Alpha vs SPY (/yr)": "{:+.1%}", "Periods": "{:.0f}"}
         formats["Coverage"] = "{:.0%}"
         display(table.set_index("Basis").style.format({k: v for k, v in formats.items() if k in table}, na_rep="n/a"))

@@ -1106,12 +1106,16 @@ class _CorrelationPlotMixin(_TableStyleMixin):
         members={group:[ticker for ticker in self.all_assets if self.asset_group.get(ticker,CRYPTO)==group]
                  for group in (CRYPTO,TRADFI)}
         for group,tickers in members.items():
-            if len(tickers)<2:
-                print(f'{group} correlations need at least two assets; held: {", ".join(tickers) or "none"}.')
+            if not tickers:
+                print(f'{group} correlations: no {group} assets held.')
                 continue
+            # The group's benchmark (SPY for TradFi, BTC for crypto) is shown last, so every asset's
+            # correlation to it sits in the same row and column.
+            benchmark=self._benchmark_for(group)
+            shown=[ticker for ticker in tickers if ticker!=benchmark]+[benchmark]
             # Each pair uses its own shared dates on the group's calendar, so a recently listed
             # asset never shortens the other pairs.
-            frame=self.group_returns[group][tickers]
+            frame=self.group_returns[group][shown]
             calendar='trading days' if group==TRADFI and self._trading_calendar(self.prices) is not None else 'days'
             self._heatmap(frame.corr(method='pearson',min_periods=MIN_COMMON_RETURNS),
                           f'{group} return correlations (pairwise over up to {frame.notna().sum().max()} {calendar}; '
@@ -1193,7 +1197,16 @@ def _project_weights(weights, lower, upper, budget=1.0):
     return np.clip(weights-right,lower,upper)
 
 
+KELLY_STATIONARITY_TOL = 1e-9
+
+
 def _optimize_full_kelly(returns, lower, upper, cash_daily_return, max_iterations=20000):
+    """Constrained full-Kelly weights by projected gradient ascent on mean log growth.
+
+    Converged when a unit gradient step, projected onto the constraints, moves no weight by more
+    than ``KELLY_STATIONARITY_TOL``. That test does not depend on the step size, which grows large
+    along flat directions (near-collinear assets), where step-based tests never settle.
+    """
     def objective(weights):
         portfolio_returns=returns@weights+(1.0-weights.sum())*cash_daily_return
         if np.any(portfolio_returns<=-1.0):
@@ -1208,6 +1221,8 @@ def _optimize_full_kelly(returns, lower, upper, cash_daily_return, max_iteration
     for _ in range(max_iterations):
         current=objective(weights)
         grad=gradient(weights)
+        if np.max(np.abs(_project_weights(weights-grad,lower,upper)-weights))<KELLY_STATIONARITY_TOL:
+            return weights
         trial=step_size
         for _ in range(100):
             candidate=_project_weights(weights-trial*grad,lower,upper)
@@ -1396,14 +1411,14 @@ class _PerformanceMixin(_TableStyleMixin):
         drawdown_dollars=portfolio_value-peak
         max_drawdown=drawdown.min()
         investment_summary=pd.DataFrame([{
-            'All-Time High ($)':portfolio_value.max(),
-            'Minimum Portfolio Value ($)':portfolio_value.min(),
-            'Max Drawdown ($)':drawdown_dollars.min(),
+            'All-Time High':portfolio_value.max(),
+            'Minimum Portfolio Value':portfolio_value.min(),
+            'Max Drawdown':drawdown_dollars.min(),
             'Max Drawdown (%)':max_drawdown,
         }],index=['Since inception'])
         self.show_table(investment_summary,{
-            'All-Time High ($)':'${:,.2f}','Minimum Portfolio Value ($)':'${:,.2f}',
-            'Max Drawdown ($)':lambda v:f'-${abs(v):,.2f}' if v<0 else f'${v:,.2f}',
+            'All-Time High':'${:,.2f}','Minimum Portfolio Value':'${:,.2f}',
+            'Max Drawdown':lambda v:f'-${abs(v):,.2f}' if v<0 else f'${v:,.2f}',
             'Max Drawdown (%)':'{:.2%}',
         })
         risk_free_annual=(1+self.risk_free_daily)**self.trading_days_per_year-1

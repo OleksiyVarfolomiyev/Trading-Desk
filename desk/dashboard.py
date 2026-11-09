@@ -115,7 +115,7 @@ def _wallet_value_series(desk: DeskAccounts, start: pd.Timestamp) -> dict | None
             recorded = _daily(saved.assign(ts=pd.to_datetime(saved["ts"], utc=True, format="mixed"))
                               .set_index("ts")["value_usd"])
         rebuilt = load_backfill(desk.data_dir, account.id)
-        if len(recorded):
+        if len(recorded) and len(rebuilt):
             rebuilt = rebuilt[rebuilt.index < recorded.index[0]]
         if len(rebuilt):
             rebuilt_until = max(rebuilt_until or rebuilt.index[-1], rebuilt.index[-1])
@@ -182,8 +182,8 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
         sums = accounts.drop(columns=["Venue", "Account", "% of desk"]).sum(numeric_only=True).to_dict()
         account_total = {"Venue": "Total", "Account": "", **sums, "% of desk": 1.0}
     money = {column: "usd" for column in ("Equity", "Cash", "Margin used", "Available", "Gross", "Value", "Risk equity",
-                                           "Open risk", "Long", "Short", "VaR 95% ($)", "VaR 99% ($)")}
-    signed = {column: "susd" for column in ("Unrealized PnL", "Net", "Value (USD)")}
+                                           "Open risk", "Long", "Short", "VaR 95%", "VaR 99%")}
+    signed = {column: "susd" for column in ("Unrealized PnL", "Net", "Value")}
     tables = {
         "accounts": table(accounts, {**money, **signed, "Positions": "int", "% of desk": "pct"}, account_total),
         "performance": table(desk.performance_frame(),
@@ -191,17 +191,17 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
                               **{f"Return {label}": "spct" for label in WINDOWS}}, total_last=True),
         "exposure": table(overview.exposure_frame(), {**money, "Net": "susd", "Gross / equity": "pct",
                                                       "Net / equity": "spct"}, total_last=True),
-        "movers": table(overview.movers_frame(MOVERS), {"Value (USD)": "susd", "Unrealized PnL": "susd",
+        "movers": table(overview.movers_frame(MOVERS), {"Value": "susd", "Unrealized PnL": "susd",
                                                         "% of position": "spct"}),
     }
     if len(positions):
-        ordered = positions.assign(_abs=positions["Value (USD)"].abs()).sort_values(
-            ["Asset class", "_abs"], ascending=[True, False]).drop(columns=["_abs", "Currency"], errors="ignore")
+        ordered = positions.assign(_abs=positions["Value"].abs()).sort_values(
+            ["Asset class", "_abs"], ascending=[True, False]).drop(columns="_abs")
         total = {column: None for column in ordered.columns}
-        total.update({"Asset class": "Total", "Value (USD)": ordered["Value (USD)"].sum(),
+        total.update({"Asset class": "Total", "Value": ordered["Value"].sum(),
                       "Unrealized PnL": ordered["Unrealized PnL"].sum(), "Weight": ordered["Weight"].sum(),
                       "Exposure / desk value": ordered["Exposure / desk value"].sum()})
-        tables["positions"] = table(ordered, {"Quantity": "num", "Avg price": "num", "Mark": "num", **signed,
+        tables["positions"] = table(ordered, {"Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
                                               "Weight": "pct", "Exposure / desk value": "pct"}, total)
     else:
         tables["positions"] = table(positions, {})
@@ -214,7 +214,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
         holdings = holdings.assign(Wallet=holdings["Wallet"].str.replace(r"\s+wallet$", "", regex=True))
         holdings = holdings.rename(columns={"Token": "Symbol"})
         holdings = holdings[[column for column in holdings.columns if column != "Note"] + ["Note"]]
-        tables["wallets"] = table(holdings, {"Amount": "num", "Price": "num", "Value": "vusd", "% of desk": "vpct"},
+        tables["wallets"] = table(holdings, {"Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct"},
                                   {"Wallet": "Total", "Value": holdings["Value"].sum(),
                                    "% of desk": holdings["% of desk"].sum()})
     if risk_table is not None and len(risk_table):
