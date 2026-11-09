@@ -81,3 +81,60 @@ class ServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WalletHistoryTests(unittest.TestCase):
+    def test_transfer_balances_roll_today_back_through_transfers(self):
+        from desk.venues.onchain_history import transfer_balances
+
+        days = pd.date_range("2026-01-01", "2026-01-04", freq="1D", tz="UTC")
+        activity = pd.DataFrame({
+            "chain": ["ethereum"] * 3, "token": ["0xA", "0xA", "0xB"],
+            "time": ["2026-01-02 12:00:00+00:00", "2026-01-03 12:00:00+00:00", "2026-01-02 06:00:00+00:00"],
+            "direction": ["in", "out", "out"], "amount": [100.0, 40.0, 5.0],
+        })
+        balances = transfer_balances(activity, {("ethereum", "0xa"): 60.0}, days, {"ethereum"})
+        # 0xA: 60 today; before the 40 out it was 100; before the 100 in it was 0.
+        self.assertEqual(balances["ethereum:0xa"].tolist(), [0.0, 100.0, 60.0, 60.0])
+        # 0xB is no longer held; 5 went out on Jan 2, so it held 5 at the close of Jan 1, and an
+        # untracked shortfall never shows as a negative balance.
+        self.assertEqual(balances["ethereum:0xb"].tolist(), [5.0, 0.0, 0.0, 0.0])
+
+    def test_llama_closes_take_the_point_nearest_each_midnight(self):
+        from unittest import mock
+
+        from desk.venues import onchain_history
+
+        days = pd.date_range("2026-01-18", "2026-01-21", freq="1D", tz="UTC")
+        stamps = ["2026-01-18 23:59:54", "2026-01-20 00:00:03", "2026-01-20 23:59:56"]  # Jan 21 close missing
+        points = [{"timestamp": int(pd.Timestamp(s, tz="UTC").timestamp()), "price": float(i + 1)}
+                  for i, s in enumerate(stamps)]
+        reply = mock.Mock(ok=True)
+        reply.json.return_value = {"coins": {"k": {"prices": points, "confidence": 0.99}}}
+        with mock.patch.object(onchain_history.onchain, "_get", return_value=reply):
+            prices = onchain_history.llama_closes("k", days)
+        # Each date is its close (the next midnight); the missing last close carries the last price.
+        self.assertEqual(prices.tolist(), [1.0, 2.0, 3.0, 3.0])
+
+    def test_dashboard_series_uses_rebuilt_values_only_before_recording(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from desk.accounts import Account
+        from desk.dashboard import _value_with_wallets, _wallet_value_series
+
+        wallet = "0x" + "1" * 40
+        with tempfile.TemporaryDirectory() as folder:
+            pd.DataFrame({"date": ["2026-01-01", "2026-01-02", "2026-01-03"], "value_usd": [10.0, 20.0, 99.0]}) \
+                .to_csv(Path(folder) / f"onchain_value_backfill_{wallet}.csv", index=False)
+            pd.DataFrame({"ts": ["2026-01-03T05:00:00+00:00", "2026-01-04T05:00:00+00:00"], "value_usd": [30.0, 40.0]}) \
+                .to_csv(Path(folder) / f"onchain_value_history_{wallet}.csv", index=False)
+            desk = SimpleNamespace(accounts=[Account("hl", wallet)], data_dir=Path(folder))
+            series = _wallet_value_series(desk, pd.Timestamp("2026-01-01", tz="UTC"))
+        self.assertEqual(series["x"], ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"])
+        self.assertEqual(series["y"], [10.0, 20.0, 30.0, 40.0])  # the recorded Jan 3 wins over the rebuilt one
+        self.assertIn("rebuilt", series["note"])
+        accounts = [{"x": ["2026-01-01", "2026-01-04"], "y": [100.0, 200.0]}]
+        total = _value_with_wallets(accounts, series)
+        self.assertEqual(total["y"], [110.0, 120.0, 130.0, 240.0])

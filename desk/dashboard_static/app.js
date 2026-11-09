@@ -231,12 +231,14 @@ function renderCharts(charts) {
     line: { width: 2, color: colors[i % colors.length] }, fillcolor: withAlpha(colors[i % colors.length], 0.18),
     hovertemplate: "%{fullData.name}: $%{y:,.2f}<extra></extra>",
   }));
-  // Not stacked: it starts on the first day wallet values were recorded, never implying zero before.
+  // Not stacked: it covers only the days wallet values are known (recorded, or rebuilt before
+  // recording began), never implying zero outside them.
   const withWallets = charts.value_with_wallets;
   if (withWallets && withWallets.x.length) {
+    const note = withWallets.note ? `<br><span style="font-size:11px">${withWallets.note}</span>` : "";
     value.push({ type: "scatter", mode: "lines", name: withWallets.name, x: withWallets.x, y: withWallets.y,
       line: { width: 2, dash: "dot", color: token("--ink-2") },
-      hovertemplate: "%{fullData.name}: $%{y:,.2f}<extra></extra>" });
+      hovertemplate: `%{fullData.name}: $%{y:,.2f}${note}<extra></extra>` });
   }
   // Collapse stretches with no trading on any account, as the HL account charts do, and say so.
   const idle = charts.value_idle || [];

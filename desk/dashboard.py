@@ -96,45 +96,54 @@ def _daily(series: pd.Series) -> pd.Series:
 
 
 def _wallet_value_series(desk: DeskAccounts, start: pd.Timestamp) -> dict | None:
-    """One stacked series for the HL wallets' tokens on other chains, from the saved value snapshots.
+    """One series for the HL wallets' tokens on other chains: recorded values, rebuilt before.
 
-    That history only builds from run to run (nothing else records balances), so the series
-    starts at the first saved snapshot; the name says when.
+    Values are recorded from run to run (``onchain_value_history_<wallet>.csv``); the days before
+    recording began come from the one-off rebuild in ``desk.venues.onchain_history``
+    (``onchain_value_backfill_<wallet>.csv``), used only where nothing was recorded.
     """
     from desk.overview import wallet_history_path
+    from desk.venues.onchain_history import load_backfill
 
-    parts = []
+    parts, rebuilt_until = [], None
     for account in desk.accounts:
         if account.venue != "hl" or not account.onchain:
             continue
         path = wallet_history_path(desk.data_dir, account.id)
-        if not path.exists():
-            continue
-        saved = pd.read_csv(path)
-        if saved.empty:
-            continue
-        series = saved.assign(ts=pd.to_datetime(saved["ts"], utc=True, format="mixed")).set_index("ts")["value_usd"]
-        parts.append(_daily(series.sort_index()))
+        recorded = pd.Series(dtype=float)
+        if path.exists() and len(saved := pd.read_csv(path)):
+            recorded = _daily(saved.assign(ts=pd.to_datetime(saved["ts"], utc=True, format="mixed"))
+                              .set_index("ts")["value_usd"])
+        rebuilt = load_backfill(desk.data_dir, account.id)
+        if len(recorded):
+            rebuilt = rebuilt[rebuilt.index < recorded.index[0]]
+        if len(rebuilt):
+            rebuilt_until = max(rebuilt_until or rebuilt.index[-1], rebuilt.index[-1])
+        pieces = [piece for piece in (rebuilt, recorded) if len(piece)]
+        if pieces:
+            parts.append(_daily(pd.concat(pieces)))
     if not parts:
         return None
     total = pd.concat(parts, axis=1).ffill().sum(axis=1, min_count=1).dropna()
     total = total[total.index >= start.normalize()]
     if total.empty:
         return None
-    return {"name": f"Wallets outside HL (recorded since {total.index[0]:%Y-%m-%d})",
+    note = (f"wallets rebuilt from on-chain balances to {rebuilt_until:%Y-%m-%d}, recorded after"
+            if rebuilt_until is not None else f"wallets recorded since {total.index[0]:%Y-%m-%d}")
+    return {"name": "Wallets outside HL", "note": note,
             "x": [ts.strftime("%Y-%m-%d") for ts in total.index], "y": total.round(2).tolist()}
 
 
 def _value_with_wallets(value_series: list[dict], wallets: dict | None, min_days: int = 2) -> dict | None:
-    """Desk value (the stacked accounts) plus wallet tokens, on the days wallet values were recorded."""
+    """Desk value (the stacked accounts) plus wallet tokens, on the days wallet values are known."""
     if wallets is None or len(wallets["x"]) < min_days:
         return None
     accounts = [pd.Series(series["y"], index=pd.to_datetime(series["x"])) for series in value_series]
     stacked = pd.concat(accounts, axis=1).ffill().fillna(0.0).sum(axis=1) if accounts else pd.Series(dtype=float)
     wallet = pd.Series(wallets["y"], index=pd.to_datetime(wallets["x"]))
     total = (stacked.reindex(wallet.index, method="ffill").fillna(0.0) + wallet).round(2)
-    return {"name": "Desk value incl. wallets outside HL", "x": [ts.strftime("%Y-%m-%d") for ts in total.index],
-            "y": total.tolist()}
+    return {"name": "Desk value incl. wallets outside HL", "note": wallets.get("note", ""),
+            "x": [ts.strftime("%Y-%m-%d") for ts in total.index], "y": total.tolist()}
 
 
 def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
