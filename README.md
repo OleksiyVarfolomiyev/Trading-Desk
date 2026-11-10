@@ -8,6 +8,7 @@ A multi-venue trading desk: analytics, research, and guarded execution across **
 | Desk accounts: every account combined into one desk return net of deposits; performance by account, risk metrics vs BTC and SPY, charts | All | [`desk_accounts.ipynb`](desk_accounts.ipynb), `desk/desk_accounts.py` |
 | Live dashboard: the desk accounts view as a self-refreshing local web page | All | `python -m desk.dashboard`, `desk/dashboard.py` |
 | Guarded execution: dry run by default, typed confirmations, desk-wide risk cap, shared kill switch | HL, IB | `execution/hl_trade.py`, `execution/ib_trade.py` |
+| Trading daemon: live HL data and signing clients, orders about a second after confirmation, guards that act within a second | HL | `execution/hl_daemon.py` |
 | Account analytics: PnL, funding, risk metrics, attribution, charts | HL | `hl_account*.ipynb`, `desk/hl/` |
 | Account analytics: balances, today's PnL, positions with ATR levels, current-book risk vs SPY, fills, attribution | IB | `ib_account.ipynb`, `desk/ib/` |
 | Trade analytics and backtest | HL | `hl_trade_analytics.ipynb`, `hl_backtest.ipynb` |
@@ -158,7 +159,7 @@ Stops and targets work in extended hours unless `--rth-only` (see below). IB sto
 .venv/bin/python execution/ib_trade.py --protect-open --ladder 3 --live   # place, after confirmations
 ```
 
-Optional signal columns and run options: `quantity` asks for a size (rounded down to whole shares and never above what the risk and margin sizing allows, for example a Kelly size); side `REDUCE` with a `quantity` closes that many units of a held position (never more than held, never a reversal) and runs before the buys in the same file; `--no-exits` sends entries alone, with no stop or take-profit, and cancels whatever has not filled after 60 seconds so nothing is left resting; `--quote-source yahoo` prices entries and reductions from Yahoo Finance's free last price (USD stocks, regular session, under 10 minutes old, limit at most 0.5% through it) for accounts without an IB real-time data subscription (in pre-market and after-hours it uses Yahoo's latest extended-session trade); `limit_price` sends an entry at exactly that limit, refused if it is more than 3% from the last trade (pre-market and after-hours included), and sizes the stop and risk from it; `--overnight` (with `--no-exits`, and a `limit_price` on every row) routes US stock entries to IB's overnight venue, Sunday-Thursday 20:00 to 03:50 ET, still cancelling whatever has not filled after 60 seconds. A cash account buys only with settled cash, so proceeds of a sale fund buys from the next business day.
+Optional signal columns and run options: `quantity` asks for a size (rounded down to whole shares and never above what the risk and margin sizing allows, for example a Kelly size); side `REDUCE` with a `quantity` closes that many units of a held position (never more than held, never a reversal) and runs before the buys in the same file; `--no-exits` sends entries alone, with no stop or take-profit, and cancels whatever has not filled after 60 seconds so nothing is left resting; `--quote-source` picks the price source: `auto` (the default) gives IB 3 seconds and, for a US stock IB cannot quote in real time (no data on the connection, or only delayed data), uses Yahoo Finance's last trade when it is current, and the plan says so; `ib` uses IB only (a live entry then needs a real-time IB subscription); `yahoo` prices entries and reductions from Yahoo Finance's free last price only (USD stocks, regular session, under 10 minutes old, limit at most 0.5% through it; in pre-market and after-hours Yahoo's latest extended-session trade); `limit_price` sends an entry at exactly that limit, refused if it is more than 3% from the last trade (pre-market and after-hours included), and sizes the stop and risk from it; `--overnight` (with `--no-exits`, and a `limit_price` on every row) routes US stock entries to IB's overnight venue, Sunday-Thursday 20:00 to 03:50 ET, still cancelling whatever has not filled after 60 seconds. A cash account buys only with settled cash, so proceeds of a sale fund buys from the next business day.
 
 `--cancel-targets` cancels the take-profit orders (resting limits on the profit side) of every open IB position, or of `--symbols`, and leaves the stops working. A dry run lists what is cancelled and what is kept; `--live` asks for `LIVE TRADING`, re-reads the orders, asks for `CANCEL TARGETS`, then confirms each kept stop is still working.
 
@@ -350,6 +351,30 @@ The caps limit estimated loss (stop distance, adverse funding, and fees), not ma
 - Remaining room goes to in-the-money positions with the lowest unrealized PnL percentage first.
 
 The executor applies the limits to each action but does not choose positions; that ordering is applied when writing the actions CSV.
+
+`--urgent` (with `--signals`) enters at once instead: one immediate-or-cancel limit at most `--slippage` percent from the order-book mid (default 0.5%), paying the taker fee, which the sizing then counts on both legs. Whatever fills gets its stop and take-profit, sent together in one request; nothing is left resting, and a fill smaller than planned is kept. A send that fails without an answer is settled from the position itself, so it is never sent twice. Reads run in parallel over one kept-open connection, so a plan takes about 4 seconds instead of 12.
+
+### HL trading daemon
+
+`execution/hl_daemon.py` keeps everything the executor reads live, so an order goes out about a second after the final confirmation instead of 25-30 seconds, and guards act within about a second instead of every 15 seconds. Start it once in its own terminal; it loads each wallet's API key from the Keychain, like the executor:
+
+```bash
+.venv/bin/python execution/hl_daemon.py serve                 # Ctrl-C (or `stop`) ends it
+.venv/bin/python execution/hl_daemon.py status                # wallets, data age, guards
+.venv/bin/python execution/hl_daemon.py trade --wallet 07f2 --signals short.csv --urgent          # dry run
+.venv/bin/python execution/hl_daemon.py trade --wallet 07f2 --signals short.csv --urgent --live   # live
+.venv/bin/python execution/hl_daemon.py trade --wallet 07f2 --actions resize.csv --live
+.venv/bin/python execution/hl_daemon.py reattach --wallet 07f2 --coins TRUMP,VVV --live         # move guards in
+```
+
+`trade` takes the executor's flags (a wallet can be named by its last four characters; risk wallets default to every daemon wallet) and asks for the same typed phrases: `LIVE TRADING`, then `SUBMIT ORDERS` or `SUBMIT POSITION ACTIONS`. Planning, risk caps, sizing and order code are the executor's own; only the data source changes:
+
+- HL's websocket pushes every wallet's positions and margin on all DEXes about every 5 seconds, USDC collateral, order and fill events, and prices: every market about every 12 seconds, and each coin held, guarded or being traded about every second. Data older than 15 seconds (5 for a traded coin's price) is read from HL directly instead, so a dropped connection costs speed, not correctness.
+- Other desk accounts (IB) are re-read every 2 minutes; the plan shows how old that read is, and an unreadable account blocks live orders unless `--ignore-unreachable`, as in the executor.
+- Guards for trades opened through the daemon run inside it and are saved to `~/.trading-desk/hl_guards.json`; a restarted daemon resumes them. A price past the loss limit closes the tranche at once; a filled stop or take-profit cancels the other side as soon as HL reports it; a full check from HL still runs every minute. After a resize or close through the daemon, a guarded coin's guard is rebuilt from its new stop and take-profit. Guards still running in executor processes are separate: `reattach` moves a position's guard into the daemon (stop the old process first).
+- `serve --paper` runs on live data with a stand-in exchange that sends nothing (urgent entries only), to try the daemon out.
+
+While the daemon runs, the IB executor and the dashboard read HL equity and open risk from it (`desk/hl/daemon_link.py`) in milliseconds instead of re-reading HL; without it they read HL as before. The socket (`~/.trading-desk/hl_daemon.sock`) is private to the user. The kill switch blocks the daemon's new entries like the executor's.
 
 ## HL kill switch
 

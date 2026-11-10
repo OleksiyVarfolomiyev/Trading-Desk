@@ -845,7 +845,8 @@ class TradeAnalyticsTests(unittest.TestCase):
         )
         successful = unittest.mock.Mock(status_code=200, ok=True, json=lambda: {"ok": True})
         with (
-            patch("desk.hl.trade_analytics.requests.post", side_effect=[rate_limited, successful]),
+            patch("desk.hl.trade_analytics._session",
+                  return_value=SimpleNamespace(post=MagicMock(side_effect=[rate_limited, successful]))),
             patch("desk.hl.trade_analytics.time.sleep") as sleep,
         ):
             self.assertEqual(post_info({"type": "meta"}), {"ok": True})
@@ -854,7 +855,8 @@ class TradeAnalyticsTests(unittest.TestCase):
     def test_info_request_reports_rate_limit_after_retry_limit(self):
         rate_limited = unittest.mock.Mock(status_code=429, ok=False, headers={})
         with (
-            patch("desk.hl.trade_analytics.requests.post", return_value=rate_limited),
+            patch("desk.hl.trade_analytics._session",
+                  return_value=SimpleNamespace(post=MagicMock(return_value=rate_limited))),
             patch("desk.hl.trade_analytics.time.sleep"),
             self.assertRaisesRegex(RuntimeError, r"HTTP 429"),
         ):

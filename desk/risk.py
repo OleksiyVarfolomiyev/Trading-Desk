@@ -136,7 +136,18 @@ def _hl_executor():
 
 
 def hl_book_entry(wallets: list[str], label: str = "") -> BookEntry:
-    """Collateral equity and executor-consistent open risk across HL wallets."""
+    """Collateral equity and executor-consistent open risk across HL wallets.
+
+    When the HL trading daemon is running it answers from its live data in milliseconds;
+    otherwise HL is read directly (a few seconds and a few hundred units of HL's rate limit).
+    """
+    from desk.hl import daemon_link
+
+    label = label or f"HL ({len(wallets)} wallet{'s' if len(wallets) != 1 else ''})"
+    live = daemon_link.hl_book(wallets)
+    if live is not None:
+        return BookEntry(venue="hl", label=label, equity_usd=float(live["equity"]), risk_usd=float(live["risk"]),
+                         margin_used_usd=float(live["margin_used"]), positions=int(live["positions"]))
     executor = _hl_executor()
     dexes = executor.get_dexes([])
     markets = executor.fetch_markets(dexes)

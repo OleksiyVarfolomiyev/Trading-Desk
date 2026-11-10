@@ -70,6 +70,8 @@ extended_hours = True
 # Where entry prices come from: IB's own quotes (needs a real-time data subscription for live
 # entries) or Yahoo Finance's free quotes (--quote-source yahoo; US stocks only).
 quote_source = "ib"
+# With --quote-source auto, IB gets this long to quote before Yahoo Finance is asked instead.
+IB_QUOTE_WAIT_SECONDS = 3
 YAHOO_MAX_AGE_SECONDS = 600  # a regular-session last trade older than this is not used for a live entry
 # With only a last price (no bid/ask), the entry limit sits this far through it, still capped by
 # MAX_ENTRY_SLIPPAGE_PCT: a marketable limit that fills at the best offer, never beyond the cap.
@@ -290,17 +292,39 @@ def yahoo_quote(symbol: str, now: float | None = None) -> ib_venue.Quote:
             pass
     return ib_venue.Quote(bid=price * (1 - EXTERNAL_QUOTE_CROSS_PCT),
                           ask=price * (1 + EXTERNAL_QUOTE_CROSS_PCT),
-                          last=price, close=last.previous_close, live=live)
+                          last=price, close=last.previous_close, live=live, source="yahoo")
 
 
 def get_quote(ib, contract) -> ib_venue.Quote:
-    """The entry quote from the source chosen for this run."""
+    """The entry quote from the source chosen for this run.
+
+    ``auto`` gives IB IB_QUOTE_WAIT_SECONDS; for a US stock IB cannot quote in real time (no
+    data on this connection, or only delayed data) it then uses Yahoo Finance's last trade when
+    that is current. ``ib`` and ``yahoo`` use one source only.
+    """
+    usd_stock = contract.secType == "STK" and contract.currency == "USD"
     if quote_source == "yahoo":
-        if contract.secType != "STK" or contract.currency != "USD":
+        if not usd_stock:
             raise ValueError(f"--quote-source yahoo covers USD stocks only, not {contract.secType} "
                              f"{contract.currency}")
         return yahoo_quote(contract.symbol)
-    return ib_venue.quote(ib, contract)
+    if quote_source != "auto" or not usd_stock:
+        return ib_venue.quote(ib, contract)
+    try:
+        quote = ib_venue.quote(ib, contract, timeout=IB_QUOTE_WAIT_SECONDS)
+    except ValueError:
+        quote = None
+    if quote is not None and quote.live:
+        return quote
+    try:
+        fallback = yahoo_quote(contract.symbol)
+    except Exception:  # no Yahoo price either: keep IB's answer
+        fallback = None
+    if fallback is not None and (fallback.live or quote is None):
+        return fallback
+    if quote is None:
+        raise ValueError(f"no quote for {contract.symbol} from IB within {IB_QUOTE_WAIT_SECONDS}s or from Yahoo Finance")
+    return quote
 
 
 def size_bracket(
@@ -525,6 +549,8 @@ def plan_ib_trades(ib, account: Account, signals: list[Signal], external: DeskBo
                                  f"({bars['date'].iloc[-1]:%Y-%m-%d}). A live run needs a real-time quote")
         elif not quote.live:
             plan.warnings.append("quote is delayed or from the prior close; a live run needs real-time data")
+        elif quote.source == "yahoo" and quote_source == "auto":
+            plan.warnings.append("IB had no real-time quote; priced from Yahoo Finance's last trade")
         commission_unit = commission_per_unit_usd(klass, reference, mult, fx)
         # First pass: size by risk alone, then let IB's what-if price margin and commission.
         sizing = size_bracket(signal.side, reference, quote.bid, quote.ask, atr, tick, step, mult, fx,
@@ -663,7 +689,7 @@ def submit_bracket(ib, plan: IBPlan, account: str) -> str:
         return f"{plan.symbol}: skipped, {exc}."
     if not fresh.live:
         return (f"{plan.symbol}: skipped, no real-time quote (market closed or no live data subscription"
-                + ("; Yahoo's last trade is stale or the session is closed)." if quote_source == "yahoo" else ")."))
+                + ("; Yahoo's last trade is stale or the session is closed)." if quote_source in ("yahoo", "auto") else ")."))
     direction = side_direction(plan.side)
     if (fresh.reference - plan.stop_price) * direction <= 0:
         return f"{plan.symbol}: skipped, the price {fresh.reference:,.6g} is already through the stop."
@@ -1422,9 +1448,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replace", action="store_true",
                         help="With --protect-open: cancel the desk's own existing exit orders and place fresh ones "
                         "(for example to move them to extended hours or a new ladder).")
-    parser.add_argument("--quote-source", choices=("ib", "yahoo"), default="ib",
-                        help="Entry prices from IB (default; live entries need a real-time IB data subscription) "
-                        "or Yahoo Finance's free last price (USD stocks only).")
+    parser.add_argument("--quote-source", choices=("auto", "ib", "yahoo"), default="auto",
+                        help="Entry prices: 'auto' (default) asks IB for up to "
+                        f"{IB_QUOTE_WAIT_SECONDS}s, then uses Yahoo Finance's last trade for a US stock IB cannot "
+                        "quote in real time; 'ib' only IB (live entries need a real-time IB data subscription); "
+                        "'yahoo' only Yahoo Finance (USD stocks only).")
     parser.add_argument("--no-exits", action="store_true",
                         help="With --signals: send entries only, with no stop or take-profit; an entry not filled "
                         "within the timeout is cancelled, so nothing is left resting.")

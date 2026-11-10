@@ -15,9 +15,10 @@ import getpass
 import math
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -68,6 +69,23 @@ KILL_CLOSE_SLIPPAGES = (0.05, 0.05, 0.10)
 KILL_RETRY_SECONDS = 2
 # Longer than one entry-chase check, so another running entry loop has seen the halt.
 KILL_SETTLE_SECONDS = CHASE_INTERVAL_SECONDS + 2
+# Independent info requests (one per wallet and DEX) run this many at a time. HL's limit is on
+# request weight per minute, not concurrency, so this only shortens the wall-clock wait.
+PARALLEL_READS = 12
+# Urgent entries cross the spread with an immediate-or-cancel limit at most this far from the mid.
+URGENT_SLIPPAGE = 0.005
+
+
+def _gather(calls: list[Callable[[], Any]]) -> list[Any]:
+    """Run independent zero-argument calls concurrently; results keep the calls' order.
+
+    The first failure is raised once every call has finished, as a sequential loop would raise it.
+    """
+    if len(calls) <= 1:
+        return [call() for call in calls]
+    with ThreadPoolExecutor(max_workers=min(PARALLEL_READS, len(calls))) as pool:
+        futures = [pool.submit(call) for call in calls]
+    return [future.result() for future in futures]
 
 
 @dataclass(frozen=True)
@@ -263,42 +281,54 @@ def get_dexes(signals: list[dict[str, str]]) -> list[str]:
     return sorted(dexes)
 
 
-def fetch_markets(dexes: list[str]) -> dict[str, Market]:
-    """Fetch metadata and current mark/oracle prices for the requested DEXes."""
+def fetch_market_response(dex: str) -> Any:
+    """One DEX's ``[meta, asset contexts]`` from HL."""
+    request: dict[str, Any] = {"type": "metaAndAssetCtxs"}
+    if dex:
+        request["dex"] = dex
+    return post_info(request)
+
+
+def markets_from_response(dex: str, response: Any) -> dict[str, Market]:
+    """Markets with a usable mark and oracle price from one DEX's ``[meta, asset contexts]``."""
+    if not isinstance(response, list) or len(response) != 2:
+        raise ValueError(f"Invalid market metadata response for DEX {dex or 'default'}.")
+    meta, contexts = response
+    if not isinstance(meta, dict) or not isinstance(contexts, list):
+        raise ValueError(f"Invalid market metadata structure for DEX {dex or 'default'}.")
+    universe = meta.get("universe")
+    if not isinstance(universe, list) or len(universe) != len(contexts):
+        raise ValueError(f"Market metadata and contexts do not align for DEX {dex or 'default'}.")
     markets: dict[str, Market] = {}
-    for dex in dexes:
-        request: dict[str, Any] = {"type": "metaAndAssetCtxs"}
-        if dex:
-            request["dex"] = dex
-        response = post_info(request)
-        if not isinstance(response, list) or len(response) != 2:
-            raise ValueError(f"Invalid market metadata response for DEX {dex or 'default'}.")
-        meta, contexts = response
-        if not isinstance(meta, dict) or not isinstance(contexts, list):
-            raise ValueError(f"Invalid market metadata structure for DEX {dex or 'default'}.")
-        universe = meta.get("universe")
-        if not isinstance(universe, list) or len(universe) != len(contexts):
-            raise ValueError(f"Market metadata and contexts do not align for DEX {dex or 'default'}.")
-        for instrument, context in zip(universe, contexts):
-            name = str(instrument.get("name", ""))
-            if not name or not isinstance(context, dict):
-                continue
-            coin, normalized_dex = normalize_market(name, dex)
-            mark = float(context.get("markPx") or 0)
-            oracle = float(context.get("oraclePx") or mark or 0)
-            size_decimals = int(instrument.get("szDecimals", 0))
-            max_leverage = int(instrument.get("maxLeverage", 1))
-            if mark <= 0 or oracle <= 0:
-                continue
-            markets[coin] = Market(
-                coin=coin,
-                dex=normalized_dex,
-                mark_price=mark,
-                oracle_price=oracle,
-                size_decimals=size_decimals,
-                max_leverage=max_leverage,
-                only_isolated=bool(instrument.get("onlyIsolated")),
-            )
+    for instrument, context in zip(universe, contexts):
+        name = str(instrument.get("name", ""))
+        if not name or not isinstance(context, dict):
+            continue
+        coin, normalized_dex = normalize_market(name, dex)
+        mark = float(context.get("markPx") or 0)
+        oracle = float(context.get("oraclePx") or mark or 0)
+        size_decimals = int(instrument.get("szDecimals", 0))
+        max_leverage = int(instrument.get("maxLeverage", 1))
+        if mark <= 0 or oracle <= 0:
+            continue
+        markets[coin] = Market(
+            coin=coin,
+            dex=normalized_dex,
+            mark_price=mark,
+            oracle_price=oracle,
+            size_decimals=size_decimals,
+            max_leverage=max_leverage,
+            only_isolated=bool(instrument.get("onlyIsolated")),
+        )
+    return markets
+
+
+def fetch_markets(dexes: list[str]) -> dict[str, Market]:
+    """Fetch metadata and current mark/oracle prices for the requested DEXes (read in parallel)."""
+    markets: dict[str, Market] = {}
+    responses = _gather([lambda dex=dex: fetch_market_response(dex) for dex in dexes])
+    for dex, response in zip(dexes, responses):
+        markets.update(markets_from_response(dex, response))
     return markets
 
 
@@ -350,25 +380,45 @@ def parse_fee_rates(wallet: str) -> tuple[float, float]:
     return maker, taker
 
 
-def collect_snapshot(wallets: list[str], dexes: list[str], markets: dict[str, Market]) -> AccountSnapshot:
+def collect_snapshot(
+    wallets: list[str],
+    dexes: list[str],
+    markets: dict[str, Market],
+    states: dict[tuple[str, str], dict[str, Any]] | None = None,
+    collateral: Callable[[str, float], float] | None = None,
+    fee_rates: tuple[float, float] | None = None,
+) -> AccountSnapshot:
     """Collect validated positions, margin totals, and collateral equity across wallets.
 
     The first wallet is the execution wallet; its equity and margin are kept
     separately for sizing, while all supplied wallets contribute to aggregate
     risk and total equity.
+
+    ``states`` ({(wallet, dex): clearinghouse state}), ``collateral`` (wallet, perp equity ->
+    collateral equity) and ``fee_rates`` (maker, taker) let a caller that already holds fresh
+    data (the trading daemon) skip those requests; anything not supplied is read from HL, in
+    parallel.
     """
     wallets = list(dict.fromkeys(wallet.lower() for wallet in wallets))
     if not wallets:
         raise ValueError("At least one risk wallet address is required.")
+    states = {(wallet.lower(), dex): state for (wallet, dex), state in (states or {}).items()}
+    missing = [(wallet, dex) for wallet in wallets for dex in dexes if (wallet, dex) not in states]
+    calls: list[Callable[[], Any]] = [lambda pair=pair: fetch_user_state(*pair) for pair in missing]
+    if fee_rates is None:
+        calls.append(lambda: parse_fee_rates(wallets[0]))
+    results = _gather(calls)
+    if fee_rates is None:
+        fee_rates = results.pop()
+    states.update(zip(missing, results))
     all_positions: list[Position] = []
-    equity = 0.0
+    perp_equities: list[float] = []
     margin_used = 0.0
-    target_equity = 0.0
     target_margin_used = 0.0
     for wallet_index, wallet in enumerate(wallets):
         perp_equity = 0.0
         for dex in dexes:
-            state = fetch_user_state(wallet, dex)
+            state = states[(wallet, dex)]
             margin_summary = state.get("marginSummary", {})
             try:
                 account_value = float(margin_summary["accountValue"])
@@ -419,13 +469,16 @@ def collect_snapshot(wallets: list[str], dexes: list[str], markets: dict[str, Ma
                         leverage=leverage,
                     )
                 )
-        wallet_equity = fetch_collateral_equity(wallet, perp_equity)
-        equity += wallet_equity
-        if wallet_index == 0:
-            target_equity = wallet_equity
+        perp_equities.append(perp_equity)
+    collateral = collateral or fetch_collateral_equity
+    wallet_equities = _gather([
+        lambda wallet=wallet, perp=perp: collateral(wallet, perp) for wallet, perp in zip(wallets, perp_equities)
+    ])
+    equity = sum(wallet_equities)
+    target_equity = wallet_equities[0]
     if equity <= 0:
         raise ValueError("Combined account equity must be positive.")
-    maker_rate, taker_rate = parse_fee_rates(wallets[0])
+    maker_rate, taker_rate = fee_rates
     return AccountSnapshot(
         equity=equity,
         margin_used=margin_used,
@@ -1546,14 +1599,105 @@ def _place_entry(exchange: Any, wallet: str, plan: PlannedTrade, market: Market)
     return filled_total, weighted_entry / filled_total
 
 
+def _book_mid(coin: str, dex: str) -> float:
+    """The order book's current midpoint for one market."""
+    request: dict[str, Any] = {"type": "l2Book", "coin": coin}
+    if dex:
+        request["dex"] = dex
+    response = post_info(request)
+    levels = response.get("levels") if isinstance(response, dict) else None
+    if not isinstance(levels, list) or len(levels) != 2 or not levels[0] or not levels[1]:
+        raise ValueError(f"Order book for {coin} has no two-sided market.")
+    bid, ask = float(levels[0][0]["px"]), float(levels[1][0]["px"])
+    if bid <= 0 or ask <= bid:
+        raise ValueError(f"Order book for {coin} is crossed or has invalid prices.")
+    return (bid + ask) / 2
+
+
+def _place_taker_entry(
+    exchange: Any,
+    wallet: str,
+    plan: PlannedTrade,
+    market: Market,
+    slippage: float = URGENT_SLIPPAGE,
+    reference: float | None = None,
+    baseline: float | None = None,
+) -> tuple[float, float]:
+    """Enter at once: one immediate-or-cancel limit at most ``slippage`` from the mid.
+
+    Whatever fills is returned (possibly less than planned) and nothing is left resting. When a
+    send fails without an answer, the position itself shows whether it filled, so a fill is never
+    left without exit protection and the order is never sent twice.
+    """
+    if kill_switch_engaged():
+        raise RuntimeError("the kill switch is engaged; no entry was sent")
+    if not 0 < slippage <= 0.05:
+        raise ValueError("urgent-entry slippage must be above 0 and at most 5%.")
+    direction = side_to_direction(plan.side)
+    mid = reference if reference is not None and reference > 0 else _book_mid(plan.coin, plan.dex)
+    limit = _round_price(mid * (1 + direction * slippage), market.size_decimals)
+    if baseline is None:
+        baseline = _current_position_quantity(wallet, plan.dex, plan.coin)
+    try:
+        response = exchange.order(
+            plan.coin, direction > 0, plan.quantity, limit, {"limit": {"tif": "Ioc"}}, reduce_only=False
+        )
+        status = _status_rows(response)[0]
+    except Exception as exc:  # The SDK raises its own types; the position decides what happened.
+        try:
+            signed, entry = _current_position_details(wallet, plan.dex, plan.coin)
+        except Exception:
+            raise RuntimeError(
+                f"{plan.coin}: urgent entry send failed ({exc}) and its result could not be read; "
+                "check this market on the exchange."
+            ) from exc
+        added = round(direction * (signed - baseline), market.size_decimals)
+        if added > 0:
+            print(f"{plan.coin}: the send reported an error ({exc}) but the position grew by {added:g}.")
+            return added, entry if baseline == 0 and entry > 0 else limit
+        raise RuntimeError(f"{plan.coin}: urgent entry send failed ({exc}); the exchange shows no fill.") from exc
+    if "filled" in status:
+        size, average = _filled_size(status)
+        if size > 0:
+            return round(size, market.size_decimals), average
+    raise RuntimeError(
+        f"{plan.coin}: no fill within {slippage:.2%} of the ${mid:,.6g} mid "
+        f"({status.get('error') or status!r}); nothing rests on the book."
+    )
+
+
+def _resend_passive_target(
+    exchange: Any, plan: PlannedTrade, quantity: float, target_price: float, size_decimals: int
+) -> int:
+    """Re-place a rejected take-profit just outside the spread; 0 when it still cannot rest."""
+    direction = side_to_direction(plan.side)
+    exit_side = "SHORT" if direction > 0 else "LONG"
+    passive_price = post_only_price(plan.coin, plan.dex, exit_side, size_decimals)
+    price = max(target_price, passive_price) if direction > 0 else min(target_price, passive_price)
+    response = exchange.order(plan.coin, direction < 0, quantity, price, {"limit": {"tif": "Alo"}}, reduce_only=True)
+    try:
+        oid = _oid_from_status(_status_rows(response)[0])
+    except ValueError:
+        oid = None
+    if oid is None:
+        print(f"{plan.coin}: take-profit could not rest after passive repricing; the reduce-only stop remains active.")
+        return 0
+    return oid
+
+
 def _place_exit_orders(
     exchange: Any,
     plan: PlannedTrade,
     quantity: float,
     entry_price: float,
     size_decimals: int,
+    batched: bool = False,
 ) -> tuple[int, int]:
-    """Submit reduce-only stop-market and post-only take-profit orders for a filled entry."""
+    """Submit reduce-only stop-market and post-only take-profit orders for a filled entry.
+
+    ``batched`` sends both in one request (one round trip instead of two). The stop must rest;
+    a take-profit that cannot rest is re-placed just outside the spread, or left out.
+    """
     direction = side_to_direction(plan.side)
     stop_distance = plan.price_stop_distance or plan.stop_distance
     stop_price = _round_price(entry_price - direction * stop_distance, size_decimals)
@@ -1562,12 +1706,33 @@ def _place_exit_orders(
         size_decimals,
     )
     close_is_buy = direction < 0
+    stop_type = {"trigger": {"triggerPx": stop_price, "isMarket": True, "tpsl": "sl"}}
+    if batched:
+        statuses = _status_rows(exchange.bulk_orders([
+            {"coin": plan.coin, "is_buy": close_is_buy, "sz": quantity, "limit_px": stop_price,
+             "order_type": stop_type, "reduce_only": True},
+            {"coin": plan.coin, "is_buy": close_is_buy, "sz": quantity, "limit_px": target_price,
+             "order_type": {"limit": {"tif": "Alo"}}, "reduce_only": True},
+        ]))
+        stop_status, target_status = statuses[0], (statuses[1] if len(statuses) > 1 else {})
+        stop_oid = _oid_from_status(stop_status)
+        target_oid = _oid_from_status(target_status) if "filled" not in target_status else None
+        if stop_oid is None or "filled" in stop_status:
+            if target_oid is not None:
+                try:  # a lone take-profit is no protection; the caller closes the fill
+                    exchange.cancel(plan.coin, target_oid)
+                except Exception as exc:
+                    print(f"{plan.coin}: could not cancel take-profit {target_oid} ({exc}).")
+            raise RuntimeError(f"Could not confirm the reduce-only stop-market order for {plan.coin}: {stop_status!r}")
+        if target_oid is None:
+            target_oid = _resend_passive_target(exchange, plan, quantity, target_price, size_decimals)
+        return stop_oid, target_oid
     stop_response = exchange.order(
         plan.coin,
         close_is_buy,
         quantity,
         stop_price,
-        {"trigger": {"triggerPx": stop_price, "isMarket": True, "tpsl": "sl"}},
+        stop_type,
         reduce_only=True,
     )
     stop_status = _status_rows(stop_response)[0]
@@ -2310,13 +2475,18 @@ def run_protection_ladder_replacement(
 
 def run_position_reconciliation(
     wallet: str,
-    private_key: str,
+    private_key: str | None,
     dexes: list[str],
     plans: list[ReconcilePlan],
     markets: dict[str, Market],
+    exchange: Any = None,
 ) -> None:
-    """Apply approved position-size changes, then restore reduce-only protections."""
-    exchange = build_exchange(wallet, private_key, dexes)
+    """Apply approved position-size changes, then restore reduce-only protections.
+
+    A caller holding a ready exchange client (the trading daemon) passes it as ``exchange``.
+    """
+    if exchange is None:
+        exchange = build_exchange(wallet, private_key, trade_dexes(plans))
     failures: list[str] = []
     for plan in plans:
         if plan.block_reason:
@@ -2358,7 +2528,8 @@ def run_position_reconciliation(
 
             actual_signed, actual_entry = _current_position_details(wallet, dex, coin)
             actual_quantity = abs(actual_signed)
-            existing_orders = fetch_open_orders(wallet)
+            # A market's orders live on its own DEX, so only that DEX is read.
+            existing_orders = fetch_open_orders(wallet, [dex])
             existing_position = plan.position
             if existing_position is not None:
                 stops, targets = _matching_protection_orders(existing_position, existing_orders)
@@ -2590,33 +2761,63 @@ def run_guard_reattachment(wallet: str, private_key: str, dexes: list[str], plan
     _watch_trades(exchange, wallet, trades, trades[0].plan.maker_fee_rate, trades[0].plan.taker_fee_rate)
 
 
-def run_live(wallet: str, private_key: str, dexes: list[str], plans: list[PlannedTrade], markets: dict[str, Market]) -> None:
-    """Execute planned entries, place protective exits, and monitor resulting trades."""
-    exchange = build_exchange(wallet, private_key, dexes)
+def _set_leverage(exchange: Any, plan: PlannedTrade, market: Market) -> None:
+    """Set the market's leverage for this wallet, raising unless HL confirms it."""
+    result = exchange.update_leverage(plan.leverage, plan.coin, is_cross=not market.only_isolated)
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        raise RuntimeError(f"Could not confirm leverage {plan.leverage}x for {plan.coin}: {result!r}")
+
+
+def trade_dexes(plans: list[Any]) -> list[str]:
+    """The DEXes an exchange client needs for these plans: the default DEX plus each plan's own."""
+    return sorted({""} | {getattr(plan, "dex", "") or getattr(getattr(plan, "action", None), "dex", "")
+                          for plan in plans})
+
+
+def execute_plans(
+    exchange: Any,
+    wallet: str,
+    plans: list[PlannedTrade],
+    markets: dict[str, Market],
+    urgent: bool = False,
+    slippage: float = URGENT_SLIPPAGE,
+    batched_exits: bool = False,
+) -> tuple[list[ActiveTrade], list[str]]:
+    """Enter each planned trade and place its exits; return the trades to guard and any failures.
+
+    Maker entries chase with post-only limits (up to five minutes); ``urgent`` entries take the
+    book at once with an immediate-or-cancel limit at most ``slippage`` from the mid.
+    """
     active: list[ActiveTrade] = []
     failures: list[str] = []
     for plan in plans:
         if plan.quantity <= 0:
             continue
+        market = markets[plan.coin]
         try:
-            baseline_quantity = _current_position_quantity(wallet, plan.dex, plan.coin)
-            leverage_result = exchange.update_leverage(
-                plan.leverage,
-                plan.coin,
-                is_cross=not markets[plan.coin].only_isolated,
-            )
-            if not isinstance(leverage_result, dict) or leverage_result.get("status") != "ok":
-                raise RuntimeError(
-                    f"Could not confirm leverage {plan.leverage}x for {plan.coin}: {leverage_result!r}"
+            # The position read, the leverage update and the urgent entry's mid are independent.
+            reads: list[Callable[[], Any]] = [
+                lambda: _current_position_quantity(wallet, plan.dex, plan.coin),
+                lambda: _set_leverage(exchange, plan, market),
+            ]
+            if urgent:
+                reads.append(lambda: _book_mid(plan.coin, plan.dex))
+            results = _gather(reads)
+            baseline_quantity = results[0]
+            if urgent:
+                quantity, entry_price = _place_taker_entry(
+                    exchange, wallet, plan, market, slippage, reference=results[2], baseline=baseline_quantity
                 )
-            quantity, entry_price = _place_entry(exchange, wallet, plan, markets[plan.coin])
+            else:
+                quantity, entry_price = _place_entry(exchange, wallet, plan, market)
             try:
                 stop_oid, target_oid = _place_exit_orders(
                     exchange,
                     plan,
                     quantity,
                     entry_price,
-                    markets[plan.coin].size_decimals,
+                    market.size_decimals,
+                    batched=batched_exits,
                 )
             except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as exc:
                 exchange.market_close(plan.coin, quantity)
@@ -2646,6 +2847,22 @@ def run_live(wallet: str, private_key: str, dexes: list[str], plans: list[Planne
         )
         if target_oid:
             print(f"{plan.coin}: reduce-only post-only take-profit is active.")
+    return active, failures
+
+
+def run_live(
+    wallet: str,
+    private_key: str,
+    dexes: list[str],
+    plans: list[PlannedTrade],
+    markets: dict[str, Market],
+    urgent: bool = False,
+    slippage: float = URGENT_SLIPPAGE,
+) -> None:
+    """Execute planned entries, place protective exits, and monitor resulting trades."""
+    exchange = build_exchange(wallet, private_key, trade_dexes(plans))
+    active, failures = execute_plans(exchange, wallet, plans, markets, urgent=urgent, slippage=slippage,
+                                     batched_exits=True)
     if active:
         print("Monitoring funding-adjusted net PnL. Keep this process running for the guard to remain active.")
         _watch_trades(exchange, wallet, active, plans[0].maker_fee_rate, plans[0].taker_fee_rate)
@@ -2789,6 +3006,13 @@ def attach_other_venues(snapshot: AccountSnapshot, args: argparse.Namespace) -> 
     return replace(snapshot, external_equity=book.equity_usd, external_risk=book.risk_usd)
 
 
+def urgent_fees(snapshot: AccountSnapshot, urgent: bool) -> AccountSnapshot:
+    """An urgent entry pays the taker fee, so its sizing and guard count taker fees both ways."""
+    from dataclasses import replace
+
+    return replace(snapshot, maker_fee_rate=snapshot.taker_fee_rate) if urgent else snapshot
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse command-line options and run the selected planning or execution workflow."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -2837,9 +3061,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Trade even if another desk account in accounts.json (such as IB) cannot be read; "
         "its risk is then left out of the aggregate cap.",
     )
+    parser.add_argument(
+        "--urgent",
+        action="store_true",
+        help="With --signals: enter at once with an immediate-or-cancel limit at most --slippage from the mid "
+        "(taker fee) instead of chasing with post-only limits for up to five minutes.",
+    )
+    parser.add_argument(
+        "--slippage",
+        type=float,
+        default=URGENT_SLIPPAGE * 100,
+        help=f"With --urgent: the most the entry may pay beyond the mid, in percent (default {URGENT_SLIPPAGE * 100:g}).",
+    )
     parser.add_argument("--store-key", action="store_true", help="Prompt locally and store the API-wallet key in Keychain.")
     parser.add_argument("--live", action="store_true", help="Allow live orders after typing the confirmation phrase.")
     args = parser.parse_args(argv)
+    if not 0 < args.slippage <= 5:
+        parser.error("--slippage must be above 0 and at most 5 (percent).")
+    if args.urgent and args.signals is None:
+        parser.error("--urgent applies to --signals entries.")
     if args.max_risk_pct is not None:
         if not 0 < args.max_risk_pct <= MAX_RISK_PCT_OVERRIDE_LIMIT:
             parser.error(f"--max-risk-pct must be above 0 and at most {MAX_RISK_PCT_OVERRIDE_LIMIT:g}.")
@@ -3016,8 +3256,10 @@ def main(argv: list[str] | None = None) -> int:
         dexes = get_dexes(signals)
         markets = fetch_markets(dexes)
         risk_wallets = read_target_wallets(args.wallet, args.risk_wallets)
-        snapshot = attach_other_venues(collect_snapshot(risk_wallets, dexes, markets), args)
+        snapshot = urgent_fees(attach_other_venues(collect_snapshot(risk_wallets, dexes, markets), args), args.urgent)
         plans, current_risk = plan_trades(signals, markets, snapshot)
+        if args.urgent:
+            print(f"Urgent entry: immediate-or-cancel at most {args.slippage:g}% from the mid (taker fee).")
         print_plan(snapshot, plans, current_risk)
         if not args.live:
             print("Dry run only. No signing key was loaded and no order was sent.")
@@ -3030,7 +3272,9 @@ def main(argv: list[str] | None = None) -> int:
             print("Confirmation did not match; no order was sent.")
             return 0
         fresh_markets = fetch_markets(dexes)
-        fresh_snapshot = attach_other_venues(collect_snapshot(risk_wallets, dexes, fresh_markets), args)
+        fresh_snapshot = urgent_fees(
+            attach_other_venues(collect_snapshot(risk_wallets, dexes, fresh_markets), args), args.urgent
+        )
         fresh_plans, fresh_current_risk = plan_trades(signals, fresh_markets, fresh_snapshot)
         print("Refreshed preflight immediately before live submission:")
         print_plan(fresh_snapshot, fresh_plans, fresh_current_risk)
@@ -3042,7 +3286,8 @@ def main(argv: list[str] | None = None) -> int:
             print("Confirmation did not match; no order was sent.")
             return 0
         private_key = _load_key_from_keychain(args.wallet)
-        run_live(args.wallet, private_key, dexes, fresh_plans, fresh_markets)
+        run_live(args.wallet, private_key, dexes, fresh_plans, fresh_markets, urgent=args.urgent,
+                 slippage=args.slippage / 100)
         return 0
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Trade execution stopped: {exc}", file=sys.stderr)

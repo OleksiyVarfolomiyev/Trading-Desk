@@ -459,6 +459,7 @@ class Quote:
     last: float
     close: float
     live: bool
+    source: str = "ib"
 
     @property
     def reference(self) -> float:
@@ -470,15 +471,25 @@ class Quote:
         return self.close
 
 
-def quote(ib, contract) -> Quote:
-    """Snapshot bid/ask/last; ``live`` is False for delayed or frozen data."""
+def quote(ib, contract, timeout: float | None = None) -> Quote:
+    """Snapshot bid/ask/last; ``live`` is False for delayed or frozen data.
+
+    ``timeout`` caps the wait (default: the connection's request timeout).
+    """
     import asyncio
 
+    saved = getattr(ib, "RequestTimeout", None)
+    if timeout is not None:
+        ib.RequestTimeout = timeout
     try:
         ticker = ib.reqTickers(contract)[0]
     except (asyncio.TimeoutError, TimeoutError):
+        waited = timeout if timeout is not None else READ_REQUEST_TIMEOUT_SECONDS
         raise ValueError(f"IB sent no quote for {contract_symbol(contract)} within "
-                         f"{READ_REQUEST_TIMEOUT_SECONDS}s (no market data for it on this connection)") from None
+                         f"{waited:g}s (no market data for it on this connection)") from None
+    finally:
+        if timeout is not None:
+            ib.RequestTimeout = saved
 
     def clean(value):
         return float(value) if is_set(value) and float(value) > 0 else float("nan")

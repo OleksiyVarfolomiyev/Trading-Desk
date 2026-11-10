@@ -26,6 +26,19 @@ CACHE_DIR = None if os.environ.get("HL_DISABLE_CACHE") else Path(__file__).resol
 # A full 500-row funding page costs about 45 of the API's 1,200 weight per minute.
 FULL_PAGE_PAUSE_SECONDS = 2.5
 FUNDING_TIMESTAMP_TOLERANCE = pd.Timedelta(seconds=2)
+# One kept-open HTTPS connection pool for every info request: a fresh TLS handshake per request
+# cost about 35 ms each, and the executors make dozens of requests per run (some in parallel).
+_SESSION: requests.Session | None = None
+
+
+def _session() -> requests.Session:
+    """The shared HTTP session for HL info requests (created on first use)."""
+    global _SESSION
+    if _SESSION is None:
+        session = requests.Session()
+        session.mount("https://", requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=32))
+        _SESSION = session
+    return _SESSION
 
 
 def _rate_limit_delay(response: requests.Response, retry_number: int) -> float:
@@ -59,7 +72,7 @@ def post_info(payload: dict[str, Any], timeout: float = 30) -> Any:
     """
     for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
         try:
-            response = requests.post(INFO_URL, json=payload, timeout=timeout)
+            response = _session().post(INFO_URL, json=payload, timeout=timeout)
         except requests.RequestException as exc:
             raise RuntimeError(f"HL info request failed ({type(exc).__name__}).") from exc
         if response.status_code == 429 and attempt < MAX_RATE_LIMIT_RETRIES:
