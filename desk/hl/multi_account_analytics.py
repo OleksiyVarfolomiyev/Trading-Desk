@@ -275,13 +275,12 @@ class _MultiWalletRealizedMixin:
         print_realized_stats(perp_df,'PERP',funding_history=data.funding_history_df,
                              account_value=data.current_account_value,funding_events=data.funding_df)
         print_realized_stats(spot_df,'SPOT',account_value=data.current_account_value)
-        print('\n=== PERP PNL BREAKDOWN ===')
         breakdown,non_usd_tokens=perp_pnl_breakdown(perp_df,data.funding_history_df)
         net_index=breakdown.index[breakdown['Component']=='Net perp PnL'][0]
         display_interactive_table(breakdown,formatters={
             'Amount':lambda v:f'${v:,.2f}',
             'Contribution (% of |net PnL|)':lambda v:f'{v:.2f}%',
-        },cell_style=breakdown_style,bold_last=True,key_columns={'Amount':None},
+        },cell_style=breakdown_style,bold_last=True,key_columns={'Amount':None},title='PERP PNL BREAKDOWN',
           blank_missing_cells={(net_index,'Contribution (% of |net PnL|)')})
         liquidations=liquidation_stats(perp_df,funding_history=data.funding_history_df)
         print(f"Liquidations: {liquidations['liquidations']} of {liquidations['closes']} closes "
@@ -306,7 +305,7 @@ class _MultiWalletVolumeMixin:
     def show_volume_summary(self):
         data=self._require_data()
         summary=summarize_volume_pnl(build_daily_volume_pnl(data.realized_df))
-        print(f'=== TRADED VOLUME VS REALIZED PNL (ALL WALLETS; {volume_window(data.realized_df)}) ===')
+        title=f'TRADED VOLUME VS REALIZED PNL (ALL WALLETS; {volume_window(data.realized_df)})'
         if summary.empty:
             print('No fill volume or realized PnL data is available.')
             return
@@ -319,7 +318,7 @@ class _MultiWalletVolumeMixin:
             'Realized PnL / Volume (%)':lambda v:f'{v:.2f}%',
             'PnL / $1k volume':lambda v:f'${v:,.2f}',
             'Daily Pearson r':lambda v:f'{v:.3f}','Daily Spearman r':lambda v:f'{v:.3f}',
-        },cell_style=style,bold_last=True,blank_missing_cells=volume_total_blank_cells(summary),
+        },cell_style=style,bold_last=True,title=title,blank_missing_cells=volume_total_blank_cells(summary),
           key_columns={'Realized PnL excl. funding (trading + fees)':'abs'})
         print('Realized PnL is HL closedPnl less USDC trading fees; funding is excluded. '+VOLUME_WINDOW_NOTE)
 
@@ -341,8 +340,7 @@ class _MultiWalletAttributionMixin:
             non_perp_pnl=fetch_non_perp_pnl(self.wallet_addresses),
         )
         if not tables:
-            print('=== CONSOLIDATED PNL ATTRIBUTION ===')
-            print('No realized or open-position PnL to attribute.')
+            print('Consolidated PnL attribution: no realized or open-position PnL to attribute.')
             return
         display_pnl_attribution_tables(tables,'CONSOLIDATED PNL ATTRIBUTION')
         print(f'Net attributed PnL across wallets: ${net_pnl:,.2f}. '

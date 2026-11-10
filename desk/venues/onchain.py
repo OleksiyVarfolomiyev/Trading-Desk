@@ -35,6 +35,7 @@ from desk.venues.base import VenueAccount, VenuePosition
 VENUE = "onchain"
 ETHERSCAN_URL = "https://api.etherscan.io/v2/api"
 LLAMA_URL = "https://coins.llama.fi/prices/current/"
+LLAMA_CHANGE_URL = "https://coins.llama.fi/percentage/"
 KEYCHAIN_SERVICE = "Etherscan API"
 BLOCKSCOUT_KEYCHAIN_SERVICE = "Blockscout PRO API"
 ALCHEMY_KEYCHAIN_SERVICE = "Alchemy API"
@@ -283,6 +284,21 @@ def fetch_prices(keys: set[str]) -> dict[str, float]:
             if float(coin.get("confidence") or 0) >= MIN_PRICE_CONFIDENCE and float(coin.get("price") or 0) > 0:
                 prices[key.lower()] = float(coin["price"])
     return prices
+
+
+def fetch_changes_24h(keys: set[str]) -> dict[str, float]:
+    """DefiLlama's 24-hour price change for ``chain:address`` keys, as a fraction (0.01 is +1%)."""
+    changes: dict[str, float] = {}
+    keys = sorted(keys)
+    for start in range(0, len(keys), 60):
+        chunk = keys[start:start + 60]
+        coins = _get(LLAMA_CHANGE_URL + ",".join(chunk), params={"period": "24h"}).json().get("coins", {})
+        for key, change in coins.items():
+            try:
+                changes[key.lower()] = float(change) / 100
+            except (TypeError, ValueError):
+                continue
+    return changes
 
 
 # ---------------------------------------------------------------------------

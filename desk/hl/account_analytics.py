@@ -130,8 +130,7 @@ def display_interactive_table(frame, formatters=None, cell_style=None, bold_last
             cells.append(f"<td data-sort='{sort_attribute}' style='{style_attribute}'>{content}</td>")
         body_rows.append('<tr>' + ''.join(cells) + '</tr>')
     caption_html = (
-        "<caption style='caption-side:top;text-align:left;font-weight:600;padding:0.35em 0.55em;"
-        f"color:#f9fafb;background:#000;'>{html.escape(str(title))}</caption>"
+        f"<caption style='{emphasis.TITLE_CAPTION}'>{html.escape(str(title))}</caption>"
     ) if title else ''
     markup = f"""<div id="{table_id}" class="interactive-table-wrap">
       <input class="interactive-table-filter" type="search" placeholder="Filter \
@@ -1027,11 +1026,10 @@ def print_account_metrics(metrics, new_api_rows, fill_count, rolling_24h, book_b
         except ValueError:
             return ''
         return ''
-    print('=== ACCOUNT / PNL AND RISK ===')
     gap_warning = account_history_gap_warning(history_value, account_value)
     if gap_warning:
         print(gap_warning)
-    display_interactive_table(table, cell_style=sign_style, key_rows={
+    display_interactive_table(table, cell_style=sign_style, title='ACCOUNT / PNL AND RISK', key_rows={
         'Account value', 'Unrealized PnL', 'Account maximum drawdown', '24H bootstrap VaR 95%'})
     print('Current book BTC beta sums each open position\'s signed notional times its 60-day '
           'beta to BTC, per dollar of account value: today\'s book, not past returns. Alpha, '
@@ -1561,10 +1559,10 @@ def display_positions(rows,show_wallet=False):
         total_row['Funding APR']=funding_summary['Net Funding APR (%) (simple, covered)']
         table=pd.concat([table,pd.DataFrame([total_row])],ignore_index=True)
         blank_total_cells={(len(table)-1,column) for column in table.columns}
-        for columns in (pnl_columns,position_columns):
+        for columns,view in ((pnl_columns,'PNL AND RISK'),(position_columns,'SIZE AND MARGIN')):
             display_interactive_table(table,columns=columns,cell_style=style,formatters=formatters,
                                       bold_last=True,blank_missing_cells=blank_total_cells,
-                                      title=f'OPEN POSITIONS: {group.upper()}',
+                                      title=f'OPEN POSITIONS: {group.upper()}, {view}',
                                       # Risk view: nearest liquidation and PnL; sizing view: biggest share.
                                       key_columns={'Liq %':'min','uPnL':'abs','Position / Account (%)':'max'})
     print(f"All positions: notional ${frame['Pos'].abs().sum():,.0f} | "
@@ -1587,7 +1585,6 @@ def display_exposure_and_funding(rows):
     funding_rows = consolidate_current_funding(rows)
     if not funding_rows:
         return
-    print('=== ACCOUNT NET EXPOSURE ===')
     summary = summarize_current_funding(rows)
     account_summary = pd.DataFrame([{
         **summary,
@@ -1600,14 +1597,13 @@ def display_exposure_and_funding(rows):
         'Net Direction', 'Long/Short Positions', 'Long/Short Notional',
         'Gross Notional', 'Net Notional', 'Net Exposure / Gross (%)',
     ]
-    display_interactive_table(account_summary, columns=exposure_columns,
+    display_interactive_table(account_summary, columns=exposure_columns, title='ACCOUNT NET EXPOSURE',
         html_columns={'Long/Short Positions', 'Long/Short Notional'}, formatters={
         'Gross Notional': lambda value: f'${value:,.2f}',
         'Net Notional': lambda value: f'${abs(value):,.2f}',
         'Net Exposure / Gross (%)': lambda value: f'{abs(value):.2f}%' if pd.notna(value) else 'n/a',
     }, key_columns={'Net Notional': None, 'Net Exposure / Gross (%)': None})
     print('Net direction compares long and short USD notionals; it is not delta- or beta-adjusted.')
-    print('=== FUNDING BY ASSET AND SIDE ===')
     frame = pd.DataFrame(funding_rows)
     position_values = frame['Position Value']
     frame = pd.concat([frame, pd.DataFrame([{
@@ -1638,7 +1634,7 @@ def display_exposure_and_funding(rows):
                 'color:#c62828;' if value < 0 else ''
         return ''
 
-    display_interactive_table(frame, columns=columns, cell_style=style, formatters={
+    display_interactive_table(frame, columns=columns, cell_style=style, title='FUNDING BY ASSET AND SIDE', formatters={
         'Size': lambda value: f'{value:,.4g}',
         'Position Value': lambda value: f'${value:,.2f}',
         'Current Funding / 1h (%)': lambda value: f'{value:.6f}%' if pd.notna(value) else 'n/a',
@@ -1775,11 +1771,10 @@ class _HighlightsMixin:
                 if names:
                     print(f"{change}: {', '.join(names)}.")
         for title,table in (('WHAT WENT WELL',well),('NEEDS ATTENTION',attention)):
-            print(f'=== {title} ===')
             if table:
-                display_interactive_table(pd.DataFrame(table),columns=['Window','Update','Detail'])
+                display_interactive_table(pd.DataFrame(table),columns=['Window','Update','Detail'],title=title)
             else:
-                print('Nothing to report.')
+                print(f'{title.capitalize()}: nothing to report.')
         save_state(self.data_dir,make_state(now,cumulative_pnl,rows),self.highlights_state_file)
 
 
@@ -1787,7 +1782,7 @@ class _OpenPositionsMixin:
     position_atr_period=14
     position_atr_stop_multiple=1.25
     margin_reserve_pct=20.0
-    aggregate_risk_pct=20.0
+    aggregate_risk_pct=33.0
 
     def show_funding_apr_chart(self):
         events=[
@@ -1915,7 +1910,7 @@ class _OpenPositionsMixin:
             if isinstance(value,str) and value!='n/a':
                 return 'color:#188038;font-weight:600;'
             return ''
-        display_interactive_table(summary,cell_style=style,key_rows={
+        display_interactive_table(summary,cell_style=style,title='OPEN POSITIONS: ACCOUNT SUMMARY',key_rows={
             'Position value','uPnL','Aggregate risk room','Leverage (Pos / Margin)'})
         print('ROE is unrealized PnL divided by used margin; a negative ROE means the open positions '
               'are currently at an unrealized loss relative to the margin supporting them.')
@@ -2054,8 +2049,7 @@ def display_liquidation_events(realized_df, title='LIQUIDATIONS'):
     """Show each liquidation event with a total row; say so plainly when there were none."""
     events = liquidation_events(realized_df)
     if events.empty:
-        print(f'=== {title} ===')
-        print('No liquidations in the available fills.')
+        print(f'{title.capitalize()}: none in the available fills.')
         return events
     total = {'When': 'Total', 'Assets': f'{len(events)} event(s)', 'Positions': int(events['Positions'].sum()),
         'Notional': events['Notional'].sum(), 'Realized PnL': events['Realized PnL'].sum(),
@@ -2229,13 +2223,12 @@ class _RealizedPnLMixin:
         print_realized_stats(perp_df, "PERP", funding_history=data.funding_history_df,
             account_value=data.current_account_value, funding_events=data.funding_df)
         print_realized_stats(spot_df, "SPOT", account_value=data.current_account_value)
-        print("\n=== PERP PNL BREAKDOWN ===")
         perp_breakdown, non_usd_fee_tokens = perp_pnl_breakdown(perp_df, data.funding_history_df)
         net_row_index = perp_breakdown.index[perp_breakdown["Component"] == "Net perp PnL"][0]
         display_interactive_table(perp_breakdown, formatters={
             "Amount": lambda value: f"${value:,.2f}",
                     "Contribution (% of |net PnL|)": lambda value: f"{value:.2f}%",
-        }, cell_style=breakdown_style, bold_last=True, key_columns={"Amount": None},
+        }, cell_style=breakdown_style, bold_last=True, key_columns={"Amount": None}, title="PERP PNL BREAKDOWN",
             blank_missing_cells={(net_row_index, "Contribution (% of |net PnL|)")})
         if non_usd_fee_tokens:
             print('Trading and fee dollar contributions are n/a ' \
@@ -2398,7 +2391,7 @@ class _VolumeSummaryMixin:
         data = self._require_data()
         daily_volume_pnl = build_daily_volume_pnl(data.realized_df)
         volume_pnl_summary = summarize_volume_pnl(daily_volume_pnl)
-        print(f"=== TRADED VOLUME VS REALIZED PNL ({volume_window(data.realized_df)}) ===")
+        volume_title = f"TRADED VOLUME VS REALIZED PNL ({volume_window(data.realized_df)})"
         if volume_pnl_summary.empty:
             print("No fill volume or realized PnL data is available.")
             return
@@ -2414,7 +2407,7 @@ class _VolumeSummaryMixin:
             "PnL / $1k volume": lambda value: f"${value:,.2f}",
             "Daily Pearson r": lambda value: f"{value:.3f}",
             "Daily Spearman r": lambda value: f"{value:.3f}",
-        }, cell_style=volume_style, bold_last=True,
+        }, cell_style=volume_style, bold_last=True, title=volume_title,
             blank_missing_cells=volume_total_blank_cells(volume_pnl_summary),
             key_columns={"Realized PnL excl. funding (trading + fees)": "abs"})
         print('Volume is one-sided fill notional (price x size), counted once per fill. Realized PnL is HL '
@@ -2630,7 +2623,6 @@ class _NetPnLMixin:
         times = pd.to_datetime(data.realized_df['ts'], utc=True) if not data.realized_df.empty else pd.Series(dtype=object)
         since = f' since {times.min().tz_convert(ACCOUNTING_TIMEZONE):%Y-%m-%d}' if len(times) else ''
         scope = 'all wallets' if len(self.wallet_addresses) > 1 else 'this wallet'
-        print(f"=== NET PNL ({scope}{since}): {'-' if net < 0 else ''}${abs(net):,.2f} ===")
         table = pd.DataFrame(rows, columns=['Component', 'Amount'])
         subtotal = {'Realized PnL', 'Net PnL'}
         def style(row_index, column, value, row):
@@ -2639,7 +2631,8 @@ class _NetPnLMixin:
                 return weight + ('color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else '')
             return weight + 'color:inherit;'
         display_interactive_table(table, formatters={'Amount': lambda value: (
-            f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")}, cell_style=style, title='NET PNL',
+            f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")}, cell_style=style,
+            title=f"NET PNL ({scope}{since}): {'-' if net < 0 else ''}${abs(net):,.2f}",
             key_rows={'Net PnL'})
         print(f"Net PnL = trading PnL before fees - fees +/- funding + unrealized PnL. Liquidations are already "
               f"inside trading PnL (of which liquidation losses: {'-' if liquidation_loss < 0 else ''}"
@@ -2696,8 +2689,8 @@ class _BtcExposureMixin:
         first, last = windows[0], windows[-1]
         def money(value):
             return f"{'-' if value < 0 else '+'}${abs(value):,.0f}" if pd.notna(value) else 'n/a'
-        print(f"=== NET BTC EXPOSURE, BETA-WEIGHTED (HL + wallet tokens, excl. IB): {money(net[f'BTC-eq {first}d'])} "
-              f"({first}d) / {money(net[f'BTC-eq {last}d'])} ({last}d) ===")
+        headline = (f"NET BTC EXPOSURE, BETA-WEIGHTED (HL + wallet tokens, excl. IB): {money(net[f'BTC-eq {first}d'])} "
+                    f"({first}d) / {money(net[f'BTC-eq {last}d'])} ({last}d)")
         formats = {'Value': lambda value: money(value)}
         formats.update({f'BTC-eq {days}d': (lambda value: money(value)) for days in windows})
         formats.update({f'Beta {days}d': (lambda value: f'{value:.2f}' if pd.notna(value) else '') for days in windows})
@@ -2706,7 +2699,7 @@ class _BtcExposureMixin:
                 return 'color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else ''
             return 'color:inherit;'
         display_interactive_table(legs, formatters=formats, cell_style=style, bold_last=True,
-                                  title='BTC EXPOSURE BY LEG', key_columns={'BTC-eq 90d': 'abs'})
+                                  title=f'{headline}: BY LEG', key_columns={'BTC-eq 90d': 'abs'})
         detail = table.assign(_size=table[f'BTC-eq {last}d'].abs()).sort_values('_size', ascending=False).drop(columns='_size')
         display_interactive_table(detail, formatters=formats, cell_style=style, title='BTC EXPOSURE BY HOLDING',
                                   key_columns={'BTC-eq 90d': 'abs'})
@@ -2737,8 +2730,7 @@ class _PnLAttributionMixin:
             non_perp_pnl=fetch_non_perp_pnl(self.wallet_addresses),
         )
         if not attribution_tables:
-            print("=== PNL ATTRIBUTION ===")
-            print("No realized or open-position PnL to attribute.")
+            print("PnL attribution: no realized or open-position PnL to attribute.")
             return
         display_pnl_attribution_tables(attribution_tables, 'PNL ATTRIBUTION')
         print(f"Net attributed PnL: ${net_attributed_pnl:,.2f} | percentages are signed \

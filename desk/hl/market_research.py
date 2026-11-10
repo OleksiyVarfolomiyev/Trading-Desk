@@ -193,9 +193,9 @@ def show_market_research(view: str) -> None:
         return ""
 
     def show(title: str, frame: pd.DataFrame, key: dict | None = None) -> None:
-        print(f"=== {title} ===")
         display_interactive_table(
             frame,
+            title=title,
             columns=TABLE_COLUMNS,
             cell_style=signed_style,
             formatters={
@@ -209,7 +209,6 @@ def show_market_research(view: str) -> None:
 
     from desk.notebook_highlights import show as show_highlights
 
-    print("=== HIGHLIGHTS ===")
     show_highlights(*market_highlights(universe, view))
     print(f"{label}: {len(universe):,} markets. Change is mid vs prior-day price; funding is the "
           "current hourly rate x 8. Positive funding means longs pay shorts.")

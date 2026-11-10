@@ -605,7 +605,7 @@ class DeskAccounts:
         basis = table.set_index("Basis")
         styler = basis.style.format({k: v for k, v in formats.items() if k in table}, na_rep="n/a")
         # Dollar VaR and the BTC beta are what the risk row is read for.
-        display(emphasis.style_frame(styler, basis, {"VaR 95%": None, "Beta BTC": None}))
+        display(emphasis.style_frame(styler, basis, {"VaR 95%": None, "Beta BTC": None}, title="DESK RISK METRICS"))
         print(RISK_NOTE)
         self.risk_table = table
 

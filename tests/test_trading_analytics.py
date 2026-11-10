@@ -563,8 +563,9 @@ class RealizedPnlTests(unittest.TestCase):
                 patch.object(self.account, "display_interactive_table",
                              side_effect=lambda frame, **kwargs: shown.append((kwargs["title"], frame))):
             self.account.display_positions(rows, show_wallet=True)
-        self.assertEqual([title for title, _ in shown], ["OPEN POSITIONS: PERP CRYPTO"] * 2
-                         + ["OPEN POSITIONS: PERP TRADFI"] * 2)
+        self.assertEqual([title for title, _ in shown],
+                         [f"OPEN POSITIONS: {group}, {view}" for group in ("PERP CRYPTO", "PERP TRADFI")
+                          for view in ("PNL AND RISK", "SIZE AND MARGIN")])
         crypto, tradfi = shown[0][1], shown[2][1]
         self.assertEqual(list(crypto["Ticker"]), ["BTC", "para:ANSEM", "Net/total"])
         self.assertEqual(list(tradfi["Ticker"]), ["xyz:AAPL", "Net/total"])
@@ -1124,7 +1125,7 @@ class TradeAnalyticsTests(unittest.TestCase):
         )
         self.assertEqual(blocked.quantity, 0)
         self.assertEqual(blocked.leverage, 3)
-        self.assertIn("20% equity cap", blocked.block_reason)
+        self.assertIn("33% equity cap", blocked.block_reason)
 
     def test_position_risk_budget_and_margin_limit_scale_quantity(self):
         candles = make_candles()
@@ -2034,7 +2035,7 @@ class KillSwitchTests(unittest.TestCase):
             for bad in ("0", "51", "-5"):
                 with self.assertRaises(SystemExit):
                     self.execution.main(["--wallet", "0x" + "1" * 40, "--store-key", "--max-risk-pct", bad])
-        self.assertEqual(self.execution.MAX_TOTAL_RISK_PCT, 0.20)
+        self.assertEqual(self.execution.MAX_TOTAL_RISK_PCT, 0.33)
 
     def test_engaged_switch_stops_a_running_entry_chase(self):
         self.flag.write_text("engaged")

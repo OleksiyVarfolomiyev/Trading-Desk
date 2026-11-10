@@ -7,6 +7,7 @@ xyz:AAPL,TradFi,HL perp,SPY,True
 xyz:MU,TradFi,HL perp,SPY,True
 xyz:QNT,TradFi,HL perp,SPY,False
 HYPE,Crypto,HL spot,BTC,True
+DPI,Crypto,Wallet,BTC,True
 VVV,Crypto,Wallet,BTC,True
 GOOGL,TradFi,IB,SPY,True
 KYIV,TradFi,IB,SPY,True

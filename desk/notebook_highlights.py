@@ -126,20 +126,28 @@ def render(well: list[Row], attention: list[Row], since: SinceLastRun | None = N
     parts = ["<div style='font-size:13px;line-height:1.45'>",
              _rows_html("WHAT STANDS OUT", well, GOOD), _rows_html("NEEDS ATTENTION", attention, BAD)]
     if since is not None:
-        parts.append(f"<div style='font-weight:600;margin:10px 0 4px;color:{NEUTRAL}'>SINCE LAST RUN</div>")
-        if since.last_run is None:
-            parts.append("<div style='opacity:.75'>No earlier run saved yet; changes appear from the next run.</div>")
+        heading = f"font-weight:600;margin:10px 0 4px;color:{NEUTRAL}"
+        last = (f"last run {since.last_run.tz_convert('UTC'):%Y-%m-%d %H:%M} UTC"
+                if since.last_run is not None else "")
+        if since.last_run is not None and since.changes:
+            # The heading is the table's own caption, as in every desk table.
+            header = "".join(f"<th style='padding:3px 10px;text-align:{align}'>{name}</th>"
+                             for name, align in (("Metric", "left"), ("Last run", "right"),
+                                                 ("Now", "right"), ("Change", "right")))
+            body = "".join(
+                "<tr>" + "".join(f"<td style='padding:2px 10px;text-align:{'left' if i == 0 else 'right'}'>"
+                                 f"{html.escape(cell)}</td>" for i, cell in enumerate(row)) + "</tr>"
+                for row in since.changes)
+            caption = (f"<caption style='caption-side:top;text-align:left;{heading};padding:0'>"
+                       f"SINCE LAST RUN <span style='font-weight:400;opacity:.75'>({last})</span></caption>")
+            parts.append(f"<table style='border-collapse:collapse;margin:4px 0'>{caption}<tr>{header}</tr>{body}</table>")
         else:
-            parts.append(f"<div style='opacity:.75'>Last run: {since.last_run.tz_convert('UTC'):%Y-%m-%d %H:%M} UTC.</div>")
-            if since.changes:
-                header = "".join(f"<th style='padding:3px 10px;text-align:{align}'>{name}</th>"
-                                 for name, align in (("Metric", "left"), ("Last run", "right"),
-                                                     ("Now", "right"), ("Change", "right")))
-                body = "".join(
-                    "<tr>" + "".join(f"<td style='padding:2px 10px;text-align:{'left' if i == 0 else 'right'}'>"
-                                     f"{html.escape(cell)}</td>" for i, cell in enumerate(row)) + "</tr>"
-                    for row in since.changes)
-                parts.append(f"<table style='border-collapse:collapse;margin:4px 0'><tr>{header}</tr>{body}</table>")
+            parts.append(f"<div style='{heading}'>SINCE LAST RUN</div>")
+            if since.last_run is None:
+                parts.append("<div style='opacity:.75'>No earlier run saved yet; changes appear from the next run.</div>")
+            else:
+                parts.append(f"<div style='opacity:.75'>{last[0].upper() + last[1:]}.</div>")
+        if since.last_run is not None:
             for note in since.notes:
                 parts.append(f"<div>{html.escape(note)}</div>")
             if not since.changes and not since.notes:

@@ -42,6 +42,7 @@ from desk.hl.trade_analytics import (
 KEYCHAIN_SERVICE = "Hyperliquid API wallet"
 BASE_URL = "https://api.hyperliquid.xyz"
 # Sizing rules are shared with every other venue's executor.
+from desk.risk import MAX_TOTAL_RISK_PCT as DEFAULT_MAX_TOTAL_RISK_PCT  # noqa: E402
 from desk.risk import (  # noqa: E402
     MAX_RISK_PCT_OVERRIDE_LIMIT,
     MAX_TOTAL_RISK_PCT,
@@ -2807,7 +2808,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-risk-pct",
         type=float,
-        help="Aggregate risk cap for this run only, as a percentage of collateral equity (default 20).",
+        help=f"Aggregate risk cap for this run only, as a percentage of collateral equity (default {DEFAULT_MAX_TOTAL_RISK_PCT * 100:g}).",
     )
     parser.add_argument(
         "--kill-switch",
@@ -2844,7 +2845,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"--max-risk-pct must be above 0 and at most {MAX_RISK_PCT_OVERRIDE_LIMIT:g}.")
         global MAX_TOTAL_RISK_PCT
         MAX_TOTAL_RISK_PCT = args.max_risk_pct / 100
-        print(f"NOTE: aggregate risk cap for this run is {args.max_risk_pct:g}%, not the default 20%.")
+        print(f"NOTE: aggregate risk cap for this run is {args.max_risk_pct:g}%, not the default {DEFAULT_MAX_TOTAL_RISK_PCT * 100:g}%.")
     try:
         if args.store_key:
             store_key(args.wallet)

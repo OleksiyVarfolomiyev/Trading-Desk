@@ -20,6 +20,8 @@ import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from desk import risk as desk_risk  # noqa: E402
@@ -76,6 +78,14 @@ EXTERNAL_QUOTE_CROSS_PCT = 0.003
 attach_exits = True
 # Aggregate cap for this run; --max-risk-pct overrides it.
 max_total_risk_pct = desk_risk.MAX_TOTAL_RISK_PCT
+# An explicit limit_price must lie within this share of the last trade (pre-market and
+# after-hours included): it guards against a typo, not against the market.
+LIMIT_PRICE_MAX_GAP_PCT = 0.03
+# --overnight: US stocks go to IB's overnight venue (Sunday-Thursday 20:00 to 03:50 ET). Nothing
+# prices it for free, so every entry needs an explicit limit_price and no exits are attached.
+overnight = False
+OVERNIGHT_EXCHANGE = "OVERNIGHT"
+OVERNIGHT_OPEN, OVERNIGHT_CLOSE = (20, 0), (3, 50)
 
 
 @dataclass(frozen=True)
@@ -84,6 +94,8 @@ class Signal:
     side: str
     # Requested size (for example from Kelly weights); the risk and margin sizing still caps it.
     quantity: float | None = None
+    # Explicit entry limit (the limit_price column); the order is sent at exactly this price.
+    limit_price: float | None = None
 
 
 @dataclass
@@ -114,6 +126,8 @@ class IBPlan:
     # REDUCE plans: the closing order's side and the units left afterwards.
     reduce_action: str = ""
     remaining: float = float("nan")
+    # Set when the signal gave an explicit limit_price: the entry is sent at exactly this price.
+    limit_price: float | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +161,73 @@ def side_direction(side: str) -> int:
     return 1 if side == "LONG" else -1
 
 
+def _positive(row: dict, column: str, path: Path, number: int) -> float | None:
+    """An optional positive number from a signals row (blank is None)."""
+    if not row.get(column):
+        return None
+    try:
+        value = float(row[column])
+    except ValueError:
+        raise ValueError(f"{path} line {number}: {column} {row[column]!r} is not a number.") from None
+    if not value > 0:
+        raise ValueError(f"{path} line {number}: {column} must be positive.")
+    return value
+
+
+def overnight_open(now: pd.Timestamp | None = None) -> bool:
+    """Whether IB's US overnight session runs now: Sunday-Thursday 20:00 to 03:50 ET next morning.
+
+    Exchange holidays are not known here; IB rejects an order on one.
+    """
+    now = (pd.Timestamp.now(tz="UTC") if now is None else now).tz_convert("America/New_York")
+    minutes = now.hour * 60 + now.minute
+    opens, closes = OVERNIGHT_OPEN[0] * 60 + OVERNIGHT_OPEN[1], OVERNIGHT_CLOSE[0] * 60 + OVERNIGHT_CLOSE[1]
+    evening = minutes >= opens and now.weekday() in (6, 0, 1, 2, 3)     # Sunday-Thursday evenings
+    morning = minutes < closes and now.weekday() in (0, 1, 2, 3, 4)     # Monday-Friday small hours
+    return evening or morning
+
+
+def last_trade(contract, quote) -> tuple[float, str]:
+    """The latest traded price to check an explicit limit against, and where it came from.
+
+    A live quote if there is one; else Yahoo's last trade including pre-market and after-hours
+    (US stocks), which overnight is the 20:00 after-hours close; else IB's delayed or prior price.
+    """
+    if quote.live and quote.reference > 0:
+        return quote.reference, "live quote"
+    if contract.secType == "STK" and contract.currency == "USD":
+        try:
+            from desk.venues import yahoo
+
+            price, stamp, _, _ = yahoo.extended_price(contract.symbol, days=5)
+            return price, f"Yahoo last trade {stamp.tz_convert('America/New_York'):%a %H:%M} ET"
+        except ValueError:
+            pass
+    return quote.reference, "IB delayed or prior price"
+
+
+def check_limit_price(limit: float, last: float) -> str:
+    """A block reason when an explicit limit is too far from the last trade, else ''."""
+    if not last > 0:
+        return "no last trade to check limit_price against"
+    gap = limit / last - 1
+    if abs(gap) > LIMIT_PRICE_MAX_GAP_PCT:
+        return (f"limit_price {limit:,.6g} is {gap:+.1%} from the last trade {last:,.6g} "
+                f"(more than {LIMIT_PRICE_MAX_GAP_PCT:.0%}; check for a typo)")
+    return ""
+
+
+def order_contract(contract):
+    """The contract to send orders to: IB's overnight venue under --overnight, else as resolved."""
+    if not overnight:
+        return contract
+    from copy import copy
+
+    routed = copy(contract)
+    routed.exchange = OVERNIGHT_EXCHANGE
+    return routed
+
+
 def read_signals(path: Path) -> list[Signal]:
     """Load unique ``symbol,side`` rows (plus optional contract columns) from a CSV."""
     with path.open(newline="", encoding="utf-8-sig") as file:
@@ -174,15 +255,11 @@ def read_signals(path: Path) -> list[Signal]:
         if key in seen:
             raise ValueError(f"{path} line {number}: {spec.symbol} is listed twice.")
         seen.add(key)
-        quantity = None
-        if row.get("quantity"):
-            try:
-                quantity = float(row["quantity"])
-            except ValueError:
-                raise ValueError(f"{path} line {number}: quantity {row['quantity']!r} is not a number.") from None
-            if not quantity > 0:
-                raise ValueError(f"{path} line {number}: quantity must be positive.")
-        signals.append(Signal(spec, row["side"].upper(), quantity))
+        quantity = _positive(row, "quantity", path, number)
+        limit_price = _positive(row, "limit_price", path, number)
+        if reduce and limit_price is not None:
+            raise ValueError(f"{path} line {number}: limit_price is for entries, not REDUCE.")
+        signals.append(Signal(spec, row["side"].upper(), quantity, limit_price))
     return signals
 
 
@@ -200,11 +277,20 @@ def yahoo_quote(symbol: str, now: float | None = None) -> ib_venue.Quote:
     if last.currency != "USD":
         raise ValueError(f"Yahoo Finance prices {symbol} in {last.currency}, not USD")
     moment = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now, unit="s", tz="UTC")
-    live = (last.price > 0 and last.in_session(moment)
+    price = last.price
+    live = (price > 0 and last.in_session(moment)
             and (moment - last.time).total_seconds() <= YAHOO_MAX_AGE_SECONDS)
-    return ib_venue.Quote(bid=last.price * (1 - EXTERNAL_QUOTE_CROSS_PCT),
-                          ask=last.price * (1 + EXTERNAL_QUOTE_CROSS_PCT),
-                          last=last.price, close=last.previous_close, live=live)
+    if not live and extended_hours and now is None:
+        # Pre-market or after-hours: the last extended-session trade, when fresh.
+        try:
+            extended, stamp, start, end = yahoo.extended_price(symbol)
+            if extended > 0 and start <= moment <= end and (moment - stamp).total_seconds() <= YAHOO_MAX_AGE_SECONDS:
+                price, live = extended, True
+        except ValueError:
+            pass
+    return ib_venue.Quote(bid=price * (1 - EXTERNAL_QUOTE_CROSS_PCT),
+                          ask=price * (1 + EXTERNAL_QUOTE_CROSS_PCT),
+                          last=price, close=last.previous_close, live=live)
 
 
 def get_quote(ib, contract) -> ib_venue.Quote:
@@ -393,6 +479,17 @@ def plan_ib_trades(ib, account: Account, signals: list[Signal], external: DeskBo
             atr = wilder_atr(bars, ATR_PERIOD)
             quote = get_quote(ib, contract)
             reference = quote.reference
+            limit_note = ""
+            if signal.limit_price is not None and signal.side != REDUCE:
+                last, source = last_trade(contract, quote)
+                problem = check_limit_price(signal.limit_price, last)
+                if problem:
+                    raise ValueError(problem)
+                limit_note = f"explicit limit {signal.limit_price:,.6g} vs {source} {last:,.6g}"
+                # Size, stop and target from the price the order is sent at.
+                reference = signal.limit_price
+                quote = ib_venue.Quote(bid=reference, ask=reference, last=reference, close=quote.close,
+                                       live=quote.live)
             closed_price = not reference > 0
             if closed_price:
                 # No quote at all (market closed or no data subscription): plan from the last
@@ -420,7 +517,10 @@ def plan_ib_trades(ib, account: Account, signals: list[Signal], external: DeskBo
             plan.block_reason = f"held {position.side.lower()} {abs(position.quantity):g}; close it before reversing"
             plans.append(plan)
             continue
-        if closed_price:
+        plan.limit_price = signal.limit_price
+        if limit_note:
+            plan.warnings.append(limit_note + ("; routed to IB's overnight venue" if overnight else ""))
+        elif closed_price:
             plan.warnings.append(f"no quote from IB; planned from the last daily close "
                                  f"({bars['date'].iloc[-1]:%Y-%m-%d}). A live run needs a real-time quote")
         elif not quote.live:
@@ -452,6 +552,9 @@ def plan_ib_trades(ib, account: Account, signals: list[Signal], external: DeskBo
             sizing = size_bracket(signal.side, reference, quote.bid, quote.ask, atr, tick, step, mult, fx,
                                   budget, headroom, margin_room, margin_unit, commission_unit)
         sizing = requested_size(sizing, signal.quantity, step, plan)
+        if signal.limit_price is not None:
+            # Sent at exactly the given price (sizing crossed it by a couple of ticks).
+            sizing = replace(sizing, entry_limit=ib_venue.round_to_tick(signal.limit_price, tick, "nearest"))
         plan.quantity = sizing.quantity
         plan.stop_price, plan.target_price, plan.entry_limit = sizing.stop_price, sizing.target_price, sizing.entry_limit
         plan.risk_usd = sizing.risk_usd
@@ -552,6 +655,8 @@ def submit_bracket(ib, plan: IBPlan, account: str) -> str:
     """Send one bracket, wait for the entry, and tidy partial fills. Returns a status line."""
     if plan.side == REDUCE:
         return submit_reduction(ib, plan, account)
+    if plan.limit_price is not None:
+        return submit_at_limit(ib, plan, account)
     try:
         fresh = get_quote(ib, plan.contract)
     except ValueError as exc:
@@ -581,6 +686,11 @@ def submit_bracket(ib, plan: IBPlan, account: str) -> str:
                         tif="DAY", outsideRth=extended_hours, account=account)
     take_profit = exit_target_order(exit_action, plan.quantity, plan.target_price, account)
     stop_loss = exit_stop_order(exit_action, plan.quantity, plan.stop_price, plan.atr, plan.tick, account)
+    return _send_bracket(ib, plan, parent, take_profit, stop_loss)
+
+
+def _send_bracket(ib, plan: IBPlan, parent, take_profit, stop_loss) -> str:
+    """Transmit an entry with its target and stop, wait for the entry, and tidy partial fills."""
     for child in (take_profit, stop_loss):
         child.orderId, child.parentId, child.transmit = ib.client.getReqId(), parent.orderId, False
     stop_loss.transmit = True
@@ -608,6 +718,34 @@ def submit_bracket(ib, plan: IBPlan, account: str) -> str:
             f"take-profit {plan.target_price:,.6g} are held by IB as one-cancels-other.")
 
 
+def submit_at_limit(ib, plan: IBPlan, account: str) -> str:
+    """Send an entry at its explicit limit_price after re-checking it against the last trade."""
+    try:
+        fresh = get_quote(ib, plan.contract)
+    except ValueError:
+        fresh = ib_venue.Quote(bid=0.0, ask=0.0, last=0.0, close=0.0, live=False)
+    last, source = last_trade(plan.contract, fresh)
+    problem = check_limit_price(plan.limit_price, last)
+    if problem:
+        return f"{plan.symbol}: skipped, {problem}."
+    direction = side_direction(plan.side)
+    if (last - plan.stop_price) * direction <= 0:
+        return f"{plan.symbol}: skipped, the last trade {last:,.6g} ({source}) is already through the stop."
+    if overnight and not overnight_open():
+        return f"{plan.symbol}: skipped, IB's overnight session is closed (Sunday-Thursday 20:00 to 03:50 ET)."
+    action = "BUY" if direction > 0 else "SELL"
+    if not attach_exits:
+        return submit_entry_only(ib, plan, action, plan.entry_limit, account)
+    from ib_async import LimitOrder
+
+    exit_action = "SELL" if direction > 0 else "BUY"
+    parent = LimitOrder(action, plan.quantity, plan.entry_limit, orderId=ib.client.getReqId(), transmit=False,
+                        tif="DAY", outsideRth=extended_hours, account=account)
+    take_profit = exit_target_order(exit_action, plan.quantity, plan.target_price, account)
+    stop_loss = exit_stop_order(exit_action, plan.quantity, plan.stop_price, plan.atr, plan.tick, account)
+    return _send_bracket(ib, plan, parent, take_profit, stop_loss)
+
+
 def submit_entry_only(ib, plan: IBPlan, action: str, limit: float, account: str) -> str:
     """Send the entry with no exit orders; whatever has not filled in time is cancelled.
 
@@ -615,8 +753,9 @@ def submit_entry_only(ib, plan: IBPlan, action: str, limit: float, account: str)
     """
     from ib_async import LimitOrder
 
-    trade = ib.placeOrder(plan.contract, LimitOrder(action, plan.quantity, limit, tif="DAY",
-                                                     outsideRth=extended_hours, account=account))
+    trade = ib.placeOrder(order_contract(plan.contract),
+                          LimitOrder(action, plan.quantity, limit, tif="DAY",
+                                     outsideRth=extended_hours or overnight, account=account))
     _wait_for_parent(ib, trade, ENTRY_TIMEOUT_SECONDS)
     if not trade.isDone():
         ib.cancelOrder(trade.order)
@@ -1268,7 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--account", help="IB account number or accounts.json label (default: the configured one).")
     parser.add_argument("--signals", type=Path, help="CSV with symbol,side and optional sec_type,exchange,currency,expiry.")
     parser.add_argument("--port", type=int, help="TWS socket port (7496 live, 7497 paper); overrides accounts.json.")
-    parser.add_argument("--max-risk-pct", type=float, help="Aggregate risk cap for this run only (default 20).")
+    parser.add_argument("--max-risk-pct", type=float, help=f"Aggregate risk cap for this run only (default {desk_risk.MAX_TOTAL_RISK_PCT * 100:g}).")
     parser.add_argument("--ignore-unreachable", action="store_true",
                         help="Trade even if another desk account cannot be read; its risk is then left out.")
     parser.add_argument("--kill-switch", action="store_true",
@@ -1297,6 +1436,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rth-only", action="store_true",
                         help="Keep orders to regular trading hours (default: they also work in pre-market and "
                         "after-hours, with stops as stop-limits).")
+    parser.add_argument("--overnight", action="store_true",
+                        help="With --signals and --no-exits: send US stock entries to IB's overnight venue "
+                        "(Sunday-Thursday 20:00 to 03:50 ET). Every row needs a limit_price; the order is sent at "
+                        "exactly that price and cancelled if not filled within the timeout.")
     parser.add_argument("--live", action="store_true", help="Allow live orders after typing the confirmation phrases.")
     args = parser.parse_args(argv)
     if (args.stops_only or args.ladder != 1 or args.replace) and not args.protect_open:
@@ -1306,7 +1449,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.cancel_targets and (args.protect_open or args.signals or args.kill_switch):
         parser.error("--cancel-targets cannot be combined with --protect-open, --signals or --kill-switch.")
     symbols = {item.strip().upper() for item in args.symbols.split(",") if item.strip()} if args.symbols else None
-    global extended_hours, attach_exits, quote_source
+    global extended_hours, attach_exits, quote_source, overnight
+    if args.overnight and not (args.signals and args.no_exits):
+        parser.error("--overnight needs --signals and --no-exits (stops cannot be placed on the overnight venue).")
+    if args.overnight and args.rth_only:
+        parser.error("--overnight and --rth-only contradict each other.")
+    overnight = args.overnight
     extended_hours = not args.rth_only
     quote_source = args.quote_source
     attach_exits = not args.no_exits
@@ -1320,7 +1468,7 @@ def main(argv: list[str] | None = None) -> int:
         if not 0 < args.max_risk_pct <= MAX_RISK_PCT_OVERRIDE_LIMIT:
             parser.error(f"--max-risk-pct must be above 0 and at most {MAX_RISK_PCT_OVERRIDE_LIMIT:g}.")
         max_total_risk_pct = args.max_risk_pct / 100
-        print(f"NOTE: aggregate risk cap for this run is {args.max_risk_pct:g}%, not the default 20%.")
+        print(f"NOTE: aggregate risk cap for this run is {args.max_risk_pct:g}%, not the default {desk_risk.MAX_TOTAL_RISK_PCT * 100:g}%.")
     if args.clear_kill_switch:
         KILL_SWITCH_FILE.unlink(missing_ok=True)
         print("Kill switch cleared; new entries are allowed again.")
@@ -1403,6 +1551,14 @@ def main(argv: list[str] | None = None) -> int:
                 print("Kill switch is engaged; no order was sent. Use --clear-kill-switch to trade again.")
                 return 2
             signals = read_signals(args.signals)
+            if overnight:
+                bad = [signal.spec.symbol for signal in signals if signal.side == REDUCE or signal.limit_price is None]
+                if bad:
+                    parser.error("--overnight: every row needs a limit_price and LONG or SHORT (not REDUCE): "
+                                 + ", ".join(bad))
+                if not overnight_open():
+                    print("Note: IB's overnight session is closed now (Sunday-Thursday 20:00 to 03:50 ET); "
+                          "a live run will not send.")
             external = other_venue_book("ib", accounts)
             if external.unreachable and args.live and not args.ignore_unreachable:
                 print_book(external)

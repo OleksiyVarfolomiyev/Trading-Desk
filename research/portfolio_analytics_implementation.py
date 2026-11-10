@@ -188,7 +188,7 @@ def wallet_token_ticker(symbol, chain, token):
     return base.upper()
 
 
-def _signed_table(frame, formatters=None, key_columns=None, key_rows=None):
+def _signed_table(frame, formatters=None, key_columns=None, key_rows=None, title=None):
     """Format a table, color positive numbers green and negatives red, and tint its key column(s)
     and headline rows (see desk/emphasis.py)."""
     def sign_color(value):
@@ -201,7 +201,7 @@ def _signed_table(frame, formatters=None, key_columns=None, key_rows=None):
                     return 'color: #ef4444;'
         return ''
     styler=frame.style.format(formatters or {}, na_rep='N/A').map(sign_color)
-    return emphasis.style_frame(styler,frame,key_columns,key_rows)
+    return emphasis.style_frame(styler,frame,key_columns,key_rows,title=title)
 
 
 class Results(dict):
@@ -271,7 +271,7 @@ def _beta_table(rows, names, extra):
 SIGNIFICANT_T=2.0  # |t| at or above this marks a beta as significant in the regime tables
 
 
-def _show_beta_table(table):
+def _show_beta_table(table, title=None):
     """Display a regime beta table with betas, t-stats, percentages and context each formatted."""
     def cell(value,row,column):
         if isinstance(value,str) or pd.isna(value):
@@ -297,7 +297,7 @@ def _show_beta_table(table):
                     if beta in styles.columns:
                         styles.loc[row,beta]=emphasis.KEY_TINT
         return styles
-    display(shown.style.apply(significance,axis=None))
+    display(emphasis.titled(shown.style.apply(significance,axis=None),title))
 
 
 def shade_regimes(fig, regimes, period=pd.Timedelta(days=7)):
@@ -316,8 +316,8 @@ def shade_regimes(fig, regimes, period=pd.Timedelta(days=7)):
 
 class _TableStyleMixin:
     """Shared table formatting methods."""
-    def show_table(self, frame, formatters=None, key_columns=None, key_rows=None):
-        display(_signed_table(frame, formatters, key_columns, key_rows))
+    def show_table(self, frame, formatters=None, key_columns=None, key_rows=None, title=None):
+        display(_signed_table(frame, formatters, key_columns, key_rows, title))
 
 
 # ----------------------------------------------------------------------------
@@ -1186,7 +1186,7 @@ class _CorrelationPlotMixin(_TableStyleMixin):
         print('Crypto assets are measured against BTC over every day (365-day annualization); TradFi assets '
               'against SPY over US trading days (252-day). Beta ranges come from 2,000 bootstrap resamples. '
               '"Corr to other benchmark" is crypto vs SPY or TradFi vs BTC, on US trading days.')
-        self.show_table(table,{
+        self.show_table(table,title='BENCHMARK EXPOSURES (crypto vs BTC, TradFi vs SPY)',formatters={
             'Correlation':'{:.2f}','Beta':'{:.2f}','Alpha (/yr)':'{:.1%}','Volatility (/yr)':'{:.1%}',
             'Sharpe':'{:.2f}','Corr to other benchmark':'{:.2f}','Returns':'{:.0f}',
         },key_columns={'Beta':'abs'})
@@ -1307,10 +1307,9 @@ class _KellyMixin(_TableStyleMixin):
         })
         long_exposure=weights[weights>0].sum()
         short_exposure=-weights[weights<0].sum()
-        print('Constrained long/short full-Kelly weights, sorted by coin weight (%)')
         print(f'Gross long exposure: {long_exposure:.1%}; gross short exposure: {short_exposure:.1%}; net exposure: {weights.sum():.1%}.')
         print('Expected price PnL is a historical mean-forward-return contribution per $100 of portfolio equity; it excludes funding, fees, and slippage.')
-        self.show_table(weight_table,{
+        self.show_table(weight_table,title='CONSTRAINED LONG/SHORT FULL-KELLY WEIGHTS (sorted by weight)',formatters={
             'Weight (%)':'{:.2f}',
             'Expected Price PnL / $100 equity (5d)':'${:.3f}',
         },key_columns={'Weight (%)':'abs'})
@@ -1347,8 +1346,8 @@ class _PerformanceMixin(_TableStyleMixin):
                 'Share of book variance':sleeve.cov(portfolio_returns)/portfolio_returns.var(ddof=1),
             })
         if len(rows)>1:
-            print('Kelly sleeves: each group\'s part of the optimized book, measured against its own benchmark.')
-            self.show_table(pd.DataFrame(rows).set_index('Sleeve'),{
+            self.show_table(pd.DataFrame(rows).set_index('Sleeve'),
+                            title='KELLY SLEEVES (each group\'s part of the book, vs its own benchmark)',formatters={
                 'Net weight':'{:.1%}','Gross weight':'{:.1%}','Beta to benchmark':'{:.2f}',
                 'Correlation to benchmark':'{:.2f}','Share of book variance':'{:.1%}',
             },key_columns={'Share of book variance':'max'})
@@ -1421,13 +1420,14 @@ class _PerformanceMixin(_TableStyleMixin):
             'M (1 month)':trailing_return(months=1),'Q (3 months)':trailing_return(months=3),
             'Since Inception':portfolio_value.iloc[-1]/100-1,
         },name='Return')
-        self.show_table(period_returns.to_frame(),{'Return':'{:.2%}'},key_rows={'Since Inception'})
+        self.show_table(period_returns.to_frame(),{'Return':'{:.2%}'},key_rows={'Since Inception'},title='PERIOD RETURNS')
         daily_summary=pd.Series({
             'Average daily return':portfolio_returns.mean(),
             'Largest daily gain':portfolio_returns.max(),
             'Largest daily loss':portfolio_returns.min(),
         },name='Daily return')
-        self.show_table(daily_summary.to_frame(),{'Daily return':'{:.2%}'},key_rows={'Largest daily loss'})
+        self.show_table(daily_summary.to_frame(),{'Daily return':'{:.2%}'},key_rows={'Largest daily loss'},
+                        title='DAILY RETURNS')
         peak=portfolio_value.cummax()
         drawdown=portfolio_value/peak-1
         drawdown_dollars=portfolio_value-peak
@@ -1438,7 +1438,7 @@ class _PerformanceMixin(_TableStyleMixin):
             'Max Drawdown':drawdown_dollars.min(),
             'Max Drawdown (%)':max_drawdown,
         }],index=['Since inception'])
-        self.show_table(investment_summary,{
+        self.show_table(investment_summary,title='VALUE OF $100 INVESTED',formatters={
             'All-Time High':'${:,.2f}','Minimum Portfolio Value':'${:,.2f}',
             'Max Drawdown':lambda v:f'-${abs(v):,.2f}' if v<0 else f'${v:,.2f}',
             'Max Drawdown (%)':'{:.2%}',
@@ -1472,7 +1472,7 @@ class _PerformanceMixin(_TableStyleMixin):
         # At 252-day annualization the main Sharpe already is the sqrt-252 one (same column).
         if not has_spy:
             metrics=metrics.drop(columns=['Beta (SPY)'])
-        self.show_table(metrics,{
+        self.show_table(metrics,title='RISK-ADJUSTED METRICS (IN-SAMPLE)',formatters={
             f'Sharpe (excess, sqrt {periods})':'{:.3f}',
             'Sharpe (excess, sqrt 252)':'{:.3f}',
             'Sharpe (raw, sqrt 252)':'{:.3f}',
@@ -1730,12 +1730,12 @@ class _FactorModelMixin(_TableStyleMixin):
               'held perps, by lagged 7-day average funding. Returns exclude funding payments and trading costs.')
         if factor_note:
             print(factor_note)
-        self.show_table(summary,{
+        self.show_table(summary,title='FACTOR MODEL: BETAS, PREMIA AND CONTRIBUTIONS',formatters={
             'Beta':'{:.3f}','HAC t-stat':'{:.2f}',
             'Factor premium (%/yr)':'{:.2%}','Premium t-stat':'{:.2f}',
             'Portfolio contribution (%/yr)':'{:.2%}',
         },key_columns={'HAC t-stat':'abs'})
-        self.show_table(fit.to_frame(),key_rows={'R-squared','Annual alpha'})
+        self.show_table(fit.to_frame(),key_rows={'R-squared','Annual alpha'},title='FACTOR MODEL FIT')
         self.factor_returns=factors
         self.factor_model_summary=summary
         self.factor_model_fit=fit
@@ -1886,11 +1886,14 @@ class _FactorModelMixin(_TableStyleMixin):
               'return. Alpha is the intercept: the part of the average return no factor explains. Specific '
               f'return is alpha plus each {unit}\'s residual; it is the return attributable to selection.')
         self.show_table(table,{'Beta':'{:.3f}','HAC t-stat':'{:.2f}','Factor return (/yr)':'{:.1%}',
-                               'Contribution (/yr)':'{:.1%}'},key_columns={'Contribution (/yr)':'abs'})
-        self.show_table(summary.to_frame(),key_rows={'Alpha (/yr)','Alpha t-stat','Information ratio'})
-        print(f'Return attribution over the sample (sum of {dict(day="daily",week="weekly").get(unit,"periodic")} excess returns):')
+                               'Contribution (/yr)':'{:.1%}'},key_columns={'Contribution (/yr)':'abs'},
+                        title=f'STYLE MODEL: {label.upper()}')
+        self.show_table(summary.to_frame(),key_rows={'Alpha (/yr)','Alpha t-stat','Information ratio'},
+                        title=f'STYLE MODEL FIT: {label.upper()}')
         self.show_table(attribution.to_frame(),{'Return over sample':'{:.1%}'},
-                        key_rows={'Specific return (alpha + residual)','Total excess return'})
+                        key_rows={'Specific return (alpha + residual)','Total excess return'},
+                        title=f'RETURN ATTRIBUTION OVER THE SAMPLE (sum of '
+                              f'{dict(day="daily",week="weekly").get(unit,"periodic")} excess returns)')
         fig=go.Figure()
         for series,line_name,color in ((data['Book excess'].cumsum(),'Book excess return','#2563eb'),
                                        (explained.cumsum(),'Explained by factors','#9ca3af'),
@@ -2099,7 +2102,6 @@ class _FactorModelMixin(_TableStyleMixin):
         from desk.hl.trade_analytics import inactive_periods
 
         regimes=exposure['Regime']
-        print(f'=== HL BOOK EXPOSURE BY LEG ({len(exposure)} weeks, average of daily exposure / equity) ===')
         fig=go.Figure()
         for leg,color in zip(book_exposure.LEGS,('#f59e0b','#2563eb','#16a34a')):
             fig.add_trace(go.Bar(x=exposure.index,y=exposure[f'Net {leg}'],name=f'Net {leg}',marker_color=color))
@@ -2110,7 +2112,8 @@ class _FactorModelMixin(_TableStyleMixin):
         activity=daily_exposure.attrs.get('activity_days')
         idle=inactive_periods(activity) if activity is not None and len(activity) else []
         clip_inactive_periods(fig,idle)
-        fig.update_layout(title={'text':'HL book: net exposure per leg and gross exposure (x equity), by regime','y':0.98},
+        fig.update_layout(title={'text':f'HL book: net exposure per leg and gross exposure (x equity), by regime; '
+                                         f'{len(exposure)} weeks, average of daily exposure / equity','y':0.98},
                           barmode='relative',yaxis_tickformat='.1f',yaxis_title='x equity',
                           template='plotly_dark',hovermode='x unified',
                           # Legend in one row above the plot, clear of the title and the idle-period label.
@@ -2121,14 +2124,12 @@ class _FactorModelMixin(_TableStyleMixin):
             **{f'Net {leg}':(f'Net {leg}','mean') for leg in book_exposure.LEGS},
             **{f'Gross {leg}':(f'Gross {leg}','mean') for leg in book_exposure.LEGS},
             **{'Gross total':('Gross total','mean'),'Peak gross':('Gross total','max'),'Equity (end)':('Equity','last')})
-        print('Average exposure per regime (x equity):')
-        self.show_table(summary,{'Weeks':'{:.0f}','Equity (end)':'${:,.0f}',
+        self.show_table(summary,title='AVERAGE EXPOSURE PER REGIME (x equity)',formatters={'Weeks':'{:.0f}','Equity (end)':'${:,.0f}',
                                  **{column:'{:+.2f}' for column in summary.columns if column.startswith('Net')},
                                  **{column:'{:.2f}' for column in summary.columns
                                     if column.startswith(('Gross','Peak'))}},key_columns={'Gross total':'max'})
         recent=exposure.drop(columns='Equity').tail(12)
-        print('Last 12 weeks (x equity):')
-        self.show_table(recent,{column:'{:+.2f}' if column.startswith('Net') else '{:.2f}'
+        self.show_table(recent,title='LAST 12 WEEKS (x equity)',formatters={column:'{:+.2f}' if column.startswith('Net') else '{:.2f}'
                                 for column in recent.columns if column!='Regime'},key_columns={'Net total':'abs'})
 
     def _regime_regression_data(self, weekly_returns, exposure, factors, notes):
@@ -2240,16 +2241,16 @@ class _FactorModelMixin(_TableStyleMixin):
     def _show_regime_betas(self, tables, names, too_short):
         if tables['delevered'].empty:
             print('No regime has enough factor data for betas yet.')
-        print('=== STYLE BETAS PER REGIME, PER 1x GROSS EXPOSURE (each period\'s return / its gross; HAC t-stats) ===')
-        _show_beta_table(tables['delevered'])
+        _show_beta_table(tables['delevered'],'STYLE BETAS PER REGIME, PER 1x GROSS EXPOSURE '
+                         '(each period\'s return / its gross; HAC t-stats)')
         print('Comparable across regimes: the beta a book with 1x gross exposure would have, with leverage '
               'changes inside a regime removed period by period, so a sign flip is a change of positioning, not '
               f'of leverage. Alpha is per 1x gross and is not quoted from under {MIN_ALPHA_DAYS} days.')
-        print('=== AS REPORTED (not de-levered; scales with each regime\'s gross, so not comparable across regimes) ===')
-        _show_beta_table(tables['raw'])
-        print('=== PER 1x GROSS OF THE MATCHING LEG (raw beta / average gross of that leg) ===')
+        _show_beta_table(tables['raw'],'STYLE BETAS AS REPORTED (not de-levered; scale with each regime\'s gross, '
+                         'so not comparable across regimes)')
         leg=tables['leg']
-        _show_beta_table(leg.drop(columns=[column for column in leg.columns if column[1]=='t']))
+        _show_beta_table(leg.drop(columns=[column for column in leg.columns if column[1]=='t']),
+                         'STYLE BETAS PER 1x GROSS OF THE MATCHING LEG (raw beta / average gross of that leg)')
         print('SPY is scaled by TradFi gross, the alt and funding factors by alt gross, BTC by crypto (BTC + alts) '
               'gross. Blank where the leg was under 5% of equity: a beta to a factor the book held no position '
               'in is correlation through other holdings, not exposure.')
@@ -2273,11 +2274,12 @@ class _FactorModelMixin(_TableStyleMixin):
         for regime in compare.columns[1:]:
             part=pivot[pivot['Regime']==regime].set_index('Term').reindex(names)
             compare[f'Change vs {reference.split(" (")[0]}: t ({regime.split(" (")[0]})']=part['Difference t-stat']
-        print(f'=== REGIME INTERACTION MODEL, PER 1x GROSS ({observations} weeks; betas per regime, t of the change) ===')
         # The t of each change is the answer: did that beta move between regimes?
         self.show_table(compare,{column:('{:.2f}' if column.startswith('Change') else '{:+.3f}')
                                  for column in compare.columns},
-                        key_columns={column:'abs' for column in compare.columns if column.startswith('Change')})
+                        key_columns={column:'abs' for column in compare.columns if column.startswith('Change')},
+                        title=f'REGIME INTERACTION MODEL, PER 1x GROSS ({observations} weeks; betas per regime, '
+                              't of the change)')
         changed=[term for term in names if (pivot.loc[pivot['Term']==term,'Difference t-stat'].abs()>=2).any()]
         print('De-levered betas that change significantly between regimes (|t| >= 2): '
               +(', '.join(changed) if changed else 'none at this sample size')+'.')
@@ -2457,11 +2459,11 @@ class _FactorModelMixin(_TableStyleMixin):
         self.show_table(table,{
             'FM premium (/yr per 1 sd)':'{:.1%}','FM t-stat':'{:.2f}','FM days':'{:.0f}','Avg assets':'{:.1f}',
             'Sort spread (/yr)':'{:.1%}','Sort t-stat':'{:.2f}','Sort days':'{:.0f}',
-        },key_columns={'FM t-stat':'abs'})
+        },key_columns={'FM t-stat':'abs'},title='CRYPTO CROSS-SECTION: CHARACTERISTIC PREMIA')
         if joint is not None:
-            print('Joint Fama-MacBeth (each premium controls for the others): '+', '.join(broad)+'.')
             self.show_table(joint,{'Joint FM premium (/yr per 1 sd)':'{:.1%}','Joint t-stat':'{:.2f}',
-                                   'Days':'{:.0f}','Avg assets':'{:.1f}'},key_columns={'Joint t-stat':'abs'})
+                                   'Days':'{:.0f}','Avg assets':'{:.1f}'},key_columns={'Joint t-stat':'abs'},
+                            title='JOINT FAMA-MACBETH (each premium controls for the others: '+', '.join(broad)+')')
         for note in notes:
             print(note)
         print(f'With about {len(assets)} assets the cross-section is small, so even these t-stats are noisy; '
@@ -2515,7 +2517,7 @@ class _FactorModelMixin(_TableStyleMixin):
         self.show_table(table.set_index(['Test','Weights fit on','Evaluated on']),{
             'Annual alpha':'{:.2%}','Alpha t-stat':'{:.2f}','R-squared':'{:.1%}',
             **{f'{name} beta':'{:.3f}' for name in names},
-        },key_columns={'Alpha t-stat':'abs'})
+        },key_columns={'Alpha t-stat':'abs'},title='ALPHA IN AND OUT OF SAMPLE')
         forward=table.iloc[-2]
         print(f"Forward test (fit on first half, evaluated on second): alpha "
               f"{alpha_verdict(forward['Annual alpha'],forward['Alpha t-stat'])}.")

@@ -26,6 +26,9 @@ KEY_HEADER = "color:#93c5fd;font-weight:700;"
 # Gains and losses on dark tables (the light-page #188038 / #c62828 are too dark on black).
 DARK_SIGN_COLORS = {"#188038": "#4ade80", "#c62828": "#f87171", "#d93025": "#f87171"}
 EXTREMES = {"abs", "max", "min", None}
+# A table's title is its own caption: white on black above the header, as in desk_overview.
+TITLE_CAPTION = ("caption-side:top;text-align:left;font-weight:600;padding:0.35em 0.55em;"
+                 "color:#f9fafb;background:#000;")
 
 
 def normalize(key_columns) -> dict:
@@ -69,8 +72,18 @@ def standout_position(values, mode: str | None, skip: set[int] | None = None) ->
     return best
 
 
-def style_frame(styler, frame: pd.DataFrame, key_columns=None, key_rows=None, total_last: bool = False):
-    """Apply key-column and key-row emphasis to a pandas Styler of ``frame``."""
+def titled(styler, title):
+    """Give a pandas Styler its title as a caption styled like every other desk table."""
+    if not title:
+        return styler
+    return styler.set_caption(str(title)).set_table_styles(
+        [{"selector": "caption", "props": TITLE_CAPTION}], overwrite=False)
+
+
+def style_frame(styler, frame: pd.DataFrame, key_columns=None, key_rows=None, total_last: bool = False,
+                title=None):
+    """Apply key-column and key-row emphasis (and the title caption) to a pandas Styler of ``frame``."""
+    styler = titled(styler, title)
     keys = {column: mode for column, mode in normalize(key_columns).items() if column in frame.columns}
     skip = {len(frame) - 1} if total_last and len(frame) else set()
     for column, mode in keys.items():

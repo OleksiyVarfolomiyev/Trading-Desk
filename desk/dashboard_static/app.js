@@ -8,6 +8,7 @@ let latest = null;              // latest /api/state document
 
 // ---------------------------------------------------------------- formatting
 const usdFormat = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const wholeUsdFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 function isNum(value) { return typeof value === "number" && isFinite(value); }
 
@@ -18,6 +19,13 @@ function usd(value) {
 function signedUsd(value) {
   if (!isNum(value)) return "";
   return (value < 0 ? "-$" : value > 0 ? "+$" : "$") + usdFormat.format(Math.abs(value));
+}
+// Whole dollars with thousands separators: $12,345 (or +$123 when signed).
+function wholeUsd(value, signed = false) {
+  if (!isNum(value)) return "n/a";
+  const rounded = Math.round(value);
+  const sign = rounded < 0 ? "-$" : signed && rounded > 0 ? "+$" : "$";
+  return sign + wholeUsdFormat.format(Math.abs(rounded));
 }
 function pct(value, digits = 1, signed = false) {
   if (!isNum(value)) return "";
@@ -159,16 +167,32 @@ function tile(label, value, sub, extra) {
   return el("div", { class: "tile" }, [
     el("div", { class: "label", text: label }),
     el("div", { class: "value " + (extra && extra.valueClass ? extra.valueClass : ""), text: value }),
+    extra && extra.line ? el("div", { class: "line " + (extra.line.cls || ""), text: extra.line.text,
+      title: extra.line.title || "" }) : null,
     sub ? el("div", { class: "sub", text: sub }) : null,
   ]);
+}
+
+// "24h +$123 (+1.2%)", net of deposits, withdrawals and transfers; per-account parts on hover.
+function dayChangeLine(day) {
+  if (!day || !isNum(day.change)) return { text: "24h change n/a", cls: "muted" };
+  const share = isNum(day.pct) ? ` (${pct(day.pct, 1, true)})` : "";
+  const parts = Object.entries(day.parts || {}).map(([name, value]) => `${name}: ${wholeUsd(value, true)}`);
+  const missing = (day.missing || []).length ? [`Not included: ${day.missing.join(", ")}`] : [];
+  return {
+    text: `24h ${wholeUsd(day.change, true)}${share} net of deposits${missing.length ? " *" : ""}`,
+    cls: signClass(day.change),
+    title: ["Change over the last 24 hours, net of deposits, withdrawals and transfers.", ...parts, ...missing].join("\n"),
+  };
 }
 
 function renderTiles(k) {
   const r = k.returns || {};
   const mw = k.money_weighted || {};
   const tiles = [
-    tile("Desk value", compactUsd(k.desk_value),
-      `Trading ${compactUsd(k.trading_equity)} · wallets ${compactUsd(k.wallet_value)}`),
+    tile("Desk value", wholeUsd(k.desk_value),
+      `Trading ${wholeUsd(k.trading_equity)} · wallets ${wholeUsd(k.wallet_value)}`,
+      { line: dayChangeLine(k.day_change) }),
     // Dollars and the money-weighted return, next to the time-weighted return: a loss on a small
     // balance and a gain on a large one net out here, but not in the time-weighted figure.
     tile("Net PnL since start", signedUsd(mw.pnl),

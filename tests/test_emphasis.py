@@ -57,5 +57,13 @@ class EmphasisTests(unittest.TestCase):
         self.assertEqual(spec["columns"][0]["emphasis"], "none")
 
 
+class TableTitleTests(unittest.TestCase):
+    def test_styler_tables_carry_their_title_as_a_caption(self):
+        frame = pd.DataFrame({"A": [1.0, -2.0]})
+        html = emphasis.style_frame(frame.style, frame, {"A": "abs"}, title="RISK METRICS").to_html()
+        self.assertIn("RISK METRICS</caption>", html)
+        self.assertIn("caption-side: top", html.replace("caption-side:top", "caption-side: top"))
+        self.assertNotIn("<caption", emphasis.style_frame(frame.style, frame).to_html())
+
 if __name__ == "__main__":
     unittest.main()

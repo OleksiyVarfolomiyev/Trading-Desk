@@ -135,6 +135,8 @@ main { margin: 0; padding: 12px 12px 48px; display: flex; flex-direction: column
 .tile { min-width: 0; }
 .tile .value { font-size: 22px; font-weight: 600; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .sub { color: var(--muted); font-size: 12px; }
+.tile .line { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.tile .line.muted { color: var(--muted); font-weight: 400; }
 
 .accounts-status { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {

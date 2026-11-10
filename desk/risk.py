@@ -19,7 +19,7 @@ from desk.venues.base import VenueAccount, VenuePosition
 # Sizing rules shared by every venue's executor.
 RESERVE_PCT = 0.20
 RISK_PCT_OF_USABLE_MARGIN = 0.05
-MAX_TOTAL_RISK_PCT = 0.20
+MAX_TOTAL_RISK_PCT = 0.33  # raised from 0.20 on 2026-11-09 at the user's request
 MAX_RISK_PCT_OVERRIDE_LIMIT = 50.0
 STOP_ATR_MULTIPLE = 1.25
 REWARD_RISK_RATIO = 1.0

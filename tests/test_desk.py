@@ -342,7 +342,7 @@ class HLDeskRiskTests(unittest.TestCase):
         with redirect_stdout(output):
             executor.print_plan(with_ib, [], desk_risk)
         self.assertIn("Desk equity (all venues): $2,000.00", output.getvalue())
-        self.assertIn("Aggregate stop-risk cap: $400.00", output.getvalue())
+        self.assertIn("Aggregate stop-risk cap: $660.00 (33% of desk equity)", output.getvalue())
 
     def test_live_run_stops_when_another_account_is_unreachable(self):
         import argparse
@@ -1506,6 +1506,43 @@ class YahooQuoteTests(unittest.TestCase):
             self.assertFalse(ib_trade.yahoo_quote("NET", now=2_500).live)  # after the session
         with patch("requests.get", return_value=self.reply(currency="EUR")), self.assertRaises(ValueError):
             ib_trade.yahoo_quote("SAP", now=1_100)
+
+
+class ExplicitLimitTests(unittest.TestCase):
+    def test_limit_price_column_is_read_and_checked(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "signals.csv"
+            path.write_text("symbol,side,quantity,limit_price\nNET,LONG,1,296.5\n")
+            self.assertEqual(ib_trade.read_signals(path)[0].limit_price, 296.5)
+            path.write_text("symbol,side,quantity,limit_price\nNET,REDUCE,1,296.5\n")
+            with self.assertRaises(ValueError):
+                ib_trade.read_signals(path)
+            path.write_text("symbol,side,limit_price\nNET,LONG,-3\n")
+            with self.assertRaises(ValueError):
+                ib_trade.read_signals(path)
+
+    def test_a_limit_far_from_the_last_trade_is_blocked(self):
+        self.assertEqual(ib_trade.check_limit_price(296.0, 294.0), "")
+        self.assertIn("typo", ib_trade.check_limit_price(29.6, 294.0))
+        self.assertIn("no last trade", ib_trade.check_limit_price(296.0, 0.0))
+
+    def test_overnight_session_hours(self):
+        def at(text):
+            return pd.Timestamp(text, tz="America/New_York").tz_convert("UTC")
+
+        self.assertTrue(ib_trade.overnight_open(at("2026-11-09 20:30")))    # Monday evening
+        self.assertTrue(ib_trade.overnight_open(at("2026-11-10 03:49")))    # Tuesday small hours
+        self.assertFalse(ib_trade.overnight_open(at("2026-11-10 03:50")))
+        self.assertFalse(ib_trade.overnight_open(at("2026-11-10 12:00")))   # regular session
+        self.assertFalse(ib_trade.overnight_open(at("2026-11-13 21:00")))   # Friday evening
+        self.assertTrue(ib_trade.overnight_open(at("2026-11-15 20:00")))    # Sunday evening
+
+    def test_orders_route_to_the_overnight_venue_only_under_the_flag(self):
+        contract = SimpleNamespace(exchange="SMART", symbol="NET")
+        self.assertIs(ib_trade.order_contract(contract), contract)
+        with patch.object(ib_trade, "overnight", True):
+            routed = ib_trade.order_contract(contract)
+        self.assertEqual((routed.exchange, contract.exchange), ("OVERNIGHT", "SMART"))
 
 
 class ReduceSignalTests(unittest.TestCase):

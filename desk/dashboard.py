@@ -36,6 +36,7 @@ import numpy as np
 import pandas as pd
 
 from desk import emphasis
+from desk.day_change import DayChange, desk_day_change
 from desk.desk_accounts import ROOT_DATA, WINDOWS, DeskAccounts
 
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
@@ -154,8 +155,12 @@ def _value_with_wallets(value_series: list[dict], wallets: dict | None, min_days
             "x": [ts.strftime("%Y-%m-%d") for ts in total.index], "y": total.tolist()}
 
 
-def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
-    """The page's data from a fetched DeskAccounts: tiles, highlights, tables and chart series."""
+def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_change: DayChange | None = None) -> dict:
+    """The page's data from a fetched DeskAccounts: tiles, highlights, tables and chart series.
+
+    ``day_change`` is the desk's 24-hour change net of deposits (``desk.day_change``), fetched by
+    the refresh loop; without it the tile shows no change.
+    """
     overview = desk.overview
     trading, wallets = overview._trading(), overview._wallets()
     trading_equity = sum(snapshot.equity_usd for snapshot in trading)
@@ -167,6 +172,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None) -> dict:
     peak = desk.index.cummax()
     kpis = {
         "desk_value": overview.desk_equity,
+        "day_change": day_change.as_dict() if day_change is not None else None,
         "trading_equity": trading_equity,
         "wallet_value": sum(snapshot.equity_usd for snapshot in wallets),
         "unrealized": unrealized,
@@ -329,7 +335,12 @@ class Dashboard:
             if history or self.risk_table is None or accounts_in_history != self.risk_accounts:
                 self.risk_table = self.desk.risk_metrics()
                 self.risk_accounts = accounts_in_history
-            payload = build_payload(self.desk, self.risk_table)
+            try:
+                day = desk_day_change(self.desk.overview.snapshots)
+            except Exception:  # the tile then shows no 24-hour change; everything else still updates
+                traceback.print_exc()
+                day = None
+            payload = build_payload(self.desk, self.risk_table, day)
             payload["accounts_status"] = self.account_status(payload["problems"])
             with self.lock:
                 self.payload = json_safe(payload)
