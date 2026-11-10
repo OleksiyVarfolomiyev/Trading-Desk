@@ -147,7 +147,17 @@ class DeskAccounts:
                 # Shown as "IB 8440": only the last four characters of an account ID reach the screen.
                 label = f"IB {short_id(account_id)}"
                 self.ib_ids[label] = account_id
-                self.histories[label] = ib_history(pd.read_csv(path))
+                nav = pd.read_csv(path)
+                # Days before IB's Flex window, rebuilt from an activity statement (desk/venues/ib_statement.py).
+                backfill = account_file(ib_data_dir(), "ib_nav_backfill", account_id)
+                if backfill.exists() and len(nav):
+                    earlier = pd.read_csv(backfill)
+                    earlier = earlier[pd.to_datetime(earlier["date"]) < pd.to_datetime(nav["date"]).min()]
+                    if len(earlier):
+                        nav = pd.concat([earlier, nav], ignore_index=True)
+                        self.notes.append(f"{label}: values before {nav['date'].iloc[len(earlier)]} are rebuilt from the "
+                                          "activity statement's transactions at daily closes (IB's Flex history starts there).")
+                self.histories[label] = ib_history(nav)
                 self.windowed.add(label)
         self.excluded = self._drop_unreadable()
         if not self.histories:
