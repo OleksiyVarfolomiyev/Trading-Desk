@@ -123,3 +123,62 @@ def desk_day_change(snapshots, now: pd.Timestamp | None = None) -> DayChange | N
         result.change += change
         result.value += snapshot.equity_usd
     return result if result.parts else None
+
+
+def position_changes(snapshots, now: pd.Timestamp | None = None) -> dict[tuple[str, str], float]:
+    """Each open position's 24-hour price change, as a fraction, keyed (account label, symbol).
+
+    HL perps use HL's mark against its price 24 hours ago (``prevDayPx``), IB holdings Yahoo's
+    move since this time yesterday, and wallet tokens DefiLlama's 24-hour change. A position that
+    cannot be priced is left out.
+    """
+    now = pd.Timestamp.now(tz="UTC") if now is None else now
+    changes: dict[tuple[str, str], float] = {}
+    by_venue: dict[str, list] = {}
+    for snapshot in snapshots:
+        for position in snapshot.positions:
+            by_venue.setdefault(snapshot.venue, []).append((snapshot.label, position))
+
+    if by_venue.get("hl"):
+        from desk.hl.account_analytics import fetch_market_contexts
+
+        try:
+            contexts = fetch_market_contexts(sorted({position.ref for _, position in by_venue["hl"]}))
+        except Exception:
+            contexts = {}
+        for label, position in by_venue["hl"]:
+            context = contexts.get((position.ref or "HL", position.symbol), {})
+            try:
+                mark, before = float(context["markPx"]), float(context["prevDayPx"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if before > 0:
+                changes[label, position.symbol] = mark / before - 1
+
+    if by_venue.get("ib"):
+        from desk.venues import yahoo
+
+        moves: dict[str, float] = {}
+        for label, position in by_venue["ib"]:
+            if position.symbol not in moves:
+                try:
+                    then, latest, _ = yahoo.price_change(position.symbol, now - DAY)
+                    moves[position.symbol] = latest / then - 1 if then > 0 else float("nan")
+                except Exception:
+                    moves[position.symbol] = float("nan")
+            if math.isfinite(moves[position.symbol]):
+                changes[label, position.symbol] = moves[position.symbol]
+
+    if by_venue.get("onchain"):
+        from desk.venues.onchain import fetch_changes_24h
+
+        keys = token_keys([position for _, position in by_venue["onchain"]])
+        try:
+            moves = fetch_changes_24h(set(keys.values()))
+        except Exception:
+            moves = {}
+        for label, position in by_venue["onchain"]:
+            move = moves.get(keys.get(position.ref, ""))
+            if move is not None and math.isfinite(move):
+                changes[label, position.symbol] = move
+    return changes

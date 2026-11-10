@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 
 from desk import emphasis
-from desk.day_change import DayChange, desk_day_change
+from desk.day_change import DayChange, desk_day_change, position_changes
 from desk.desk_accounts import ROOT_DATA, WINDOWS, DeskAccounts
 
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
@@ -85,18 +85,76 @@ def table(frame: pd.DataFrame, formats: dict[str, str], total: dict | None = Non
     """A table for the page: column formats, body rows, an optional total row, and key columns.
 
     ``key`` maps the column(s) that answer the table's question to how their standout value is
-    picked ("abs", "max", "min" or None); the page tints them (see desk/emphasis.py).
+    picked ("abs", "max", "min" or None); the page tints them (see desk/emphasis.py) and puts them
+    first, right after the leading text columns that name each row (account, symbol, side).
     """
     if frame is None or frame.empty:
         return {"columns": [], "rows": [], "total": None}
+    keys = emphasis.normalize(key)
+    frame = frame[key_columns_first(list(frame.columns), keys, formats)]
     rows = frame.to_dict(orient="records")
     if total_last:
         rows, total = rows[:-1], rows[-1]
-    keys = emphasis.normalize(key)
     return {"columns": [{"key": column, "fmt": formats.get(column, "text"),
                          **({"emphasis": keys[column] or "none"} if column in keys else {})}
                         for column in frame.columns],
             "rows": rows, "total": total}
+
+
+# Formats the page colours (by sign, as risk, or LONG/SHORT): these columns move up with the key ones.
+COLORED_FORMATS = {"susd", "vusd", "vpct", "spct", "rusd", "rpct", "side"}
+
+
+def key_columns_first(columns: list[str], keys, formats: dict[str, str]) -> list[str]:
+    """Column order with the key (tinted) and colour-coded columns moved up, in their own order,
+    behind the leading text columns that name each row."""
+    def stands_out(column):
+        return column in keys or formats.get(column, "text") in COLORED_FORMATS
+
+    lead = []
+    for column in columns:
+        if stands_out(column) or formats.get(column, "text") != "text":
+            break
+        lead.append(column)
+    moved = [column for column in columns if stands_out(column) and column not in lead]
+    return lead + moved + [column for column in columns if column not in lead and column not in moved]
+
+
+# Account dollar columns shown as a share of the account's own equity.
+ACCOUNT_SHARES = {"Cash": "Cash / equity", "Margin used": "Margin used / equity", "Available": "Available / equity",
+                  "Unrealized PnL": "Unrealized PnL / equity", "Gross": "Gross / equity", "Net": "Net / equity"}
+
+
+def account_shares(accounts: pd.DataFrame) -> tuple[pd.DataFrame, dict | None]:
+    """The accounts table in percent: % of desk, and each dollar column over the account's equity.
+    The total row divides the summed dollars by the summed equity."""
+    if accounts.empty:
+        return accounts, None
+    shares = accounts[["Venue", "Account", "% of desk"]].copy()
+    equity = accounts["Equity"].where(accounts["Equity"] > 0)
+    for column, name in ACCOUNT_SHARES.items():
+        shares[name] = accounts[column] / equity
+    shares["Positions"] = accounts["Positions"]
+    total_equity = accounts["Equity"].sum()
+    total = {"Venue": "Total", "Account": "", "% of desk": 1.0, "Positions": accounts["Positions"].sum(),
+             **{name: accounts[column].sum() / total_equity if total_equity > 0 else None
+                for column, name in ACCOUNT_SHARES.items()}}
+    return shares, total
+
+
+def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], float] | None) -> pd.DataFrame:
+    """Positions without Venue (the account name says it), with uPnL (%) and 24h change (%) after
+    Unrealized PnL. uPnL (%) is over the cost basis (value less unrealized PnL), so it is blank
+    where the entry price is unknown (wallet tokens)."""
+    frame = positions.drop(columns="Venue", errors="ignore").copy()
+    cost = (frame["Value"] - frame["Unrealized PnL"]).abs()
+    upnl_pct = (frame["Unrealized PnL"] / cost).where(frame["Avg price"].notna() & (cost > 0))
+    day = [(moves or {}).get((account, symbol), float("nan"))
+           for account, symbol in zip(frame["Account"], frame["Symbol"])]
+    at = frame.columns.get_loc("Unrealized PnL") + 1
+    frame.insert(at, "uPnL (%)", upnl_pct)
+    frame.insert(at + 1, "24h change (%)", day)
+    return frame
 
 
 def _daily(series: pd.Series) -> pd.Series:
@@ -155,11 +213,13 @@ def _value_with_wallets(value_series: list[dict], wallets: dict | None, min_days
             "x": [ts.strftime("%Y-%m-%d") for ts in total.index], "y": total.tolist()}
 
 
-def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_change: DayChange | None = None) -> dict:
+def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_change: DayChange | None = None,
+                  moves: dict[tuple[str, str], float] | None = None) -> dict:
     """The page's data from a fetched DeskAccounts: tiles, highlights, tables and chart series.
 
     ``day_change`` is the desk's 24-hour change net of deposits (``desk.day_change``), fetched by
-    the refresh loop; without it the tile shows no change.
+    the refresh loop; without it the tile shows no change. ``moves`` is each position's 24-hour
+    price change ({(account, symbol): fraction}, ``desk.day_change.position_changes``).
     """
     overview = desk.overview
     trading, wallets = overview._trading(), overview._wallets()
@@ -190,35 +250,38 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
 
     well, attention, _, _ = desk.highlight_rows()
 
-    accounts = overview.accounts_frame()
-    account_total = None
-    if len(accounts):
-        sums = accounts.drop(columns=["Venue", "Account", "% of desk"]).sum(numeric_only=True).to_dict()
-        account_total = {"Venue": "Total", "Account": "", **sums, "% of desk": 1.0}
+    accounts, account_total = account_shares(overview.accounts_frame())
     money = {column: "usd" for column in ("Equity", "Cash", "Margin used", "Available", "Gross", "Value", "Risk equity",
                                            "Open risk", "Long", "Short", "VaR 95%", "VaR 99%")}
     signed = {column: "susd" for column in ("Unrealized PnL", "Net", "Value")}
     tables = {
-        "accounts": table(accounts, {**money, **signed, "Positions": "int", "% of desk": "pct"}, account_total,
-                          key={"Equity": "max"}),
-        "performance": table(desk.performance_frame(),
-                             {"Value": "usd", **{f"PnL {label}": "susd" for label in WINDOWS},
-                              **{f"Return {label}": "spct" for label in WINDOWS}}, total_last=True,
+        "accounts": table(accounts, {**{column: "pct" for column in ACCOUNT_SHARES.values()},
+                                     "Unrealized PnL / equity": "spct", "Net / equity": "spct",
+                                     "Positions": "int", "% of desk": "pct"}, account_total,
+                          key={"% of desk": "max"}),
+        # Returns only: the dollar PnL is in the accounts' value chart and the desk value tile.
+        "performance": table(desk.performance_frame()[["Account"] + [f"Return {label}" for label in WINDOWS]],
+                             {f"Return {label}": "spct" for label in WINDOWS}, total_last=True,
                              key={"Return 30D": "abs"}),
         "exposure": table(overview.exposure_frame(), {**money, "Net": "susd", "Gross / equity": "pct",
                                                       "Net / equity": "spct"}, total_last=True,
                           key={"Net / equity": "abs"}),
-        "movers": table(overview.movers_frame(MOVERS), {"Value": "susd", "Unrealized PnL": "susd",
+        "movers": table(overview.movers_frame(MOVERS), {"Side": "side", "Value": "susd", "Unrealized PnL": "susd",
                                                         "% of position": "spct"}, key={"Unrealized PnL": "abs"}),
     }
     if len(positions):
-        ordered = positions.assign(_abs=positions["Value"].abs()).sort_values(
+        ordered = with_position_returns(positions, moves)
+        ordered = ordered.assign(_abs=ordered["Value"].abs()).sort_values(
             ["Asset class", "_abs"], ascending=[True, False]).drop(columns="_abs")
         total = {column: None for column in ordered.columns}
         total.update({"Asset class": "Total", "Value": ordered["Value"].sum(),
                       "Unrealized PnL": ordered["Unrealized PnL"].sum(), "Weight": ordered["Weight"].sum(),
                       "Exposure / desk value": ordered["Exposure / desk value"].sum()})
-        tables["positions"] = table(ordered, {"Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
+        priced = ordered["uPnL (%)"].notna()
+        cost = (ordered["Value"] - ordered["Unrealized PnL"]).abs()[priced].sum()
+        total["uPnL (%)"] = ordered["Unrealized PnL"][priced].sum() / cost if cost else None
+        tables["positions"] = table(ordered, {"Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
+                                              "uPnL (%)": "spct", "24h change (%)": "spct",
                                               "Weight": "pct", "Exposure / desk value": "pct"}, total,
                                     key={"Weight": "max"})
     else:
@@ -340,7 +403,12 @@ class Dashboard:
             except Exception:  # the tile then shows no 24-hour change; everything else still updates
                 traceback.print_exc()
                 day = None
-            payload = build_payload(self.desk, self.risk_table, day)
+            try:
+                moves = position_changes(self.desk.overview.snapshots)
+            except Exception:  # the 24h column is then blank
+                traceback.print_exc()
+                moves = None
+            payload = build_payload(self.desk, self.risk_table, day, moves)
             payload["accounts_status"] = self.account_status(payload["problems"])
             with self.lock:
                 self.payload = json_safe(payload)

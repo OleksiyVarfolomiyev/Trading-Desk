@@ -63,6 +63,8 @@ const FORMATS = {
   num2: { text: (v) => (isNum(v) ? v.toFixed(2) : ""), num: true },
   int: { text: (v) => (isNum(v) ? Math.round(v).toLocaleString("en-US") : ""), num: true },
   text: { text: (v) => (v === null || v === undefined ? "" : String(v)), num: false },
+  // LONG green, SHORT red.
+  side: { text: (v) => (v === null || v === undefined ? "" : String(v)), num: false, side: true },
 };
 
 function signClass(value) {
@@ -149,7 +151,9 @@ function renderTable(id, spec) {
   const cell = (row, column, index) => {
     const format = FORMATS[column.fmt] || FORMATS.text;
     const value = row[column.key];
-    const tone = format.signed ? signClass(value) : format.tone && isNum(value) && value > 0 ? format.tone : "";
+    const tone = format.signed ? signClass(value)
+      : format.side ? (value === "LONG" ? "pos" : value === "SHORT" ? "neg" : "")
+      : format.tone && isNum(value) && value > 0 ? format.tone : "";
     const key = column.emphasis ? (index !== undefined && standout[column.key] === index ? "key key-top" : "key") : "";
     const classes = [format.num ? "num" : "", tone, key].filter(Boolean).join(" ");
     return el("td", { class: classes, text: format.text(value) });

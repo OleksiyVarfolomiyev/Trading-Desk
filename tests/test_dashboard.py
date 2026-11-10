@@ -7,7 +7,7 @@ from http.server import ThreadingHTTPServer
 import numpy as np
 import pandas as pd
 
-from desk.dashboard import json_safe, make_handler, table
+from desk.dashboard import account_shares, json_safe, make_handler, table, with_position_returns
 
 
 class PayloadTests(unittest.TestCase):
@@ -26,6 +26,43 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(len(spec["rows"]), 2)
         self.assertEqual(spec["total"]["Value"], 3.0)
         self.assertEqual(table(pd.DataFrame(), {})["rows"], [])
+
+    def test_key_and_colour_coded_columns_follow_the_leading_text_columns(self):
+        frame = pd.DataFrame({"Account": ["A"], "Symbol": ["X"], "Side": ["LONG"], "Value": [1.0], "PnL": [0.1],
+                              "Weight": [0.5], "Note": ["n"]})
+        spec = table(frame, {"Side": "side", "Value": "usd", "PnL": "susd", "Weight": "pct"}, key={"Weight": "max"})
+        self.assertEqual([column["key"] for column in spec["columns"]],
+                         ["Account", "Symbol", "Side", "PnL", "Weight", "Value", "Note"])
+
+    def test_accounts_in_percent_of_desk_and_of_own_equity(self):
+        accounts = pd.DataFrame({"Venue": ["hl", "ib"], "Account": ["HL", "IB"], "Equity": [1000.0, 3000.0],
+                                 "Cash": [500.0, 3000.0], "Margin used": [200.0, 0.0], "Available": [800.0, 3000.0],
+                                 "Unrealized PnL": [-50.0, 10.0], "Gross": [2000.0, 0.0], "Net": [-1500.0, 0.0],
+                                 "Positions": [3, 0], "% of desk": [0.25, 0.75]})
+        shares, total = account_shares(accounts)
+        self.assertNotIn("Equity", shares.columns)
+        self.assertAlmostEqual(shares["Margin used / equity"].iloc[0], 0.2)
+        self.assertAlmostEqual(shares["Net / equity"].iloc[0], -1.5)
+        self.assertAlmostEqual(total["Unrealized PnL / equity"], -40.0 / 4000.0)
+        self.assertEqual(total["% of desk"], 1.0)
+
+    def test_positions_drop_venue_and_add_upnl_and_day_percent_after_unrealized_pnl(self):
+        positions = pd.DataFrame({
+            "Asset class": ["crypto perp", "crypto spot"], "Venue": ["hl", "onchain"],
+            "Account": ["HL 07f2", "HL c248 wallet"], "Symbol": ["AVAX", "VVV"], "Side": ["SHORT", "LONG"],
+            "Quantity": [-100.0, 10.0], "Avg price": [10.0, float("nan")], "Mark": [9.0, 11.0],
+            "Value": [-900.0, 110.0], "Unrealized PnL": [100.0, 0.0], "Weight": [0.9, 0.1],
+            "Exposure / desk value": [0.5, 0.1]})
+        frame = with_position_returns(positions, {("HL 07f2", "AVAX"): -0.05})
+        self.assertNotIn("Venue", frame.columns)
+        columns = list(frame.columns)
+        at = columns.index("Unrealized PnL")
+        self.assertEqual(columns[at + 1:at + 3], ["uPnL (%)", "24h change (%)"])
+        # A short entered at $10, now $9: +$100 on a $1,000 cost basis.
+        self.assertAlmostEqual(frame["uPnL (%)"].iloc[0], 0.10)
+        self.assertTrue(pd.isna(frame["uPnL (%)"].iloc[1]))      # no entry price for wallet tokens
+        self.assertEqual(frame["24h change (%)"].iloc[0], -0.05)
+        self.assertTrue(pd.isna(frame["24h change (%)"].iloc[1]))
 
 
 class _StubDashboard:

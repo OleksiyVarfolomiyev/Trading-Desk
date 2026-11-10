@@ -90,5 +90,30 @@ class DayChangeTests(unittest.TestCase):
             self.assertIsNone(day_change.desk_day_change([account("hl", "HL 07f2", 3000.0)]))
 
 
+class PositionChangeTests(unittest.TestCase):
+    def test_each_venue_uses_its_own_24_hour_source(self):
+        perp = VenuePosition(venue="hl", account="0x1", symbol="xyz:MU", asset_class="tradfi perp",
+                             quantity=-1.0, avg_price=700.0, mark_price=717.0, ref="xyz")
+        snapshots = [account("hl", "HL 07f2", 3000.0, [perp], account_id="0x1"),
+                     account("ib", "IB 8440", 3500.0, [stock("NET", 5), stock("ZZZ", 1)]),
+                     account("onchain", "HL c248 wallet", 2200.0, [token("VVV", 200, 11.0, "base:0xabc")])]
+        contexts = {("xyz", "xyz:MU"): {"markPx": "717.31", "prevDayPx": "696.97"}}
+        key = day_change.token_keys(snapshots[2].positions)["base:0xabc"]
+
+        def price_change(symbol, since):
+            if symbol == "ZZZ":
+                raise ValueError("no bars")
+            return 100.0, 103.0, "USD"
+
+        with patch("desk.hl.account_analytics.fetch_market_contexts", return_value=contexts), \
+                patch.object(yahoo, "price_change", side_effect=price_change), \
+                patch("desk.venues.onchain.fetch_changes_24h", return_value={key: -0.02}):
+            moves = day_change.position_changes(snapshots)
+        self.assertAlmostEqual(moves["HL 07f2", "xyz:MU"], 717.31 / 696.97 - 1)
+        self.assertAlmostEqual(moves["IB 8440", "NET"], 0.03)
+        self.assertNotIn(("IB 8440", "ZZZ"), moves)
+        self.assertAlmostEqual(moves["HL c248 wallet", "VVV"], -0.02)
+
+
 if __name__ == "__main__":
     unittest.main()

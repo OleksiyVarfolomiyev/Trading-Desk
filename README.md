@@ -110,6 +110,8 @@ It serves http://127.0.0.1:8050 (`--port` to change) and re-reads every account 
 
 The desk value's 24-hour change is net of deposits, withdrawals and transfers (`desk/day_change.py`): HL wallets use HL's own 24-hour PnL; IB is its current holdings times each symbol's move since this time yesterday (Yahoo Finance; zero over a weekend); wallet tokens are their current balances times DefiLlama's 24-hour price change. Trades in the last 24 hours on IB and in wallets count as if held all day. Hovering the line shows each account's part; an account that cannot be priced is left out, marked `*` and named there.
 
+Open positions show uPnL (%) (unrealized PnL over the cost basis; blank for wallet tokens, which have no entry price) and the 24h change (%) of each position's price from the same sources (HL perps: HL's mark against its price 24 hours ago). In every dashboard table the tinted key columns come right after the columns that name the row.
+
 The server listens on 127.0.0.1 only and has no login, because the page shows balances. It is read-only and never places orders. `kill -USR1 <pid>` writes every thread's stack to its output if a refresh seems stuck. Code: `desk/dashboard.py`, page in `desk/dashboard_static/`.
 
 ## Notebook highlights
