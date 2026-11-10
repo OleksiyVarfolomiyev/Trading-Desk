@@ -6,6 +6,8 @@
   "name": "desk-relay",
   "main": "web/worker.js",
   "compatibility_date": "2025-09-01",
+  // Keep the WALLETS value set in Cloudflare's dashboard across deploys from this repository.
+  "keep_vars": true,
   "assets": { "directory": "./web/site" },
   "build": { "command": "bash web/build_site.sh" }
 }
