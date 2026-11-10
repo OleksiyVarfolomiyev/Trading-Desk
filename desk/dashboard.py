@@ -38,6 +38,7 @@ import pandas as pd
 from desk import emphasis
 from desk.privacy import mask
 from desk.day_change import DayChange, desk_day_change, position_changes
+from desk.overview import with_position_returns
 from desk.desk_accounts import ROOT_DATA, WINDOWS, DeskAccounts
 
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
@@ -107,23 +108,14 @@ COLORED_FORMATS = {"susd", "vusd", "vpct", "spct", "rusd", "rpct", "side"}
 
 
 def key_columns_first(columns: list[str], keys, formats: dict[str, str]) -> list[str]:
-    """Column order with the key (tinted) and colour-coded columns moved up, in their own order,
-    behind the leading text columns that name each row."""
-    def stands_out(column):
-        return column in keys or formats.get(column, "text") in COLORED_FORMATS
-
-    lead = []
-    for column in columns:
-        if stands_out(column) or formats.get(column, "text") != "text":
-            break
-        lead.append(column)
-    moved = [column for column in columns if stands_out(column) and column not in lead]
-    return lead + moved + [column for column in columns if column not in lead and column not in moved]
+    """Column order with the key (tinted) and colour-coded columns moved up (desk/emphasis.py)."""
+    return emphasis.key_columns_first(columns, keys, [c for c in columns if formats.get(c, "text") in COLORED_FORMATS],
+                                      text={c for c in columns if formats.get(c, "text") == "text"})
 
 
 # Account dollar columns shown as a share of the account's own equity.
 ACCOUNT_SHARES = {"Cash": "Cash / equity", "Margin used": "Margin used / equity", "Available": "Available / equity",
-                  "Unrealized PnL": "Unrealized PnL / equity", "Gross": "Gross / equity", "Net": "Net / equity"}
+                  "Unrealized PnL": "uPnL / equity", "Gross": "Gross / equity", "Net": "Net / equity"}
 
 
 def account_shares(accounts: pd.DataFrame) -> tuple[pd.DataFrame, dict | None]:
@@ -141,21 +133,6 @@ def account_shares(accounts: pd.DataFrame) -> tuple[pd.DataFrame, dict | None]:
              **{name: accounts[column].sum() / total_equity if total_equity > 0 else None
                 for column, name in ACCOUNT_SHARES.items()}}
     return shares, total
-
-
-def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], float] | None) -> pd.DataFrame:
-    """Positions without Venue (the account name says it), with uPnL (%) and 24h change (%) after
-    Unrealized PnL. uPnL (%) is over the cost basis (value less unrealized PnL), so it is blank
-    where the entry price is unknown (wallet tokens)."""
-    frame = positions.drop(columns="Venue", errors="ignore").copy()
-    cost = (frame["Value"] - frame["Unrealized PnL"]).abs()
-    upnl_pct = (frame["Unrealized PnL"] / cost).where(frame["Avg price"].notna() & (cost > 0))
-    day = [(moves or {}).get((account, symbol), float("nan"))
-           for account, symbol in zip(frame["Account"], frame["Symbol"])]
-    at = frame.columns.get_loc("Unrealized PnL") + 1
-    frame.insert(at, "uPnL (%)", upnl_pct)
-    frame.insert(at + 1, "24h change (%)", day)
-    return frame
 
 
 def _daily(series: pd.Series) -> pd.Series:
@@ -254,10 +231,10 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     accounts, account_total = account_shares(overview.accounts_frame())
     money = {column: "usd" for column in ("Equity", "Cash", "Margin used", "Available", "Gross", "Value", "Risk equity",
                                            "Open risk", "Long", "Short", "VaR 95%", "VaR 99%")}
-    signed = {column: "susd" for column in ("Unrealized PnL", "Net", "Value")}
+    signed = {column: "susd" for column in ("uPnL", "Net", "Value")}
     tables = {
         "accounts": table(accounts, {**{column: "pct" for column in ACCOUNT_SHARES.values()},
-                                     "Unrealized PnL / equity": "spct", "Net / equity": "spct",
+                                     "uPnL / equity": "spct", "Net / equity": "spct",
                                      "Positions": "int", "% of desk": "pct"}, account_total,
                           key={"% of desk": "max"}),
         # Returns only: the dollar PnL is in the accounts' value chart and the desk value tile.
@@ -267,8 +244,8 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         "exposure": table(overview.exposure_frame(), {**money, "Net": "susd", "Gross / equity": "pct",
                                                       "Net / equity": "spct"}, total_last=True,
                           key={"Net / equity": "abs"}),
-        "movers": table(overview.movers_frame(MOVERS), {"Side": "side", "Value": "susd", "Unrealized PnL": "susd",
-                                                        "% of position": "spct"}, key={"Unrealized PnL": "abs"}),
+        "movers": table(overview.movers_frame(MOVERS), {"Side": "side", "Value": "susd", "uPnL": "susd",
+                                                        "% of position": "spct"}, key={"uPnL": "abs"}),
     }
     if len(positions):
         ordered = with_position_returns(positions, moves)
@@ -276,11 +253,11 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
             ["Asset class", "_abs"], ascending=[True, False]).drop(columns="_abs")
         total = {column: None for column in ordered.columns}
         total.update({"Asset class": "Total", "Value": ordered["Value"].sum(),
-                      "Unrealized PnL": ordered["Unrealized PnL"].sum(), "Weight": ordered["Weight"].sum(),
+                      "uPnL": ordered["uPnL"].sum(), "Weight": ordered["Weight"].sum(),
                       "Exposure / desk value": ordered["Exposure / desk value"].sum()})
         priced = ordered["uPnL (%)"].notna()
-        cost = (ordered["Value"] - ordered["Unrealized PnL"]).abs()[priced].sum()
-        total["uPnL (%)"] = ordered["Unrealized PnL"][priced].sum() / cost if cost else None
+        cost = (ordered["Value"] - ordered["uPnL"]).abs()[priced].sum()
+        total["uPnL (%)"] = ordered["uPnL"][priced].sum() / cost if cost else None
         tables["positions"] = table(ordered, {"Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
                                               "uPnL (%)": "spct", "24h change (%)": "spct",
                                               "Weight": "pct", "Exposure / desk value": "pct"}, total,

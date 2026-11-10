@@ -43,7 +43,7 @@ class PayloadTests(unittest.TestCase):
         self.assertNotIn("Equity", shares.columns)
         self.assertAlmostEqual(shares["Margin used / equity"].iloc[0], 0.2)
         self.assertAlmostEqual(shares["Net / equity"].iloc[0], -1.5)
-        self.assertAlmostEqual(total["Unrealized PnL / equity"], -40.0 / 4000.0)
+        self.assertAlmostEqual(total["uPnL / equity"], -40.0 / 4000.0)
         self.assertEqual(total["% of desk"], 1.0)
 
     def test_positions_drop_venue_and_add_upnl_and_day_percent_after_unrealized_pnl(self):
@@ -51,12 +51,12 @@ class PayloadTests(unittest.TestCase):
             "Asset class": ["crypto perp", "crypto spot"], "Venue": ["hl", "onchain"],
             "Account": ["HL 07f2", "HL c248 wallet"], "Symbol": ["AVAX", "VVV"], "Side": ["SHORT", "LONG"],
             "Quantity": [-100.0, 10.0], "Avg price": [10.0, float("nan")], "Mark": [9.0, 11.0],
-            "Value": [-900.0, 110.0], "Unrealized PnL": [100.0, 0.0], "Weight": [0.9, 0.1],
+            "Value": [-900.0, 110.0], "uPnL": [100.0, 0.0], "Weight": [0.9, 0.1],
             "Exposure / desk value": [0.5, 0.1]})
         frame = with_position_returns(positions, {("HL 07f2", "AVAX"): -0.05})
         self.assertNotIn("Venue", frame.columns)
         columns = list(frame.columns)
-        at = columns.index("Unrealized PnL")
+        at = columns.index("uPnL")
         self.assertEqual(columns[at + 1:at + 3], ["uPnL (%)", "24h change (%)"])
         # A short entered at $10, now $9: +$100 on a $1,000 cost basis.
         self.assertAlmostEqual(frame["uPnL (%)"].iloc[0], 0.10)

@@ -1439,9 +1439,15 @@ def fetch_position_rows(user=None, fills=None, fills_complete=False, states=None
         fees, fees_usd = current_position_fees(
             position['coin'], size, fills, fills_complete, return_usd=True
         )
+        entry = as_float(position.get('entryPx'))
+        upnl = as_float(position.get('unrealizedPnl'))
+        previous = as_float(market_context.get('prevDayPx'), default=float('nan'))
         rows.append({'Coin': position['coin'], 'Dex': dex, 'Pos': value, 'Margin': margin,
                 'Margin Type': margin_type, 'ROE': as_float(position.get('returnOnEquity')) * 100,
-                'uPnL': as_float(position.get('unrealizedPnl')), 'Funding': funding_usd,
+                'uPnL': upnl, 'Funding': funding_usd,
+                # As on the desk dashboard: uPnL over the entry value, and the 24-hour price move.
+                'uPnL (%)': upnl / (entry * abs(size)) * 100 if entry > 0 and size else float('nan'),
+                '24h change (%)': (mark / previous - 1) * 100 if previous > 0 and mark > 0 else float('nan'),
                 'Funding (1h)': funding_rate_pct, 'Funding APR': funding_apr_pct,
                 'Fees': fees, 'Fees USD': fees_usd,
                 'Margin %': margin / total_available_margin * 100 if \
@@ -1456,6 +1462,14 @@ def fetch_position_rows(user=None, fills=None, fills_complete=False, states=None
 def _account_equity(frame):
     """Sum account value once per wallet."""
     return frame.drop_duplicates('Wallet')['Account value'].sum()
+
+
+def _upnl_pct_total(frame):
+    """uPnL over the entry value of the positions, in percent (blank without entry prices)."""
+    if 'Entry' not in frame or 'Sz' not in frame:
+        return float('nan')
+    cost = (pd.to_numeric(frame['Entry'], errors='coerce') * pd.to_numeric(frame['Sz'], errors='coerce').abs()).sum()
+    return frame['uPnL'].sum() / cost * 100 if cost else float('nan')
 
 
 def _positions_total_row(frame, equity=None):
@@ -1475,6 +1489,7 @@ def _positions_total_row(frame, equity=None):
     fees = -frame['Fees USD'].abs().sum() if frame['Fees USD'].notna().all() else float('nan')
     return {
         'Ticker': 'Net/total', 'uPnL': frame['uPnL'].sum(),
+        'uPnL (%)': _upnl_pct_total(frame),
         'ROE': frame['uPnL'].sum() / margin * 100 if margin else float('nan'),
         'Funding (since open)': frame['Funding (since open)'].sum(),
         'Expected Price PnL (5d)': price_pnl.sum(),
@@ -1506,7 +1521,7 @@ def display_positions(rows,show_wallet=False):
     frame = frame.rename(columns={'Funding': 'Funding (since open)','Coin':'Ticker'})
     # Split across two tables so each fits on screen; both repeat the identifying columns.
     identifiers=(['Wallet'] if show_wallet else [])+['Ticker','Side']
-    pnl_columns=identifiers+['Liq %','ROE','uPnL','Funding (since open)',
+    pnl_columns=identifiers+['Liq %','ROE','uPnL','uPnL (%)','24h change (%)','Funding (since open)',
              'Funding (1h)','Funding APR',
              'Expected Price PnL (5d)','Expected Funding PnL (5d)',
              'Expected PnL incl. funding (5d)',
@@ -1534,7 +1549,7 @@ def display_positions(rows,show_wallet=False):
                 'color:#d97706;' if value <= 25 else 'color:#188038;'
         if column in {'Fees','Fees / Position (%)'}:
             return 'color:#c62828;'
-        if column in {'uPnL','ROE','Funding (since open)','Expected Price PnL (5d)',
+        if column in {'uPnL','uPnL (%)','24h change (%)','ROE','Funding (since open)','Expected Price PnL (5d)',
                 'Expected Funding PnL (5d)','Expected PnL incl. funding (5d)',
                 'Expected Price Return (5d)','Expected Funding Return (5d)'} and pd.notna(value):
             return 'color:#188038;' if value>0 else 'color:#c62828;' if value<0 else ''
@@ -1544,6 +1559,8 @@ def display_positions(rows,show_wallet=False):
         'Sz':lambda v:f'{v:,.2f}','Pos':lambda v:f'${v:,.0f}','Margin':lambda v:f'${v:,.0f}',
         'Liq %':lambda v:f'{v:.2f}%' if pd.notna(v) else 'n/a',
         'ROE':lambda v:f'{v:.2f}%','uPnL':usd,'Funding (since open)':usd,
+        'uPnL (%)':lambda v:f'{v:+.2f}%' if pd.notna(v) else 'n/a',
+        '24h change (%)':lambda v:f'{v:+.2f}%' if pd.notna(v) else 'n/a',
         'Fees / Position (%)':lambda v:f'{v:.3f}%' if pd.notna(v) else 'n/a',
         'Position / Account (%)':lambda v:f'{v:.2f}%' if pd.notna(v) else 'n/a',
         'Funding (1h)':lambda v:f'{v:.6f}%' if pd.notna(v) else 'n/a',

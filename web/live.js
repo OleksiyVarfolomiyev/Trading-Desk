@@ -552,17 +552,17 @@
       const change = p.venue === "hl" ? (context && context.prevDay > 0 ? context.mark / context.prevDay - 1 : NaN) : p.change24h;
       return {
         "Asset class": p.asset_class, "Account": p.account, "Symbol": p.symbol, "Side": p.quantity > 0 ? "LONG" : "SHORT",
-        "Quantity": p.quantity, "Avg price": p.avg_price, "Mark": p.mark_price, "Value": v, "Unrealized PnL": p.unrealized,
+        "Quantity": p.quantity, "Avg price": p.avg_price, "Mark": p.mark_price, "Value": v, "uPnL": p.unrealized,
         "uPnL (%)": fin(p.avg_price) && cost > 0 ? p.unrealized / cost : NaN, "24h change (%)": change,
         "Weight": grossAll ? Math.abs(v) / grossAll : NaN, "Exposure / desk value": deskEquity ? Math.abs(v) / deskEquity : NaN,
       };
     }).sort((a, b) => a["Asset class"].localeCompare(b["Asset class"]) || Math.abs(b.Value) - Math.abs(a.Value));
     const priced = positionRows.filter((r) => fin(r["uPnL (%)"]));
-    const pricedCost = sum(priced.map((r) => Math.abs(r.Value - r["Unrealized PnL"])));
+    const pricedCost = sum(priced.map((r) => Math.abs(r.Value - r["uPnL"])));
     const positionTotal = { "Asset class": "Total", "Value": sum(positionRows.map((r) => r.Value)),
-      "Unrealized PnL": sum(positionRows.map((r) => r["Unrealized PnL"])), "Weight": sum(positionRows.map((r) => r.Weight)),
+      "uPnL": sum(positionRows.map((r) => r["uPnL"])), "Weight": sum(positionRows.map((r) => r.Weight)),
       "Exposure / desk value": sum(positionRows.map((r) => r["Exposure / desk value"])),
-      "uPnL (%)": pricedCost ? sum(priced.map((r) => r["Unrealized PnL"])) / pricedCost : NaN };
+      "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN };
 
     // -- exposure by asset class
     const classes = {};
@@ -582,21 +582,21 @@
     const ranked = hlPositions.slice().sort((a, b) => a.unrealized - b.unrealized);
     const moverList = [...new Set(ranked.slice(-MOVERS).reverse().concat(ranked.slice(0, MOVERS)))];
     const moverRows = moverList.map((p) => ({ "Account": p.account, "Symbol": p.symbol, "Side": p.quantity > 0 ? "LONG" : "SHORT",
-      "Value": value(p), "Unrealized PnL": p.unrealized, "% of position": share(p) }));
+      "Value": value(p), "uPnL": p.unrealized, "% of position": share(p) }));
 
     // -- accounts in percent
     const accountRows = accounts.map((a) => ({
       "Venue": a.venue, "Account": a.label, "% of desk": deskEquity ? a.equity / deskEquity : NaN,
       "Cash / equity": a.equity > 0 ? a.cash / a.equity : NaN, "Margin used / equity": a.equity > 0 ? a.margin_used / a.equity : NaN,
       "Available / equity": a.equity > 0 ? a.available / a.equity : NaN,
-      "Unrealized PnL / equity": a.equity > 0 ? a.unrealized / a.equity : NaN,
+      "uPnL / equity": a.equity > 0 ? a.unrealized / a.equity : NaN,
       "Gross / equity": a.equity > 0 ? sum(a.positions.map((p) => Math.abs(value(p)))) / a.equity : NaN,
       "Net / equity": a.equity > 0 ? sum(a.positions.map(value)) / a.equity : NaN, "Positions": a.positions.length,
     }));
     const accountTotal = { "Venue": "Total", "Account": "", "% of desk": 1, "Positions": sum(accounts.map((a) => a.positions.length)),
       "Cash / equity": sum(accounts.map((a) => a.cash)) / deskEquity, "Margin used / equity": sum(accounts.map((a) => a.margin_used)) / deskEquity,
       "Available / equity": sum(accounts.map((a) => a.available)) / deskEquity,
-      "Unrealized PnL / equity": sum(accounts.map((a) => a.unrealized)) / deskEquity,
+      "uPnL / equity": sum(accounts.map((a) => a.unrealized)) / deskEquity,
       "Gross / equity": sum(allPositions.map((p) => Math.abs(value(p)))) / deskEquity, "Net / equity": sum(allPositions.map(value)) / deskEquity };
 
     // -- performance by account
@@ -641,12 +641,17 @@
     const firstLevel = index.length ? index[0].v : 1;
     const twr = [{ name: "Desk (net of deposits)", x: [...indexDays.keys()], y: [...indexDays.values()].map((v) => Math.round(1e5 * v / firstLevel) / 1e3) }];
     const benchmarkDays = Math.ceil((now - start) / DAY_MS) + 2;
-    const benchmarks = await Promise.all([[BTC, "BTC"], [SP500, "S&P 500 (HL perp)"]].map(([coin, name]) =>
-      dailyCandles(coin, benchmarkDays).then((rows) => {
-        const inRange = rows.filter((row) => row.t >= Math.floor(start / DAY_MS) * DAY_MS);
-        if (!inRange.length) return null;
-        return { name, x: inRange.map((row) => dayKey(row.t)), y: inRange.map((row) => Math.round(1e5 * row.c / inRange[0].c) / 1e3) };
-      }, () => null)));
+    const rebased = (name, rows) => {  // rows: [{t, c}] daily closes
+      const inRange = rows.filter((row) => row.t >= Math.floor(start / DAY_MS) * DAY_MS && row.c > 0);
+      if (!inRange.length) return null;
+      return { name, x: inRange.map((row) => dayKey(row.t)), y: inRange.map((row) => Math.round(1e5 * row.c / inRange[0].c) / 1e3) };
+    };
+    // SPY's daily closes come from Yahoo Finance through the relay (a browser cannot call Yahoo), so
+    // the line covers the whole chart; HL's S&P 500 perp, which starts at its listing, is the fallback.
+    const spy = relay("/benchmark/SPY").then((reply) => rebased("SPY", (reply.closes || []).map(([day, close]) =>
+      ({ t: Date.parse(day + "T00:00:00Z"), c: close }))), () => null)
+      .then((series) => series || dailyCandles(SP500, benchmarkDays).then((rows) => rebased("S&P 500 (HL perp)", rows), () => null));
+    const benchmarks = await Promise.all([dailyCandles(BTC, benchmarkDays).then((rows) => rebased("BTC", rows), () => null), spy]);
     benchmarks.filter(Boolean).forEach((series) => twr.push(series));
 
     // -- highlights (desk/overview.py and desk/desk_accounts.py rules)
@@ -663,7 +668,7 @@
       if (worst["Return 30D"] < 0) attention.splice(1, 0, ["Worst account, 30D", `${worst.Account} ${percent(worst["Return 30D"], true)}.`]);
     }
     if (hlPositions.length) {
-      (unrealized >= 0 ? well : attention).push(["Unrealized PnL", `${signedMoney(unrealized)} on ${money(gross)} of positions (${gross ? percent(unrealized / gross, true) : "n/a"}).`]);
+      (unrealized >= 0 ? well : attention).push(["uPnL", `${signedMoney(unrealized)} on ${money(gross)} of positions (${gross ? percent(unrealized / gross, true) : "n/a"}).`]);
       const mover = (p) => `${p.symbol} ${signedMoney(p.unrealized)}${fin(share(p)) ? ` (${percent(share(p), true)})` : ""}`;
       const winners = ranked.slice().reverse().filter((p) => p.unrealized > 0).slice(0, HIGHLIGHT_MOVERS);
       const losers = ranked.filter((p) => p.unrealized < 0).slice(0, HIGHLIGHT_MOVERS);
@@ -700,21 +705,21 @@
 
     const money2 = { "Equity": "usd", "Cash": "usd", "Margin used": "usd", "Available": "usd", "Gross": "usd", "Value": "usd",
       "Risk equity": "usd", "Open risk": "usd", "Long": "usd", "Short": "usd", "VaR 95%": "usd", "VaR 99%": "usd" };
-    const signed = { "Unrealized PnL": "susd", "Net": "susd", "Value": "susd" };
+    const signed = { "uPnL": "susd", "Net": "susd", "Value": "susd" };
     const tables = {
       performance: table(performanceRows, ["Account", "Return 7D", "Return 30D", "Return 90D"],
         { "Return 7D": "spct", "Return 30D": "spct", "Return 90D": "spct" }, { totalLast: true, key: { "Return 30D": "abs" } }),
       accounts: table(accountRows, ["Venue", "Account", "% of desk", "Cash / equity", "Margin used / equity", "Available / equity",
-        "Unrealized PnL / equity", "Gross / equity", "Net / equity", "Positions"],
+        "uPnL / equity", "Gross / equity", "Net / equity", "Positions"],
       { "% of desk": "pct", "Cash / equity": "pct", "Margin used / equity": "pct", "Available / equity": "pct",
-        "Unrealized PnL / equity": "spct", "Gross / equity": "pct", "Net / equity": "spct", "Positions": "int" },
+        "uPnL / equity": "spct", "Gross / equity": "pct", "Net / equity": "spct", "Positions": "int" },
       { total: accountTotal, key: { "% of desk": "max" } }),
       exposure: table(exposureRows, ["Asset class", "Long", "Short", "Net", "Gross", "Gross / equity", "Net / equity"],
         Object.assign({}, money2, { "Net": "susd", "Gross / equity": "pct", "Net / equity": "spct" }), { totalLast: true, key: { "Net / equity": "abs" } }),
-      movers: table(moverRows, ["Account", "Symbol", "Side", "Value", "Unrealized PnL", "% of position"],
-        { "Side": "side", "Value": "susd", "Unrealized PnL": "susd", "% of position": "spct" }, { key: { "Unrealized PnL": "abs" } }),
+      movers: table(moverRows, ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
+        { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
       positions: table(positionRows, ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
-        "Unrealized PnL", "uPnL (%)", "24h change (%)", "Weight", "Exposure / desk value"],
+        "uPnL", "uPnL (%)", "24h change (%)", "Weight", "Exposure / desk value"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
         { "uPnL (%)": "spct", "24h change (%)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
       { total: positionTotal, key: { "Weight": "max" } }),
@@ -738,7 +743,7 @@
     notes.push("IB is not included: it can only be read through TWS on the desk's own machine.");
     notes.push("Wallet tokens on Base (main tokens and Venice staking) and Ethereum are included; Arbitrum and Polygon need an API key and are left out.");
     notes.push("Returns and the value chart use HL's own history: weekly points before the last month, then daily and finer.");
-    notes.push("The S&P 500 line is HL's S&P 500 perp, which starts at its listing.");
+    notes.push("SPY is Yahoo Finance's daily close, read through the relay; S&P 500 beta in the risk table uses HL's S&P 500 perp, which trades every day like the crypto book.");
     notes.push("Current-holdings risk is a historical simulation: today's positions moved by each of the last 90 days' prices.");
     [...new Set(riskNotes)].forEach((note) => notes.push(`Open risk: ${note}`));
 

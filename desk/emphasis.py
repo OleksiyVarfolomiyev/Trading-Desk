@@ -104,3 +104,22 @@ def style_frame(styler, frame: pd.DataFrame, key_columns=None, key_rows=None, to
         if wanted & set(labels):
             styler = styler.apply(paint_row, axis=1)
     return styler
+
+
+def key_columns_first(columns, keys, colored=(), text=None) -> list:
+    """Column order with the key (tinted) and colour-coded columns moved up, in their own order,
+    right behind the leading text columns that name each row (account, symbol, side).
+
+    ``text`` says which columns hold text; by default every column not key or coloured that comes
+    before the first one that is.
+    """
+    keys, colored = set(keys or ()), set(colored or ())
+    stands_out = lambda column: column in keys or column in colored
+    is_text = (lambda column: column in text) if text is not None else (lambda column: True)
+    lead = []
+    for column in columns:
+        if stands_out(column) or not is_text(column):
+            break
+        lead.append(column)
+    moved = [column for column in columns if stands_out(column) and column not in lead]
+    return lead + moved + [column for column in columns if column not in lead and column not in moved]

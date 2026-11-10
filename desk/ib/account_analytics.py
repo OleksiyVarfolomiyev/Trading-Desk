@@ -19,6 +19,7 @@ from IPython.display import display
 
 from desk.accounts import Account, accounts_for, ib_data_dir, load_accounts, short_id
 from desk.privacy import account_file
+from desk import emphasis
 from desk.hl.account_analytics import display_interactive_table
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var, wilder_atr
 from desk.notebook_highlights import HighlightsState, signed_money
@@ -55,14 +56,17 @@ def _neutral(row_index, column, value, row):
 
 
 def _pnl_style(row_index, column, value, row):
-    if isinstance(value, (int, float)) and np.isfinite(value) and ("PnL" in column or column == "1D change"):
+    if column == "Side" and value in ("LONG", "SHORT"):
+        return "color:#188038;" if value == "LONG" else "color:#c62828;"
+    signed = "PnL" in column or column in ("24h change (%)", "Value")
+    if isinstance(value, (int, float)) and np.isfinite(value) and signed:
         return "color:#188038;" if value > 0 else "color:#c62828;" if value < 0 else "color:inherit;"
     return "color:inherit;"
 
 
 def _mover(row) -> str:
-    share = row["Unrealized PnL %"]
-    return f"{row['Symbol']} {signed_money(row['Unrealized PnL'])}" + (f" ({share:+.1%})" if np.isfinite(share) else "")
+    share = row["uPnL (%)"]
+    return f"{row['Symbol']} {signed_money(row['uPnL'])}" + (f" ({share:+.1%})" if np.isfinite(share) else "")
 
 
 def _returns(bars: pd.DataFrame) -> pd.Series:
@@ -272,6 +276,12 @@ class IBAccountAnalytics:
     def _position_table(self) -> pd.DataFrame:
         equity = self.snapshot.equity_usd
         rows = []
+        try:  # the 24-hour move, as on the desk dashboard (Yahoo); the move since the last close if not
+            from desk.day_change import position_changes
+
+            moves = position_changes([self.snapshot])
+        except Exception:
+            moves = {}
         for position in self.snapshot.positions:
             bars = self.bars.get(position.symbol)
             atr = float("nan")
@@ -293,9 +303,9 @@ class IBAccountAnalytics:
                 "Symbol": position.symbol, "Class": position.asset_class, "Side": position.side,
                 "Quantity": position.quantity, "Avg cost": position.avg_price, "Mark": position.mark_price,
                 "Value": position.notional_usd, "% of account": abs(position.notional_usd) / equity if equity else np.nan,
-                "Unrealized PnL": position.unrealized_usd,
-                "Unrealized PnL %": position.unrealized_usd / cost if cost else np.nan,
-                "1D change": change,
+                "uPnL": position.unrealized_usd,
+                "uPnL (%)": position.unrealized_usd / cost if cost else np.nan,
+                "24h change (%)": moves.get((self.snapshot.label, position.symbol), change),
                 f"ATR({ATR_PERIOD})": atr,
                 "Stop": position.mark_price - direction * distance if np.isfinite(atr) else np.nan,
                 "Target": position.mark_price + direction * distance * REWARD_RISK_RATIO if np.isfinite(atr) else np.nan,
@@ -324,23 +334,23 @@ class IBAccountAnalytics:
         (well if not np.isfinite(today) or today >= 0 else attention).append(("Account", text + "."))
         positions = self.positions
         if not positions.empty:
-            unrealized = float(positions["Unrealized PnL"].sum())
+            unrealized = float(positions["uPnL"].sum())
             (well if unrealized >= 0 else attention).append(
                 ("Unrealized PnL", f"{signed_money(unrealized)} across open positions."))
-            ranked = positions.sort_values("Unrealized PnL")
-            winners = ranked[ranked["Unrealized PnL"] > 0].tail(HIGHLIGHT_MOVERS).iloc[::-1]
-            losers = ranked[ranked["Unrealized PnL"] < 0].head(HIGHLIGHT_MOVERS)
+            ranked = positions.sort_values("uPnL")
+            winners = ranked[ranked["uPnL"] > 0].tail(HIGHLIGHT_MOVERS).iloc[::-1]
+            losers = ranked[ranked["uPnL"] < 0].head(HIGHLIGHT_MOVERS)
             if len(winners):
                 well.append(("Largest winners", ", ".join(
                     _mover(row) for _, row in winners.iterrows()) + "."))
             if len(losers):
                 attention.append(("Largest losers", ", ".join(
                     _mover(row) for _, row in losers.iterrows()) + "."))
-            moves = positions.dropna(subset=["1D change"])
+            moves = positions.dropna(subset=["24h change (%)"])
             if len(moves):
-                moves = moves.reindex(moves["1D change"].abs().sort_values(ascending=False).index).head(HIGHLIGHT_MOVERS)
+                moves = moves.reindex(moves["24h change (%)"].abs().sort_values(ascending=False).index).head(HIGHLIGHT_MOVERS)
                 well.append(("Biggest moves since last close", ", ".join(
-                    f"{row['Symbol']} {row['1D change']:+.1%}" for _, row in moves.iterrows()) + "."))
+                    f"{row['Symbol']} {row['24h change (%)']:+.1%}" for _, row in moves.iterrows()) + "."))
             top = positions.loc[positions["% of account"].idxmax()]
             if top["% of account"] > CONCENTRATION_PCT:
                 attention.append(("Concentration", f"{top['Symbol']} {top['Side'].lower()} is "
@@ -448,21 +458,28 @@ class IBAccountAnalytics:
         total = {column: np.nan for column in frame.columns}
         total.update({"Symbol": "Total", "Class": "", "Side": "", "Risk basis": "",
                       "Value": frame["Value"].sum(), "% of account": frame["% of account"].sum(),
-                      "Unrealized PnL": frame["Unrealized PnL"].sum(), "Risk to stop": frame["Risk to stop"].sum()})
+                      "uPnL": frame["uPnL"].sum(), "Risk to stop": frame["Risk to stop"].sum()})
+        cost = (frame["Avg cost"] * frame["Quantity"].abs()).sum()
+        total["uPnL (%)"] = frame["uPnL"].sum() / cost if cost else np.nan
         frame = pd.concat([frame, pd.DataFrame([total])], ignore_index=True)
+        frame = frame[emphasis.key_columns_first(list(frame.columns), {"uPnL", "Risk to stop"},
+                                                 {"Side", "Value", "uPnL", "uPnL (%)", "24h change (%)"},
+                                                 text={"Symbol", "Class"})]
         last = len(frame) - 1
         blanks = {(last, column) for column in frame.columns if pd.isna(total[column])}
         formatters = {column: _number for column in ("Quantity", "Avg cost", "Mark", f"ATR({ATR_PERIOD})",
                                                      "Stop", "Target")}
-        formatters.update({column: _money for column in ("Value", "Unrealized PnL", "Risk to stop")})
-        formatters.update({column: _percent for column in ("% of account", "Unrealized PnL %", "1D change")})
+        formatters.update({column: _money for column in ("Value", "uPnL", "Risk to stop")})
+        formatters["% of account"] = _percent
+        formatters.update({column: (lambda value: "n/a" if not np.isfinite(value) else f"{value:+.2%}")
+                           for column in ("uPnL (%)", "24h change (%)")})
         formatters[f"Beta {BETA_LOOKBACK_DAYS}d"] = lambda value: "n/a" if not np.isfinite(value) else f"{value:.2f}"
         display_interactive_table(frame, formatters=formatters, cell_style=_pnl_style, bold_last=True,
                                   blank_missing_cells=blanks, title="IB OPEN POSITIONS",
-                                  key_columns={"Unrealized PnL": "abs", "Risk to stop": "max"})
+                                  key_columns={"uPnL": "abs", "Risk to stop": "max"})
         print(f"Stop and target are {STOP_ATR_MULTIPLE:g} x ATR({ATR_PERIOD}) from the current mark (1:1), as the "
-              f"executor would place them now; they are not orders. 1D change compares the mark with the last "
-              f"completed daily close. Beta uses the last {BETA_LOOKBACK_DAYS} trading days against {BENCHMARK}.")
+              f"executor would place them now; they are not orders. 24h change is the price move since this time "
+              f"yesterday (Yahoo Finance; the move since the last daily close when Yahoo has none). Beta uses the last {BETA_LOOKBACK_DAYS} trading days against {BENCHMARK}.")
 
     def show_book_chart(self):
         """The current book over the past year against the benchmark (both start at 100)."""
@@ -562,7 +579,7 @@ class IBAccountAnalytics:
         """Unrealized PnL of open positions plus saved realized PnL, by symbol."""
         if not self._require():
             return
-        open_pnl = self.positions.set_index("Symbol")["Unrealized PnL"] if not self.positions.empty else pd.Series(dtype=float)
+        open_pnl = self.positions.set_index("Symbol")["uPnL"] if not self.positions.empty else pd.Series(dtype=float)
         realized = (self.fills.groupby("symbol")["realized_pnl"].sum() if not self.fills.empty
                     else pd.Series(dtype=float))
         frame = pd.DataFrame({"Unrealized PnL": open_pnl, "Realized PnL": realized}).fillna(0.0)

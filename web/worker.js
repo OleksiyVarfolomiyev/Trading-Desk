@@ -6,6 +6,7 @@
 //
 // Endpoints (GET only; answers are cached for CACHE_SECONDS):
 //   /wallets             the wallets' short ids (their last four characters)
+//   /benchmark/SPY       SPY's daily closes from Yahoo Finance (a browser page cannot call Yahoo)
 //   /hl/<id>/account     positions and margin on every HL DEX, spot balances, account mode, fee rates
 //   /hl/<id>/portfolio   HL's value and PnL history (day, week, month, all time)
 //   /wallet/<id>         token balances outside HL: Base and Ethereum (free public nodes, Blockscout)
@@ -241,6 +242,22 @@ async function walletHoldings(address) {
   return { holdings, problems };
 }
 
+// SPY daily closes since 2015, kept for an hour (they change once a day).
+let spyMemo = { at: 0, body: null };
+async function spyCloses() {
+  if (spyMemo.body && Date.now() - spyMemo.at < 3600_000) return spyMemo.body;
+  const url = "https://query1.finance.yahoo.com/v8/finance/chart/SPY?interval=1d&period1=1420070400&period2="
+    + Math.floor(Date.now() / 1000);
+  const response = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (desk relay)", Accept: "application/json" } });
+  if (!response.ok) throw new Error(`Yahoo Finance answered HTTP ${response.status}`);
+  const result = (await response.json()).chart.result[0];
+  const closes = result.indicators.quote[0].close;
+  const body = { closes: result.timestamp.map((t, i) => [new Date(t * 1000).toISOString().slice(0, 10), closes[i]])
+    .filter(([, close]) => close > 0) };
+  spyMemo = { at: Date.now(), body };
+  return body;
+}
+
 // Drop transaction hashes and anything naming the address; the address itself never leaves.
 function scrub(value, address) {
   const hidden = new RegExp(address.slice(2), "gi");
@@ -286,6 +303,13 @@ export default {
     const url = new URL(request.url);
     const [kind, id, what] = url.pathname.split("/").filter(Boolean);
     if (kind === "wallets" && !id) return reply({ wallets: Object.keys(wallets) }, 200, CACHE_SECONDS);
+    if (kind === "benchmark" && id === "SPY" && !what) {
+      try {
+        return reply(await spyCloses(), 200, 3600);
+      } catch (error) {
+        return reply({ error: String(error && error.message || error) }, 502);
+      }
+    }
     const address = wallets[id];
     if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) return reply({ error: "unknown wallet id" }, 404);
     const maxAge = kind === "wallet" ? WALLET_SECONDS : CACHE_SECONDS;

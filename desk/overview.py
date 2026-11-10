@@ -14,6 +14,7 @@ import pandas as pd
 
 from desk.accounts import Account, accounts_for, ib_data_dir, load_accounts
 from desk.privacy import account_file
+from desk import emphasis
 from desk.hl.account_analytics import display_interactive_table
 from desk.notebook_highlights import HighlightsState, money, percent, signed_money
 from desk.notebook_highlights import show as show_highlights
@@ -46,11 +47,36 @@ def _percent(value):
     return "n/a" if value is None or not math.isfinite(value) else f"{value:.2%}"
 
 
+# Columns coloured by sign (green up, red down) and the Side column (LONG green, SHORT red).
+SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "uPnL (%)", "24h change (%)", "% of position"}
+
+
 def _signed_style(row_index, column, value, row):
-    if isinstance(value, (int, float)) and math.isfinite(value) and column in {"Unrealized PnL", "Net", "Value"}:
+    if column == "Side" and value in ("LONG", "SHORT"):
+        return "color:#188038;" if value == "LONG" else "color:#c62828;"
+    if isinstance(value, (int, float)) and math.isfinite(value) and column in SIGNED_COLUMNS:
         return "color:#188038;" if value > 0 else "color:#c62828;" if value < 0 else "color:inherit;"
     # Balances, quantities and prices are not gains or losses, so keep them uncoloured.
     return "color:inherit;"
+
+
+def _signed_percent(value):
+    return "" if value is None or not math.isfinite(value) else f"{value:+.2%}"
+
+
+def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], float] | None) -> pd.DataFrame:
+    """Positions without Venue (the account name says it), with uPnL (%) and 24h change (%) after
+    uPnL. uPnL (%) is over the cost basis (value less uPnL), so it is blank where the entry price is
+    unknown (wallet tokens); the 24-hour change comes from ``desk.day_change.position_changes``."""
+    frame = positions.drop(columns="Venue", errors="ignore").copy()
+    cost = (frame["Value"] - frame["uPnL"]).abs()
+    upnl_pct = (frame["uPnL"] / cost).where(frame["Avg price"].notna() & (cost > 0))
+    day = [(moves or {}).get((account, symbol), float("nan"))
+           for account, symbol in zip(frame["Account"], frame["Symbol"])]
+    at = frame.columns.get_loc("uPnL") + 1
+    frame.insert(at, "uPnL (%)", upnl_pct)
+    frame.insert(at + 1, "24h change (%)", day)
+    return frame
 
 
 def _pnl_style(row_index, column, value, row):
@@ -320,7 +346,7 @@ class DeskOverview:
                     # Prices in USD like every other desk value, so no currency column is needed.
                     "Avg price": position.avg_price * position.fx_to_usd,
                     "Mark": position.mark_price * position.fx_to_usd,
-                    "Value": position.notional_usd, "Unrealized PnL": position.unrealized_usd,
+                    "Value": position.notional_usd, "uPnL": position.unrealized_usd,
                     "Exposure / desk value": abs(position.notional_usd) / equity if equity else float("nan"),
                 })
         frame = pd.DataFrame(rows)
@@ -341,21 +367,35 @@ class DeskOverview:
             return
         number = "{:,.6g}".format
         usd_price = "${:,.6g}".format
+        try:  # each position's price move over 24 hours (HL, Yahoo, DefiLlama); blank if unavailable
+            from desk.day_change import position_changes
+
+            moves = position_changes(self.snapshots)
+        except Exception:
+            moves = {}
+        frame = with_position_returns(frame, moves)
         for klass, group in frame.groupby("Asset class", sort=True):
             group = group.sort_values("Value", key=abs, ascending=False).drop(columns="Asset class")
-            total = {"Venue": "Total", "Account": "", "Symbol": "", "Side": "", "Quantity": float("nan"),
+            priced = group["uPnL (%)"].notna()
+            cost = (group["Value"] - group["uPnL"]).abs()[priced].sum()
+            total = {"Account": "Total", "Symbol": "", "Side": "", "Quantity": float("nan"),
                      "Avg price": float("nan"), "Mark": float("nan"),
-                     "Value": group["Value"].sum(), "Unrealized PnL": group["Unrealized PnL"].sum(),
+                     "Value": group["Value"].sum(), "uPnL": group["uPnL"].sum(),
+                     "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
+                     "24h change (%)": float("nan"),
                      "Weight": group["Weight"].sum(), "Exposure / desk value": group["Exposure / desk value"].sum()}
             group = pd.concat([group, pd.DataFrame([total])], ignore_index=True)
-            group = _without_venue(group)
+            group = group[emphasis.key_columns_first(list(group.columns), {"Weight"}, SIGNED_COLUMNS | {"Side"},
+                                                     text={"Account", "Symbol"})]
             display_interactive_table(
                 group, formatters={"Quantity": number, "Avg price": usd_price, "Mark": usd_price,
-                                   "Value": _money, "Unrealized PnL": _money, "Weight": _percent,
+                                   "Value": _money, "uPnL": _money, "uPnL (%)": _signed_percent,
+                                   "24h change (%)": _signed_percent, "Weight": _percent,
                                    "Exposure / desk value": _percent},
                 cell_style=_signed_style, bold_last=True, title=f"OPEN POSITIONS: {klass.upper()}",
                 key_columns={"Weight": "max"},
-                blank_missing_cells={(len(group) - 1, column) for column in ("Quantity", "Avg price", "Mark")},
+                blank_missing_cells={(len(group) - 1, column)
+                                     for column in ("Quantity", "Avg price", "Mark", "24h change (%)")},
             )
         frame = frame.assign(gross=frame["Value"].abs())
         leverage = frame["gross"].sum() / self.desk_equity if self.desk_equity else float("nan")
@@ -518,9 +558,11 @@ class DeskOverview:
         movers = self.movers_frame(top)
         if movers.empty:
             return
-        display_interactive_table(movers, formatters={"Value": _money, "Unrealized PnL": _money, "% of position": _percent},
+        movers = movers[emphasis.key_columns_first(list(movers.columns), {"uPnL"}, SIGNED_COLUMNS | {"Side"},
+                                                   text={"Account", "Symbol"})]
+        display_interactive_table(movers, formatters={"Value": _money, "uPnL": _money, "% of position": _signed_percent},
                                   cell_style=_signed_style, title=f"LARGEST WINNERS AND LOSERS (TOP {top} EACH)",
-                                  key_columns={"Unrealized PnL": "abs"})
+                                  key_columns={"uPnL": "abs"})
         print("Unrealized PnL is on open trading positions (HL and IB); wallet tokens have no cost basis here. "
               "% of position compares the PnL with the position's value at entry.")
 
@@ -528,12 +570,12 @@ class DeskOverview:
         """The largest winning and losing trading positions by unrealized PnL."""
         positions = pd.DataFrame([{
             "Account": snapshot.label, "Symbol": position.symbol, "Side": position.side,
-            "Value": position.notional_usd, "Unrealized PnL": position.unrealized_usd,
+            "Value": position.notional_usd, "uPnL": position.unrealized_usd,
             "% of position": _pnl_share(position),
         } for snapshot in self._trading() for position in snapshot.positions])
         if positions.empty:
             return positions
-        ranked = positions.sort_values("Unrealized PnL")
+        ranked = positions.sort_values("uPnL")
         return pd.concat([ranked.tail(top).iloc[::-1], ranked.head(top)]).drop_duplicates().reset_index(drop=True)
 
     def show_desk_metrics(self):

@@ -108,6 +108,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if kind == "wallets" and wallet is None:
             return self.reply(200, json.dumps({"wallets": sorted(WALLETS)}).encode())
+        if kind == "benchmark" and wallet == "SPY" and what is None:
+            response = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/SPY",
+                                    params={"interval": "1d", "period1": 1420070400, "period2": int(time.time())},
+                                    headers={"User-Agent": "Mozilla/5.0 (desk relay)"}, timeout=30)
+            result = response.json()["chart"]["result"][0]
+            closes = [[time.strftime("%Y-%m-%d", time.gmtime(t)), c]
+                      for t, c in zip(result["timestamp"], result["indicators"]["quote"][0]["close"]) if c]
+            return self.reply(200, json.dumps({"closes": closes}).encode())
         address = WALLETS.get(wallet or "")
         if not address:
             return self.reply(404, b'{"error": "unknown wallet id"}')
