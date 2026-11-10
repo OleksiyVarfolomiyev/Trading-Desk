@@ -11,3 +11,5 @@ research/data/french/
 research/data/*ib_book*
 # Run-to-run highlight baselines hold account values
 data/desk_*highlights_state*.json
+# Assembled by web/build_site.sh before each deploy
+web/site/

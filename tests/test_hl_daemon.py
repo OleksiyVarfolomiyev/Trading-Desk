@@ -381,6 +381,24 @@ class ExecutorFastPathTests(unittest.TestCase):
         with patch.object(ht, "post_only_price", return_value=7.5):
             self.assertEqual(ht._place_exit_orders(exchange, self.plan, 30, 8.0, 2, batched=True), (2, 4))
 
+    def test_a_fast_chase_reprices_every_two_seconds(self):
+        exchange = MagicMock()
+        exchange.order.return_value = statuses({"resting": {"oid": 5}})
+        with patch.object(ht, "post_only_price", return_value=8.0), \
+                patch.object(ht, "_current_position_quantity", return_value=0.0), \
+                patch.object(ht, "_rest_entry", return_value=("filled", 30.0)) as rest:
+            self.assertEqual(ht._place_entry(exchange, WALLET, self.plan, self.market, fast=True), (30.0, 8.0))
+        self.assertEqual(rest.call_args.args[-1], ht.FAST_CHASE_SECONDS)
+
+    def test_a_fast_chase_stops_when_the_price_runs_away(self):
+        exchange = MagicMock()
+        # A short planned at $8.00 with a $1.00 stop distance: chasing below $7.60 stops.
+        with patch.object(ht, "post_only_price", return_value=7.55), \
+                patch.object(ht, "_current_position_quantity", return_value=0.0), \
+                self.assertRaisesRegex(RuntimeError, "No entry fill"):
+            ht._place_entry(exchange, WALLET, self.plan, self.market, fast=True)
+        exchange.order.assert_not_called()
+
     def test_a_snapshot_from_supplied_data_makes_no_requests(self):
         markets = {"AVAX": self.market}
         with patch.object(ht, "fetch_user_state", side_effect=AssertionError("no read")), \

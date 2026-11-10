@@ -27,6 +27,7 @@ import pandas as pd
 import requests
 
 from desk.accounts import Account
+from desk.privacy import account_file
 from desk.venues import onchain
 from desk.venues.onchain import CHAINS, NATIVE, PUBLIC_RPC, STAKING_REWARDS, USER_AGENT, WELL_KNOWN_TOKENS
 
@@ -39,7 +40,7 @@ PRICE_GAP_DAYS = 3
 
 
 def backfill_path(data_dir: Path, wallet: str) -> Path:
-    return Path(data_dir) / f"onchain_value_backfill_{wallet.lower()}.csv"
+    return account_file(data_dir, "onchain_value_backfill", wallet)
 
 
 def day_closes(start: pd.Timestamp, end: pd.Timestamp) -> pd.DatetimeIndex:
@@ -240,7 +241,7 @@ def rebuild_wallet_values(account: Account, data_dir: Path, start: pd.Timestamp,
     for chain in PUBLIC_RPC:
         balances = rpc_balances(chain, account.id, days)
         parts.append(balances.rename(columns=lambda token, c=chain: f"{c}:{token}"))
-    path = Path(data_dir) / f"onchain_activity_{account.id.lower()}.csv"
+    path = account_file(data_dir, "onchain_activity", account.id)
     activity = pd.read_csv(path) if path.exists() else pd.DataFrame()
     other = set(CHAINS) - set(PUBLIC_RPC) - failed
     if failed:

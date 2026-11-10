@@ -65,6 +65,22 @@ def short_id(account_id: str) -> str:
     return str(account_id or "")[-4:]
 
 
+def hl_wallet(suffix: str, accounts: list[Account] | None = None) -> str:
+    """The full HL wallet address in accounts.json ending in ``suffix`` (for example ``"07f2"``).
+
+    Notebooks name wallets this way, so no full address is ever written into them.
+    """
+    matches = [account.id for account in accounts_for("hl", accounts) if account.id.lower().endswith(suffix.lower())]
+    if len(matches) != 1:
+        raise ValueError(f"accounts.json has {len(matches)} HL wallets ending in {suffix!r}; expected exactly one.")
+    return matches[0]
+
+
+def hl_wallets(accounts: list[Account] | None = None) -> list[str]:
+    """Every HL wallet address in accounts.json, in file order."""
+    return [account.id for account in accounts_for("hl", accounts)]
+
+
 def parse_accounts(items: list[dict]) -> list[Account]:
     """Validate raw account entries and return them as ``Account`` objects."""
     if not isinstance(items, list):
@@ -85,7 +101,7 @@ def parse_accounts(items: list[dict]) -> list[Account]:
             raise ValueError(f"Account entry {index}: {account_id!r} is not an IB account number.")
         key = (venue, account_id.lower())
         if key in seen:
-            raise ValueError(f"Account entry {index} repeats {venue} account {account_id!r}.")
+            raise ValueError(f"Account entry {index} repeats {venue} account ...{short_id(account_id)}.")
         seen.add(key)
         port = int(item.get("port", IB_DEFAULT_PORT))
         if not 0 < port < 65536:
@@ -96,6 +112,10 @@ def parse_accounts(items: list[dict]) -> list[Account]:
             onchain=bool(item.get("onchain", True)) and venue == "hl",
             flex_query_id=str(item.get("flex_query_id", "")).strip() if venue == "ib" else "",
         ))
+    # Files and labels carry only the last four characters, so those must tell accounts apart.
+    from desk.privacy import check_unique
+
+    check_unique([account.id for account in accounts if account.id])
     return accounts
 
 

@@ -18,6 +18,8 @@ import socket
 from pathlib import Path
 from typing import Any
 
+from desk.privacy import mask  # noqa: F401  (the daemon masks what it prints and sends)
+
 RUN_DIR = Path(os.environ.get("HL_DAEMON_DIR") or Path.home() / ".trading-desk")
 SOCKET_PATH = RUN_DIR / "hl_daemon.sock"
 

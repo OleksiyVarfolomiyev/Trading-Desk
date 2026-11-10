@@ -139,7 +139,9 @@ def update_nav_history(account: Account, data_dir: Path | str) -> Path:
         raise FlexNotConfigured("no Flex token stored" if not token else "no flex_query_id in accounts.json")
     statement_account, fresh = parse_nav_history(fetch_statement(token, query_id))
     name = statement_account or account.id or "ib"
-    path = Path(data_dir) / f"ib_nav_history_{name}.csv"
+    from desk.privacy import account_file
+
+    path = account_file(data_dir, "ib_nav_history", name)
     if path.exists():
         saved = pd.read_csv(path)
         saved["date"] = pd.to_datetime(saved["date"], utc=True)

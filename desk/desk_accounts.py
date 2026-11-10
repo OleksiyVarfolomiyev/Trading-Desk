@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 from IPython.display import display
 
 from desk.accounts import accounts_for, ib_data_dir, load_accounts, short_id
+from desk.privacy import account_file
 from desk.hl.account_analytics import display_interactive_table, fetch_btc_candles, update_portfolio_history
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var, time_weighted_index
 from desk.live_risk import MIN_RATIO_DAYS
@@ -128,7 +129,7 @@ class DeskAccounts:
         for account in accounts_for("hl", self.accounts):
             try:
                 history = (update_portfolio_history(account.id, self.wallet_data_dir) if refresh_history else
-                           pd.read_csv(self.wallet_data_dir / f"hl_portfolio_history_{account.id.lower()}.csv"))
+                           pd.read_csv(account_file(self.wallet_data_dir, "hl_portfolio_history", account.id)))
                 history["ts"] = pd.to_datetime(history["ts"], utc=True, format="mixed")
                 self.histories[account.name] = history[["ts", "accountValue", "pnl"]]
             except Exception as exc:
@@ -246,7 +247,7 @@ class DeskAccounts:
             ordered = history.assign(ts=pd.to_datetime(history["ts"], utc=True)).sort_values("ts")
             moved = ordered["accountValue"].diff().abs().fillna(np.inf) > 0.005  # the first day counts
             active |= set(pd.DatetimeIndex(ordered.loc[moved, "ts"]).normalize())
-            fills_path = ib_data_dir() / f"ib_fills_{getattr(self, 'ib_ids', {}).get(label, label.split(' ', 1)[1])}.csv"
+            fills_path = account_file(ib_data_dir(), "ib_fills", getattr(self, "ib_ids", {}).get(label, label.split(" ", 1)[1]))
             fills = pd.read_csv(fills_path) if fills_path.exists() else pd.DataFrame()
             if len(fills) and "time" in fills:
                 active |= set(pd.DatetimeIndex(pd.to_datetime(fills["time"], utc=True, errors="coerce").dropna()).normalize())

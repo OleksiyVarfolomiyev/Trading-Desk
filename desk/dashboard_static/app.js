@@ -376,8 +376,14 @@ function render(doc) {
   document.getElementById("notes").replaceChildren(...(data.notes || []).map((note) => el("li", { text: note })));
 }
 
+// The web copy (web/live.js) builds the same document in the browser and sets DESK_SOURCE.
 async function load() {
   try {
+    if (window.DESK_SOURCE) {
+      latest = await window.DESK_SOURCE();
+      render(latest);
+      return;
+    }
     const response = await fetch("/api/state", { cache: "no-store" });
     if (!response.ok) throw new Error("HTTP " + response.status);
     latest = await response.json();
@@ -394,7 +400,10 @@ function poll() {          // the one polling loop
 
 document.getElementById("refresh").addEventListener("click", async () => {
   document.getElementById("refresh").disabled = true;
-  try { await fetch("/api/refresh", { method: "POST" }); } catch (error) { /* the next poll reports it */ }
+  try {
+    if (window.DESK_REFRESH) await window.DESK_REFRESH();
+    else await fetch("/api/refresh", { method: "POST" });
+  } catch (error) { /* the next poll reports it */ }
   setTimeout(load, 500);   // one extra read, not a second loop
 });
 

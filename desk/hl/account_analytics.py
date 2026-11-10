@@ -47,6 +47,7 @@ from desk.hl.highlights import (
     save_state,
 )
 from desk import emphasis
+from desk.privacy import account_file, short_id
 from desk.charts import show as show_chart
 from IPython.display import HTML, display
 from plotly.subplots import make_subplots
@@ -385,7 +386,7 @@ def anchor_to_all_time(history, periods):
 
 def update_portfolio_history(user, data_dir):
     """Merge new HL value and PnL points into the wallet's saved history file."""
-    path = Path(data_dir) / f'hl_portfolio_history_{user.lower()}.csv'
+    path = account_file(data_dir, 'hl_portfolio_history', user)
     saved = pd.DataFrame(columns=PORTFOLIO_HISTORY_COLUMNS)
     if path.exists():
         saved = pd.read_csv(path)
@@ -511,7 +512,11 @@ def fetch_user_fills(user, max_pages=8):
 
 def fetch_user_funding(user, start_ms=0):
     """Return signed USDC funding transfers, downloading only events not saved yet."""
-    name = f'user_funding_{user.lower()}.json'
+    from desk.hl.trade_analytics import CACHE_DIR
+
+    if CACHE_DIR is not None and CACHE_DIR.exists():
+        account_file(CACHE_DIR, 'user_funding', user, '.json')  # renames a cache file named with the full address
+    name = f'user_funding_{short_id(user)}.json'
     events = read_cache_json(name) or []
     now_ms = int(pd.Timestamp.now(tz='UTC').timestamp() * 1000)
     latest = max((int(event['time']) for event in events), default=None)
@@ -2759,7 +2764,7 @@ def collect_wallet_data(wallet_address, data_dir="data"):
         raise ValueError("wallet_address must be a 0x-prefixed 40-hex-character address")
     data_path = Path(data_dir)
     data_path.mkdir(parents=True, exist_ok=True)
-    csv_path = data_path / f"hl_account_history_{wallet_address.lower()}.csv"
+    csv_path = account_file(data_path, "hl_account_history", wallet_address)
     saved = load_saved_history(csv_path)
     history = fetch_all_time_history(wallet_address)
     current_states = fetch_perp_states(wallet_address)
@@ -2821,7 +2826,8 @@ class _AnalyticsCore:
             raise ValueError("wallet_address must be a 0x-prefixed 40-hex-character address")
         self.wallet_address = wallet_address
         self.wallet_addresses = [wallet_address]
-        self.highlights_state_file = f"hl_highlights_state_{wallet_address.lower()}.json"
+        self.highlights_state_file = (account_file(data_dir, "hl_highlights_state", wallet_address, ".json").name
+                                      if Path(data_dir).exists() else f"hl_highlights_state_{short_id(wallet_address)}.json")
         self.data_dir = data_dir
         self.data = None
         self.portfolio_history = None

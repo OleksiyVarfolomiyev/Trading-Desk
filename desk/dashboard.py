@@ -36,6 +36,7 @@ import numpy as np
 import pandas as pd
 
 from desk import emphasis
+from desk.privacy import mask
 from desk.day_change import DayChange, desk_day_change, position_changes
 from desk.desk_accounts import ROOT_DATA, WINDOWS, DeskAccounts
 
@@ -432,7 +433,8 @@ class Dashboard:
         """Serialize payload and status once per change (the page polls often)."""
         document = {"status": self.status, "data": self.payload,
                     "server_time": pd.Timestamp.now(tz="UTC").isoformat()}
-        self.payload_json = json.dumps(json_safe(document), allow_nan=False).encode()
+        # Account errors can quote a full wallet address or account number; the page shows only the last four.
+        self.payload_json = mask(json.dumps(json_safe(document), allow_nan=False)).encode()
 
     def state_json(self) -> bytes:
         with self.lock:
@@ -557,4 +559,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from desk.privacy import mask_output
+
+    mask_output()  # only the last four characters of any wallet or account number are shown
     raise SystemExit(main())

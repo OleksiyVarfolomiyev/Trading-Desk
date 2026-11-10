@@ -586,14 +586,14 @@ def fetch_collateral_equity(wallet: str, perp_equity: float) -> float:
     response = post_info({"type": "spotClearinghouseState", "user": wallet})
     balances = response.get("balances") if isinstance(response, dict) else None
     if not isinstance(balances, list):
-        raise ValueError(f"Invalid spot balance response returned for wallet {wallet}.")
+        raise ValueError(f"Invalid spot balance response returned for wallet ...{wallet[-4:]}.")
     usdc = next((item for item in balances if item.get("coin") == "USDC"), None)
     try:
         collateral = float(usdc["total"]) if usdc is not None else 0.0
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"Wallet {wallet} returned an invalid USDC balance.") from exc
+        raise ValueError(f"Wallet ...{wallet[-4:]} returned an invalid USDC balance.") from exc
     if not np.isfinite(collateral) or collateral < 0:
-        raise ValueError(f"Wallet {wallet} returned an invalid USDC balance.")
+        raise ValueError(f"Wallet ...{wallet[-4:]} returned an invalid USDC balance.")
     return collateral
 
 

@@ -861,7 +861,9 @@ def update_activity_file(account: Account, data_dir: Path, lookback_days: int = 
     The first run reads ``lookback_days``; later runs start a day before the newest saved
     transfer. Values are re-priced at current prices on every run.
     """
-    path = Path(data_dir) / f"onchain_activity_{account.id.lower()}.csv"
+    from desk.privacy import account_file
+
+    path = account_file(data_dir, "onchain_activity", account.id)
     saved = pd.read_csv(path) if path.exists() else pd.DataFrame(columns=ACTIVITY_COLUMNS)
     if not saved.empty:
         saved["time"] = pd.to_datetime(saved["time"], utc=True, format="mixed")

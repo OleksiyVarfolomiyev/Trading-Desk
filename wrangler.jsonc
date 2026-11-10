@@ -1,0 +1,11 @@
+// The desk relay and web dashboard, one Cloudflare Worker. Cloudflare Workers Builds deploys it
+// on every push to main: web/build_site.sh assembles the page into web/site (served as static
+// files) and web/worker.js answers the account requests. The WALLETS secret lives in the
+// Worker's settings in Cloudflare, never here. "name" must match the Worker's name there.
+{
+  "name": "desk-relay",
+  "main": "web/worker.js",
+  "compatibility_date": "2025-09-01",
+  "assets": { "directory": "./web/site" },
+  "build": { "command": "bash web/build_site.sh" }
+}

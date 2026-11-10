@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Desk Live</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="app.css">
+<script src="https://cdn.plot.ly/plotly-4.1.1.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="title">
+    <h1>Trading desk</h1>
+    <span class="subtitle">HL and wallets · live in your browser · read-only</span>
+  </div>
+  <div class="status" id="status" role="status" aria-live="polite">
+    <span class="dot" id="status-dot"></span><span id="status-text">Connecting…</span>
+  </div>
+  <button type="button" id="refresh" class="button">Refresh now</button>
+</header>
+
+<main id="main">
+  <div id="banners"></div>
+
+  <section id="loading" class="card loading">
+    Reading the HL accounts and the wallets on other chains. This takes a few seconds.
+  </section>
+
+  <div id="content" hidden>
+    <section class="tiles" id="tiles" aria-label="Key numbers"></section>
+
+    <section class="accounts-status" id="accounts-status" aria-label="Account connections"></section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2><span class="icon good" aria-hidden="true">✓</span>What stands out</h2>
+        <ul class="highlights" id="hl-well"></ul>
+      </div>
+      <div class="card">
+        <h2><span class="icon bad" aria-hidden="true">!</span>Needs attention</h2>
+        <ul class="highlights" id="hl-attention"></ul>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2>Desk value by account</h2>
+        <p class="caption">USD, from HL's own history (weekly before the last month, then daily); wallet tokens on other chains are not included.</p>
+        <div class="chart" id="chart-value"></div>
+      </div>
+      <div class="card">
+        <h2>Desk return vs BTC and the S&amp;P 500</h2>
+        <p class="caption">Time-weighted, net of deposits and withdrawals; each line starts at 100.</p>
+        <div class="chart" id="chart-twr"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Performance</h2>
+      <p class="caption">Time-weighted returns, net of deposits and withdrawals.</p>
+      <div class="table-wrap" id="t-performance"></div>
+    </section>
+
+    <section class="card">
+      <h2>Accounts</h2>
+      <p class="caption">Each account's share of the desk; the other columns are a share of that account's own equity.</p>
+      <div class="table-wrap" id="t-accounts"></div>
+    </section>
+
+    <section class="card">
+      <h2>Risk metrics</h2>
+      <p class="caption">Current holdings: today's positions moved by each of the last 90 days' prices (a historical simulation). VaR is the one-day loss at that percentile, in dollars. S&amp;P 500 beta uses HL's S&amp;P 500 perp.</p>
+      <div class="table-wrap" id="t-risk"></div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2>Exposure by asset class</h2>
+        <div class="table-wrap" id="t-exposure"></div>
+      </div>
+      <div class="card">
+        <h2>Open risk vs the desk cap</h2>
+        <p class="caption">Each position's 1.25 × ATR(14) stop distance plus costs; HL adds a 5-day funding reserve.</p>
+        <div class="table-wrap" id="t-open_risk"></div>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2>Largest winners and losers</h2>
+        <div class="table-wrap" id="t-movers"></div>
+      </div>
+      <div class="card">
+        <h2>Wallet holdings outside HL</h2>
+        <div class="table-wrap" id="t-wallets"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Open positions</h2>
+      <p class="caption">Value is signed (shorts negative). Weight is the share of gross exposure (sums to 100%); exposure / desk value sums to gross leverage.</p>
+      <div class="table-wrap" id="t-positions"></div>
+    </section>
+
+    <details class="card notes">
+      <summary>Data notes</summary>
+      <ul id="notes"></ul>
+    </details>
+  </div>
+</main>
+<script src="live.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

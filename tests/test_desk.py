@@ -102,7 +102,7 @@ class FakeIB:
 class AccountsTests(unittest.TestCase):
     def test_parses_both_venues_and_names(self):
         accounts = parse_accounts([
-            {"venue": "hl", "id": "0x...07f2"},
+            {"venue": "hl", "id": "0x" + "ab" * 18 + "07f2"},
             {"venue": "IB", "id": "U1234567", "port": 7497},
         ])
         self.assertEqual(accounts[0].name, "HL 07f2")

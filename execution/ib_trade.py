@@ -1629,4 +1629,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from desk.privacy import mask_output
+
+    mask_output()  # only the last four characters of any wallet or account number are shown
     raise SystemExit(main())

@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from desk.accounts import Account, accounts_for, ib_data_dir, load_accounts
+from desk.privacy import account_file
 from desk.hl.account_analytics import display_interactive_table
 from desk.notebook_highlights import HighlightsState, money, percent, signed_money
 from desk.notebook_highlights import show as show_highlights
@@ -105,7 +106,7 @@ def _pnl_share(position) -> float:
 
 def save_ib_history(snapshot: VenueAccount, data_dir: Path) -> Path:
     """Append this run's IB account values to ``ib_account_history_<account>.csv``."""
-    path = data_dir / f"ib_account_history_{snapshot.account}.csv"
+    path = account_file(data_dir, "ib_account_history", snapshot.account)
     row = pd.DataFrame([{
         "ts": snapshot.as_of.isoformat(), "equity_usd": snapshot.equity_usd, "cash_usd": snapshot.cash_usd,
         "margin_used_usd": snapshot.margin_used_usd, "unrealized_usd": snapshot.unrealized_usd,
@@ -120,7 +121,7 @@ WALLET_HISTORY_COLUMNS = ["ts", "value_usd"]
 
 
 def wallet_history_path(data_dir: Path, wallet: str) -> Path:
-    return Path(data_dir) / f"onchain_value_history_{wallet.lower()}.csv"
+    return account_file(data_dir, "onchain_value_history", wallet)
 
 
 def save_wallet_history(snapshot: VenueAccount, data_dir: Path) -> Path:
@@ -142,7 +143,7 @@ def merge_ib_fills(fills: pd.DataFrame, data_dir: Path, account: str) -> pd.Data
 
     TWS only returns about a week of executions, so saving them each run keeps the history.
     """
-    path = data_dir / f"ib_fills_{account}.csv"
+    path = account_file(data_dir, "ib_fills", account)
     saved = pd.read_csv(path) if path.exists() else pd.DataFrame()
     if fills.empty:
         return saved
@@ -659,7 +660,7 @@ class DeskOverview:
             "Time": recent["time"].dt.tz_convert("America/New_York").dt.strftime("%Y-%m-%d %H:%M"),
             "Wallet": recent["Wallet"], "Chain": recent["chain"], "Direction": recent["direction"],
             "Token": recent["symbol"], "Amount": recent["amount"], "Value": recent["value_usd"] * sign,
-            "Counterparty": [label or f"{str(party)[:6]}…{str(party)[-4:]}"
+            "Counterparty": [label or f"...{str(party)[-4:]}"
                              for label, party in zip(recent["label"].fillna(""), recent["counterparty"])],
             "Tx": [f"{str(tx)[:10]}…" for tx in recent["hash"]],
         })

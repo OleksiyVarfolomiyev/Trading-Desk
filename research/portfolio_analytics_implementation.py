@@ -45,6 +45,7 @@ from portfolio_risk import calculate_portfolio_risk_metrics
 from desk.hl.market_research import asset_class
 from desk.hl.trade_analytics import bootstrap_btc_regression
 from desk.accounts import Account, accounts_for, ib_data_dir, load_accounts
+from desk.privacy import account_file
 from IPython.display import display
 from desk.notebook_highlights import HighlightsPanel, SinceLastRun
 from desk.notebook_highlights import show as show_highlight_block
@@ -448,14 +449,14 @@ class _MarketDataMixin:
             for dex in dex_names:
                 state = post_info({'type': 'clearinghouseState', 'user': wallet, 'dex': dex})
                 if not isinstance(state, dict):
-                    raise ValueError(f'HL returned invalid perp state for wallet {wallet}.')
+                    raise ValueError(f'HL returned invalid perp state for wallet ...{wallet[-4:]}.')
                 for item in state.get('assetPositions', []):
                     position = item.get('position', {})
                     try:
                         size = float(position.get('szi') or 0)
                     except (TypeError, ValueError) as exc:
                         raise ValueError(
-                            f'Invalid open position size returned for wallet {wallet}.'
+                            f'Invalid open position size returned for wallet ...{wallet[-4:]}.'
                         ) from exc
                     coin = str(position.get('coin', '')).strip()
                     ticker = coin if ':' in coin else coin.upper()
@@ -468,12 +469,12 @@ class _MarketDataMixin:
                             assets.append(ticker)
             spot_state = post_info({'type': 'spotClearinghouseState', 'user': wallet})
             if not isinstance(spot_state, dict):
-                raise ValueError(f'HL returned invalid spot state for wallet {wallet}.')
+                raise ValueError(f'HL returned invalid spot state for wallet ...{wallet[-4:]}.')
             for balance in spot_state.get('balances', []):
                 try:
                     amount = float(balance.get('total') or 0)
                 except (TypeError, ValueError) as exc:
-                    raise ValueError(f'Invalid spot balance returned for wallet {wallet}.') from exc
+                    raise ValueError(f'Invalid spot balance returned for wallet ...{wallet[-4:]}.') from exc
                 ticker = str(balance.get('coin', '')).strip().upper()
                 if amount > 0 and ticker:
                     if ticker not in self.spot_wallet_assets:
@@ -1931,7 +1932,7 @@ class _FactorModelMixin(_TableStyleMixin):
         folder=Path(desk_data_dir) if desk_data_dir else DESK_DATA_DIR
         histories=[]
         for wallet in self.wallet_addresses:
-            path=folder/f'hl_portfolio_history_{wallet.lower()}.csv'
+            path=account_file(folder,'hl_portfolio_history',wallet)
             if path.exists():
                 history=pd.read_csv(path)
                 history['ts']=pd.to_datetime(history['ts'],utc=True,format='mixed')
@@ -2026,7 +2027,7 @@ class _FactorModelMixin(_TableStyleMixin):
         folder=Path(desk_data_dir) if desk_data_dir else DESK_DATA_DIR
         values=[]
         for wallet in self.wallet_addresses:
-            path=folder/f'hl_portfolio_history_{wallet.lower()}.csv'
+            path=account_file(folder,'hl_portfolio_history',wallet)
             if path.exists():
                 history=pd.read_csv(path)
                 history['ts']=pd.to_datetime(history['ts'],utc=True,format='mixed')

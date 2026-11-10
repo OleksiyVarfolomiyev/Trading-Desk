@@ -14,4 +14,7 @@ sys.path.insert(0, str(ROOT))
 from desk.dashboard import main  # noqa: E402
 
 if __name__ == "__main__":
+    from desk.privacy import mask_output
+
+    mask_output()  # only the last four characters of any wallet or account number are shown
     raise SystemExit(main())

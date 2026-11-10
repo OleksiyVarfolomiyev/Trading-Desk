@@ -18,6 +18,7 @@ import plotly.graph_objects as go
 from IPython.display import display
 
 from desk.accounts import Account, accounts_for, ib_data_dir, load_accounts, short_id
+from desk.privacy import account_file
 from desk.hl.account_analytics import display_interactive_table
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var, wilder_atr
 from desk.notebook_highlights import HighlightsState, signed_money
@@ -202,7 +203,7 @@ class IBAccountAnalytics:
             ib.disconnect()
         self.snapshot = snapshot
         save_ib_history(snapshot, self.data_dir)
-        history_path = self.data_dir / f"ib_account_history_{acct}.csv"
+        history_path = account_file(self.data_dir, "ib_account_history", acct)
         self.history = pd.read_csv(history_path) if history_path.exists() else pd.DataFrame()
         self.positions = self._position_table()
         values = {position.symbol: position.notional_usd for position in snapshot.positions}
@@ -373,7 +374,7 @@ class IBAccountAnalytics:
                    "Gross position value": (snap.gross_usd, "usd")}
         items = {"Positions": [f"{row['Symbol']} {row['Side'].lower()}" for _, row in positions.iterrows()]}
         if self._highlights_state is None:
-            self._highlights_state = HighlightsState(self.data_dir / f"ib_highlights_state_{snap.account}.json")
+            self._highlights_state = HighlightsState(account_file(self.data_dir, "ib_highlights_state", snap.account, ".json"))
         since = self._highlights_state.compare(metrics, items)
         show_highlights(well, attention, since,
                         footnote="Changes in account value include deposits and withdrawals.")

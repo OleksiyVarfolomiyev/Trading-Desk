@@ -74,6 +74,10 @@ KILL_SETTLE_SECONDS = CHASE_INTERVAL_SECONDS + 2
 PARALLEL_READS = 12
 # Urgent entries cross the spread with an immediate-or-cancel limit at most this far from the mid.
 URGENT_SLIPPAGE = 0.005
+# Fast chase: the post-only entry is checked and re-priced this often, until it fills.
+FAST_CHASE_SECONDS = 2
+# ... and the chase stops if the price runs this share of the stop distance away from the plan.
+FAST_CHASE_MAX_DRIFT = 0.4
 
 
 def _gather(calls: list[Callable[[], Any]]) -> list[Any]:
@@ -339,7 +343,7 @@ def fetch_user_state(wallet: str, dex: str) -> dict[str, Any]:
         request["dex"] = dex
     response = post_info(request)
     if not isinstance(response, dict) or not isinstance(response.get("assetPositions"), list):
-        raise ValueError(f"Invalid account state returned for wallet {wallet} on DEX {dex or 'default'}.")
+        raise ValueError(f"Invalid account state returned for wallet ...{wallet[-4:]} on DEX {dex or 'default'}.")
     return response
 
 
@@ -354,12 +358,12 @@ def fetch_open_orders(wallet: str, dexes: list[str] | None = None) -> list[dict[
         response = post_info(request)
         if not isinstance(response, list) or any(not isinstance(order, dict) for order in response):
             raise ValueError(
-                f"Invalid open-order response returned for wallet {wallet} on DEX {dex or 'default'}."
+                f"Invalid open-order response returned for wallet ...{wallet[-4:]} on DEX {dex or 'default'}."
             )
         for order in response:
             if order.get("oid") is None:
                 raise ValueError(
-                    f"Open order for wallet {wallet} on DEX {dex or 'default'} has no order ID."
+                    f"Open order for wallet ...{wallet[-4:]} on DEX {dex or 'default'} has no order ID."
                 )
             order_id = int(order["oid"])
             existing = orders_by_id.get(order_id)
@@ -373,10 +377,10 @@ def parse_fee_rates(wallet: str) -> tuple[float, float]:
     """Return the wallet's maker and taker fee rates from HL."""
     response = post_info({"type": "userFees", "user": wallet})
     if not isinstance(response, dict) or "userAddRate" not in response or "userCrossRate" not in response:
-        raise ValueError(f"Could not read the maker/taker fee rates for wallet {wallet}.")
+        raise ValueError(f"Could not read the maker/taker fee rates for wallet ...{wallet[-4:]}.")
     maker, taker = float(response["userAddRate"]), float(response["userCrossRate"])
     if maker < 0 or taker < 0 or not np.isfinite(maker + taker):
-        raise ValueError(f"Invalid maker/taker fee rates returned for wallet {wallet}.")
+        raise ValueError(f"Invalid maker/taker fee rates returned for wallet ...{wallet[-4:]}.")
     return maker, taker
 
 
@@ -425,10 +429,10 @@ def collect_snapshot(
                 used_margin = float(margin_summary["totalMarginUsed"])
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError(
-                    f"Wallet {wallet} has no usable margin summary for DEX {dex or 'default'}."
+                    f"Wallet ...{wallet[-4:]} has no usable margin summary for DEX {dex or 'default'}."
                 ) from exc
             if account_value < 0 or used_margin < 0:
-                raise ValueError(f"Wallet {wallet} returned negative account or margin values.")
+                raise ValueError(f"Wallet ...{wallet[-4:]} returned negative account or margin values.")
             perp_equity += account_value
             margin_used += used_margin
             if wallet_index == 0:
@@ -1477,11 +1481,12 @@ def _read_fill(wallet: str, oid: int, size_decimals: int) -> tuple[str, float]:
 
 
 def _rest_entry(
-    wallet: str, oid: int, plan: PlannedTrade, market: Market, price: float, deadline: float
+    wallet: str, oid: int, plan: PlannedTrade, market: Market, price: float, deadline: float,
+    interval: float = CHASE_INTERVAL_SECONDS,
 ) -> tuple[str, float]:
     """Wait on a resting entry, keeping queue priority until its target price changes."""
     while True:
-        time.sleep(CHASE_INTERVAL_SECONDS)
+        time.sleep(interval)
         state, filled = _read_fill(wallet, oid, market.size_decimals)
         if time.monotonic() >= deadline or kill_switch_engaged():
             return state, filled
@@ -1511,12 +1516,18 @@ def _failed_send_left_nothing(wallet: str, plan: PlannedTrade, expected_quantity
     return not resting and bool(np.isclose(quantity, expected_quantity, atol=1e-8))
 
 
-def _place_entry(exchange: Any, wallet: str, plan: PlannedTrade, market: Market) -> tuple[float, float]:
+def _place_entry(
+    exchange: Any, wallet: str, plan: PlannedTrade, market: Market, fast: bool = False
+) -> tuple[float, float]:
     """Chase the planned entry with post-only limits and return filled size and average price.
 
     Recoverable failures retry until the window ends. A failed send is retried only
     after the exchange shows it left nothing, so a retry cannot double the position.
+    ``fast`` re-prices every FAST_CHASE_SECONDS instead of CHASE_INTERVAL_SECONDS and stops once
+    the price has run FAST_CHASE_MAX_DRIFT of the stop distance away from the plan's reference.
     """
+    interval = FAST_CHASE_SECONDS if fast else CHASE_INTERVAL_SECONDS
+    max_drift = FAST_CHASE_MAX_DRIFT * (plan.price_stop_distance or plan.stop_distance) if fast else None
     deadline = time.monotonic() + ENTRY_TIMEOUT_SECONDS
     baseline = _current_position_quantity(wallet, plan.dex, plan.coin)
     direction = side_to_direction(plan.side)
@@ -1530,6 +1541,10 @@ def _place_entry(exchange: Any, wallet: str, plan: PlannedTrade, market: Market)
             print(f"{plan.coin}: could not read the order book ({exc}); retrying.")
             time.sleep(ENTRY_RETRY_SECONDS)
             continue
+        if max_drift is not None and direction * (price - plan.entry_reference) > max_drift:
+            print(f"{plan.coin}: price ${price:,.6g} ran more than {FAST_CHASE_MAX_DRIFT:.0%} of the stop distance "
+                  f"from the planned ${plan.entry_reference:,.6g}; stopped chasing.")
+            break
         is_buy = plan.side == "LONG"
         try:
             response = exchange.order(
@@ -1544,7 +1559,7 @@ def _place_entry(exchange: Any, wallet: str, plan: PlannedTrade, market: Market)
         except Exception as exc:  # The SDK raises its own types; every send failure is checked the same way.
             if _failed_send_left_nothing(wallet, plan, baseline + direction * filled_total):
                 print(f"{plan.coin}: order send failed ({exc}); the exchange shows nothing placed, retrying.")
-                time.sleep(ENTRY_RETRY_SECONDS)
+                time.sleep(min(ENTRY_RETRY_SECONDS, interval))
                 continue
             message = f"{plan.coin}: order send failed ({exc}) and its result could not be ruled out; stopping entry."
             if filled_total > 0:
@@ -1569,7 +1584,7 @@ def _place_entry(exchange: Any, wallet: str, plan: PlannedTrade, market: Market)
                 filled_total += size
                 weighted_entry += size * average
             break
-        state, filled = _rest_entry(wallet, oid, plan, market, price, deadline)
+        state, filled = _rest_entry(wallet, oid, plan, market, price, deadline, interval)
         if state != "filled":
             try:
                 exchange.cancel(plan.coin, oid)
@@ -1946,7 +1961,7 @@ def _load_key_from_keychain(wallet: str) -> str:
     key = keyring.get_password(KEYCHAIN_SERVICE, wallet.lower())
     if not key:
         raise RuntimeError(
-            f"No API-wallet key is stored for {wallet}. Run this script with --store-key --wallet ADDRESS locally."
+            f"No API-wallet key is stored for ...{wallet[-4:]}. Run this script with --store-key --wallet ADDRESS locally."
         )
     return key
 
@@ -1965,7 +1980,7 @@ def store_key(wallet: str) -> None:
     if first != second:
         raise ValueError("The two entries did not match; the key was not stored.")
     keyring.set_password(KEYCHAIN_SERVICE, wallet.lower(), first)
-    print(f"Stored the API-wallet key in the OS keychain for {wallet}.")
+    print(f"Stored the API-wallet key in the OS keychain for ...{wallet[-4:]}.")
 
 
 def build_exchange(wallet_address: str, private_key: str, dexes: list[str]) -> Any:
@@ -1983,6 +1998,16 @@ def build_exchange(wallet_address: str, private_key: str, dexes: list[str]) -> A
         account_address=wallet_address,
         perp_dexs=dexes,
     )
+
+
+def resolve_wallet(text: str) -> str:
+    """A full address as given, or the accounts.json wallet ending in these characters (``07f2``)."""
+    text = text.strip()
+    if text.lower().startswith("0x") and len(text) == 42:
+        return text
+    from desk.accounts import hl_wallet
+
+    return hl_wallet(text)
 
 
 def read_target_wallets(wallet: str, risk_wallets: str | None) -> list[str]:
@@ -2782,6 +2807,7 @@ def execute_plans(
     urgent: bool = False,
     slippage: float = URGENT_SLIPPAGE,
     batched_exits: bool = False,
+    fast: bool = False,
 ) -> tuple[list[ActiveTrade], list[str]]:
     """Enter each planned trade and place its exits; return the trades to guard and any failures.
 
@@ -2809,7 +2835,7 @@ def execute_plans(
                     exchange, wallet, plan, market, slippage, reference=results[2], baseline=baseline_quantity
                 )
             else:
-                quantity, entry_price = _place_entry(exchange, wallet, plan, market)
+                quantity, entry_price = _place_entry(exchange, wallet, plan, market, fast=fast)
             try:
                 stop_oid, target_oid = _place_exit_orders(
                     exchange,
@@ -2858,11 +2884,12 @@ def run_live(
     markets: dict[str, Market],
     urgent: bool = False,
     slippage: float = URGENT_SLIPPAGE,
+    fast: bool = False,
 ) -> None:
     """Execute planned entries, place protective exits, and monitor resulting trades."""
     exchange = build_exchange(wallet, private_key, trade_dexes(plans))
     active, failures = execute_plans(exchange, wallet, plans, markets, urgent=urgent, slippage=slippage,
-                                     batched_exits=True)
+                                     batched_exits=True, fast=fast)
     if active:
         print("Monitoring funding-adjusted net PnL. Keep this process running for the guard to remain active.")
         _watch_trades(exchange, wallet, active, plans[0].maker_fee_rate, plans[0].taker_fee_rate)
@@ -2893,7 +2920,7 @@ def print_kill_switch_plan(wallets: list[str], dexes: list[str]) -> None:
         orders = fetch_open_orders(wallet, dexes)
         protection = sum(_is_reduce_only(order) for order in orders)
         print(
-            f"{wallet}: close {len(positions)} positions "
+            f"...{wallet[-4:]}: close {len(positions)} positions "
             f"(${sum(item['value'] for item in positions):,.2f} notional); "
             f"cancel {len(orders) - protection} entry and {protection} reduce-only orders."
         )
@@ -2973,11 +3000,11 @@ def run_kill_switch(wallets: list[str], dexes: list[str]) -> bool:
     for wallet in wallets:
         if problems.get(wallet):
             clean = False
-            print(f"{wallet}: NOT FLAT")
+            print(f"...{wallet[-4:]}: NOT FLAT")
             for problem in problems[wallet]:
                 print(f"  {problem}")
         else:
-            print(f"{wallet}: confirmed flat, no open orders.")
+            print(f"...{wallet[-4:]}: confirmed flat, no open orders.")
     if not clean:
         print("ACT NOW: close what is listed above in the HL app, or run the kill switch again.")
     return clean
@@ -3016,8 +3043,11 @@ def urgent_fees(snapshot: AccountSnapshot, urgent: bool) -> AccountSnapshot:
 def main(argv: list[str] | None = None) -> int:
     """Parse command-line options and run the selected planning or execution workflow."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--wallet", required=True, help="Main wallet address linked to the API wallet key.")
-    parser.add_argument("--risk-wallets", help="Comma-separated public addresses included in aggregate risk.")
+    parser.add_argument("--wallet", required=True,
+                        help="Main wallet linked to the API wallet key: its last four characters (e.g. 07f2, looked "
+                        "up in accounts.json) or the full address.")
+    parser.add_argument("--risk-wallets", help="Comma-separated wallets included in aggregate risk (last four "
+                        "characters or full addresses).")
     parser.add_argument("--signals", type=Path, help="CSV file with coin,side,dex columns.")
     parser.add_argument(
         "--actions",
@@ -3068,6 +3098,12 @@ def main(argv: list[str] | None = None) -> int:
         "(taker fee) instead of chasing with post-only limits for up to five minutes.",
     )
     parser.add_argument(
+        "--fast",
+        action="store_true",
+        help=f"With --signals: post-only limit re-priced every {FAST_CHASE_SECONDS}s until fully filled "
+        f"(stops if the price runs {FAST_CHASE_MAX_DRIFT * 100:.0f}%% of the stop distance away).",
+    )
+    parser.add_argument(
         "--slippage",
         type=float,
         default=URGENT_SLIPPAGE * 100,
@@ -3078,8 +3114,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 0 < args.slippage <= 5:
         parser.error("--slippage must be above 0 and at most 5 (percent).")
-    if args.urgent and args.signals is None:
-        parser.error("--urgent applies to --signals entries.")
+    if (args.urgent or args.fast) and args.signals is None:
+        parser.error("--urgent and --fast apply to --signals entries.")
+    if args.urgent and args.fast:
+        parser.error("choose --urgent or --fast, not both.")
     if args.max_risk_pct is not None:
         if not 0 < args.max_risk_pct <= MAX_RISK_PCT_OVERRIDE_LIMIT:
             parser.error(f"--max-risk-pct must be above 0 and at most {MAX_RISK_PCT_OVERRIDE_LIMIT:g}.")
@@ -3090,6 +3128,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.store_key:
             store_key(args.wallet)
             return 0
+        args.wallet = resolve_wallet(args.wallet)
+        if args.risk_wallets:
+            args.risk_wallets = ",".join(resolve_wallet(item) for item in args.risk_wallets.split(",") if item.strip())
         _validate_address(args.wallet, "--wallet main-wallet address")
         if args.clear_kill_switch:
             KILL_SWITCH_FILE.unlink(missing_ok=True)
@@ -3287,7 +3328,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         private_key = _load_key_from_keychain(args.wallet)
         run_live(args.wallet, private_key, dexes, fresh_plans, fresh_markets, urgent=args.urgent,
-                 slippage=args.slippage / 100)
+                 slippage=args.slippage / 100, fast=args.fast)
         return 0
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Trade execution stopped: {exc}", file=sys.stderr)
@@ -3295,4 +3336,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from desk.privacy import mask_output
+
+    mask_output()  # only the last four characters of any wallet or account number are shown
     raise SystemExit(main())

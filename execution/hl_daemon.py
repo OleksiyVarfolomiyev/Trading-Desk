@@ -112,6 +112,7 @@ class _Tee(io.TextIOBase):
         self.stream, self.path = stream, path
 
     def write(self, text: str) -> int:
+        text = daemon_link.mask(text)
         self.stream.write(text)
         self.stream.flush()
         if self.path is not None:
@@ -332,7 +333,7 @@ class HLState:
             if unified:
                 usdc = _usdc_total((post_info({"type": "spotClearinghouseState", "user": wallet}) or {}).get("balances"))
                 if usdc is None:
-                    raise ValueError(f"Wallet {wallet} returned an invalid USDC balance.")
+                    raise ValueError(f"Wallet ...{wallet[-4:]} returned an invalid USDC balance.")
             fees = ht.parse_fee_rates(wallet) if slow or wallet not in self.fees else self.fees[wallet]
             return wallet, dict(zip(self.dexes, states)), unified, usdc, fees
 
@@ -798,7 +799,7 @@ class Session:
         self.writer.flush()
 
     def out(self, text: str) -> None:
-        self.send({"t": "out", "text": text})
+        self.send({"t": "out", "text": daemon_link.mask(text)})
 
     def data(self, payload: Any) -> None:
         self.send({"t": "data", "data": payload})
@@ -1027,10 +1028,13 @@ class Daemon:
         wallet = self.wallet(request.get("wallet") or "")
         risk_wallets = list(dict.fromkeys(
             [wallet] + [self.wallet(item) for item in (request.get("risk_wallets") or self.state.wallets)]))
-        live, urgent = bool(request.get("live")), bool(request.get("urgent"))
+        live, urgent, fast = bool(request.get("live")), bool(request.get("urgent")), bool(request.get("fast"))
         slippage = float(request.get("slippage") or ht.URGENT_SLIPPAGE * 100) / 100
-        if urgent and not request.get("signals"):
-            print("--urgent applies to --signals entries.")
+        if (urgent or fast) and not request.get("signals"):
+            print("--urgent and --fast apply to --signals entries.")
+            return 2
+        if urgent and fast:
+            print("Choose --urgent or --fast, not both.")
             return 2
         if self.paper and request.get("signals") and not urgent and live:
             print("Paper mode simulates urgent entries only; add --urgent.")
@@ -1089,7 +1093,7 @@ class Daemon:
             exchange = self.exchanges[wallet]
             if kind == "signals":
                 active, failures = ht.execute_plans(exchange, wallet, plans, markets, urgent=urgent,
-                                                    slippage=slippage, batched_exits=True)
+                                                    slippage=slippage, batched_exits=True, fast=fast)
                 print(f"Orders sent and protected {time.time() - confirmed:.2f}s after confirmation.")
                 for trade in active:
                     if self.paper:
@@ -1338,6 +1342,8 @@ def main(argv: list[str] | None = None) -> int:
     trade.add_argument("--actions", type=Path, help="CSV with action,coin,side,dex,margin_usd columns")
     trade.add_argument("--urgent", action="store_true",
                        help="enter at once: immediate-or-cancel at most --slippage from the mid (taker fee)")
+    trade.add_argument("--fast", action="store_true",
+                       help="post-only limit re-priced every 2s until fully filled (stops if the price runs away)")
     trade.add_argument("--slippage", type=float, default=URGENT_SLIPPAGE_PCT,
                        help=f"with --urgent: percent beyond the mid the entry may pay (default {URGENT_SLIPPAGE_PCT:g})")
     trade.add_argument("--max-risk-pct", type=float, help="aggregate risk cap for this run only, in percent")
@@ -1357,7 +1363,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "trade":
         if not 0 < args.slippage <= 5:
             parser.error("--slippage must be above 0 and at most 5 (percent).")
-        request = {"cmd": "trade", "wallet": args.wallet, "live": args.live, "urgent": args.urgent,
+        if args.urgent and args.fast:
+            parser.error("choose --urgent or --fast, not both.")
+        request = {"cmd": "trade", "wallet": args.wallet, "live": args.live, "urgent": args.urgent, "fast": args.fast,
                    "slippage": args.slippage, "max_risk_pct": args.max_risk_pct,
                    "ignore_unreachable": args.ignore_unreachable,
                    "risk_wallets": [item.strip() for item in args.risk_wallets.split(",")] if args.risk_wallets else None,
@@ -1371,4 +1379,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from desk.privacy import mask_output
+
+    mask_output()  # only the last four characters of any wallet or account number are shown
     raise SystemExit(main())
