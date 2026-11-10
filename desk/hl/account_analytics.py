@@ -461,7 +461,12 @@ def fetch_perp_states(user):
         'HL and every listed perp DEX.'
     dexes = post({'type': 'perpDexs'})
     names = [''] + [dex['name'] for dex in dexes if dex and dex.get('name')]
-    return {dex: post({'type': 'clearinghouseState', 'user': user, 'dex': dex}) for dex in names}
+    # One request per DEX, read in parallel (HL limits request weight per minute, not concurrency).
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        states = list(pool.map(lambda dex: post({'type': 'clearinghouseState', 'user': user, 'dex': dex}), names))
+    return dict(zip(names, states))
 
 
 FILLS_PAGE_SIZE = 2000      # HL returns at most this many fills per userFillsByTime call

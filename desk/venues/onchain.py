@@ -751,6 +751,39 @@ def wallet_snapshot(account: Account, chains: list[str] | None = None) -> tuple[
     return snapshot, notes
 
 
+# Token balances only change when tokens are moved, so a refresh within this many seconds of the
+# last full read re-prices the saved balances instead of reading every chain again (about 30 s).
+BALANCES_MAX_AGE_SECONDS = 30 * 60
+_balances: dict[str, tuple[float, VenueAccount, list[str]]] = {}
+
+
+def wallet_snapshot_cached(account: Account, max_age: float = BALANCES_MAX_AGE_SECONDS) -> tuple[VenueAccount, list[str]]:
+    """``wallet_snapshot``, reading balances at most every ``max_age`` seconds and prices every time."""
+    import dataclasses
+
+    key = account.id.lower()
+    hit = _balances.get(key)
+    if hit is None or time.time() - hit[0] > max_age:
+        snapshot, notes = wallet_snapshot(account)
+        _balances[key] = (time.time(), snapshot, notes)
+        return snapshot, notes
+    _, snapshot, notes = hit
+    keys = {}
+    for position in snapshot.positions:
+        chain, _, token = position.ref.partition(":")
+        if chain in CHAINS:
+            keys[position.ref] = price_key(CHAINS[chain], token).lower()
+    try:
+        prices = fetch_prices(set(keys.values()))
+    except Exception:  # keep the last prices rather than drop the wallet
+        prices = {}
+    positions = tuple(dataclasses.replace(position, mark_price=prices.get(keys.get(position.ref, ""), position.mark_price))
+                      for position in snapshot.positions)
+    equity = sum(position.notional_usd for position in positions)
+    return dataclasses.replace(snapshot, positions=positions, equity_usd=equity, cash_usd=equity, available_usd=equity,
+                               as_of=pd.Timestamp.now(tz="UTC")), notes
+
+
 def _load_names() -> dict[str, str]:
     try:
         return json.loads(NAME_CACHE.read_text())

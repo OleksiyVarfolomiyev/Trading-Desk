@@ -325,7 +325,7 @@ function renderBanners(doc, now) {
       el("div", {}, [el("strong", { text: `Last refresh failed (${clock(status.last_attempt)}). ` }),
         el("span", { text: `${status.error}. ` + (status.last_ok ? `Showing data from ${ago(status.last_ok, now)}.` : "") })]),
     ]));
-  } else if (status.last_ok && (now - new Date(status.last_ok)) / 1000 > 3 * (status.interval_s || 180) + 120) {
+  } else if (status.last_ok && (now - new Date(status.last_ok)) / 1000 > 3 * (status.interval_s || 60) + 120) {
     banners.push(el("div", { class: "banner warning", role: "alert" }, [
       el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }),
       el("div", { text: `Data is ${ago(status.last_ok, now)}; the refresh may be stuck.` }),
@@ -348,7 +348,7 @@ function renderStatus(doc, now) {
     text.textContent = `Refresh failed · data ${ago(status.last_ok, now)}`;
   } else if (status.last_ok) {
     dot.className = "dot live";
-    const next = new Date(new Date(status.last_ok).getTime() + (status.interval_s || 180) * 1000);
+    const next = new Date(new Date(status.last_ok).getTime() + (status.interval_s || 60) * 1000);
     const wait = Math.max(0, Math.round((next - now) / 60000));
     text.textContent = `Live · updated ${ago(status.last_ok, now)} · next ${wait < 1 ? "within a minute" : "in " + wait + " min"}`;
   } else {

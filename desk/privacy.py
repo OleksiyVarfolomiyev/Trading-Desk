@@ -83,6 +83,9 @@ class MaskedStream(io.TextIOBase):
     def isatty(self) -> bool:
         return self.stream.isatty()
 
+    def fileno(self) -> int:  # faulthandler and subprocesses write to the real stream
+        return self.stream.fileno()
+
     @property
     def encoding(self):  # some libraries read it
         return getattr(self.stream, "encoding", "utf-8")

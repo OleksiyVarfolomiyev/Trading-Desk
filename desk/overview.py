@@ -194,17 +194,31 @@ class DeskOverview:
         self.wallet_activity = {}
         self.data_dir.mkdir(parents=True, exist_ok=True)
         hl_accounts = accounts_for("hl", self.accounts)
-        for account in hl_accounts:
+        # HL and the wallets are read in worker threads while IB (tied to this thread's event loop)
+        # is read here; results are put back in the usual order afterwards.
+        from concurrent.futures import ThreadPoolExecutor
+
+        def attempt(label, read):
             try:
-                self.snapshots.append(hl_venue.snapshot(account))
+                return read(), None
             except Exception as exc:  # network and API shape errors alike
-                self.problems.append(f"{account.name}: {type(exc).__name__}: {exc}")
-        for account in hl_accounts if include_risk else []:
-            # Per wallet, so one unreadable wallet does not hide the others' risk.
-            try:
-                self.book.append(hl_book_entry([account.id], account.name))
-            except Exception as exc:
-                self.problems.append(f"{account.name} risk: {type(exc).__name__}: {exc}")
+                return None, f"{label}: {type(exc).__name__}: {exc}"
+
+        pool = ThreadPoolExecutor(max_workers=8)
+        hl_jobs = [pool.submit(attempt, account.name, lambda account=account: hl_venue.snapshot(account))
+                   for account in hl_accounts]
+        # Per wallet, so one unreadable wallet does not hide the others' risk.
+        risk_jobs = [pool.submit(attempt, f"{account.name} risk", lambda account=account: hl_book_entry([account.id], account.name))
+                     for account in (hl_accounts if include_risk else [])]
+        wallet_jobs = [(account, pool.submit(attempt, f"{account.name} wallet",
+                                             lambda account=account: onchain.wallet_snapshot_cached(account)))
+                       for account in hl_accounts if account.onchain]
+        for job in hl_jobs:
+            snapshot, problem = job.result()
+            self.snapshots.append(snapshot) if snapshot is not None else self.problems.append(problem)
+        for job in risk_jobs:
+            entry, problem = job.result()
+            self.book.append(entry) if entry is not None else self.problems.append(problem)
         for account in accounts_for("ib", self.accounts):
             try:
                 ib = ib_venue.connect(account, "overview", readonly=True)
@@ -226,17 +240,16 @@ class DeskOverview:
                 self.problems.append(f"{account.name}: {ib_venue.describe_failure(ib, exc)}")
             finally:
                 ib.disconnect()
-        for account in hl_accounts:
-            if not account.onchain:
-                continue
+        for account, job in wallet_jobs:
             # The same address on other EVM chains: holdings and transfers outside HL.
-            try:
-                snapshot, _ = onchain.wallet_snapshot(account)
+            result, problem = job.result()
+            if result is None:
+                self.problems.append(problem)
+            else:
+                snapshot, _ = result
                 self.snapshots.append(snapshot)
                 if record_ib_history:  # the same throttled "record this read" switch as IB
                     save_wallet_history(snapshot, self.data_dir)
-            except Exception as exc:
-                self.problems.append(f"{account.name} wallet: {type(exc).__name__}: {exc}")
             if not include_wallet_activity:
                 continue
             try:
@@ -248,6 +261,7 @@ class DeskOverview:
                                      if "unavailable" in note)
             except Exception as exc:
                 self.problems.append(f"{account.name} wallet activity: {type(exc).__name__}: {exc}")
+        pool.shutdown(wait=False)
         return self.snapshots
 
     @property
