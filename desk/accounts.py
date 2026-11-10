@@ -61,7 +61,7 @@ class Account:
 
 
 def short_id(account_id: str) -> str:
-    """The last four characters of an account ID, the only part shown on screen (``U...8440`` -> ``8440``)."""
+    """The last four characters of an account ID, the only part shown on screen (``U98768440`` -> ``8440``)."""
     return str(account_id or "")[-4:]
 
 

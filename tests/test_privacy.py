@@ -8,12 +8,12 @@ from pathlib import Path
 from desk import privacy
 from desk.accounts import hl_wallet, hl_wallets, parse_accounts
 
-WALLET = "0x...07f2"
+WALLET = "0x" + "aB" * 18 + "07f2"  # made up; only the last four characters matter
 
 
 class MaskTests(unittest.TestCase):
     def test_wallets_and_ib_accounts_keep_only_their_last_four(self):
-        text = f"Wallet {WALLET} on IB U...8440 (paper DU1234567) failed."
+        text = f"Wallet {WALLET} on IB U98768440 (paper DU1234567) failed."
         self.assertEqual(privacy.mask(text), "Wallet ...07f2 on IB ...8440 (paper ...4567) failed.")
 
     def test_transaction_hashes_and_short_hex_are_left_alone(self):
@@ -38,8 +38,8 @@ class AccountFileTests(unittest.TestCase):
 
     def test_ib_files_keep_their_case_sensitive_legacy_name(self):
         with tempfile.TemporaryDirectory() as folder:
-            (Path(folder) / "ib_fills_U...8440.csv").write_text("x\n")
-            self.assertEqual(privacy.account_file(folder, "ib_fills", "U...8440").read_text(), "x\n")
+            (Path(folder) / "ib_fills_U98768440.csv").write_text("x\n")
+            self.assertEqual(privacy.account_file(folder, "ib_fills", "U98768440").read_text(), "x\n")
 
     def test_an_existing_short_file_is_never_overwritten(self):
         with tempfile.TemporaryDirectory() as folder:

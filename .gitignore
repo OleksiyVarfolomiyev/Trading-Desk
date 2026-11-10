@@ -13,3 +13,7 @@ research/data/*ib_book*
 data/desk_*highlights_state*.json
 # Assembled by web/build_site.sh before each deploy
 web/site/
+# Account data stays on this machine: balances, value and PnL histories, transfers (with their
+# transaction hashes). The desk reads and writes these files locally; they are never published.
+data/
+research/data/hl_book_exposure_weekly.csv
