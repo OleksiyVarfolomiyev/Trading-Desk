@@ -332,8 +332,13 @@ class DeskOverview:
         return sum(snapshot.equity_usd for snapshot in self.snapshots)
 
     def _require(self) -> bool:
-        """Return whether any account was read; otherwise say why and show nothing."""
+        """Return whether any account was read; otherwise say why and show nothing.
+
+        When some accounts could not be read, say so above every section's table: it is then missing them.
+        """
         if self.snapshots:
+            if self.problems:
+                print("NOT SHOWN, could not be read this time: " + "; ".join(self.problems))
             return True
         if self.problems:
             print("No account could be read: " + "; ".join(self.problems))

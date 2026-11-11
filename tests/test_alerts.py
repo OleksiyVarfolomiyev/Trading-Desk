@@ -43,5 +43,28 @@ class AlertRegistryTests(unittest.TestCase):
         self.assertEqual(registry.state()["alerts"], [])  # expired
 
 
+class SectionWarningTests(unittest.TestCase):
+    def test_a_section_says_which_accounts_are_missing(self):
+        import io
+        from contextlib import redirect_stdout
+        from types import SimpleNamespace
+
+        from desk.overview import DeskOverview
+
+        overview = object.__new__(DeskOverview)
+        overview.snapshots = [SimpleNamespace()]
+        overview.problems = ["HL 07f2: TimeoutError"]
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertTrue(overview._require())
+        self.assertIn("NOT SHOWN", out.getvalue())
+        self.assertIn("HL 07f2: TimeoutError", out.getvalue())
+        overview.problems = []
+        out = io.StringIO()
+        with redirect_stdout(out):
+            overview._require()
+        self.assertEqual(out.getvalue(), "")
+
+
 if __name__ == "__main__":
     unittest.main()
