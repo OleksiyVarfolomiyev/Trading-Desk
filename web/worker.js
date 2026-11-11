@@ -10,6 +10,7 @@
 //   /hl/<id>/history     the wallet's daily value and PnL saved so far (KV), so old history keeps its
 //                        daily detail after HL thins it to weekly points
 //   /sync                the last scheduled capture (Cron Trigger every 6 hours): when, days saved, problems
+//   /walletperf          the wallets' token performance (daily price-move PnL), sent by the Mac (POST /ingest/wallets)
 //   /ib                  the IB account as the desk's Mac last sent it (KV): balances, positions, risk,
 //                        daily NAV; written with POST /ingest/ib and the INGEST_TOKEN secret
 //
@@ -369,12 +370,12 @@ async function ingest(request, env, kind, id, wallets) {
   } catch (error) {
     return reply({ error: "the body is not JSON" }, 400);
   }
-  if (kind === "ib") {
+  if (kind === "ib" || kind === "wallets") {
     const text = JSON.stringify(body);
     if (/(?:DU|U)\d{5,}/.test(text) || Object.values(wallets).some((a) => text.toLowerCase().includes(a.slice(2).toLowerCase()))) {
       return reply({ error: "refused: the body holds a full account identifier" }, 400);
     }
-    await env.DESK.put("ib", text);
+    await env.DESK.put(kind === "ib" ? "ib" : "walletperf", text);
     return reply({ ok: true, bytes: text.length });
   }
   if (kind === "history" && wallets[id] && Array.isArray(body.points)) {
@@ -442,6 +443,10 @@ export default {
     if (kind === "sync" && !id) {  // the last scheduled capture: when, days saved per wallet, problems
       const saved = env.DESK ? await env.DESK.get("sync", "json") : null;
       return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no scheduled capture has run yet" }, 404);
+    }
+    if (kind === "walletperf" && !id) {  // the wallets' token performance, sent by the desk's Mac
+      const saved = env.DESK ? await env.DESK.get("walletperf", "json") : null;
+      return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no wallet performance has been sent yet" }, 404);
     }
     if (kind === "ib" && !id) {
       const saved = env.DESK ? await env.DESK.get("ib", "json") : null;

@@ -57,6 +57,31 @@ def ib_history(nav: pd.DataFrame) -> pd.DataFrame:
     })
 
 
+def wallet_performance(accounts: list, data_dir: Path | str) -> dict[str, pd.DataFrame]:
+    """Each HL wallet's tokens on other chains: daily ``pnl_usd`` and ``base_usd`` (what the tokens held at the
+    previous close earned from price moves, ``desk.venues.onchain_history``) with the value, as
+    ``ts, accountValue, pnl, base`` where ``ts`` is the day's close. Deposits and withdrawals never count as
+    performance, because a balance only earns from the day after it arrives."""
+    from desk.overview import wallet_daily_value
+    from desk.venues.onchain_history import load_returns
+
+    histories = {}
+    for account in accounts_for("hl", accounts):
+        if not account.onchain:
+            continue
+        moves = load_returns(Path(data_dir), account.id)
+        if moves.empty:
+            continue
+        value, _ = wallet_daily_value(Path(data_dir), account.id)
+        close = moves.index + pd.Timedelta(days=1)
+        held = value.reindex(value.index.union(moves.index)).ffill().reindex(moves.index)
+        held.iloc[-1] = value.iloc[-1]  # the table shows the wallet's value now
+        histories[f"{account.name} wallet"] = pd.DataFrame({
+            "ts": close, "accountValue": held.to_numpy(), "pnl": moves["pnl_usd"].cumsum().to_numpy(),
+            "base": moves["base_usd"].to_numpy()})
+    return histories
+
+
 def daily_points(history: pd.DataFrame) -> pd.DatetimeIndex:
     """UTC dates on which an account has at least one saved value."""
     return pd.DatetimeIndex(pd.to_datetime(history["ts"], utc=True).dt.normalize().unique())
@@ -127,6 +152,8 @@ class DeskAccounts:
         self.notes = []
         self._highlights_state = None  # a fresh fetch compares with the last saved run
         self.overview.fetch_data(record_ib_history=record_ib_history)
+        if refresh_history:
+            self._update_wallet_returns()
         self.histories, self.windowed = {}, set()
         self.ib_ids: dict[str, str] = {}  # history label ("IB 8440") -> full IB account ID
         for account in accounts_for("hl", self.accounts):
@@ -400,15 +427,73 @@ class DeskAccounts:
             rows.append(row)
         return pd.DataFrame(rows)
 
+    def _update_wallet_returns(self) -> None:
+        """Extend each wallet's daily price-move performance to yesterday (a few requests once a day)."""
+        from desk.venues.onchain_history import update_wallet_returns
+
+        for account in accounts_for("hl", self.accounts):
+            if account.onchain:
+                try:
+                    update_wallet_returns(account, self.data_dir)
+                except Exception as exc:  # the saved days stay; the row is just a day behind
+                    self.notes.append(f"{account.name} wallet: performance not extended ({type(exc).__name__}: {exc}).")
+
+    def wallet_histories(self) -> dict[str, pd.DataFrame]:
+        """Each HL wallet's tokens outside HL as ``ts, accountValue, pnl, base`` (see ``wallet_performance``)."""
+        histories = wallet_performance(self.accounts, self.data_dir)
+        if not histories and any(account.venue == "hl" and account.onchain for account in self.accounts):
+            self.notes.append("Wallet tokens outside HL have no performance yet: run "
+                              "python -m desk.venues.onchain_history --returns")
+        return histories
+
+    def wallet_pnl(self, histories: dict[str, pd.DataFrame]) -> pd.DataFrame:
+        """Wallet rows like ``account_pnl``: return is the compounded daily price move of the tokens held."""
+        now = pd.Timestamp.now(tz="UTC")
+        rows = []
+        for name, history in histories.items():
+            daily = (history["pnl"].diff().fillna(history["pnl"].iloc[0]) / history["base"].where(history["base"] > 0)).fillna(0.0)
+            level = pd.Series((1 + daily.clip(lower=-1.0)).cumprod().to_numpy(), index=history["ts"])
+            pnl = pd.Series(history["pnl"].to_numpy(), index=history["ts"])
+            row = {"Account": name, "Value": float(history["accountValue"].iloc[-1])}
+            for label, days in WINDOWS.items():
+                cutoff = now - pd.Timedelta(days=days)
+                before = level[level.index <= cutoff]
+                if before.empty:
+                    row[f"PnL {label}"] = row[f"Return {label}"] = np.nan
+                    continue
+                row[f"PnL {label}"] = float(pnl.iloc[-1] - pnl[pnl.index <= cutoff].iloc[-1])
+                row[f"Return {label}"] = float(level.iloc[-1] / before.iloc[-1] - 1)
+            row[f"PnL {INCEPTION}"] = float(pnl.iloc[-1])
+            row[f"Return {INCEPTION}"] = float(level.iloc[-1] - 1)
+            rows.append(row)
+        return pd.DataFrame(rows)
+
     def performance_frame(self) -> pd.DataFrame:
-        """Per-account PnL and return over each window, with the combined desk row last."""
-        table = self.account_pnl()
+        """Per-account PnL and return over each window: the accounts, the wallets' tokens outside HL, the
+        combined HL and IB row (the headline return) and, last, the whole desk with the wallets."""
+        trading = self.account_pnl()
+        wallets_history = self.wallet_histories()
+        wallets = self.wallet_pnl(wallets_history) if wallets_history else pd.DataFrame(columns=trading.columns)
         returns = self.desk_returns()
-        desk = {"Account": "Desk (combined)", "Value": table["Value"].sum()}
-        for label in PERIODS:
-            desk[f"Return {label}"] = returns.get("since start" if label == INCEPTION else label, np.nan)
-            desk[f"PnL {label}"] = table[f"PnL {label}"].sum(min_count=1)
-        table = pd.concat([table, pd.DataFrame([desk])], ignore_index=True)
+
+        def combined(name, parts, index_returns):
+            row = {"Account": name, "Value": parts["Value"].sum()}
+            for label in PERIODS:
+                row[f"Return {label}"] = index_returns.get(label, np.nan)
+                row[f"PnL {label}"] = parts[f"PnL {label}"].sum(min_count=1)
+            return row
+
+        rows = [combined("Desk (HL + IB)", trading, {**returns, INCEPTION: returns["since start"]})]
+        if len(wallets):
+            index = time_weighted_index(list(self.histories.values()) + list(wallets_history.values()))
+            index.index = pd.to_datetime(index.index, utc=True)
+            now = pd.Timestamp.now(tz="UTC")
+            every = {INCEPTION: float(index.iloc[-1] / index.iloc[0] - 1) if len(index) else np.nan}
+            for label, days in WINDOWS.items():
+                prior = index[index.index <= now - pd.Timedelta(days=days)]
+                every[label] = float(index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
+            rows.append(combined("Desk incl. wallets", pd.concat([trading, wallets]), every))
+        table = pd.concat([trading, wallets, pd.DataFrame(rows)], ignore_index=True)
         return table[["Account", "Value"] + [f"{kind} {label}" for label in PERIODS for kind in ("PnL", "Return")]]
 
     def show_performance(self):

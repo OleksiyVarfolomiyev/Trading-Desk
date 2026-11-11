@@ -147,26 +147,17 @@ def _wallet_value_series(desk: DeskAccounts, start: pd.Timestamp) -> dict | None
     recording began come from the one-off rebuild in ``desk.venues.onchain_history``
     (``onchain_value_backfill_<wallet>.csv``), used only where nothing was recorded.
     """
-    from desk.overview import wallet_history_path
-    from desk.venues.onchain_history import load_backfill
+    from desk.overview import wallet_daily_value
 
     parts, rebuilt_until = [], None
     for account in desk.accounts:
         if account.venue != "hl" or not account.onchain:
             continue
-        path = wallet_history_path(desk.data_dir, account.id)
-        recorded = pd.Series(dtype=float)
-        if path.exists() and len(saved := pd.read_csv(path)):
-            recorded = _daily(saved.assign(ts=pd.to_datetime(saved["ts"], utc=True, format="mixed"))
-                              .set_index("ts")["value_usd"])
-        rebuilt = load_backfill(desk.data_dir, account.id)
-        if len(recorded) and len(rebuilt):
-            rebuilt = rebuilt[rebuilt.index < recorded.index[0]]
-        if len(rebuilt):
-            rebuilt_until = max(rebuilt_until or rebuilt.index[-1], rebuilt.index[-1])
-        pieces = [piece for piece in (rebuilt, recorded) if len(piece)]
-        if pieces:
-            parts.append(_daily(pd.concat(pieces)))
+        series, rebuilt_last = wallet_daily_value(desk.data_dir, account.id)
+        if rebuilt_last is not None:
+            rebuilt_until = max(rebuilt_until or rebuilt_last, rebuilt_last)
+        if len(series):
+            parts.append(series)
     if not parts:
         return None
     total = pd.concat(parts, axis=1).ffill().sum(axis=1, min_count=1).dropna()
@@ -429,6 +420,7 @@ class Dashboard:
         def send():
             try:
                 web_sync.push_ib(snapshot, entry, moves)
+                web_sync.push_wallets(self.desk.data_dir)
             except Exception as exc:  # the web dashboard keeps the last IB it received
                 print(f"Sending IB to the web dashboard failed: {exc}")
 

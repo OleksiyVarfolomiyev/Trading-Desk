@@ -511,6 +511,7 @@
       (w.notes || []).forEach((note) => notes.push(note));
     });
     const ibData = await every("ib", 5 * 60000, () => relay("/ib")).catch(() => null);
+    const walletPerf = await every("walletperf", 30 * 60000, () => relay("/walletperf")).catch(() => null);
     const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];
     ibs.forEach((account) => {
       const age = Date.now() - account.asOf;
@@ -677,8 +678,34 @@
       return { "Account": a.label, "Return 7D": r["7D"], "Return 30D": r["30D"], "Return 90D": r["90D"], "Return 1Y": r["1Y"],
         "Return since inception": r.since_start };
     });
-    performanceRows.push({ "Account": "Desk (combined)", "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"],
+    const performanceCount = performanceRows.length;  // the trading accounts: what "best account" ranks
+    // Wallet tokens outside HL: the daily price move of what was held (the Mac computes it; deposits earn nothing).
+    const walletSeries = Object.entries((walletPerf && walletPerf.series) || {}).filter(([, points]) => points.length > 1)
+      .map(([name, points]) => ({ name, points: points.map(([t, value, pnl, base]) => ({ t, value, pnl, base })) }));
+    const walletPerformanceRows = walletSeries.map(({ name, points }) => {
+      let level = 1;
+      const levels = points.map((p, i) => {
+        const gain = p.pnl - (i ? points[i - 1].pnl : 0);
+        if (p.base > 0) level *= 1 + Math.max(-1, gain / p.base);
+        return { t: p.t, v: level, pnl: p.pnl };
+      });
+      const row = { "Account": name };
+      for (const [label, days] of Object.entries(WINDOWS)) {
+        const prior = levels.filter((l) => l.t <= now - days * DAY_MS);
+        row[`Return ${label}`] = prior.length ? level / prior[prior.length - 1].v - 1 : NaN;
+      }
+      row["Return since inception"] = level - 1;
+      return row;
+    });
+    performanceRows.push(...walletPerformanceRows);
+    performanceRows.push({ "Account": "Desk (HL + IB)", "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"],
       "Return 1Y": returns["1Y"], "Return since inception": returns.since_start });
+    if (walletSeries.length) {
+      const everything = twrIndex(histories.concat(walletSeries.map(({ points }) => points)));
+      const all = windowReturns(everything, now);
+      performanceRows.push({ "Account": "Desk incl. wallets", "Return 7D": all["7D"], "Return 30D": all["30D"], "Return 90D": all["90D"],
+        "Return 1Y": all["1Y"], "Return since inception": all.since_start });
+    }
 
     // -- wallet holdings outside HL
     const walletRows = wallets.flatMap((a) => a.positions.map((p) => {
@@ -733,7 +760,7 @@
     const returnText = `${percent(returns.since_start, true)} since ${dayKey(start)}; ` +
       Object.keys(WINDOWS).map((label) => `${label} ${percent(returns[label], true)}`).join(", ") + ".";
     ((returns["30D"] || 0) >= 0 ? well : attention).unshift(["Desk return (net of deposits)", returnText]);
-    const recent = performanceRows.slice(0, -1).filter((r) => fin(r["Return 30D"]));
+    const recent = performanceRows.slice(0, performanceCount).filter((r) => fin(r["Return 30D"]));
     if (recent.length > 1) {
       const best = recent.reduce((a, b) => (b["Return 30D"] > a["Return 30D"] ? b : a));
       const worst = recent.reduce((a, b) => (b["Return 30D"] < a["Return 30D"] ? b : a));

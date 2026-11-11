@@ -895,11 +895,14 @@ def wallet_activity(account: Account, since: pd.Timestamp, chains: list[str] | N
 
 def update_activity_file(account: Account, data_dir: Path, lookback_days: int = 365,
                          chains: list[str] | None = None,
-                         desk_wallets: dict[str, str] | None = None) -> tuple[pd.DataFrame, list[str]]:
+                         desk_wallets: dict[str, str] | None = None,
+                         full_history: bool = False) -> tuple[pd.DataFrame, list[str]]:
     """Fetch new transfers and merge them into ``onchain_activity_<wallet>.csv``.
 
     The first run reads ``lookback_days``; later runs start a day before the newest saved
-    transfer. Values are re-priced at current prices on every run.
+    transfer. ``full_history`` reads ``lookback_days`` again for the given chains, to fill in a chain
+    that was not readable when the file began (a key stored since). Values are re-priced at current
+    prices on every run.
     """
     from desk.privacy import account_file
 
@@ -909,6 +912,8 @@ def update_activity_file(account: Account, data_dir: Path, lookback_days: int = 
         saved["time"] = pd.to_datetime(saved["time"], utc=True, format="mixed")
         since = saved["time"].max() - pd.Timedelta(days=1)
     else:
+        since = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=lookback_days)
+    if full_history:
         since = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=lookback_days)
     fresh, notes = wallet_activity(account, since, chains, desk_wallets)
     frames = [frame for frame in (saved, fresh) if not frame.empty]
@@ -927,6 +932,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="On-chain wallet reader for the trading desk.")
     parser.add_argument("--store-key", action="store_true", help="Save an Etherscan API key in the Keychain.")
+    parser.add_argument("--backfill-activity", metavar="CHAIN",
+                        help="read a chain's whole transfer history (a year) into every HL wallet's activity file")
     parser.add_argument("--store-alchemy-key", action="store_true",
                         help="Save an Alchemy API key (free at alchemy.com) in the Keychain.")
     parser.add_argument("--store-blockscout-key", action="store_true",
@@ -938,3 +945,14 @@ if __name__ == "__main__":
         store_blockscout_key()
     if args.store_alchemy_key:
         store_alchemy_key()
+    if args.backfill_activity:
+        from desk.accounts import ROOT, accounts_for, load_accounts
+        from desk.privacy import mask_output, shown
+
+        mask_output()
+        for account in accounts_for("hl", load_accounts()):
+            frame, notes = update_activity_file(account, ROOT / "data", chains=[args.backfill_activity], full_history=True)
+            mine = frame[frame["chain"] == args.backfill_activity] if len(frame) else frame
+            print(f"{shown(account.id)}: {len(mine)} {args.backfill_activity} transfers saved")
+            for note in notes:
+                print("  note:", note)

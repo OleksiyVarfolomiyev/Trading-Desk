@@ -163,6 +163,29 @@ def wallet_history_path(data_dir: Path, wallet: str) -> Path:
     return account_file(data_dir, "onchain_value_history", wallet)
 
 
+def wallet_daily_value(data_dir: Path, wallet: str) -> tuple[pd.Series, pd.Timestamp | None]:
+    """A wallet's on-chain token value by UTC day, and the last day that comes from the one-off rebuild.
+
+    Values recorded from run to run (``onchain_value_history_<wallet>.csv``) win; the days before
+    recording began come from ``desk.venues.onchain_history``'s rebuild.
+    """
+    from desk.venues.onchain_history import load_backfill
+
+    def daily(series: pd.Series) -> pd.Series:
+        return series.sort_index().resample("1D").last().ffill().dropna()
+
+    recorded = pd.Series(dtype=float)
+    path = wallet_history_path(data_dir, wallet)
+    if path.exists() and len(saved := pd.read_csv(path)):
+        recorded = daily(saved.assign(ts=pd.to_datetime(saved["ts"], utc=True, format="mixed")).set_index("ts")["value_usd"])
+    rebuilt = load_backfill(data_dir, wallet)
+    if len(recorded) and len(rebuilt):
+        rebuilt = rebuilt[rebuilt.index < recorded.index[0]]
+    pieces = [piece for piece in (rebuilt, recorded) if len(piece)]
+    series = daily(pd.concat(pieces)) if pieces else pd.Series(dtype=float)
+    return series, (rebuilt.index[-1] if len(rebuilt) else None)
+
+
 def save_wallet_history(snapshot: VenueAccount, data_dir: Path) -> Path:
     """Append this run's on-chain wallet value to ``onchain_value_history_<wallet>.csv``.
 

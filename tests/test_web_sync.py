@@ -67,11 +67,13 @@ class SeedHistoryTests(unittest.TestCase):
 
 class DailySyncTests(unittest.TestCase):
     def run_daily(self, read_ib):
-        accounts = [SimpleNamespace(venue="hl", id=WALLET), SimpleNamespace(venue="ib", id=ACCOUNT)]
+        accounts = [SimpleNamespace(venue="hl", id=WALLET, onchain=True), SimpleNamespace(venue="ib", id=ACCOUNT)]
         with patch.object(web_sync, "load_accounts", return_value=accounts), \
+                patch("desk.venues.onchain_history.update_wallet_returns", return_value=([1, 2], [])), \
                 patch("desk.hl.account_analytics.update_portfolio_history") as hl_history, \
                 patch("desk.venues.ib_flex.update_nav_history") as flex, \
                 patch.object(web_sync, "read_ib", side_effect=read_ib), \
+                patch.object(web_sync, "push_wallets", return_value={"ok": True}), \
                 patch.object(web_sync, "push_ib", return_value={"ok": True}) as push, \
                 patch.object(web_sync, "push_nav_only", return_value={"ok": True}) as nav_only, \
                 patch("desk.day_change.position_changes", return_value={}):
@@ -84,7 +86,7 @@ class DailySyncTests(unittest.TestCase):
         flex.assert_called_once()
         push.assert_not_called()
         nav_only.assert_called_once()
-        self.assertIn("daily NAV sent", report[-1])
+        self.assertIn("daily NAV sent", report[-2])
         self.assertNotIn(ACCOUNT, " ".join(report))
         self.assertNotIn(WALLET, " ".join(report))
 
@@ -93,7 +95,9 @@ class DailySyncTests(unittest.TestCase):
         report, *_, push, nav_only = self.run_daily(lambda account: (None, snap))
         push.assert_called_once()
         nav_only.assert_not_called()
-        self.assertEqual(report, ["HL 07f2: history saved", "IB 6543: Flex NAV saved", "IB 6543: sent to the relay (2 positions)"])
+        self.assertEqual(report, ["HL 07f2: history saved", "HL 07f2 wallet: performance saved (2 days)",
+                                  "IB 6543: Flex NAV saved", "IB 6543: sent to the relay (2 positions)",
+                                  "wallets: performance sent to the relay"])
 
     def test_the_job_runs_daily_from_the_repository(self):
         job = web_sync.job_plist()

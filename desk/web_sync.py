@@ -145,6 +145,21 @@ def ib_payload(snapshot, book_entry=None, moves: dict | None = None) -> dict:
     }
 
 
+def wallet_payload(data_dir: Path | str = REPO / "data") -> dict:
+    """The wallets' token performance for the web page: per wallet ``[close ms, value, cumulative PnL, base]``."""
+    from desk.desk_accounts import wallet_performance
+
+    series = {}
+    for name, frame in wallet_performance(load_accounts(), data_dir).items():
+        series[name] = [[int(row.ts.timestamp() * 1000), _clean(float(row.accountValue)), _clean(float(row.pnl)),
+                         _clean(float(row.base))] for row in frame.itertuples()]
+    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "series": series}
+
+
+def push_wallets(data_dir: Path | str = REPO / "data") -> dict:
+    return _post("/ingest/wallets", wallet_payload(data_dir))
+
+
 def push_ib(snapshot, book_entry=None, moves: dict | None = None) -> dict:
     return _post("/ingest/ib", ib_payload(snapshot, book_entry, moves))
 
@@ -177,12 +192,20 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
     from desk.venues import ib_flex
 
     report = []
+    from desk.venues.onchain_history import update_wallet_returns
+
     for account in accounts_for("hl", load_accounts()):
         try:
             update_portfolio_history(account.id, data_dir)
             report.append(f"HL {short_id(account.id)}: history saved")
         except Exception as exc:
             report.append(f"HL {short_id(account.id)}: history not saved ({type(exc).__name__}: {exc})")
+        if account.onchain:
+            try:
+                days = len(update_wallet_returns(account, Path(data_dir))[0])
+                report.append(f"HL {short_id(account.id)} wallet: performance saved ({days} days)")
+            except Exception as exc:
+                report.append(f"HL {short_id(account.id)} wallet: performance not saved ({type(exc).__name__}: {exc})")
     for account in accounts_for("ib", load_accounts()):
         # accounts.json may leave the IB number out (TWS supplies it): then the Flex file names it.
         ident, flex_note = account.id, ""
@@ -209,6 +232,11 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
                               + ("daily NAV sent, positions kept from the last send" if sent else "nothing on the relay to update"))
             except Exception as inner:
                 report.append(f"{label}: TWS not readable ({reason}) and NAV not sent ({inner})")
+    try:
+        push_wallets(data_dir)
+        report.append("wallets: performance sent to the relay")
+    except Exception as exc:
+        report.append(f"wallets: performance not sent ({type(exc).__name__}: {exc})")
     return report
 
 
@@ -262,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--store-token", action="store_true",
                         help="make a new relay token, keep it in the Keychain and print it for pbcopy")
     parser.add_argument("--seed-history", action="store_true", help="send the saved daily HL history to the relay")
+    parser.add_argument("--push-wallets", action="store_true", help="send the wallets' token performance to the relay now")
     parser.add_argument("--push-ib", action="store_true", help="read IB through TWS and send it to the relay now")
     parser.add_argument("--daily", action="store_true", help="save HL and IB history locally and send IB (the daily job)")
     parser.add_argument("--install-daily", action="store_true", help="run --daily at 08:00 and 23:30 through launchd")
@@ -286,6 +315,8 @@ def main(argv: list[str] | None = None) -> int:
             print("  " + line)
     if args.seed_history:
         print("Saved daily points on the relay:", seed_history())
+    if args.push_wallets:
+        print("Sent wallet performance:", push_wallets())
     if args.push_ib:
         from desk.day_change import position_changes
 
@@ -293,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
             entry, snapshot = read_ib(account)
             answer = push_ib(snapshot, entry, position_changes([snapshot]))
             print(f"Sent {snapshot.label} ({len(snapshot.positions)} positions, NAV history included): {answer}")
-    if not any((args.seed_history, args.push_ib, args.daily, args.install_daily, args.uninstall_daily)):
+    if not any((args.seed_history, args.push_ib, args.push_wallets, args.daily, args.install_daily, args.uninstall_daily)):
         parser.print_help()
     return 0
 

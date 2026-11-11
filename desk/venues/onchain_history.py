@@ -228,11 +228,11 @@ def current_balances(snapshot) -> dict[tuple[str, str], float]:
     return amounts
 
 
-def rebuild_wallet_values(account: Account, data_dir: Path, start: pd.Timestamp, end: pd.Timestamp,
-                          snapshot=None, notes: list[str] | None = None) -> tuple[pd.Series, list[str]]:
-    """Daily value of one wallet's tokens outside HL from ``start`` to ``end``, with notes."""
+def wallet_balances(account: Account, data_dir: Path, days: pd.DatetimeIndex, snapshot=None,
+                    notes: list[str] | None = None) -> pd.DataFrame:
+    """Each ``chain:token`` balance of one wallet at every day's close: read exactly on public-RPC chains,
+    rebuilt backward from today's balances and the saved transfers elsewhere."""
     notes = [] if notes is None else notes
-    days = day_closes(start, end)
     if snapshot is None:
         snapshot, read_notes = onchain.wallet_snapshot(account)
         notes += [f"current balances: {note}" for note in read_notes]
@@ -248,7 +248,14 @@ def rebuild_wallet_values(account: Account, data_dir: Path, start: pd.Timestamp,
         notes.append(f"{', '.join(sorted(failed))}: today's balances could not be read, so their past "
                      "balances are left out")
     parts.append(transfer_balances(activity, current_balances(snapshot), days, other))
-    balances = pd.concat(parts, axis=1).fillna(0.0)
+    return pd.concat(parts, axis=1).fillna(0.0)
+
+
+def rebuild_wallet_values(account: Account, data_dir: Path, start: pd.Timestamp, end: pd.Timestamp,
+                          snapshot=None, notes: list[str] | None = None) -> tuple[pd.Series, list[str]]:
+    """Daily value of one wallet's tokens outside HL from ``start`` to ``end``, with notes."""
+    notes = [] if notes is None else notes
+    balances = wallet_balances(account, data_dir, day_closes(start, end), snapshot, notes)
     value, unpriced = value_balances(balances)
     if unpriced:
         notes.append(f"no DefiLlama price history for {len(unpriced)} token(s): {', '.join(unpriced)}")
@@ -284,6 +291,80 @@ def load_backfill(data_dir: Path, wallet: str) -> pd.Series:
     return pd.Series(saved["value_usd"].to_numpy(), index=pd.to_datetime(saved["date"], utc=True))
 
 
+# ---------------------------------------------------------------------------
+# Performance: what the tokens held each morning earned from price moves
+# ---------------------------------------------------------------------------
+
+RETURN_COLUMNS = ["date", "pnl_usd", "base_usd"]
+
+
+def returns_path(data_dir: Path, wallet: str) -> Path:
+    return account_file(data_dir, "onchain_returns", wallet)
+
+
+def price_moves(balances: pd.DataFrame, price_of=llama_closes) -> tuple[pd.DataFrame, list[str]]:
+    """Daily ``pnl_usd`` and ``base_usd`` of the tokens held at the previous close.
+
+    A day's PnL is the previous close's balance times the day's price change; its base is that balance's
+    value at the previous close. Deposits, withdrawals and swaps change a balance only from the next day, so
+    they never count as performance. A token without a price on either day adds nothing that day.
+    """
+    pnl = pd.Series(0.0, index=balances.index)
+    base = pd.Series(0.0, index=balances.index)
+    unpriced = []
+    for column in balances.columns:
+        if not (balances[column] > 0).any():
+            continue
+        chain, token = column.split(":", 1)
+        prices = price_of(price_key(chain, token), balances.index)
+        if prices.isna().all():
+            unpriced.append(column)
+            continue
+        held = balances[column].shift(1)
+        before = prices.shift(1)
+        known = prices.notna() & before.notna()
+        pnl += (held * (prices - before)).where(known, 0.0).fillna(0.0)
+        base += (held * before).where(known, 0.0).fillna(0.0)
+    return pd.DataFrame({"pnl_usd": pnl, "base_usd": base}).iloc[1:], unpriced
+
+
+def update_wallet_returns(account: Account, data_dir: Path, start: pd.Timestamp | None = None,
+                          ) -> tuple[pd.DataFrame, list[str]]:
+    """Extend ``onchain_returns_<wallet>.csv`` with the days up to yesterday and return all saved days.
+
+    The first run starts where the value rebuild starts; later runs read from the last saved day, so a
+    daily run costs a few requests. Read-only: nothing here signs or sends a transaction.
+    """
+    path = returns_path(data_dir, account.id)
+    saved = pd.read_csv(path) if path.exists() else pd.DataFrame(columns=RETURN_COLUMNS)
+    yesterday = pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=1)
+    if len(saved):
+        begin = pd.Timestamp(saved["date"].max(), tz="UTC")
+    else:
+        rebuilt = load_backfill(data_dir, account.id)
+        begin = start if start is not None else (rebuilt.index[0] if len(rebuilt) else yesterday - pd.Timedelta(days=30))
+    if begin >= yesterday:
+        return saved, []
+    notes: list[str] = []
+    balances = wallet_balances(account, data_dir, day_closes(begin, yesterday), None, notes)
+    moves, unpriced = price_moves(balances)
+    if unpriced:
+        notes.append(f"no DefiLlama price history for {len(unpriced)} token(s): {', '.join(unpriced)}")
+    fresh = moves.reset_index(names="date").assign(date=lambda frame: frame["date"].dt.strftime("%Y-%m-%d"))
+    merged = pd.concat([saved, fresh[RETURN_COLUMNS]]).drop_duplicates("date", keep="last").sort_values("date")
+    merged.to_csv(path, index=False)
+    return merged, notes
+
+
+def load_returns(data_dir: Path, wallet: str) -> pd.DataFrame:
+    """Saved daily ``pnl_usd`` and ``base_usd`` (empty if never built), indexed by UTC date."""
+    path = returns_path(data_dir, wallet)
+    if not path.exists():
+        return pd.DataFrame(columns=RETURN_COLUMNS[1:], index=pd.DatetimeIndex([], tz="UTC"))
+    saved = pd.read_csv(path)
+    return saved.set_index(pd.to_datetime(saved["date"], utc=True))[RETURN_COLUMNS[1:]]
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -292,7 +373,22 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Rebuild each HL wallet's on-chain value before recording began.")
     parser.add_argument("--start", default=None, help="First date (YYYY-MM-DD); default one year ago.")
     parser.add_argument("--data-dir", default=str(ROOT / "data"))
+    parser.add_argument("--returns", action="store_true",
+                        help="extend each wallet's daily price-move performance (onchain_returns_<wallet>.csv) to yesterday")
     args = parser.parse_args()
+    if args.returns:
+        from desk.privacy import mask_output
+
+        mask_output()
+        for account in load_accounts():
+            if account.venue == "hl" and account.onchain:
+                started = time.time()
+                frame, notes = update_wallet_returns(account, Path(args.data_dir), pd.Timestamp(args.start, tz="UTC") if args.start else None)
+                print(f"{account.name}: {len(frame)} days to {frame['date'].max() if len(frame) else 'n/a'} "
+                      f"({time.time() - started:.0f}s)")
+                for note in notes:
+                    print(f"  {note}")
+        raise SystemExit(0)
     start = pd.Timestamp(args.start, tz="UTC") if args.start else pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=365)
     for account in load_accounts():
         if account.venue != "hl" or not account.onchain:
