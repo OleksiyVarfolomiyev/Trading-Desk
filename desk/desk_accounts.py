@@ -74,8 +74,11 @@ def wallet_performance(accounts: list, data_dir: Path | str) -> dict[str, pd.Dat
             continue
         value, _ = wallet_daily_value(Path(data_dir), account.id)
         close = moves.index + pd.Timedelta(days=1)
-        held = value.reindex(value.index.union(moves.index)).ffill().reindex(moves.index)
-        held.iloc[-1] = value.iloc[-1]  # the table shows the wallet's value now
+        # Value at each day's close is the next day's holdings base, so value and PnL come from the same balances
+        # (the rebuilt value series can miss a token a day, which would be read as a flow); the last day uses
+        # the wallet's value now.
+        held = moves["base_usd"].shift(-1)
+        held.iloc[-1] = value.iloc[-1]
         histories[account.wallet_name] = pd.DataFrame({
             "ts": close, "accountValue": held.to_numpy(), "pnl": moves["pnl_usd"].cumsum().to_numpy(),
             "base": moves["base_usd"].to_numpy()})

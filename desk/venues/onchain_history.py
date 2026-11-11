@@ -66,13 +66,65 @@ def _rpc(url: str, method: str, params: list) -> str:
     return response.json()["result"]
 
 
+def _block_stamps(url: str, numbers: list[int]) -> list[int]:
+    """The real timestamps of these blocks."""
+    calls = [{"jsonrpc": "2.0", "id": index, "method": "eth_getBlockByNumber", "params": [hex(number), False]}
+             for index, number in enumerate(numbers)]
+    results = onchain._rpc_batch(url, calls)
+    return [int(results[index]["timestamp"], 16) for index in range(len(numbers))]
+
+
+BLOCK_TOLERANCE_SECONDS = 30
+
+
 def blocks_at(chain: str, moments: list[pd.Timestamp]) -> list[int]:
-    """The block at or just before each moment, from the latest block and a fixed block time."""
+    """The block at or just before each moment (within ``BLOCK_TOLERANCE_SECONDS``), found by searching
+    real block timestamps.
+
+    A chain's block time drifts (Base's went from two seconds to a fraction of one), so a block counted
+    back from the latest at the nominal time landed weeks from its day. The search keeps a bracket of
+    blocks around each moment, guesses by interpolating inside it and bisects every fourth round, so it
+    always converges; all moments share each round's batched request.
+    """
     url = PUBLIC_RPC[chain]
     latest = _rpc(url, "eth_getBlockByNumber", ["latest", False])
     number, stamp = int(latest["number"], 16), int(latest["timestamp"], 16)
-    seconds = BLOCK_SECONDS[chain]
-    return [max(0, number - max(0, stamp - int(moment.timestamp()) + seconds - 1) // seconds) for moment in moments]
+    first = _block_stamps(url, [0])[0]
+    targets = [int(moment.timestamp()) for moment in moments]
+    low, low_stamp = [0] * len(targets), [first] * len(targets)
+    high, high_stamp = [number] * len(targets), [stamp] * len(targets)
+    result: list[int | None] = [None] * len(targets)
+    for index, target in enumerate(targets):
+        if target >= stamp:
+            result[index] = number
+        elif target <= first:
+            result[index] = 0
+    for round_number in range(80):
+        pending = [index for index, found in enumerate(result) if found is None]
+        if not pending:
+            break
+        guesses = {}
+        for index in pending:
+            if high[index] - low[index] <= 1:
+                result[index] = low[index]
+                continue
+            if round_number % 4 == 3 or high_stamp[index] <= low_stamp[index]:
+                guess = (low[index] + high[index]) // 2
+            else:
+                share = (targets[index] - low_stamp[index]) / (high_stamp[index] - low_stamp[index])
+                guess = low[index] + int(share * (high[index] - low[index]))
+            guesses[index] = min(high[index] - 1, max(low[index] + 1, guess))
+        if not guesses:
+            continue
+        order = list(guesses)
+        for index, found in zip(order, _block_stamps(url, [guesses[index] for index in order])):
+            if found <= targets[index]:
+                low[index], low_stamp[index] = guesses[index], found
+                if targets[index] - found <= BLOCK_TOLERANCE_SECONDS:
+                    result[index] = guesses[index]
+            else:
+                high[index], high_stamp[index] = guesses[index], found
+    return [low[index] if found is None else found for index, found in enumerate(result)]
 
 
 def _balance_calls(chain: str, wallet: str, token: str, block: int, call_id: int) -> dict:
