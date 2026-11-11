@@ -229,7 +229,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
                                      "Positions": "int", "% of desk": "pct"}, account_total,
                           key={"% of desk": "max"}),
         # Returns only: the dollar PnL is in the accounts' value chart and the desk value tile.
-        "performance": table(desk.performance_frame()[["Account"] + [f"Return {label}" for label in PERIODS]],
+        "performance": table(desk.performance_frame()[["Account"] + [f"Return {label}" for label in PERIODS] + ["Since"]],
                              {f"Return {label}": "spct" for label in PERIODS}, total_last=True,
                              key={"Return 30D": "abs"}),
         "exposure": table(overview.exposure_frame(), {**money, "Net": "susd", "Gross / equity": "pct",

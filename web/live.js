@@ -676,7 +676,7 @@
       const own = (historyOf[a.id] || []).length ? twrIndex([historyOf[a.id]]) : [];
       const r = windowReturns(own, now);
       return { "Account": a.label, "Return 7D": r["7D"], "Return 30D": r["30D"], "Return 90D": r["90D"], "Return 1Y": r["1Y"],
-        "Return since inception": r.since_start };
+        "Return since inception": r.since_start, "Since": own.length ? dayKey(own[0].t) : "" };
     });
     const performanceCount = performanceRows.length;  // the trading accounts: what "best account" ranks
     // Wallet tokens outside HL: the daily price move of what was held (the Mac computes it; deposits earn nothing).
@@ -695,16 +695,17 @@
         row[`Return ${label}`] = prior.length ? level / prior[prior.length - 1].v - 1 : NaN;
       }
       row["Return since inception"] = level - 1;
+      row["Since"] = dayKey(points[0].t - DAY_MS);  // the first day's return starts at the day before's close
       return row;
     });
     performanceRows.push(...walletPerformanceRows);
     performanceRows.push({ "Account": "Desk (HL + IB)", "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"],
-      "Return 1Y": returns["1Y"], "Return since inception": returns.since_start });
+      "Return 1Y": returns["1Y"], "Return since inception": returns.since_start, "Since": dayKey(start) });
     if (walletSeries.length) {
       const everything = twrIndex(histories.concat(walletSeries.map(({ points }) => points)));
       const all = windowReturns(everything, now);
       performanceRows.push({ "Account": "Desk incl. wallets", "Return 7D": all["7D"], "Return 30D": all["30D"], "Return 90D": all["90D"],
-        "Return 1Y": all["1Y"], "Return since inception": all.since_start });
+        "Return 1Y": all["1Y"], "Return since inception": all.since_start, "Since": everything.length ? dayKey(everything[0].t) : "" });
     }
 
     // -- wallet holdings outside HL
@@ -807,7 +808,7 @@
       "Risk equity": "usd", "Open risk": "usd", "Long": "usd", "Short": "usd", "VaR 95%": "usd", "VaR 99%": "usd" };
     const signed = { "uPnL": "susd", "Net": "susd", "Value": "susd" };
     const tables = {
-      performance: table(performanceRows, ["Account", "Return 7D", "Return 30D", "Return 90D", "Return 1Y", "Return since inception"],
+      performance: table(performanceRows, ["Account", "Return 7D", "Return 30D", "Return 90D", "Return 1Y", "Return since inception", "Since"],
         { "Return 7D": "spct", "Return 30D": "spct", "Return 90D": "spct", "Return 1Y": "spct", "Return since inception": "spct" },
         { totalLast: true, key: { "Return 30D": "abs" } }),
       accounts: table(accountRows, ["Venue", "Account", "% of desk", "Cash / equity", "Margin used / equity", "Available / equity",
