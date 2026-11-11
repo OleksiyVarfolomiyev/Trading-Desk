@@ -73,8 +73,11 @@ def target_price(side: str, bid: float, ask: float, elapsed: float, patience: fl
     return spot_price(price, sz_decimals)
 
 
-def chase(exchange, wallet: str, market: dict, side: str, quantity: float, patience: float) -> tuple[float, float]:
-    """Rest a limit order and reprice it until filled; returns (filled quantity, average price)."""
+def chase(exchange, wallet: str, market: dict, side: str, quantity: float, patience: float,
+          reduce_only: bool = False) -> tuple[float, float]:
+    """Rest a limit order and reprice it until filled; returns (filled quantity, average price).
+
+    Also used for perps (``market`` named by its coin, ``reduce_only`` to shrink a position)."""
     is_buy = side == "buy"
     started, oid, price = time.time(), None, None
     filled_before, notional_before = 0.0, 0.0
@@ -102,7 +105,8 @@ def chase(exchange, wallet: str, market: dict, side: str, quantity: float, patie
             oid = None
             if remaining <= 0:
                 break
-        response = exchange.order(market["name"], is_buy, remaining, wanted, {"limit": {"tif": "Gtc"}})
+        response = exchange.order(market["name"], is_buy, remaining, wanted, {"limit": {"tif": "Gtc"}},
+                                  reduce_only=reduce_only)
         status = hl_trade._status_rows(response)[0]
         if "error" in status:
             raise RuntimeError(f"HL refused the order: {status['error']}")

@@ -38,7 +38,7 @@ import pandas as pd
 from desk import emphasis
 from desk.privacy import mask
 from desk.day_change import DayChange, desk_day_change, position_changes
-from desk.overview import with_position_returns
+from desk.overview import day_change_total, with_position_returns
 from desk.desk_accounts import PERIODS, ROOT_DATA, WINDOWS, DeskAccounts
 
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
@@ -258,6 +258,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         priced = ordered["uPnL (%)"].notna()
         cost = (ordered["Value"] - ordered["uPnL"]).abs()[priced].sum()
         total["uPnL (%)"] = ordered["uPnL"][priced].sum() / cost if cost else None
+        total["24h change (%)"] = day_change_total(ordered["Value"], ordered["24h change (%)"])
         tables["positions"] = table(ordered, {"Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
                                               "uPnL (%)": "spct", "24h change (%)": "spct",
                                               "Weight": "pct", "Exposure / desk value": "pct"}, total,

@@ -632,7 +632,8 @@
     const positionTotal = { "Asset class": "Total", "Value": sum(positionRows.map((r) => r.Value)),
       "uPnL": sum(positionRows.map((r) => r["uPnL"])), "Weight": sum(positionRows.map((r) => r.Weight)),
       "Exposure / desk value": sum(positionRows.map((r) => r["Exposure / desk value"])),
-      "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN };
+      "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN,
+      "24h change (%)": dayChangeTotal(positionRows) };
 
     // -- exposure by asset class
     const classes = {};
@@ -841,6 +842,15 @@
       problems, notes,
       accounts_status: status,
     });
+  }
+
+  // The book's 24-hour move: price PnL over the last day over the gross value a day ago, as
+  // day_change_total in desk/overview.py. Positions without a 24-hour change are left out.
+  function dayChangeTotal(rows) {
+    const known = rows.filter((r) => fin(r.Value) && fin(r["24h change (%)"]) && r["24h change (%)"] > -1);
+    const before = known.map((r) => r.Value / (1 + r["24h change (%)"]));
+    const base = sum(before.map(Math.abs));
+    return base ? sum(known.map((r, i) => r.Value - before[i])) / base : NaN;
   }
 
   function exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value }) {

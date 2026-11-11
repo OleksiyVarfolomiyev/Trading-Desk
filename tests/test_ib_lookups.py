@@ -42,3 +42,13 @@ class QualifyForHistoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DayChangeTotalTests(unittest.TestCase):
+    def test_longs_and_shorts_over_yesterdays_gross_value(self):
+        from desk.overview import day_change_total
+
+        # Long worth 110 after +10% (was 100, +10); short worth -90 after -10% (was -100, +10);
+        # a wallet token with no 24h change is left out.
+        self.assertAlmostEqual(day_change_total([110.0, -90.0, 50.0], [0.10, -0.10, float("nan")]), 20 / 200)
+        self.assertTrue(day_change_total([10.0], [float("nan")]) != day_change_total([10.0], [float("nan")]))  # NaN

@@ -79,6 +79,19 @@ def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], 
     return frame
 
 
+def day_change_total(values, changes) -> float:
+    """The book's 24-hour move: price PnL over the last day (short positions gain when prices fall)
+    over the gross value a day ago. Positions without a 24-hour change are left out."""
+    values = pd.Series(values, dtype=float).reset_index(drop=True)
+    changes = pd.Series(changes, dtype=float).reset_index(drop=True)
+    known = values.notna() & changes.notna() & (changes > -1)
+    if not known.any():
+        return float("nan")
+    before = values[known] / (1 + changes[known])
+    base = before.abs().sum()
+    return float((values[known] - before).sum() / base) if base else float("nan")
+
+
 def _pnl_style(row_index, column, value, row):
     """Signed colours for PnL and its shares, on every row including the total."""
     if column in {"% of account value", "% of position value"}:
@@ -382,7 +395,7 @@ class DeskOverview:
                      "Avg price": float("nan"), "Mark": float("nan"),
                      "Value": group["Value"].sum(), "uPnL": group["uPnL"].sum(),
                      "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
-                     "24h change (%)": float("nan"),
+                     "24h change (%)": day_change_total(group["Value"], group["24h change (%)"]),
                      "Weight": group["Weight"].sum(), "Exposure / desk value": group["Exposure / desk value"].sum()}
             group = pd.concat([group, pd.DataFrame([total])], ignore_index=True)
             group = group[emphasis.key_columns_first(list(group.columns), {"Weight"}, SIGNED_COLUMNS | {"Side"},
@@ -395,7 +408,7 @@ class DeskOverview:
                 cell_style=_signed_style, bold_last=True, title=f"OPEN POSITIONS: {klass.upper()}",
                 key_columns={"Weight": "max"},
                 blank_missing_cells={(len(group) - 1, column)
-                                     for column in ("Quantity", "Avg price", "Mark", "24h change (%)")},
+                                     for column in ("Quantity", "Avg price", "Mark")},
             )
         frame = frame.assign(gross=frame["Value"].abs())
         leverage = frame["gross"].sum() / self.desk_equity if self.desk_equity else float("nan")
