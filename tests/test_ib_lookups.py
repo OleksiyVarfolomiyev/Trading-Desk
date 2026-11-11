@@ -52,3 +52,26 @@ class DayChangeTotalTests(unittest.TestCase):
         # a wallet token with no 24h change is left out.
         self.assertAlmostEqual(day_change_total([110.0, -90.0, 50.0], [0.10, -0.10, float("nan")]), 20 / 200)
         self.assertTrue(day_change_total([10.0], [float("nan")]) != day_change_total([10.0], [float("nan")]))  # NaN
+
+
+class IbHistoryFallbackTests(unittest.TestCase):
+    def test_ib_stocks_without_ib_history_are_priced_from_yahoo(self):
+        import pandas as pd
+
+        from desk import live_risk
+
+        holdings = pd.DataFrame([
+            {"key": "ib:a", "venue": "ib", "symbol": "NVDA", "ref": "1", "value": 100.0},
+            {"key": "ib:b", "venue": "ib", "symbol": "NOPE", "ref": "2", "value": 50.0},
+        ])
+        days = pd.date_range(pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=12), periods=12, freq="D")
+
+        def yahoo(symbol, count):
+            if symbol == "NOPE":
+                raise KeyError(symbol)
+            return pd.Series(range(100, 112), index=days, dtype=float)
+
+        with patch.object(live_risk, "yahoo_stock_closes", yahoo):
+            returns, missing = live_risk.holding_returns(holdings, 10, lambda refs: {})
+        self.assertEqual(list(returns.columns), ["ib:a"])
+        self.assertEqual(missing, ["NOPE"])

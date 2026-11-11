@@ -44,6 +44,19 @@ def position_values(snapshots: Iterable, hl_spot: Iterable[dict] | None = None) 
     return frame[frame["value"].abs() > 0].reset_index(drop=True)
 
 
+def yahoo_stock_closes(symbol: str, days: int) -> pd.Series:
+    """Daily closes of a US-listed stock from Yahoo Finance, dated by UTC day: the stand-in for IB's own
+    history while TWS does not answer (a symbol Yahoo does not know raises, so it counts as not priced)."""
+    from desk.venues.ib_statement import yahoo_closes
+
+    end = pd.Timestamp.now(tz="UTC").normalize()
+    series = yahoo_closes(symbol.replace(" ", "-"), end - pd.Timedelta(days=days + 10), end)
+    if series.empty:
+        raise KeyError(symbol)
+    series.index = pd.DatetimeIndex(series.index).tz_localize("UTC")
+    return series
+
+
 def hl_closes(symbol: str, dex: str, days: int) -> pd.Series:
     """Daily closes of an HL market (cached candles), dated by UTC day."""
     from desk.hl.trade_analytics import fetch_daily_candles
@@ -158,7 +171,7 @@ def holding_returns(
             elif row.venue in ("hl-spot", "wallet"):
                 series = hl_closes(row.ref, "", days)  # an empty market raises: counted as not priced
             elif row.venue == "ib":
-                series = ib_series[row.ref]
+                series = ib_series[row.ref] if row.ref in ib_series else yahoo_stock_closes(row.symbol, days)
             else:
                 raise KeyError(row.venue)
         except Exception:

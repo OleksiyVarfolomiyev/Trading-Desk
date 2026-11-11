@@ -690,7 +690,7 @@
     })).sort((a, b) => b.Value - a.Value);
 
     // -- ex-ante risk: today's holdings moved by each of the last 90 days' prices
-    const riskRow = exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value });
+    const riskRow = exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value, ibs, ibCloses: (ibData && ibData.closes) || {} });
 
     // -- charts
     const valueSeries = traders.map((a) => {
@@ -816,7 +816,7 @@
 
     if (ibs.length) {
       notes.push(`${ibs[0].label} is read through TWS on the desk's Mac, which sends it to the relay every 10 minutes while the local dashboard runs; sent ${ibData.as_of.slice(0, 16).replace("T", " ")} UTC.`);
-      notes.push(`${ibs[0].label} is left out of the current-holdings risk table, which uses HL prices.`);
+      notes.push(`${ibs[0].label} stocks are in the current-holdings risk table, priced from Yahoo Finance's daily closes that the desk's Mac sends.`);
     } else {
       notes.push("IB is not included yet: the desk's Mac has not sent it (python -m desk.web_sync --push-ib).");
     }
@@ -853,7 +853,7 @@
     return base ? sum(known.map((r, i) => r.Value - before[i])) / base : NaN;
   }
 
-  function exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value }) {
+  function exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value, ibs, ibCloses }) {
     // Daily close-to-close returns for each holding; wallet tokens and HL spot use HL's perp of the same coin.
     const holdings = hlPositions.map((p) => ({ coin: p.coin, value: value(p) }));
     trading.forEach((a) => a.spot.forEach((s) => holdings.push({ coin: s.coin, value: s.value })));
@@ -861,6 +861,8 @@
       const coin = riskCoin(p.symbol);
       holdings.push({ coin, value: value(p), stable: STABLE_SYMBOLS.has(coin) });
     }));
+    // IB stocks: the Mac sends their daily closes; a closed day carries a zero return, as in desk/live_risk.py.
+    const ibHoldings = ibs.flatMap((a) => a.positions.map((p) => ({ symbol: p.symbol, value: value(p) })));
     const days = [];
     const last = Date.now() - DAY_MS;
     for (let t = Math.floor((last - RISK_DAYS * DAY_MS) / DAY_MS) * DAY_MS; t < Math.floor(last / DAY_MS) * DAY_MS; t += DAY_MS) days.push(t);
@@ -870,8 +872,26 @@
       const close = new Map(rows.map((row) => [Math.floor(row.t / DAY_MS) * DAY_MS, row.c]));
       return days.map((t) => (close.has(t) && close.has(t - DAY_MS) ? close.get(t) / close.get(t - DAY_MS) - 1 : NaN));
     };
+    const ibReturns = (symbol) => {
+      const rows = ibCloses[symbol];
+      if (!rows || rows.length < 2) return null;
+      const known = rows.map(([day, close]) => [Date.parse(day + "T00:00:00Z"), close]).sort((a, b) => a[0] - b[0]);
+      const closeOn = (t) => {  // the last close on or before the day
+        let found = NaN;
+        for (const [at, close] of known) { if (at <= t) found = close; else break; }
+        return found;
+      };
+      return days.map((t) => { const x = closeOn(t) / closeOn(t - DAY_MS) - 1; return fin(x) ? x : NaN; });
+    };
     let covered = 0, total = 0;
     const pnl = days.map(() => 0);
+    for (const holding of ibHoldings) {
+      total += Math.abs(holding.value);
+      const r = ibReturns(holding.symbol);
+      if (!r) continue;
+      covered += Math.abs(holding.value);
+      r.forEach((x, i) => { pnl[i] += fin(x) ? holding.value * x : 0; });
+    }
     for (const holding of holdings) {
       total += Math.abs(holding.value);
       if (holding.stable) { covered += Math.abs(holding.value); continue; }

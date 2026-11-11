@@ -35,7 +35,8 @@ class IbPayloadTests(unittest.TestCase):
             pd.DataFrame({"date": ["2025-01-15", "2025-01-16"], "nav": [1010, 1020], "flows": [0, 0]}).to_csv(
                 Path(folder) / "ib_nav_history_6543.csv", index=False)
             entry = SimpleNamespace(equity_usd=5000.0, risk_usd=120.0, positions=2)
-            with patch.dict(os.environ, {"DESK_IB_DATA_DIR": folder}):
+            with patch.dict(os.environ, {"DESK_IB_DATA_DIR": folder}), \
+                    patch.object(web_sync, "ib_closes", return_value={"AAPL": [["2026-11-10", 160.0]]}):
                 payload = web_sync.ib_payload(snapshot(), entry, {("IB 6543", "AAPL"): 0.01})
         self.assertEqual(payload["id"], "6543")
         self.assertEqual([row[0] for row in payload["nav"]], ["2025-01-13", "2025-01-14", "2025-01-15", "2025-01-16"])

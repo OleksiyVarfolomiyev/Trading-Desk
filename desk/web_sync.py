@@ -102,6 +102,26 @@ def ib_nav(account_id: str) -> pd.DataFrame:
     return nav.drop_duplicates("date", keep="last").sort_values("date")
 
 
+RISK_CLOSE_DAYS = 100
+
+
+def ib_closes(positions) -> dict[str, list]:
+    """Recent daily closes of the IB stocks (Yahoo Finance), so the web page can put them in its
+    holdings risk; a symbol Yahoo does not know is left out."""
+    from desk.live_risk import yahoo_stock_closes
+
+    closes = {}
+    for position in positions:
+        if position.asset_class != "equity" or position.symbol in closes:
+            continue
+        try:
+            series = yahoo_stock_closes(position.symbol, RISK_CLOSE_DAYS)
+        except Exception:
+            continue
+        closes[position.symbol] = [[day.strftime("%Y-%m-%d"), round(float(close), 6)] for day, close in series.items()]
+    return closes
+
+
 def ib_payload(snapshot, book_entry=None, moves: dict | None = None) -> dict:
     """The IB account as the web dashboard needs it, with only its last four characters."""
     ident = short_id(snapshot.account)
@@ -120,6 +140,7 @@ def ib_payload(snapshot, book_entry=None, moves: dict | None = None) -> dict:
         "risk": ({"equity": book_entry.equity_usd, "risk": book_entry.risk_usd, "positions": book_entry.positions}
                  if book_entry is not None else None),
         "positions": positions,
+        "closes": ib_closes(snapshot.positions),
         "nav": [[row.date, float(row.nav), float(row.flows)] for row in nav.itertuples()],
     }
 
