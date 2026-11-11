@@ -39,6 +39,7 @@ class WebSiteTests(unittest.TestCase):
         self.assertEqual(config["main"], "web/worker.js")
         self.assertEqual(config["assets"]["directory"], "./web/site")
         self.assertIn("web/build_site.sh", config["build"]["command"])
+        self.assertEqual([space["binding"] for space in config["kv_namespaces"]], ["DESK"])
 
 
 class WalletsSecretTests(unittest.TestCase):

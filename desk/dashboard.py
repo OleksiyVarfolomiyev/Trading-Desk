@@ -388,6 +388,7 @@ class Dashboard:
                 moves = None
             payload = build_payload(self.desk, self.risk_table, day, moves)
             payload["accounts_status"] = self.account_status(payload["problems"])
+            self._send_ib_to_web(moves)
             with self.lock:
                 self.payload = json_safe(payload)
                 self.status.update(last_ok=pd.Timestamp.now(tz="UTC").isoformat(), error=None,
@@ -405,6 +406,32 @@ class Dashboard:
             with self.lock:
                 self.status["refreshing"] = False
                 self._publish()
+
+    def _send_ib_to_web(self, moves) -> None:
+        """Send IB to the web dashboard's relay (desk/web_sync.py) at most every 10 minutes, in the background."""
+        from desk import web_sync
+
+        if time.time() - getattr(self, "last_web_push", 0.0) < web_sync.PUSH_EVERY_SECONDS:
+            return
+        overview = self.desk.overview
+        snapshot = next((item for item in overview.snapshots if item.venue == "ib"), None)
+        if snapshot is None:
+            return
+        try:
+            if not web_sync.ingest_token():
+                return  # not set up: the web dashboard simply has no IB
+        except Exception:
+            return
+        entry = next((item for item in overview.book if item.venue == "ib"), None)
+        self.last_web_push = time.time()
+
+        def send():
+            try:
+                web_sync.push_ib(snapshot, entry, moves)
+            except Exception as exc:  # the web dashboard keeps the last IB it received
+                print(f"Sending IB to the web dashboard failed: {exc}")
+
+        threading.Thread(target=send, name="web-sync", daemon=True).start()
 
     def _publish(self) -> None:
         """Serialize payload and status once per change (the page polls often)."""

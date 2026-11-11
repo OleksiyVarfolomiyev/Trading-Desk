@@ -303,6 +303,16 @@
   }
 
   // ------------------------------------------------------------------ history (HL portfolio)
+  // PnL at time t, interpolated between a series' points (its first or last point outside them).
+  function pnlAt(series, t) {
+    const before = series.filter((p) => p.t <= t), after = series.filter((p) => p.t > t);
+    if (before.length && after.length) {
+      const a = before[before.length - 1], b = after[0];
+      return a.pnl + (b.pnl - a.pnl) * (t - a.t) / (b.t - a.t);
+    }
+    return (before.length ? before[before.length - 1] : after[0]).pnl;
+  }
+
   // One series per wallet on HL's all-time PnL scale: weekly points, then the month window's
   // daily points, then the week window's, then the day window's, each shifted to continue the last.
   function mergedHistory(portfolio) {
@@ -313,15 +323,6 @@
       const pnl = new Map((window.pnlHistory || []).map(([t, v]) => [t, num(v)]));
       return (window.accountValueHistory || []).filter(([t]) => pnl.has(t))
         .map(([t, v]) => ({ t, value: num(v), pnl: pnl.get(t) })).sort((a, b) => a.t - b.t);
-    };
-    // PnL at time t, interpolated between a series' points (its first or last point outside them).
-    const pnlAt = (series, t) => {
-      const before = series.filter((p) => p.t <= t), after = series.filter((p) => p.t > t);
-      if (before.length && after.length) {
-        const a = before[before.length - 1], b = after[0];
-        return a.pnl + (b.pnl - a.pnl) * (t - a.t) / (b.t - a.t);
-      }
-      return (before.length ? before[before.length - 1] : after[0]).pnl;
     };
     let series = points("allTime");
     for (const name of ["month", "week", "day"]) {
@@ -336,6 +337,53 @@
     }
     // PnL is measured from the wallet's first point, so a wallet joining later enters as a deposit.
     return series.map((p) => ({ t: p.t, value: p.value, pnl: p.pnl - series[0].pnl }));
+  }
+
+  // HL keeps only weekly points before its last month. The relay saves each day's last point (KV),
+  // so the days before the month window come from there, shifted onto the live series' PnL scale.
+  function withSaved(live, portfolio, saved) {
+    const month = (Object.fromEntries(portfolio || []).month || {}).pnlHistory || [];
+    const points = (saved || []).map(([t, value, pnl]) => ({ t, value: num(value), pnl: num(pnl) }))
+      .filter((p) => fin(p.value) && fin(p.pnl)).sort((a, b) => a.t - b.t);
+    if (!live.length || !month.length) return live;
+    const cutoff = month[0][0];
+    const older = points.filter((p) => p.t < cutoff);
+    if (!older.length) return live;
+    const anchor = older[older.length - 1];
+    const offset = pnlAt(live, anchor.t) - anchor.pnl;
+    const series = live.filter((p) => p.t < older[0].t)
+      .concat(older.map((p) => ({ t: p.t, value: p.value, pnl: p.pnl + offset })), live.filter((p) => p.t >= cutoff));
+    return series.map((p) => ({ t: p.t, value: p.value, pnl: p.pnl - series[0].pnl }));
+  }
+
+  // ------------------------------------------------------------------ IB (sent by the desk's Mac)
+  const IB_STALE_MS = 26 * HOUR_MS;
+
+  function ibAccount(data) {
+    const label = data.label, a = data.account || {};
+    const positions = (data.positions || []).map((p) => ({
+      venue: "ib", account: label, symbol: p.symbol, coin: null, asset_class: p.asset_class,
+      quantity: num(p.quantity), avg_price: num(p.avg_price), mark_price: num(p.mark_price),
+      multiplier: num(p.multiplier) || 1, unrealized: num(p.unrealized), change24h: num(p.change24h),
+    }));
+    return { venue: "ib", id: data.id, label, equity: num(a.equity), cash: num(a.cash), margin_used: num(a.margin_used),
+      available: num(a.available), unrealized: num(a.unrealized), positions, spot: [], dexes: [], asOf: Date.parse(data.as_of) };
+  }
+
+  // Daily NAV (IB's close, about 21:00 UTC) as value and PnL net of deposits, then today's equity.
+  function ibHistory(data, account) {
+    let pnl = 0, previous = null;
+    const series = (data.nav || []).map(([day, nav, flows]) => {
+      nav = num(nav);
+      if (previous !== null) pnl += nav - previous - num(flows);
+      previous = nav;
+      return { t: Date.parse(day + "T21:00:00Z"), value: nav, pnl };
+    }).filter((p) => fin(p.value) && fin(p.t));
+    const last = series[series.length - 1];
+    if (last && fin(account.equity) && account.asOf > last.t) {
+      series.push({ t: account.asOf, value: account.equity, pnl: last.pnl + account.equity - last.value });
+    }
+    return series;
   }
 
   // Growth-of-1 index net of deposits and transfers, as time_weighted_index in trade_analytics.py.
@@ -462,7 +510,18 @@
       if (w.error) problems.push(`${w.label}: ${w.error}`);
       (w.notes || []).forEach((note) => notes.push(note));
     });
-    const accounts = trading.concat(wallets);
+    const ibData = await every("ib", 5 * 60000, () => relay("/ib")).catch(() => null);
+    const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];
+    ibs.forEach((account) => {
+      const age = Date.now() - account.asOf;
+      if (!(age < IB_STALE_MS)) {
+        const problem = `last sent ${fin(account.asOf) ? dayKey(account.asOf) : "at an unknown time"}; start the local dashboard to refresh it`;
+        status.push({ name: account.label, ok: false, problem });
+        notes.push(`${account.label}: ${problem}.`);
+      } else status.push({ name: account.label, ok: true });
+    });
+    const traders = trading.concat(ibs);  // trading accounts on every venue (HL and IB)
+    const accounts = traders.concat(wallets);
 
     // Market data for every DEX with a position, plus BTC and the S&P 500 perp for benchmarks.
     const dexes = [...new Set(trading.flatMap((a) => a.dexes).concat(["", "xyz"]))];
@@ -471,22 +530,29 @@
     const others = trading.flatMap((a) => a.spot.map((s) => s.coin))
       .concat(wallets.flatMap((a) => a.positions.map((p) => riskCoin(p.symbol))));
     const coins = [...new Set(hlPositions.map((p) => p.coin).concat(others.filter((coin) => contexts[coin])))];
-    const [candles, funding, portfolios] = await Promise.all([
+    const [candles, funding, portfolios, savedPoints] = await Promise.all([
       Promise.all(coins.concat([BTC, SP500]).map((coin) => dailyCandles(coin, CANDLE_DAYS).then((rows) => [coin, rows], () => [coin, []]))),
       Promise.all([...new Set(hlPositions.map((p) => p.coin))].map((coin) => fundingHistory(coin).then((rows) => [coin, rows], () => [coin, []]))),
       Promise.all(trading.map((a) => every(`portfolio:${a.id}`, 5 * 60000, () => relay(`/hl/${a.id}/portfolio`))
         .then((p) => [a.id, p], (error) => { problems.push(`${a.label} history: ${error.message}`); return [a.id, null]; }))),
+      Promise.all(trading.map((a) => every(`saved:${a.id}`, HOUR_MS, () => relay(`/hl/${a.id}/history`))
+        .then((reply) => [a.id, reply.points || []], () => [a.id, []]))),
     ]);
     const candleOf = Object.fromEntries(candles), fundingOf = Object.fromEntries(funding), portfolioOf = Object.fromEntries(portfolios);
+    const savedOf = Object.fromEntries(savedPoints);
+    const historyOf = Object.fromEntries(trading.map((a) => [a.id,
+      portfolioOf[a.id] ? withSaved(mergedHistory(portfolioOf[a.id]), portfolioOf[a.id], savedOf[a.id]) : []]));
+    ibs.forEach((a) => { historyOf[a.id] = ibHistory(ibData, a); });
 
     // -- totals
     const deskEquity = sum(accounts.map((a) => a.equity));
-    const tradingEquity = sum(trading.map((a) => a.equity));
+    const tradingEquity = sum(traders.map((a) => a.equity));
     const walletValue = sum(wallets.map((a) => a.equity));
-    const value = (p) => p.quantity * p.mark_price;
-    const gross = sum(hlPositions.map((p) => Math.abs(value(p))));
-    const net = sum(hlPositions.map(value));
-    const unrealized = sum(trading.map((a) => a.unrealized));
+    const value = (p) => p.quantity * p.mark_price * (p.multiplier || 1);
+    const tradePositions = traders.flatMap((a) => a.positions);
+    const gross = sum(tradePositions.map((p) => Math.abs(value(p))));
+    const net = sum(tradePositions.map(value));
+    const unrealized = sum(traders.map((a) => a.unrealized));
 
     // -- open risk per HL account (executor-consistent)
     const riskNotes = [];
@@ -505,13 +571,17 @@
           riskNotes.push(`${p.coin}: no price history, assumed a 10% move`);
         }
       }
-      return { label: account.label, equity: account.collateral, risk, positions: account.positions.length };
+      return { venue: "hl", label: account.label, equity: account.collateral, risk, positions: account.positions.length };
+    });
+    ibs.forEach((account) => {  // IB's open risk as the desk's Mac computed it (desk/risk.py)
+      const r = ibData.risk;
+      if (r) book.push({ venue: "ib", label: account.label, equity: num(r.equity), risk: num(r.risk), positions: num(r.positions) });
     });
     const riskEquity = sum(book.map((b) => b.equity)), riskUsed = sum(book.map((b) => b.risk));
     const riskCap = riskEquity * MAX_TOTAL_RISK_PCT;
 
     // -- history, returns and charts
-    const histories = trading.map((a) => (portfolioOf[a.id] ? mergedHistory(portfolioOf[a.id]) : [])).filter((h) => h.length);
+    const histories = traders.map((a) => historyOf[a.id] || []).filter((h) => h.length);
     const index = twrIndex(histories);
     const returns = windowReturns(index, now);
     const start = index.length ? index[0].t : now;
@@ -531,7 +601,7 @@
         dayChange += change; dayValue += account.equity;
       } else missing.push(account.label);
     });
-    wallets.forEach((account) => {
+    ibs.concat(wallets).forEach((account) => {
       let change = 0, ok = true;
       for (const p of account.positions) {
         const r = p.change24h;
@@ -578,8 +648,8 @@
     });
 
     // -- movers (trading positions)
-    const share = (p) => { const entry = Math.abs(p.quantity * p.avg_price); return entry ? p.unrealized / entry : NaN; };
-    const ranked = hlPositions.slice().sort((a, b) => a.unrealized - b.unrealized);
+    const share = (p) => { const entry = Math.abs(p.quantity * p.avg_price * (p.multiplier || 1)); return entry ? p.unrealized / entry : NaN; };
+    const ranked = tradePositions.filter((p) => fin(p.unrealized)).sort((a, b) => a.unrealized - b.unrealized);
     const moverList = [...new Set(ranked.slice(-MOVERS).reverse().concat(ranked.slice(0, MOVERS)))];
     const moverRows = moverList.map((p) => ({ "Account": p.account, "Symbol": p.symbol, "Side": p.quantity > 0 ? "LONG" : "SHORT",
       "Value": value(p), "uPnL": p.unrealized, "% of position": share(p) }));
@@ -600,8 +670,8 @@
       "Gross / equity": sum(allPositions.map((p) => Math.abs(value(p)))) / deskEquity, "Net / equity": sum(allPositions.map(value)) / deskEquity };
 
     // -- performance by account
-    const performanceRows = trading.map((a) => {
-      const own = portfolioOf[a.id] ? twrIndex([mergedHistory(portfolioOf[a.id])]) : [];
+    const performanceRows = traders.map((a) => {
+      const own = (historyOf[a.id] || []).length ? twrIndex([historyOf[a.id]]) : [];
       const r = windowReturns(own, now);
       return { "Account": a.label, "Return 7D": r["7D"], "Return 30D": r["30D"], "Return 90D": r["90D"] };
     });
@@ -620,8 +690,8 @@
     const riskRow = exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value });
 
     // -- charts
-    const valueSeries = trading.map((a) => {
-      const history = portfolioOf[a.id] ? mergedHistory(portfolioOf[a.id]).filter((p) => p.t >= start) : [];
+    const valueSeries = traders.map((a) => {
+      const history = (historyOf[a.id] || []).filter((p) => p.t >= start);
       const days = dailyLast(history, "value");
       return { name: a.label, x: [...days.keys()], y: [...days.values()].map((v) => Math.round(v * 100) / 100) };
     }).filter((s) => s.x.length);
@@ -656,7 +726,7 @@
 
     // -- highlights (desk/overview.py and desk/desk_accounts.py rules)
     const well = [], attention = [];
-    well.push(["Desk value", `${money(deskEquity)}: trading accounts ${money(tradingEquity)}, wallet holdings ${money(walletValue)}; ${hlPositions.length} open positions.`]);
+    well.push(["Desk value", `${money(deskEquity)}: trading accounts ${money(tradingEquity)}, wallet holdings ${money(walletValue)}; ${tradePositions.length} open positions.`]);
     const returnText = `${percent(returns.since_start, true)} since ${dayKey(start)}; ` +
       Object.keys(WINDOWS).map((label) => `${label} ${percent(returns[label], true)}`).join(", ") + ".";
     ((returns["30D"] || 0) >= 0 ? well : attention).unshift(["Desk return (net of deposits)", returnText]);
@@ -667,14 +737,14 @@
       well.splice(1, 0, ["Best account, 30D", `${best.Account} ${percent(best["Return 30D"], true)}.`]);
       if (worst["Return 30D"] < 0) attention.splice(1, 0, ["Worst account, 30D", `${worst.Account} ${percent(worst["Return 30D"], true)}.`]);
     }
-    if (hlPositions.length) {
+    if (tradePositions.length) {
       (unrealized >= 0 ? well : attention).push(["uPnL", `${signedMoney(unrealized)} on ${money(gross)} of positions (${gross ? percent(unrealized / gross, true) : "n/a"}).`]);
       const mover = (p) => `${p.symbol} ${signedMoney(p.unrealized)}${fin(share(p)) ? ` (${percent(share(p), true)})` : ""}`;
       const winners = ranked.slice().reverse().filter((p) => p.unrealized > 0).slice(0, HIGHLIGHT_MOVERS);
       const losers = ranked.filter((p) => p.unrealized < 0).slice(0, HIGHLIGHT_MOVERS);
       if (winners.length) well.push(["Largest winners", winners.map(mover).join(", ") + "."]);
       if (losers.length) attention.push(["Largest losers", losers.map(mover).join(", ") + "."]);
-      const largest = hlPositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
+      const largest = tradePositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
       const concentration = deskEquity ? Math.abs(value(largest)) / deskEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {
         attention.push(["Concentration", `${largest.symbol} ${largest.quantity > 0 ? "long" : "short"} is ${percent(concentration, false, 0)} of desk value (${money(Math.abs(value(largest)))}, ${largest.account}).`]);
@@ -683,7 +753,7 @@
     if (tradingEquity) {
       const leverage = gross / tradingEquity;
       (leverage > HIGH_LEVERAGE ? attention : well).push(["Leverage", `Gross ${leverage.toFixed(2)}x and net ${net / tradingEquity >= 0 ? "+" : ""}${(net / tradingEquity).toFixed(2)}x trading equity.`]);
-      const available = sum(trading.map((a) => a.available));
+      const available = sum(traders.map((a) => a.available));
       if (available / tradingEquity < LOW_AVAILABLE_PCT) {
         attention.push(["Available margin low", `${money(available)} available, ${percent(available / tradingEquity, false, 0)} of trading equity.`]);
       }
@@ -723,7 +793,7 @@
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
         { "uPnL (%)": "spct", "24h change (%)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
       { total: positionTotal, key: { "Weight": "max" } }),
-      open_risk: table(book.map((b) => ({ "Venue": "hl", "Account": b.label, "Positions": b.positions, "Risk equity": b.equity,
+      open_risk: table(book.map((b) => ({ "Venue": b.venue, "Account": b.label, "Positions": b.positions, "Risk equity": b.equity,
         "Open risk": b.risk, "% of desk equity": riskEquity ? b.risk / riskEquity : NaN }))
         .concat([{ "Venue": "Total", "Account": "", "Positions": sum(book.map((b) => b.positions)), "Risk equity": riskEquity,
           "Open risk": riskUsed, "% of desk equity": riskEquity ? riskUsed / riskEquity : NaN }]),
@@ -740,9 +810,14 @@
         : { columns: [], rows: [], total: null },
     };
 
-    notes.push("IB is not included: it can only be read through TWS on the desk's own machine.");
+    if (ibs.length) {
+      notes.push(`${ibs[0].label} is read through TWS on the desk's Mac, which sends it to the relay every 10 minutes while the local dashboard runs; sent ${ibData.as_of.slice(0, 16).replace("T", " ")} UTC.`);
+      notes.push(`${ibs[0].label} is left out of the current-holdings risk table, which uses HL prices.`);
+    } else {
+      notes.push("IB is not included yet: the desk's Mac has not sent it (python -m desk.web_sync --push-ib).");
+    }
     notes.push("Wallet tokens on Base (main tokens and Venice staking) and Ethereum are included; Arbitrum and Polygon need an API key and are left out.");
-    notes.push("Returns and the value chart use HL's own history: weekly points before the last month, then daily and finer.");
+    notes.push("Returns and the value chart use HL's own history for the last month and the relay's saved daily points before it (HL's weekly points where none are saved); IB uses its daily NAV.");
     notes.push("SPY is Yahoo Finance's daily close, read through the relay; S&P 500 beta in the risk table uses HL's S&P 500 perp, which trades every day like the crypto book.");
     notes.push("Current-holdings risk is a historical simulation: today's positions moved by each of the last 90 days' prices.");
     [...new Set(riskNotes)].forEach((note) => notes.push(`Open risk: ${note}`));
@@ -753,7 +828,7 @@
         day_change: Object.keys(dayParts).length ? { change: dayChange, pct: dayBase > 0 ? dayChange / dayBase : NaN, parts: dayParts, missing } : null,
         trading_equity: tradingEquity, wallet_value: walletValue, unrealized, unrealized_share: gross ? unrealized / gross : NaN,
         gross, net, gross_leverage: tradingEquity ? gross / tradingEquity : NaN, net_leverage: tradingEquity ? net / tradingEquity : NaN,
-        positions: hlPositions.length,
+        positions: tradePositions.length,
         returns: { since_start: returns.since_start, "7D": returns["7D"], "30D": returns["30D"], "90D": returns["90D"] },
         money_weighted: moneyWeighted(histories, start), since: iso(start), drawdown, peak_date: iso(peak.t),
       },

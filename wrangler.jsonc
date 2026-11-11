@@ -9,5 +9,7 @@
   // Keep the WALLETS value set in Cloudflare's dashboard across deploys from this repository.
   "keep_vars": true,
   "assets": { "directory": "./web/site" },
-  "build": { "command": "bash web/build_site.sh" }
+  "build": { "command": "bash web/build_site.sh" },
+  // Saved daily HL history and the IB account the desk's Mac sends (web/worker.js).
+  "kv_namespaces": [{ "binding": "DESK", "id": "ebfaafe8107d4d9eadf30275180b394a" }]
 }

@@ -7,6 +7,12 @@
 // Endpoints (GET only; answers are cached for CACHE_SECONDS):
 //   /wallets             the wallets' short ids (their last four characters)
 //   /benchmark/SPY       SPY's daily closes from Yahoo Finance (a browser page cannot call Yahoo)
+//   /hl/<id>/history     the wallet's daily value and PnL saved so far (KV), so old history keeps its
+//                        daily detail after HL thins it to weekly points
+//   /ib                  the IB account as the desk's Mac last sent it (KV): balances, positions, risk,
+//                        daily NAV; written with POST /ingest/ib and the INGEST_TOKEN secret
+//
+// Storage: a KV namespace bound as DESK (wrangler.jsonc). Without it, history and IB are skipped.
 //   /hl/<id>/account     positions and margin on every HL DEX, spot balances, account mode, fee rates
 //   /hl/<id>/portfolio   HL's value and PnL history (day, week, month, all time)
 //   /wallet/<id>         token balances outside HL: Base and Ethereum (free public nodes, Blockscout)
@@ -287,13 +293,110 @@ function reply(body, status = 200, maxAge = 0) {
   });
 }
 
+// ---- saved history and IB (KV) ----
+// The wallet's points on HL's all-time PnL scale: weekly before the last month, then finer, as the page merges them.
+function mergedHistory(portfolio) {
+  const windows = Object.fromEntries(portfolio || []);
+  const points = (name) => {
+    const window = windows[name];
+    if (!window) return [];
+    const pnl = new Map((window.pnlHistory || []).map(([t, v]) => [t, Number(v)]));
+    return (window.accountValueHistory || []).filter(([t]) => pnl.has(t))
+      .map(([t, v]) => ({ t, value: Number(v), pnl: pnl.get(t) })).sort((a, b) => a.t - b.t);
+  };
+  const pnlAt = (series, t) => {
+    const before = series.filter((p) => p.t <= t), after = series.filter((p) => p.t > t);
+    if (before.length && after.length) {
+      const a = before[before.length - 1], b = after[0];
+      return a.pnl + (b.pnl - a.pnl) * (t - a.t) / (b.t - a.t);
+    }
+    return (before.length ? before[before.length - 1] : after[0]).pnl;
+  };
+  let series = points("allTime");
+  for (const name of ["month", "week", "day"]) {
+    const finer = points(name);
+    if (!finer.length) continue;
+    if (!series.length) { series = finer; continue; }
+    const start = finer[0].t;
+    const offset = series[0].t >= start ? series[0].pnl - pnlAt(finer, series[0].t) : pnlAt(series, start) - finer[0].pnl;
+    series = series.filter((p) => p.t < start).concat(finer.map((p) => ({ t: p.t, value: p.value, pnl: p.pnl + offset })));
+  }
+  return series;
+}
+
+const dayOf = (t) => new Date(t).toISOString().slice(0, 10);
+
+// Merge points ([t, value, pnl]) into the wallet's saved daily series, keeping each day's last point.
+async function saveDaily(env, id, points) {
+  const key = `history:${id}`;
+  const saved = (await env.DESK.get(key, "json")) || {};
+  let changed = false;
+  for (const [t, value, pnl] of points) {
+    const day = dayOf(t);
+    if (!saved[day] || saved[day][0] <= t) {
+      if (!saved[day] || saved[day][1] !== value || saved[day][2] !== pnl) changed = true;
+      saved[day] = [t, value, pnl];
+    }
+  }
+  if (changed) await env.DESK.put(key, JSON.stringify(saved));
+  return saved;
+}
+
+const lastCapture = new Map();
+async function captureHistory(env, id, portfolio) {
+  if (Date.now() - (lastCapture.get(id) || 0) < 3600_000) return;  // at most hourly: KV's free plan allows 1,000 writes a day
+  lastCapture.set(id, Date.now());
+  await saveDaily(env, id, mergedHistory(portfolio).map((p) => [p.t, p.value, p.pnl]));
+}
+
+function authorized(request, env) {
+  const given = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  const expected = env.INGEST_TOKEN || "";
+  if (!expected || given.length !== expected.length) return false;
+  let difference = 0;
+  for (let i = 0; i < given.length; i++) difference |= given.charCodeAt(i) ^ expected.charCodeAt(i);
+  return difference === 0;
+}
+
+// POST /ingest/ib (the IB account from the desk's Mac) and /ingest/history/<id> (seeding saved history).
+async function ingest(request, env, kind, id, wallets) {
+  if (!env.DESK) return reply({ error: "no KV namespace is bound as DESK" }, 501);
+  if (!authorized(request, env)) return reply({ error: "not authorized" }, 401);
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return reply({ error: "the body is not JSON" }, 400);
+  }
+  if (kind === "ib") {
+    const text = JSON.stringify(body);
+    if (/(?:DU|U)\d{5,}/.test(text) || Object.values(wallets).some((a) => text.toLowerCase().includes(a.slice(2).toLowerCase()))) {
+      return reply({ error: "refused: the body holds a full account identifier" }, 400);
+    }
+    await env.DESK.put("ib", text);
+    return reply({ ok: true, bytes: text.length });
+  }
+  if (kind === "history" && wallets[id] && Array.isArray(body.points)) {
+    const saved = await saveDaily(env, id, body.points);
+    return reply({ ok: true, days: Object.keys(saved).length });
+  }
+  return reply({ error: "unknown ingest" }, 404);
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET", "Access-Control-Max-Age": "86400" } });
     }
-    if (request.method !== "GET") return reply({ error: "only GET is supported" }, 405);
+    if (request.method === "POST") {
+      const [first, kind, id] = new URL(request.url).pathname.split("/").filter(Boolean);
+      let walletsForIngest = {};
+      try { walletsForIngest = JSON.parse(env.WALLETS || "{}"); } catch (error) { /* checked below */ }
+      if (first === "ingest") return ingest(request, env, kind, id, walletsForIngest);
+      return reply({ error: "unknown request" }, 404);
+    }
+    if (request.method !== "GET") return reply({ error: "only GET and POST are supported" }, 405);
     let wallets;
     try {
       wallets = JSON.parse(env.WALLETS || "{}");
@@ -310,8 +413,16 @@ export default {
         return reply({ error: String(error && error.message || error) }, 502);
       }
     }
+    if (kind === "ib" && !id) {
+      const saved = env.DESK ? await env.DESK.get("ib", "json") : null;
+      return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no IB data has been sent yet" }, 404);
+    }
     const address = wallets[id];
     if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) return reply({ error: "unknown wallet id" }, 404);
+    if (kind === "hl" && what === "history") {
+      const saved = env.DESK ? (await env.DESK.get(`history:${id}`, "json")) || {} : {};
+      return reply({ points: Object.values(saved).sort((a, b) => a[0] - b[0]) }, 200, CACHE_SECONDS);
+    }
     const maxAge = kind === "wallet" ? WALLET_SECONDS : CACHE_SECONDS;
     const remembered = memo.get(url.pathname);
     if (remembered && Date.now() - remembered.at < maxAge * 1000) return reply(remembered.body, 200, CACHE_SECONDS);
@@ -332,6 +443,9 @@ export default {
     }
     const clean = scrub(body, address);
     memo.set(url.pathname, { at: Date.now(), body: clean });
+    if (kind === "hl" && what === "portfolio" && env.DESK && ctx && ctx.waitUntil) {
+      ctx.waitUntil(captureHistory(env, id, body).catch(() => {}));  // keep today's daily points
+    }
     const response = reply(clean, 200, CACHE_SECONDS);
     if (cache && ctx && ctx.waitUntil) ctx.waitUntil(cache.put(key, response.clone()));
     return response;
