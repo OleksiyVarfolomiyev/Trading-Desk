@@ -182,6 +182,27 @@ def _value_with_wallets(value_series: list[dict], wallets: dict | None, min_days
             "x": [ts.strftime("%Y-%m-%d") for ts in total.index], "y": total.tolist()}
 
 
+def with_day_returns(performance: pd.DataFrame, day_change: DayChange | None) -> pd.DataFrame:
+    """The performance table with a 24h return first: each account's 24-hour change (net of flows, the
+    desk-value tile's own figures) over its value a day ago. The two desk rows sum their accounts; an
+    account whose change could not be read leaves a blank, and the desk rows then leave it out."""
+    frame = performance.copy()
+    parts = (day_change.parts if day_change is not None else {})
+    values = dict(zip(frame["Account"], frame["Value"]))
+    day = []
+    for name in frame["Account"]:
+        if name.startswith("Desk"):
+            named = [account for account in parts if account in values and not (name == "Desk (HL + IB)" and account.endswith(" wallet"))]
+            change, value = sum(parts[account] for account in named), sum(values[account] for account in named)
+            day.append(change / (value - change) if named and value - change > 0 else float("nan"))
+        elif name in parts and values[name] - parts[name] > 0:
+            day.append(parts[name] / (values[name] - parts[name]))
+        else:
+            day.append(float("nan"))
+    frame.insert(frame.columns.get_loc("Return 7D"), "Return 24h", day)
+    return frame
+
+
 def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_change: DayChange | None = None,
                   moves: dict[tuple[str, str], float] | None = None) -> dict:
     """The page's data from a fetched DeskAccounts: tiles, highlights, tables and chart series.
@@ -229,8 +250,9 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
                                      "Positions": "int", "% of desk": "pct"}, account_total,
                           key={"% of desk": "max"}),
         # Returns only: the dollar PnL is in the accounts' value chart and the desk value tile.
-        "performance": table(desk.performance_frame()[["Account"] + [f"Return {label}" for label in PERIODS] + ["Since"]],
-                             {f"Return {label}": "spct" for label in PERIODS}, total_last=True,
+        "performance": table(with_day_returns(desk.performance_frame(), day_change)[
+                                 ["Account", "Return 24h"] + [f"Return {label}" for label in PERIODS] + ["Since"]],
+                             {f"Return {label}": "spct" for label in ["24h", *PERIODS]}, total_last=True,
                              key={"Return 30D": "abs"}),
         "exposure": table(overview.exposure_frame(), {**money, "Net": "susd", "Gross / equity": "pct",
                                                       "Net / equity": "spct"}, total_last=True,

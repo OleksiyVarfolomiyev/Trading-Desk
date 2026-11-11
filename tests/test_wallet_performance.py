@@ -60,3 +60,20 @@ class WalletPerformanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DayReturnTests(unittest.TestCase):
+    def test_24h_return_is_each_accounts_change_over_its_value_a_day_ago(self):
+        from desk.dashboard import with_day_returns
+        from desk.day_change import DayChange
+
+        frame = pd.DataFrame({"Account": ["HL 07f2", "07f2 wallet", "Desk (HL + IB)", "Desk incl. wallets"],
+                              "Value": [1100.0, 500.0, 1100.0, 1600.0], "Return 7D": [0.0] * 4})
+        change = DayChange(change=90.0, value=1600.0, parts={"HL 07f2": 100.0, "07f2 wallet": -10.0})
+        out = with_day_returns(frame, change)
+        self.assertEqual(list(out.columns), ["Account", "Value", "Return 24h", "Return 7D"])
+        self.assertAlmostEqual(out["Return 24h"][0], 0.10)             # 100 on 1,000 a day ago
+        self.assertAlmostEqual(out["Return 24h"][1], -10 / 510)         # a loss over the larger earlier value
+        self.assertAlmostEqual(out["Return 24h"][2], 0.10)             # the HL + IB row leaves wallets out
+        self.assertAlmostEqual(out["Return 24h"][3], 90 / 1510)         # the whole desk
+        self.assertTrue(with_day_returns(frame, None)["Return 24h"].isna().all())

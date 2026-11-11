@@ -445,3 +445,44 @@ class IBQuoteFallbackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MarginPlanTests(unittest.TestCase):
+    def position(self, coin, quantity, entry, mark, margin, decimals=1):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(coin=coin, dex="", quantity=quantity, entry_price=entry, mark_price=mark,
+                               margin_used=margin, market=SimpleNamespace(size_decimals=decimals))
+
+    def config(self, **changes):
+        return {**hl_daemon.MARGIN_DEFAULTS, **changes}
+
+    def test_below_the_danger_line_nothing_happens(self):
+        plan = hl_daemon.margin_plan([self.position("ICP", -100, 2.5, 2.4, 500)], 1000.0, 850.0, "0xabc07f2", self.config())
+        self.assertAlmostEqual(plan["used"], 0.85)
+        self.assertIsNone(plan["action"])
+
+    def test_in_danger_the_most_in_the_money_position_is_cut_first(self):
+        positions = [self.position("ICP", -100, 2.5, 2.4, 300),     # short, price fell: +10
+                     self.position("BERA", -1000, 0.10, 0.12, 300),  # short, price rose: -20
+                     self.position("ETH", 1.0, 2000, 2100, 350)]     # long, +100: the most in the money
+        plan = hl_daemon.margin_plan(positions, 1000.0, 950.0, "0xabc07f2", self.config())
+        action = plan["action"]
+        self.assertEqual(action["coin"], "ETH")
+        self.assertAlmostEqual(action["unrealized"], 100.0)
+        # 950 used, target 850: 100 of the 350 margin, more than the 25% chop.
+        self.assertAlmostEqual(action["fraction"], 100 / 350)
+        self.assertEqual(action["quantity"], 0.2)  # 1.0 x 0.2857, down to the 0.1 size step
+
+    def test_protected_positions_are_never_cut(self):
+        positions = [self.position("VVV", -122.46, 19.56, 15.0, 600, 2), self.position("ICP", -100, 2.5, 2.6, 300)]
+        plan = hl_daemon.margin_plan(positions, 1000.0, 950.0, "0xabc07f2", self.config())
+        self.assertEqual(plan["action"]["coin"], "ICP")  # VVV is in profit but protected (the hedge)
+        only_protected = hl_daemon.margin_plan(positions[:1], 1000.0, 950.0, "0xabc07f2", self.config())
+        self.assertIsNone(only_protected["action"])
+        self.assertIn("protected", only_protected["blocked"])
+
+    def test_one_step_never_closes_more_than_half(self):
+        plan = hl_daemon.margin_plan([self.position("ICP", -100, 2.5, 2.4, 100)], 1000.0, 990.0, "0xabc07f2", self.config())
+        self.assertEqual(plan["action"]["fraction"], 0.5)
+        self.assertEqual(plan["action"]["quantity"], 50.0)

@@ -60,10 +60,16 @@ def _close_time(day: pd.Timestamp) -> pd.Timestamp:
 # ---------------------------------------------------------------------------
 
 def _rpc(url: str, method: str, params: list) -> str:
-    response = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-                             timeout=30, headers={"User-Agent": USER_AGENT})
-    response.raise_for_status()
-    return response.json()["result"]
+    for attempt in range(4):  # public nodes drop connections now and then
+        try:
+            response = requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                                     timeout=30, headers={"User-Agent": USER_AGENT})
+            response.raise_for_status()
+            return response.json()["result"]
+        except (requests.ConnectionError, requests.Timeout):
+            if attempt == 3:
+                raise
+            time.sleep(2 ** attempt)
 
 
 def _block_stamps(url: str, numbers: list[int]) -> list[int]:

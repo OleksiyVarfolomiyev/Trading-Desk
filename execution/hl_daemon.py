@@ -788,6 +788,125 @@ def _prefetch_history(coin: str) -> None:
     ht.fetch_funding_history(name.split(":")[-1], dex)
 
 
+# ----------------------------------------------------------------------------------------------
+# Margin guard: reduce positions when a wallet's margin is truly stressed
+
+MARGIN_CONFIG = daemon_link.RUN_DIR / "margin_guard.json"
+MARGIN_DEFAULTS = {
+    "enabled": False,           # False: only log what it would do
+    "warn_used": 0.80,          # margin used / equity: the 20% reserve is breached (a warning)
+    "act_used": 0.90,           # danger: reduce positions from here
+    "target_used": 0.85,        # reduce until about here
+    "chop_fraction": 0.25,      # share of the chosen position closed per step (at most half)
+    "cooldown_seconds": 90,     # between steps in a wallet, so margin data catches up
+    "max_actions_per_day": 8,
+    "protect": ["07f2:VVV"],    # "wallet last four:coin" never reduced (this VVV short hedges the staked VVV)
+}
+
+
+def margin_config() -> dict:
+    """The guard's settings: defaults, overridden by the file (read each time, so edits apply at once)."""
+    config = dict(MARGIN_DEFAULTS)
+    try:
+        config.update(json.loads(MARGIN_CONFIG.read_text()))
+    except (OSError, ValueError):
+        pass
+    return config
+
+
+def margin_plan(positions, equity: float, margin_used: float, wallet: str, config: dict) -> dict:
+    """What to do about a wallet's margin: ``used`` (margin used / equity) and, when it is in danger, the step.
+
+    The step reduces the most in-the-money position (largest unrealized profit in USD) that is not
+    protected, by ``chop_fraction`` or what reaches ``target_used`` if that is more, at most half of it.
+    """
+    used = margin_used / equity if equity > 0 else float("inf")
+    plan: dict = {"used": used, "action": None, "blocked": ""}
+    if used < config["act_used"]:
+        return plan
+    protected = {str(item).lower() for item in config.get("protect", [])}
+    candidates = [position for position in positions
+                  if position.quantity and f"{wallet[-4:]}:{position.coin}".lower() not in protected]
+    if not candidates:
+        plan["blocked"] = "every open position is protected"
+        return plan
+    best = max(candidates, key=lambda position: position.quantity * (position.mark_price - position.entry_price))
+    needed = (margin_used - config["target_used"] * equity) / best.margin_used if best.margin_used > 0 else 1.0
+    fraction = min(0.5, max(config["chop_fraction"], needed))
+    step = 10 ** -best.market.size_decimals
+    quantity = int(abs(best.quantity) * fraction / step + 1e-9) * step
+    quantity = round(quantity if quantity > 0 else abs(best.quantity), best.market.size_decimals)
+    plan["action"] = {"coin": best.coin, "dex": best.dex, "quantity": quantity, "fraction": fraction,
+                      "unrealized": best.quantity * (best.mark_price - best.entry_price),
+                      "side": "SHORT" if best.quantity < 0 else "LONG"}
+    return plan
+
+
+class MarginGuard:
+    """Watches every trading wallet's margin; in danger, closes slices of the most profitable position."""
+
+    def __init__(self, daemon: "Daemon"):
+        self.daemon = daemon
+        self.last_action: dict[str, float] = {}
+        self.last_warning: dict[str, float] = {}
+        self.actions_today: dict[str, int] = {}
+        self.day = time.strftime("%Y-%m-%d")
+        self.latest: dict[str, float] = {}
+
+    def run(self) -> None:
+        while not self.daemon.stopped.wait(10):
+            try:
+                self.step(time.time())
+            except Exception as exc:  # the guard never stops watching
+                log(f"margin guard failed ({type(exc).__name__}: {exc}); retrying")
+
+    def step(self, now: float) -> None:
+        config = margin_config()
+        if time.strftime("%Y-%m-%d") != self.day:
+            self.day, self.actions_today = time.strftime("%Y-%m-%d"), {}
+        for wallet in self.daemon.state.wallets:
+            if now - self.daemon.state.state_time.get(wallet, 0.0) > 2 * STATE_STALE_SECONDS:
+                continue  # no fresh data: never act on a stale picture
+            snapshot = self.daemon.state.snapshot([wallet])
+            plan = margin_plan(snapshot.positions, snapshot.equity, snapshot.margin_used, wallet, config)
+            self.latest[wallet] = plan["used"]
+            tag = f"...{wallet[-4:]}"
+            if plan["used"] >= config["warn_used"] and now - self.last_warning.get(wallet, 0.0) >= 600:
+                self.last_warning[wallet] = now
+                log(f"margin: {tag} uses {plan['used']:.0%} of its equity (reserve is 20%, so up to 80%).")
+            if plan["action"] is None:
+                if plan["blocked"] and now - self.last_warning.get(wallet + "!", 0.0) >= 600:
+                    self.last_warning[wallet + "!"] = now
+                    log(f"margin: {tag} is at {plan['used']:.0%} but {plan['blocked']}; nothing to reduce.")
+                continue
+            action = plan["action"]
+            what = (f"reduce {action['coin']} {action['side']} by {action['quantity']:g} "
+                    f"({action['fraction']:.0%}, unrealized ${action['unrealized']:+,.2f}; margin {plan['used']:.0%} "
+                    f"of equity, act at {config['act_used']:.0%})")
+            if now - self.last_action.get(wallet, 0.0) < config["cooldown_seconds"]:
+                continue
+            if not config["enabled"]:
+                if now - self.last_warning.get(wallet + "?", 0.0) >= 300:
+                    self.last_warning[wallet + "?"] = now
+                    log(f"margin guard (dry run, not enabled) would {tag}: {what}")
+                continue
+            if self.actions_today.get(wallet, 0) >= config["max_actions_per_day"]:
+                log(f"margin guard: {tag} reached its {config['max_actions_per_day']} steps today; not reducing: {what}")
+                continue
+            exchange = self.daemon.exchanges.get(wallet)
+            if exchange is None:
+                log(f"margin guard: {tag} is read-only in the daemon, cannot {what}")
+                continue
+            self.last_action[wallet] = now
+            self.actions_today[wallet] = self.actions_today.get(wallet, 0) + 1
+            log(f"margin guard {tag}: {what}")
+            try:
+                response = exchange.market_close(action["coin"], action["quantity"])
+                log(f"margin guard {tag}: {action['coin']} {response.get('status', response)}")
+            except Exception as exc:
+                log(f"margin guard {tag}: the reduction failed ({type(exc).__name__}: {exc}); will retry")
+
+
 class Session:
     """One client connection: text out, typed answers in."""
 
@@ -826,6 +945,7 @@ class Daemon:
         self.exchanges: dict[str, Any] = {}
         self.guards = Guards(self.state, guards_path)
         self.trade_lock = threading.Lock()
+        self.margin_guard = MarginGuard(self)
         self.streams: list[Stream] = []
         self.market_stream: Stream | None = None
         self.stopped = threading.Event()
@@ -978,6 +1098,8 @@ class Daemon:
             "other_venues_age_s": now - other[1] if other else None,
             "kill_switch": ht.kill_switch_engaged(),
             "guards": guards,
+            "margin_guard": {"enabled": margin_config()["enabled"],
+                             "used": {wallet[-4:]: used for wallet, used in self.margin_guard.latest.items()}},
         }
 
     def _other_book(self, ignore_unreachable: bool, live: bool):
@@ -1244,6 +1366,7 @@ def serve(args: argparse.Namespace) -> int:
         daemon.resume_guards()
     threading.Thread(target=daemon.guards.run, name="guards", daemon=True).start()
     threading.Thread(target=daemon.refresher, name="refresher", daemon=True).start()
+    threading.Thread(target=daemon.margin_guard.run, name="margin-guard", daemon=True).start()
 
     server = _Server(str(daemon_link.SOCKET_PATH), _Handler)
     os.chmod(daemon_link.SOCKET_PATH, 0o600)
@@ -1326,6 +1449,10 @@ def print_data(command: str | None, data: Any) -> None:
         print(f"  guard ...{guard['wallet']} {guard['coin']} {guard['side']} {guard['quantity']:g} "
               f"@ ${guard['entry']:,.6g}, mark {mark}, loss limit ${guard['loss_limit']:,.2f}"
               + (" — EXITING" if guard["exiting"] else ""))
+    margin = data.get("margin_guard")
+    if margin:
+        used = ", ".join(f"...{wallet} {share:.0%}" for wallet, share in margin["used"].items()) or "not read yet"
+        print(f"  margin guard {'ON' if margin['enabled'] else 'dry run (logs only)'}: margin used / equity {used}")
 
 
 def main(argv: list[str] | None = None) -> int:

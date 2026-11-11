@@ -672,10 +672,17 @@
       "Gross / equity": sum(allPositions.map((p) => Math.abs(value(p)))) / deskEquity, "Net / equity": sum(allPositions.map(value)) / deskEquity };
 
     // -- performance by account
+    // 24h return: each account's 24-hour change (the desk-value tile's own figures) over its value a day ago.
+    const equityOf = Object.fromEntries(accounts.map((a) => [a.label, a.equity]));
+    const dayReturn = (names) => {
+      const known = names.filter((n) => n in dayParts && n in equityOf);
+      const change = sum(known.map((n) => dayParts[n])), value = sum(known.map((n) => equityOf[n]));
+      return known.length && value - change > 0 ? change / (value - change) : NaN;
+    };
     const performanceRows = traders.map((a) => {
       const own = (historyOf[a.id] || []).length ? twrIndex([historyOf[a.id]]) : [];
       const r = windowReturns(own, now);
-      return { "Account": a.label, "Return 7D": r["7D"], "Return 30D": r["30D"], "Return 90D": r["90D"], "Return 1Y": r["1Y"],
+      return { "Account": a.label, "Return 24h": dayReturn([a.label]), "Return 7D": r["7D"], "Return 30D": r["30D"], "Return 90D": r["90D"], "Return 1Y": r["1Y"],
         "Return since inception": r.since_start, "Since": own.length ? dayKey(own[0].t) : "" };
     });
     const performanceCount = performanceRows.length;  // the trading accounts: what "best account" ranks
@@ -689,7 +696,7 @@
         if (p.base > 0) level *= 1 + Math.max(-1, gain / p.base);
         return { t: p.t, v: level, pnl: p.pnl };
       });
-      const row = { "Account": name };
+      const row = { "Account": name, "Return 24h": NaN };
       for (const [label, days] of Object.entries(WINDOWS)) {
         const prior = levels.filter((l) => l.t <= now - days * DAY_MS);
         row[`Return ${label}`] = prior.length ? level / prior[prior.length - 1].v - 1 : NaN;
@@ -698,13 +705,14 @@
       row["Since"] = dayKey(points[0].t - DAY_MS);  // the first day's return starts at the day before's close
       return row;
     });
+    walletPerformanceRows.forEach((row) => { row["Return 24h"] = dayReturn([row.Account]); });
     performanceRows.push(...walletPerformanceRows);
-    performanceRows.push({ "Account": "Desk (HL + IB)", "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"],
+    performanceRows.push({ "Account": "Desk (HL + IB)", "Return 24h": dayReturn(traders.map((a) => a.label)), "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"],
       "Return 1Y": returns["1Y"], "Return since inception": returns.since_start, "Since": dayKey(start) });
     if (walletSeries.length) {
       const everything = twrIndex(histories.concat(walletSeries.map(({ points }) => points)));
       const all = windowReturns(everything, now);
-      performanceRows.push({ "Account": "Desk incl. wallets", "Return 7D": all["7D"], "Return 30D": all["30D"], "Return 90D": all["90D"],
+      performanceRows.push({ "Account": "Desk incl. wallets", "Return 24h": dayReturn(accounts.map((a) => a.label)), "Return 7D": all["7D"], "Return 30D": all["30D"], "Return 90D": all["90D"],
         "Return 1Y": all["1Y"], "Return since inception": all.since_start, "Since": everything.length ? dayKey(everything[0].t) : "" });
     }
 
@@ -789,6 +797,13 @@
         attention.push(["Available margin low", `${money(available)} available, ${percent(available / tradingEquity, false, 0)} of trading equity.`]);
       }
     }
+    // Each HL wallet keeps 20% of its equity free; from 90% the daemon's margin guard reduces positions.
+    trading.forEach((a) => {
+      if (!(a.equity > 0)) return;
+      const used = a.margin_used / a.equity;
+      if (used >= 0.90) attention.unshift(["Margin in danger", `${a.label} uses ${percent(used, false, 0)} of its equity as margin; the margin guard reduces positions from 90%.`]);
+      else if (used > 0.80) attention.push(["Margin reserve breached", `${a.label} uses ${percent(used, false, 0)} of its equity as margin (the 20% reserve allows 80%); new trades there are refused.`]);
+    });
     if (book.length) {
       const text = `${money(riskUsed)} of ${money(riskCap)} (${percent(riskUsed / riskCap, false, 0)} of the cap); next position budget ${money(riskEquity * (1 - RESERVE_PCT) * RISK_PCT_OF_USABLE)}.`;
       if (riskUsed > riskCap) attention.unshift(["Open risk over cap", text]);
@@ -808,8 +823,8 @@
       "Risk equity": "usd", "Open risk": "usd", "Long": "usd", "Short": "usd", "VaR 95%": "usd", "VaR 99%": "usd" };
     const signed = { "uPnL": "susd", "Net": "susd", "Value": "susd" };
     const tables = {
-      performance: table(performanceRows, ["Account", "Return 7D", "Return 30D", "Return 90D", "Return 1Y", "Return since inception", "Since"],
-        { "Return 7D": "spct", "Return 30D": "spct", "Return 90D": "spct", "Return 1Y": "spct", "Return since inception": "spct" },
+      performance: table(performanceRows, ["Account", "Return 24h", "Return 7D", "Return 30D", "Return 90D", "Return 1Y", "Return since inception", "Since"],
+        { "Return 24h": "spct", "Return 7D": "spct", "Return 30D": "spct", "Return 90D": "spct", "Return 1Y": "spct", "Return since inception": "spct" },
         { totalLast: true, key: { "Return 30D": "abs" } }),
       accounts: table(accountRows, ["Venue", "Account", "% of desk", "Cash / equity", "Margin used / equity", "Available / equity",
         "uPnL / equity", "Gross / equity", "Net / equity", "Positions"],
