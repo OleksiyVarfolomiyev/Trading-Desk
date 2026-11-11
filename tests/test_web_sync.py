@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,6 +62,44 @@ class SeedHistoryTests(unittest.TestCase):
         self.assertEqual(list(sent), ["/ingest/history/07f2"])
         self.assertEqual([point[1:] for point in sent["/ingest/history/07f2"]["points"]], [[110.0, 10.0], [120.0, 20.0]])
         self.assertNotIn(WALLET, json.dumps(sent))
+
+
+class DailySyncTests(unittest.TestCase):
+    def run_daily(self, read_ib):
+        accounts = [SimpleNamespace(venue="hl", id=WALLET), SimpleNamespace(venue="ib", id=ACCOUNT)]
+        with patch.object(web_sync, "load_accounts", return_value=accounts), \
+                patch("desk.hl.account_analytics.update_portfolio_history") as hl_history, \
+                patch("desk.venues.ib_flex.update_nav_history") as flex, \
+                patch.object(web_sync, "read_ib", side_effect=read_ib), \
+                patch.object(web_sync, "push_ib", return_value={"ok": True}) as push, \
+                patch.object(web_sync, "push_nav_only", return_value={"ok": True}) as nav_only, \
+                patch("desk.day_change.position_changes", return_value={}):
+            report = web_sync.daily_sync("data")
+        return report, hl_history, flex, push, nav_only
+
+    def test_tws_closed_still_sends_the_nav(self):
+        report, hl_history, flex, push, nav_only = self.run_daily(ConnectionRefusedError("TWS is not running"))
+        hl_history.assert_called_once()
+        flex.assert_called_once()
+        push.assert_not_called()
+        nav_only.assert_called_once()
+        self.assertIn("daily NAV sent", report[-1])
+        self.assertNotIn(ACCOUNT, " ".join(report))
+        self.assertNotIn(WALLET, " ".join(report))
+
+    def test_tws_open_sends_the_account(self):
+        snap = snapshot()
+        report, *_, push, nav_only = self.run_daily(lambda account: (None, snap))
+        push.assert_called_once()
+        nav_only.assert_not_called()
+        self.assertEqual(report, ["HL 07f2: history saved", "IB 6543: Flex NAV saved", "IB 6543: sent to the relay (2 positions)"])
+
+    def test_the_job_runs_daily_from_the_repository(self):
+        job = web_sync.job_plist()
+        self.assertEqual(job["ProgramArguments"][-2:], ["desk.web_sync", "--daily"])
+        self.assertEqual(job["ProgramArguments"][0], sys.executable)
+        self.assertEqual(Path(job["WorkingDirectory"]), web_sync.REPO)
+        self.assertEqual(len(job["StartCalendarInterval"]), 2)
 
 
 class TokenTests(unittest.TestCase):

@@ -9,6 +9,7 @@
 //   /benchmark/SPY       SPY's daily closes from Yahoo Finance (a browser page cannot call Yahoo)
 //   /hl/<id>/history     the wallet's daily value and PnL saved so far (KV), so old history keeps its
 //                        daily detail after HL thins it to weekly points
+//   /sync                the last scheduled capture (Cron Trigger every 6 hours): when, days saved, problems
 //   /ib                  the IB account as the desk's Mac last sent it (KV): balances, positions, risk,
 //                        daily NAV; written with POST /ingest/ib and the INGEST_TOKEN secret
 //
@@ -383,7 +384,32 @@ async function ingest(request, env, kind, id, wallets) {
   return reply({ error: "unknown ingest" }, 404);
 }
 
+// The Cron Trigger (wrangler.jsonc): save every wallet's daily points whether or not anyone opens
+// the page. One run keeps every day of HL's month window, so a missed run loses nothing.
+async function dailyCapture(env) {
+  let wallets = {};
+  try { wallets = JSON.parse(env.WALLETS || "{}"); } catch (error) { /* reported below */ }
+  const report = { at: new Date().toISOString(), days: {}, problems: [] };
+  for (const [id, address] of Object.entries(wallets)) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) { report.problems.push(`${id}: not a wallet address`); continue; }
+    try {
+      const portfolio = await hl({ type: "portfolio", user: address });
+      const saved = await saveDaily(env, id, mergedHistory(portfolio).map((p) => [p.t, p.value, p.pnl]));
+      report.days[id] = Object.keys(saved).length;
+    } catch (error) {
+      report.problems.push(`${id}: ${scrub(String(error && error.message || error), address)}`);
+    }
+  }
+  if (!Object.keys(wallets).length) report.problems.push("the WALLETS secret lists no wallets");
+  await env.DESK.put("sync", JSON.stringify(report));
+  return report;
+}
+
 export default {
+  async scheduled(controller, env, ctx) {
+    if (env.DESK) ctx.waitUntil(dailyCapture(env));
+  },
+
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*",
@@ -412,6 +438,10 @@ export default {
       } catch (error) {
         return reply({ error: String(error && error.message || error) }, 502);
       }
+    }
+    if (kind === "sync" && !id) {  // the last scheduled capture: when, days saved per wallet, problems
+      const saved = env.DESK ? await env.DESK.get("sync", "json") : null;
+      return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no scheduled capture has run yet" }, 404);
     }
     if (kind === "ib" && !id) {
       const saved = env.DESK ? await env.DESK.get("ib", "json") : null;

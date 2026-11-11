@@ -11,5 +11,7 @@
   "assets": { "directory": "./web/site" },
   "build": { "command": "bash web/build_site.sh" },
   // Saved daily HL history and the IB account the desk's Mac sends (web/worker.js).
-  "kv_namespaces": [{ "binding": "DESK", "id": "ebfaafe8107d4d9eadf30275180b394a" }]
+  "kv_namespaces": [{ "binding": "DESK", "id": "ebfaafe8107d4d9eadf30275180b394a" }],
+  // Save each HL wallet's daily history every 6 hours, even when nobody opens the page.
+  "triggers": { "crons": ["17 */6 * * *"] }
 }

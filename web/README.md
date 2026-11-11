@@ -52,6 +52,29 @@ against HL's public trade records to find the wallets. Hide those columns if tha
 The dashboard is at `https://desk-relay.<your-subdomain>.workers.dev/`. The secret is kept
 across deploys.
 
+## Saved history and IB
+
+The relay keeps data in a KV namespace bound as `DESK` (`wrangler.jsonc`):
+
+- **HL daily history.** A Cron Trigger runs every 6 hours and saves each wallet's last point of
+  every day, so the page keeps daily detail beyond HL's one-month window. `/sync` shows the last run.
+- **IB.** Only the desk's Mac can read IB, through TWS. It sends balances, positions, open risk and
+  daily NAV to `POST /ingest/ib`, using the `INGEST_TOKEN` secret, which is also kept in the Keychain.
+
+Setup, once:
+
+```bash
+python -m desk.web_sync --store-token | pbcopy   # paste as the Worker secret INGEST_TOKEN (type Secret)
+python -m desk.web_sync --seed-history           # send the saved local HL history
+/Users/admin/anaconda3/envs/py314/bin/python -m desk.web_sync --install-daily
+```
+
+The daily job (launchd) runs at 08:00 and 23:30. If the Mac is asleep then, it runs at the next
+wake. Each run saves the HL history and IB Flex NAV locally and sends IB. When TWS is closed it
+sends the new NAV and keeps the last positions. The log is `~/.trading-desk/daily_sync.log`.
+While the local dashboard runs, it also sends IB every 10 minutes. Remove the job with
+`--uninstall-daily`.
+
 ## Trying it locally
 
 ```bash
