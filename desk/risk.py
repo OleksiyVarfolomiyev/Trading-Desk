@@ -89,6 +89,8 @@ class DeskBook:
 
     entries: list[BookEntry] = field(default_factory=list)
     unreachable: list[str] = field(default_factory=list)
+    # IB's (entry, snapshot) as read, for a caller that also reports them (the daemon sends IB to the web relay).
+    ib_reads: list = field(default_factory=list)
 
     @property
     def equity_usd(self) -> float:
@@ -193,8 +195,9 @@ def other_venue_book(venue: str, accounts: list[Account] | None = None,
             if venue == "ib" and account.id.lower() in counted:
                 continue
             try:
-                entry, _ = ib_book_entry(account)
+                entry, snapshot = ib_book_entry(account)
                 book.entries.append(entry)
+                book.ib_reads.append((entry, snapshot))
             except Exception as exc:
                 book.unreachable.append(f"{account.name}: {str(exc) or type(exc).__name__}")
     if venue != "hl" or counted:

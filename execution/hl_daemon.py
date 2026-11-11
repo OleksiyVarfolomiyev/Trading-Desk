@@ -352,6 +352,29 @@ class HLState:
         book = other_venue_book("hl", already_counted=tuple(self.wallets))
         with self.lock:
             self.other = (book, time.time())
+        self.send_ib(book)
+
+    def send_ib(self, book) -> None:
+        """Send IB, as just read for the risk checks, to the web relay every ten minutes (desk/web_sync.py)."""
+        if not book.ib_reads or time.time() - getattr(self, "ib_sent_at", 0.0) < IB_WEB_EVERY_SECONDS:
+            return
+        self.ib_sent_at = time.time()
+        try:
+            from desk import web_sync
+            from desk.day_change import position_changes
+
+            for entry, snapshot in book.ib_reads:
+                try:
+                    moves = position_changes([snapshot])
+                except Exception:
+                    moves = None
+                web_sync.push_ib(snapshot, entry, moves)
+            if time.time() - getattr(self, "slow_sent_at", 0.0) >= 3600:  # slow-changing readings, hourly
+                self.slow_sent_at = time.time()
+                web_sync.push_wallets()
+                web_sync.push_regime()
+        except Exception as exc:  # the web page keeps the last IB it received
+            log(f"IB not sent to the web relay ({type(exc).__name__}: {exc})")
 
     # -- websocket messages
     def on_wallet(self, wallet: str, channel: str, data: Any) -> None:
@@ -789,6 +812,115 @@ def _prefetch_history(coin: str) -> None:
 
 
 # ----------------------------------------------------------------------------------------------
+# Alerts: what needs the user's attention, for the dashboards (desk/alerts.py)
+
+ALERTS_FILE = daemon_link.RUN_DIR / "daemon_alerts.json"
+IB_WEB_EVERY_SECONDS = 600       # the daemon sends IB to the web relay this often
+ALERT_PUSH_SECONDS = 60          # at most this often after a change
+ALERT_HEARTBEAT_SECONDS = 900    # and at least this often to the web relay
+
+
+class Alerts:
+    def __init__(self, path: Path | None = ALERTS_FILE):
+        self.path = path
+        self.items: dict[str, dict] = {}
+        self.lock = threading.RLock()
+        self.dirty = True
+        self.last_push = 0.0
+        self.market_making: list[dict] = []
+        self.market_making_at = 0.0
+        self.ladders: list[dict] = []
+
+    def refresh_market_making(self, daemon: "Daemon") -> None:
+        """The ladders' metrics (desk/market_making.py) for the dashboards, every five minutes."""
+        self.ladders = [{"wallet": item["wallet"][-4:], "coin": item["coin"], "quotes": len(item["oids"])}
+                        for item in list(daemon.ladders.ladders.values())]
+        if time.time() - self.market_making_at < 300:
+            return
+        self.market_making_at = time.time()
+        from desk import market_making
+
+        frame = market_making.market_making_frame({(item["wallet"], item["coin"]): item["quotes"] for item in self.ladders})
+        rows = json.loads(frame.to_json(orient="records"))
+        if [row.get("Fills") for row in rows] != [row.get("Fills") for row in self.market_making] or len(rows) != len(self.market_making):
+            self.dirty = True
+        self.market_making = rows
+
+    def set(self, key: str, title: str, text: str, ttl: float = 0.0) -> None:
+        with self.lock:
+            old = self.items.get(key)
+            if old and old["title"] == title and old["text"] == text:
+                return
+            self.items[key] = {"title": title, "text": daemon_link.mask(text),
+                               "since": old["since"] if old else time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
+                               "expires": time.time() + ttl if ttl else 0}
+            self.dirty = True
+        if not old:
+            log(f"ALERT {title}: {text}")
+
+    def clear(self, key: str) -> None:
+        with self.lock:
+            if self.items.pop(key, None) is not None:
+                self.dirty = True
+
+    def state(self) -> dict:
+        now = time.time()
+        with self.lock:
+            for key in [key for key, item in self.items.items() if item["expires"] and item["expires"] < now]:
+                self.items.pop(key)
+            return {"heartbeat": now, "as_of": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
+                    "alerts": list(self.items.values()), "ladders": self.ladders, "market_making": self.market_making}
+
+    def run(self, daemon: "Daemon") -> None:
+        while not daemon.stopped.wait(30):
+            try:
+                self.watch(daemon)
+                try:
+                    self.refresh_market_making(daemon)
+                except Exception as exc:
+                    log(f"market-making metrics failed ({type(exc).__name__}: {exc})")
+                state = self.state()
+                if self.path is not None:
+                    self.path.write_text(json.dumps(state, indent=1))
+                now = time.time()
+                if (self.dirty and now - self.last_push >= ALERT_PUSH_SECONDS) or now - self.last_push >= ALERT_HEARTBEAT_SECONDS:
+                    self.last_push = now
+                    self.dirty = False
+                    try:
+                        from desk import web_sync
+
+                        web_sync._post("/ingest/alerts", state)
+                    except Exception as exc:  # the web page then shows the daemon as not reporting
+                        log(f"alerts not sent to the web relay ({type(exc).__name__}: {exc})")
+            except Exception as exc:
+                log(f"alerts failed ({type(exc).__name__}: {exc})")
+
+    def watch(self, daemon: "Daemon") -> None:
+        """The daemon's own health: stale account data, dead websockets, guards that cannot check."""
+        now = time.time()
+        for wallet in daemon.state.wallets:
+            age = now - daemon.state.state_time.get(wallet, 0.0)
+            key = f"stale:{wallet}"
+            if age > 120:
+                self.set(key, "stale account data", f"...{wallet[-4:]}: no fresh positions for {age:.0f}s; "
+                         "the guards and ladders wait for fresh data")
+            else:
+                self.clear(key)
+        down = [stream.name for stream in daemon.streams if not stream.connected]
+        if down:
+            self.set("streams", "websocket down", "Disconnected: " + ", ".join(down) + "; reconnecting")
+        else:
+            self.clear("streams")
+        failing = [entry for entry in list(daemon.guards.entries.values())
+                   if entry.failing_since is not None and now - entry.failing_since > 300]
+        if failing:
+            self.set("guards", "guard checks failing", ", ".join(f"...{entry.wallet[-4:]} {entry.coin}" for entry in failing)
+                     + ": the net-loss guard cannot check them (the exchange stops stay active)")
+        else:
+            self.clear("guards")
+
+
+# ----------------------------------------------------------------------------------------------
 # Margin guard: keep a wallet away from an account-wide liquidation cascade
 
 MARGIN_CONFIG = daemon_link.RUN_DIR / "margin_guard.json"
@@ -898,12 +1030,17 @@ class MarginGuard:
                 self.last_warning[wallet] = now
                 log(f"margin: {tag} uses {plan['used']:.0%} of its equity as margin (reserve is 20%, so up to 80%); "
                     f"{plan['health']:.0%} of the way to liquidation.")
+            alerts = self.daemon.alerts
             if plan["action"] is None:
+                alerts.clear(f"margin:{wallet}")
                 if plan["blocked"] and now - self.last_warning.get(wallet + "!", 0.0) >= 600:
                     self.last_warning[wallet + "!"] = now
                     log(f"margin: {tag} is {plan['health']:.0%} of the way to liquidation but {plan['blocked']}.")
                 continue
             action = plan["action"]
+            alerts.set(f"margin:{wallet}", "margin guard cutting positions",
+                       f"{tag} is {plan['health']:.0%} of the way to liquidation; the guard reduces positions "
+                       f"(next: {action['coin']} {action['side']}) until about {config['target_maintenance']:.0%}")
             what = (f"reduce {action['coin']} {action['side']} by {action['quantity']:g} ({action['fraction']:.0%}, "
                     f"unrealized ${action['unrealized']:+,.2f}){' as a last resort (protected)' if plan['last_resort'] else ''}; "
                     f"the account is {plan['health']:.0%} of the way to liquidation, act at {config['act_maintenance']:.0%}")
@@ -1018,6 +1155,8 @@ class RegimeGuard:
                 self.last_day[regime] = today
                 continue
             log(f"regime guard: {label} at high confidence ({part['detail']}); trimming {config['trim_fraction']:.0%}: {plan}")
+            self.daemon.alerts.set(f"regime:{regime}", f"regime guard trimmed ({label})",
+                                   f"Trimmed {config['trim_fraction']:.0%}: {plan}", ttl=24 * 3600)
             for wallet, position, quantity in orders:
                 exchange = self.daemon.exchanges.get(wallet)
                 if exchange is None:
@@ -1222,11 +1361,19 @@ class Ladders:
                     self.step(ladder, time.time())
                 except Exception as exc:
                     text = str(exc)
+                    tag = f"...{ladder['wallet'][-4:]} {ladder['coin']}"
                     if "rate limit" in text.lower() or "too many" in text.lower():
                         self.backoff_until = time.time() + 600
                         log(f"ladder: HL rate limit ({text[:120]}); pausing the ladders for 10 minutes")
+                        self.daemon.alerts.set("ladders:rate", "ladders paused (HL rate limit)",
+                                               "HL limited the account's order actions; the ladders resume in 10 minutes. "
+                                               "If this repeats, widen the spacing in ~/.trading-desk/ladder.json.", ttl=900)
                     else:
-                        log(f"ladder ...{ladder['wallet'][-4:]} {ladder['coin']} failed ({type(exc).__name__}: {exc}); retrying")
+                        log(f"ladder {tag} failed ({type(exc).__name__}: {exc}); retrying")
+                        self.daemon.alerts.set(f"ladder:{ladder['wallet']}:{ladder['coin']}", f"ladder failing ({tag})",
+                                               f"{type(exc).__name__}: {str(exc)[:160]}; retrying")
+                else:
+                    self.daemon.alerts.clear(f"ladder:{ladder['wallet']}:{ladder['coin']}")
 
     def step(self, ladder: dict, now: float) -> None:
         wallet, coin, dex, base = ladder["wallet"], ladder["coin"], ladder["dex"], ladder["base"]
@@ -1239,8 +1386,21 @@ class Ladders:
             self.save()
             self._cancel_own(wallet, coin, dex)
             log(f"ladder ...{wallet[-4:]} {coin}: the position is closed or flipped; ladder stopped and its orders cancelled")
+            self.daemon.alerts.set(f"ladder-stopped:{wallet}:{coin}", f"ladder stopped (...{wallet[-4:]} {coin})",
+                                   "The position was closed or flipped, so the ladder stopped and cancelled its orders.",
+                                   ttl=6 * 3600)
+            for key in ("band", "adds"):
+                self.daemon.alerts.clear(f"ladder-{key}:{wallet}:{coin}")
             return
         config = ladder_config()
+        held, low, high = (1 if base > 0 else -1) * position, (1 - config["band"]) * abs(base), (1 + config["band"]) * abs(base)
+        band_key = f"ladder-band:{wallet}:{coin}"
+        if held > high * 1.02 or held < low * 0.98:
+            self.daemon.alerts.set(band_key, f"ladder out of band: rebalance (...{wallet[-4:]} {coin})",
+                                   f"Position {position:g} is outside the ladder's band {low:g} to {high:g} (base {base:g}); "
+                                   "the ladder only works it back. Rebalance by hand, or stop and restart the ladder at the new size.")
+        else:
+            self.daemon.alerts.clear(band_key)
         bid, ask = self._book(coin, dex)
         mid = (bid + ask) / 2
         atr = self._atr(ladder)
@@ -1253,6 +1413,11 @@ class Ladders:
             return
         health = self.daemon.margin_guard.latest_health.get(wallet, 0.0)
         allow_adds = health < config["pause_adds_at_health"]
+        if allow_adds:
+            self.daemon.alerts.clear(f"ladder-adds:{wallet}:{coin}")
+        else:
+            self.daemon.alerts.set(f"ladder-adds:{wallet}:{coin}", f"ladder adds paused (...{wallet[-4:]} {coin})",
+                                   f"The account is {health:.0%} of the way to liquidation, so the ladder only trims.")
         market = self.daemon.state.markets([(coin, dex)])[coin]
         quotes = ladder_quotes(position, base, mid, bid, ask, atr, market.size_decimals, config, allow_adds)
         exchange = self.daemon.exchanges[wallet]
@@ -1315,6 +1480,7 @@ class Daemon:
         self.exchanges: dict[str, Any] = {}
         self.guards = Guards(self.state, guards_path)
         self.trade_lock = threading.Lock()
+        self.alerts = Alerts(None if paper else ALERTS_FILE)
         self.margin_guard = MarginGuard(self)
         self.regime_guard = RegimeGuard(self)
         self.ladders = Ladders(self, None if paper else LADDERS_FILE)
@@ -1755,6 +1921,7 @@ def serve(args: argparse.Namespace) -> int:
     threading.Thread(target=daemon.refresher, name="refresher", daemon=True).start()
     threading.Thread(target=daemon.margin_guard.run, name="margin-guard", daemon=True).start()
     threading.Thread(target=daemon.regime_guard.run, name="regime-guard", daemon=True).start()
+    threading.Thread(target=daemon.alerts.run, args=(daemon,), name="alerts", daemon=True).start()
     daemon.ladders.resume()
     threading.Thread(target=daemon.ladders.run, name="ladders", daemon=True).start()
 

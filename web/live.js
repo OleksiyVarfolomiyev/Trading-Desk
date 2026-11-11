@@ -514,6 +514,8 @@
     const ibData = await every("ib", 5 * 60000, () => relay("/ib")).catch(() => null);
     const walletPerf = await every("walletperf", 30 * 60000, () => relay("/walletperf")).catch(() => null);
     const regime = await every("regime", 30 * 60000, () => relay("/regime")).catch(() => null);
+    const daemonAlerts = await every("alerts", 60000, () => relay("/alerts")).catch(() => null);
+    const syncRun = await every("sync", 30 * 60000, () => relay("/sync")).catch(() => null);
     const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];
     ibs.forEach((account) => {
       const age = Date.now() - account.asOf;
@@ -824,6 +826,28 @@
     }
     if (problems.length) attention.unshift(["Unreadable accounts", problems.join("; ") + " Totals leave them out."]);
     ((regime && regime.notices) || []).slice().reverse().forEach((row) => attention.unshift(row));  // desk/market_regime.py
+    // Data flow: every feed the page relies on, with how stale it may get before it is a problem.
+    const minutesSince = (stamp) => (fin(stamp) ? (Date.now() - stamp) / 60000 : Infinity);
+    const flow = [
+      ["trading daemon", daemonAlerts && Number(daemonAlerts.heartbeat) * 1000, 20, "guards, the margin guard, the ladders and IB updates stop with it"],
+      ["IB", ibData && Date.parse(ibData.as_of), 30, "sent by the trading daemon every 10 minutes (TWS must be logged in)"],
+      ["market regime", regime && Date.parse(regime.as_of), 8 * 60, "sent by the trading daemon hourly"],
+      ["wallet performance", walletPerf && Date.parse(walletPerf.as_of), 36 * 60, "extended by the daily job, sent hourly"],
+      ["relay history capture", syncRun && Date.parse(syncRun.at), 7 * 60, "the relay's own job, every 6 hours"],
+    ];
+    const staleFeeds = flow.filter(([, stamp, limit]) => minutesSince(stamp) > limit);
+    if (staleFeeds.length) {
+      const describe = ([name, stamp, , note]) => `${name}: ${fin(stamp) ? `last ${new Date(stamp).toISOString().slice(0, 16).replace("T", " ")} UTC` : "never received"} (${note})`;
+      attention.unshift(["Data flow down", staleFeeds.map(describe).join("; ") + "."]);
+    }
+    if (daemonAlerts) {  // the trading daemon's problems (desk/alerts.py), first
+      const age = (Date.now() / 1000 - Number(daemonAlerts.heartbeat || 0)) / 60;
+      const rows = age > 15
+        ? [["Desk alert: trading daemon not reporting", `No word from the trading daemon for ${age.toFixed(0)} minutes: guards, the margin guard and the ladders are not running.`]]
+        : (daemonAlerts.alerts || []).filter((a) => !a.expires || a.expires > Date.now() / 1000)
+          .map((a) => [`Desk alert: ${a.title}`, `${a.text} (since ${String(a.since || "").slice(0, 16).replace("T", " ")} UTC)`]);
+      rows.reverse().forEach((row) => attention.unshift(row));
+    }
 
     const money2 = { "Equity": "usd", "Cash": "usd", "Margin used": "usd", "Available": "usd", "Gross": "usd", "Value": "usd",
       "Risk equity": "usd", "Open risk": "usd", "Long": "usd", "Short": "usd", "VaR 95%": "usd", "VaR 99%": "usd" };
@@ -853,6 +877,15 @@
       ["Venue", "Account", "Positions", "Risk equity", "Open risk", "% of desk equity"],
       Object.assign({}, money2, { "Positions": "int", "Open risk": "rusd", "% of desk equity": "rpct" }),
       { totalLast: true, key: { "% of desk equity": "max" } }),
+      market_making: (() => {  // the ladders, as the trading daemon last sent them (desk/market_making.py)
+        const rows = (daemonAlerts && daemonAlerts.market_making) || [];
+        if (!rows.length) return { columns: [], rows: [], total: null };
+        const total = { "Account": "Total" };
+        ["Fills", "Volume", "Spread captured", "Ladder PnL", "Fees"].forEach((k) => { total[k] = sum(rows.map((r) => r[k])); });
+        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Ladder PnL", "Fees", "Position vs base", "Quotes"],
+          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Ladder PnL": "susd", "Fees": "usd", "Position vs base": "spct", "Quotes": "int" },
+          { total, key: { "Ladder PnL": "abs" } });
+      })(),
       wallets: table(walletRows, ["Wallet", "Chain", "Symbol", "Value", "% of desk", "Amount", "Price", "Note"],
         { "Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct" },
         { total: { "Wallet": "Total", "Value": sum(walletRows.map((r) => r.Value)), "% of desk": sum(walletRows.map((r) => r["% of desk"])) },

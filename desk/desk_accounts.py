@@ -504,6 +504,12 @@ class DeskAccounts:
         table = pd.concat([trading, wallets, pd.DataFrame(rows)], ignore_index=True)
         return table[["Account", "Value"] + [f"{kind} {label}" for label in PERIODS for kind in ("PnL", "Return")] + ["Since"]]
 
+    def show_market_making(self):
+        """The market-making ladders' fills, volume, spread captured and PnL (desk/market_making.py)."""
+        from desk.market_making import show_market_making
+
+        show_market_making()
+
     def show_performance(self):
         """Desk and per-account returns and PnL over 7, 30 and 90 days, a year and since inception."""
         if not self._require():

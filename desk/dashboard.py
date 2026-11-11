@@ -239,6 +239,9 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     }
 
     well, attention, _, _ = desk.highlight_rows()
+    from desk import alerts as daemon_alerts
+
+    attention[:0] = daemon_alerts.rows(daemon_alerts.read())  # the trading daemon's problems first
 
     accounts, account_total = account_shares(overview.accounts_frame())
     money = {column: "usd" for column in ("Equity", "Cash", "Margin used", "Available", "Gross", "Value", "Risk equity",
@@ -278,6 +281,17 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
                                     key={"Weight": "max"})
     else:
         tables["positions"] = table(positions, {})
+    try:  # market-making ladders (desk/market_making.py); resting quotes from the trading daemon
+        from desk import alerts as daemon_alerts
+        from desk import market_making
+
+        daemon_state = daemon_alerts.read() or {}
+        quotes = {(item["wallet"], item["coin"]): item["quotes"] for item in daemon_state.get("ladders", [])}
+        frame = market_making.market_making_frame(quotes)
+        tables["market_making"] = (table(frame, market_making.FORMATS, market_making.total_row(frame),
+                                         key={"Ladder PnL": "abs"}) if len(frame) else table(frame, {}))
+    except Exception as exc:
+        desk.notes.append(f"Market-making metrics unavailable ({type(exc).__name__}: {exc}).")
     if overview.book:
         tables["open_risk"] = table(overview.risk_frame(), {**money, "Positions": "int", "Open risk": "rusd",
                                                             "% of desk equity": "rpct"}, total_last=True,
@@ -427,9 +441,13 @@ class Dashboard:
 
         if time.time() - getattr(self, "last_web_push", 0.0) < web_sync.PUSH_EVERY_SECONDS:
             return
+        from desk import alerts as daemon_alerts
+
+        daemon = daemon_alerts.read() or {}
+        daemon_sends_ib = time.time() - float(daemon.get("heartbeat", 0)) < daemon_alerts.STALE_SECONDS
         overview = self.desk.overview
         snapshot = next((item for item in overview.snapshots if item.venue == "ib"), None)
-        if snapshot is None:
+        if snapshot is None or daemon_sends_ib:  # the trading daemon sends IB itself while it runs
             return
         try:
             if not web_sync.ingest_token():
@@ -442,8 +460,10 @@ class Dashboard:
         def send():
             try:
                 web_sync.push_ib(snapshot, entry, moves)
-                web_sync.push_wallets(self.desk.data_dir)
-                web_sync.push_regime()
+                if time.time() - getattr(self, "last_slow_push", 0.0) >= 3600:
+                    self.last_slow_push = time.time()
+                    web_sync.push_wallets(self.desk.data_dir)
+                    web_sync.push_regime()
             except Exception as exc:  # the web dashboard keeps the last IB it received
                 print(f"Sending IB to the web dashboard failed: {exc}")
 

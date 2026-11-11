@@ -394,6 +394,12 @@ class DeskOverview:
             frame.insert(len(frame.columns) - 1, "Weight", frame["Value"].abs() / gross if gross else float("nan"))
         return frame
 
+    def show_market_making(self):
+        """The market-making ladders' fills, volume, spread captured and PnL (desk/market_making.py)."""
+        from desk.market_making import show_market_making
+
+        show_market_making()
+
     def show_positions(self):
         """Open positions on every venue, one table per asset class."""
         if not self._require():
