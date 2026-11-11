@@ -797,12 +797,11 @@
         attention.push(["Available margin low", `${money(available)} available, ${percent(available / tradingEquity, false, 0)} of trading equity.`]);
       }
     }
-    // Each HL wallet keeps 20% of its equity free; from 90% the daemon's margin guard reduces positions.
+    // Each HL wallet keeps 20% of its equity free; past that the executor refuses new trades there.
     trading.forEach((a) => {
       if (!(a.equity > 0)) return;
       const used = a.margin_used / a.equity;
-      if (used >= 0.90) attention.unshift(["Margin in danger", `${a.label} uses ${percent(used, false, 0)} of its equity as margin; the margin guard reduces positions from 90%.`]);
-      else if (used > 0.80) attention.push(["Margin reserve breached", `${a.label} uses ${percent(used, false, 0)} of its equity as margin (the 20% reserve allows 80%); new trades there are refused.`]);
+      if (used > 0.80) attention.push(["Margin reserve breached", `${a.label} uses ${percent(used, false, 0)} of its equity as margin (the 20% reserve allows 80%); new trades there are refused.`]);
     });
     if (book.length) {
       const text = `${money(riskUsed)} of ${money(riskCap)} (${percent(riskUsed / riskCap, false, 0)} of the cap); next position budget ${money(riskEquity * (1 - RESERVE_PCT) * RISK_PCT_OF_USABLE)}.`;

@@ -449,40 +449,40 @@ if __name__ == "__main__":
 
 class MarginPlanTests(unittest.TestCase):
     def position(self, coin, quantity, entry, mark, margin, decimals=1):
-        from types import SimpleNamespace
-
         return SimpleNamespace(coin=coin, dex="", quantity=quantity, entry_price=entry, mark_price=mark,
                                margin_used=margin, market=SimpleNamespace(size_decimals=decimals))
 
     def config(self, **changes):
         return {**hl_daemon.MARGIN_DEFAULTS, **changes}
 
-    def test_below_the_danger_line_nothing_happens(self):
-        plan = hl_daemon.margin_plan([self.position("ICP", -100, 2.5, 2.4, 500)], 1000.0, 850.0, "0xabc07f2", self.config())
-        self.assertAlmostEqual(plan["used"], 0.85)
+    def test_a_busy_account_far_from_liquidation_is_left_alone(self):
+        # 95% of equity in initial margin is past the reserve, but the account is only 38% of the way to liquidation.
+        plan = hl_daemon.margin_plan([self.position("ICP", -100, 2.5, 2.6, 950)], 1000.0, 950.0, "0xabc07f2",
+                                     self.config(), maintenance=380.0)
+        self.assertAlmostEqual(plan["health"], 0.38)
         self.assertIsNone(plan["action"])
 
-    def test_in_danger_the_most_in_the_money_position_is_cut_first(self):
+    def test_near_a_cascade_the_most_in_the_money_position_is_cut_first(self):
         positions = [self.position("ICP", -100, 2.5, 2.4, 300),     # short, price fell: +10
                      self.position("BERA", -1000, 0.10, 0.12, 300),  # short, price rose: -20
-                     self.position("ETH", 1.0, 2000, 2100, 350)]     # long, +100: the most in the money
-        plan = hl_daemon.margin_plan(positions, 1000.0, 950.0, "0xabc07f2", self.config())
+                     self.position("ETH", 1.0, 2000, 2100, 400)]     # long, +100: the most in the money
+        plan = hl_daemon.margin_plan(positions, 1000.0, 1000.0, "0xabc07f2", self.config(), maintenance=700.0)
         action = plan["action"]
         self.assertEqual(action["coin"], "ETH")
-        self.assertAlmostEqual(action["unrealized"], 100.0)
-        # 950 used, target 850: 100 of the 350 margin, more than the 25% chop.
-        self.assertAlmostEqual(action["fraction"], 100 / 350)
-        self.assertEqual(action["quantity"], 0.2)  # 1.0 x 0.2857, down to the 0.1 size step
+        # ETH carries 40% of the 700 maintenance (280); getting to 45% needs 250 of it: 89%, capped at half.
+        self.assertEqual(action["fraction"], 0.5)
+        self.assertEqual(action["quantity"], 0.5)
 
-    def test_protected_positions_are_never_cut(self):
+    def test_protected_positions_go_last(self):
         positions = [self.position("VVV", -122.46, 19.56, 15.0, 600, 2), self.position("ICP", -100, 2.5, 2.6, 300)]
-        plan = hl_daemon.margin_plan(positions, 1000.0, 950.0, "0xabc07f2", self.config())
+        plan = hl_daemon.margin_plan(positions, 1000.0, 900.0, "0xabc07f2", self.config(), maintenance=650.0)
         self.assertEqual(plan["action"]["coin"], "ICP")  # VVV is in profit but protected (the hedge)
-        only_protected = hl_daemon.margin_plan(positions[:1], 1000.0, 950.0, "0xabc07f2", self.config())
-        self.assertIsNone(only_protected["action"])
-        self.assertIn("protected", only_protected["blocked"])
+        self.assertFalse(plan["last_resort"])
+        only = hl_daemon.margin_plan(positions[:1], 1000.0, 600.0, "0xabc07f2", self.config(), maintenance=650.0)
+        self.assertEqual(only["action"]["coin"], "VVV")  # nothing else left: a cascade would close it anyway
+        self.assertTrue(only["last_resort"])
 
-    def test_one_step_never_closes_more_than_half(self):
-        plan = hl_daemon.margin_plan([self.position("ICP", -100, 2.5, 2.4, 100)], 1000.0, 990.0, "0xabc07f2", self.config())
-        self.assertEqual(plan["action"]["fraction"], 0.5)
-        self.assertEqual(plan["action"]["quantity"], 50.0)
+    def test_a_small_overshoot_takes_the_chop_fraction(self):
+        plan = hl_daemon.margin_plan([self.position("ICP", -100, 2.5, 2.4, 1000)], 1000.0, 1000.0, "0xabc07f2",
+                                     self.config(), maintenance=610.0)
+        self.assertAlmostEqual(plan["action"]["fraction"], 160 / 610)  # to 45%: 160 of the 610

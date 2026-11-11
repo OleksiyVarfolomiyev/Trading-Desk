@@ -36,7 +36,6 @@ CONCENTRATION_PCT = 0.25   # one position above this share of desk value is flag
 HIGH_LEVERAGE = 2.0        # gross exposure / trading equity
 LOW_AVAILABLE_PCT = 0.10   # available margin / trading equity
 MARGIN_RESERVE_PCT = 0.20  # each HL wallet's free-margin reserve (execution/hl_trade.py)
-MARGIN_DANGER_PCT = 0.90   # where the daemon's margin guard starts reducing positions
 NEAR_CAP_PCT = 0.80        # open risk above this share of the cap is flagged
 IB_HISTORY_COLUMNS = ["ts", "equity_usd", "cash_usd", "margin_used_usd", "unrealized_usd", "gross_usd", "net_usd"]
 
@@ -700,15 +699,12 @@ class DeskOverview:
                 attention.append(("Available margin low", f"{money(available)} available, "
                                                           f"{available / trading_equity:.0%} of trading equity."))
         # Each HL wallet keeps 20% of its equity free (the executor's reserve); past that it refuses new
-        # trades, and from 90% the daemon's margin guard reduces positions (when it is switched on).
+        # trades. (Near an account-wide liquidation the trading daemon's margin guard reduces positions.)
         for snapshot in trading:
             if snapshot.venue != "hl" or not snapshot.equity_usd or snapshot.equity_usd <= 0:
                 continue
             used = snapshot.margin_used_usd / snapshot.equity_usd
-            if used >= MARGIN_DANGER_PCT:
-                attention.insert(0, ("Margin in danger", f"{snapshot.label} uses {used:.0%} of its equity as margin; "
-                                                          "the margin guard reduces positions from 90%."))
-            elif used > 1 - MARGIN_RESERVE_PCT:
+            if used > 1 - MARGIN_RESERVE_PCT:
                 attention.append(("Margin reserve breached", f"{snapshot.label} uses {used:.0%} of its equity as "
                                                               "margin (the 20% reserve allows 80%); new trades there are refused."))
         risk_used = risk_cap = float("nan")
