@@ -16,7 +16,7 @@ class HighlightsStateTests(unittest.TestCase):
         self.assertIsNone(first.last_run)
         second = HighlightsState(path).compare({"Desk value": (1100.0, "usd"), "Sharpe": (float("nan"), "num")},
                                                {"Positions": ["AAPL long", "IONQ short"]})
-        self.assertEqual(second.changes, [("Desk value", "$1,000.00", "$1,100.00", "+$100.00")])
+        self.assertEqual(second.changes, [("Desk value", "$1,000.00", "$1,100.00", "$100.00")])
         self.assertIn("Positions added: IONQ short.", second.notes)
         self.assertIn("Positions removed: QNT short.", second.notes)
 
@@ -26,7 +26,7 @@ class HighlightsStateTests(unittest.TestCase):
         state = HighlightsState(path)
         state.compare({"Value": (2.0, "num")})
         again = state.compare({"Value": (2.0, "num")})
-        self.assertEqual(again.changes[0][3], "+1.00")
+        self.assertEqual(again.changes[0][3], "1.00")
 
     def test_render_escapes_text_and_lists_both_sections(self):
         block = render([("Good", "a < b")], [], None)

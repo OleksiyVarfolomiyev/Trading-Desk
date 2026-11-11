@@ -88,8 +88,8 @@
   const iso = (ms) => new Date(ms).toISOString();
   const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
   const money = (v) => (fin(v) ? (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "n/a");
-  const signedMoney = (v) => (fin(v) ? (v < 0 ? "-$" : "+$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "n/a");
-  const percent = (v, signed, digits = 1) => (fin(v) ? (signed && v > 0 ? "+" : "") + (v * 100).toFixed(digits) + "%" : "n/a");
+  const signedMoney = (v) => (fin(v) ? (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "n/a");
+  const percent = (v, signed, digits = 1) => (fin(v) ? (v * 100).toFixed(digits) + "%" : "n/a");
   function quantile(values, q) {
     const sorted = values.filter(fin).slice().sort((a, b) => a - b);
     if (!sorted.length) return NaN;
@@ -752,7 +752,7 @@
     }
     if (tradingEquity) {
       const leverage = gross / tradingEquity;
-      (leverage > HIGH_LEVERAGE ? attention : well).push(["Leverage", `Gross ${leverage.toFixed(2)}x and net ${net / tradingEquity >= 0 ? "+" : ""}${(net / tradingEquity).toFixed(2)}x trading equity.`]);
+      (leverage > HIGH_LEVERAGE ? attention : well).push(["Leverage", `Gross ${leverage.toFixed(2)}x and net ${(net / tradingEquity).toFixed(2)}x trading equity.`]);
       const available = sum(traders.map((a) => a.available));
       if (available / tradingEquity < LOW_AVAILABLE_PCT) {
         attention.push(["Available margin low", `${money(available)} available, ${percent(available / tradingEquity, false, 0)} of trading equity.`]);

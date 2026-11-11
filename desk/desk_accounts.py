@@ -280,7 +280,7 @@ class DeskAccounts:
             try:
                 for ref in dict.fromkeys(refs):
                     try:
-                        contract = client.qualifyContracts(Contract(conId=int(ref)))[0]
+                        contract = ib_venue.qualify_for_history(client, Contract(conId=int(ref)))[0]
                         series = ib_venue.adjusted_daily_closes(client, contract, "6 M")
                         series.index = pd.to_datetime(series.index, utc=True).normalize()
                         closes[ref] = series
@@ -333,6 +333,8 @@ class DeskAccounts:
                 from desk.venues import ib as ib_venue
 
                 def read():
+                    if ib_venue.contract_lookups_down():
+                        raise ib_venue.HistoryUnavailable("IB is not answering contract lookups")
                     client = ib_venue.connect(ib[0], "analytics", readonly=True, timeout=20)
                     try:
                         contract, _ = ib_venue.resolve_contract(client, ib_venue.ContractSpec("SPY"))
@@ -411,14 +413,14 @@ class DeskAccounts:
         table = self.performance_frame()
         columns = list(table.columns)
         money = lambda value: "n/a" if not np.isfinite(value) else f"${value:,.2f}"
-        percent = lambda value: "n/a" if not np.isfinite(value) else f"{value:+.2%}"
+        percent = lambda value: "n/a" if not np.isfinite(value) else f"{value:.2%}"
         display_interactive_table(table[columns], bold_last=True, title="DESK PERFORMANCE (NET OF DEPOSITS)",
                                   key_columns={"Return 30D": "abs"},
                                   formatters={column: (percent if column.startswith("Return") else money)
                                               for column in columns[1:]})
         since = float(self.index.iloc[-1] / self.index.iloc[0] - 1)
         print(f"Desk time-weighted return since {self.common_start:%Y-%m-%d} (first date every account has history): "
-              f"{since:+.2%}. PnL is each account's value change less deposits and withdrawals; transfers between "
+              f"{since:.2%}. PnL is each account's value change less deposits and withdrawals; transfers between "
               "desk accounts cancel in the combined return. Wallet tokens on other chains are not included.")
 
     def desk_returns(self) -> dict[str, float]:
@@ -609,9 +611,9 @@ class DeskAccounts:
         if table.empty:
             print("Not enough shared history for risk statistics yet.")
             return
-        formats = {"Return (total)": "{:+.1%}", "Volatility (/yr)": "{:.1%}", "Sharpe": "{:.2f}", "Max drawdown": "{:.1%}",
+        formats = {"Return (total)": "{:.1%}", "Volatility (/yr)": "{:.1%}", "Sharpe": "{:.2f}", "Max drawdown": "{:.1%}",
                    "VaR 95%": "${:,.2f}", "VaR 99%": "${:,.2f}", "Beta BTC": "{:.2f}", "Beta SPY": "{:.2f}",
-                   "Alpha vs BTC (/yr)": "{:+.1%}", "Alpha vs SPY (/yr)": "{:+.1%}", "Periods": "{:.0f}"}
+                   "Alpha vs BTC (/yr)": "{:.1%}", "Alpha vs SPY (/yr)": "{:.1%}", "Periods": "{:.0f}"}
         formats["Coverage"] = "{:.0%}"
         basis = table.set_index("Basis")
         styler = basis.style.format({k: v for k, v in formats.items() if k in table}, na_rep="n/a")

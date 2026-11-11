@@ -109,7 +109,7 @@ def ib_book_entry(account: Account, ib=None) -> tuple[BookEntry, VenueAccount]:
             atr, note = None, ""
             try:
                 contract = Contract(conId=int(position.ref))
-                ib.qualifyContracts(contract)
+                ib_venue.qualify_for_history(ib, contract)
                 atr = wilder_atr(ib_venue.daily_bars(ib, contract, "3 M"), ATR_PERIOD)
             except Exception as exc:  # no history or a request timeout: fall back, never fail
                 note = str(exc) or type(exc).__name__

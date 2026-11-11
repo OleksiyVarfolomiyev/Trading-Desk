@@ -424,7 +424,7 @@ class PortfolioHighlightsTests(unittest.TestCase):
             analysis.show_highlights()
         well, attention, since = shown[-1]
         changes = {name: delta for name, _, _, delta in since.changes}
-        self.assertEqual(changes["Kelly beta (btc)"], "+0.200")
+        self.assertEqual(changes["Kelly beta (btc)"], "0.200")
         self.assertIn("Dropped: NEW", " ".join(highlight for _, highlight in well))
 
     def test_highlights_fill_the_panel_reserved_at_the_top(self):

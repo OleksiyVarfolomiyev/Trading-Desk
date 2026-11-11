@@ -631,14 +631,21 @@ def etherscan_activity(chain: Chain, wallet: str, key: str, since: pd.Timestamp)
     return rows
 
 
-def etherscan_holdings(chain: Chain, wallet: str, key: str, priced_tokens: set[str]) -> list[Holding]:
+def _token_transfers(chain: Chain, wallet: str, key: str) -> list:
+    """Every token transfer to or from the wallet (Etherscan's slowest call: read it once per scan)."""
+    return _etherscan(chain, key, module="account", action="tokentx", address=wallet,
+                      page=1, offset=10000, sort="asc")
+
+
+def etherscan_holdings(chain: Chain, wallet: str, key: str, priced_tokens: set[str],
+                       history: list | None = None) -> list[Holding]:
     """Native balance plus the current balance of every priced token the wallet ever received."""
     holdings = []
     native = int(_etherscan(chain, key, module="account", action="balance", address=wallet, tag="latest")) / 1e18
     if native:
         holdings.append(Holding(chain.name, NATIVE, chain.native_symbol, native))
-    history = _etherscan(chain, key, module="account", action="tokentx", address=wallet,
-                         page=1, offset=10000, sort="asc")
+    if history is None:
+        history = _token_transfers(chain, wallet, key)
     seen = {}
     for item in history:
         seen[item["contractAddress"].lower()] = (item.get("tokenSymbol") or "?", int(item.get("tokenDecimal") or 0))
@@ -653,9 +660,7 @@ def etherscan_holdings(chain: Chain, wallet: str, key: str, priced_tokens: set[s
     return holdings
 
 
-def _etherscan_token_keys(chain: Chain, wallet: str, key: str) -> set[str]:
-    history = _etherscan(chain, key, module="account", action="tokentx", address=wallet,
-                         page=1, offset=10000, sort="asc")
+def _etherscan_token_keys(history: list, chain: Chain) -> set[str]:
     return {price_key(chain, item["contractAddress"]) for item in history}
 
 
@@ -703,9 +708,11 @@ def wallet_snapshot(account: Account, chains: list[str] | None = None) -> tuple[
         except Exception as exc:  # rewards are a small extra; never fail the wallet over them
             notes.append(redact(f"{chain.name} staking rewards unavailable: {type(exc).__name__}: {exc}"))
     token_keys = {price_key(CHAINS[item.chain], item.token) for item in holdings}
+    transfers = {}
     for chain in list(pending_etherscan):
         try:
-            token_keys |= _etherscan_token_keys(chain, wallet, key) | {chain.native_price_key}
+            transfers[chain.name] = _token_transfers(chain, wallet, key)
+            token_keys |= _etherscan_token_keys(transfers[chain.name], chain) | {chain.native_price_key}
         except Exception as exc:
             notes.append(_chain_problem(chain, exc))
             pending_etherscan.remove(chain)  # report each failing chain once
@@ -716,7 +723,7 @@ def wallet_snapshot(account: Account, chains: list[str] | None = None) -> tuple[
         notes.append(f"token prices unavailable ({type(exc).__name__}: {exc}); holdings are unvalued")
     for chain in pending_etherscan:
         try:
-            holdings.extend(etherscan_holdings(chain, wallet, key, set(prices)))
+            holdings.extend(etherscan_holdings(chain, wallet, key, set(prices), transfers.get(chain.name)))
         except Exception as exc:
             notes.append(_chain_problem(chain, exc))
     positions = []

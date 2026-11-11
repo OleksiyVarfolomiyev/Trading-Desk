@@ -281,7 +281,7 @@ def _show_beta_table(table, title=None):
             return f'{value:.2f}'
         if row in ('Alpha (/yr)','R-squared'):
             return f'{value:.1%}'
-        return f'{value:.2f}' if row in BETA_CONTEXT_ROWS else f'{value:+.3f}'
+        return f'{value:.2f}' if row in BETA_CONTEXT_ROWS else f'{value:.3f}'
     shown=pd.DataFrame({column:[cell(table.loc[row,column],row,column) for row in table.index]
                         for column in table.columns},index=table.index)
     # Significant betas are what the table is read for: |t| >= 2 tints the t and its beta.
@@ -2126,11 +2126,11 @@ class _FactorModelMixin(_TableStyleMixin):
             **{f'Gross {leg}':(f'Gross {leg}','mean') for leg in book_exposure.LEGS},
             **{'Gross total':('Gross total','mean'),'Peak gross':('Gross total','max'),'Equity (end)':('Equity','last')})
         self.show_table(summary,title='AVERAGE EXPOSURE PER REGIME (x equity)',formatters={'Weeks':'{:.0f}','Equity (end)':'${:,.0f}',
-                                 **{column:'{:+.2f}' for column in summary.columns if column.startswith('Net')},
+                                 **{column:'{:.2f}' for column in summary.columns if column.startswith('Net')},
                                  **{column:'{:.2f}' for column in summary.columns
                                     if column.startswith(('Gross','Peak'))}},key_columns={'Gross total':'max'})
         recent=exposure.drop(columns='Equity').tail(12)
-        self.show_table(recent,title='LAST 12 WEEKS (x equity)',formatters={column:'{:+.2f}' if column.startswith('Net') else '{:.2f}'
+        self.show_table(recent,title='LAST 12 WEEKS (x equity)',formatters={column:'{:.2f}' if column.startswith('Net') else '{:.2f}'
                                 for column in recent.columns if column!='Regime'},key_columns={'Net total':'abs'})
 
     def _regime_regression_data(self, weekly_returns, exposure, factors, notes):
@@ -2276,7 +2276,7 @@ class _FactorModelMixin(_TableStyleMixin):
             part=pivot[pivot['Regime']==regime].set_index('Term').reindex(names)
             compare[f'Change vs {reference.split(" (")[0]}: t ({regime.split(" (")[0]})']=part['Difference t-stat']
         # The t of each change is the answer: did that beta move between regimes?
-        self.show_table(compare,{column:('{:.2f}' if column.startswith('Change') else '{:+.3f}')
+        self.show_table(compare,{column:('{:.2f}' if column.startswith('Change') else '{:.3f}')
                                  for column in compare.columns},
                         key_columns={column:'abs' for column in compare.columns if column.startswith('Change')},
                         title=f'REGIME INTERACTION MODEL, PER 1x GROSS ({observations} weeks; betas per regime, '
@@ -2404,7 +2404,7 @@ class _FactorModelMixin(_TableStyleMixin):
                     + (f' for {", ".join(estimated)}' if estimated else '') + '.'
                     + (' Left at actual market caps only, because their circulating supply changed more than '
                        f'{SUPPLY_DRIFT_LIMIT:.0%} in the observed year: '
-                       + ', '.join(f'{asset} ({drift:+.0%})' for asset,drift in excluded.items()) + '.'
+                       + ', '.join(f'{asset} ({drift:.0%})' for asset,drift in excluded.items()) + '.'
                        if excluded else '')
                     + ' If both size rows agree, the estimate is not distorting the result.'
                 )
@@ -2588,7 +2588,7 @@ class _HighlightsMixin(_TableStyleMixin):
                     calm=rows['Correlation'].abs().idxmin()
                     well.append((f'{group} exposure',
                                  f'Highest beta to {rows.loc[top,"Benchmark"]}: {top} {rows.loc[top,"Beta"]:.2f}; '
-                                 f'least correlated: {calm} ({rows.loc[calm,"Correlation"]:+.2f}).'))
+                                 f'least correlated: {calm} ({rows.loc[calm,"Correlation"]:.2f}).'))
             wide=exposures[exposures['Volatility (/yr)']>1.5]
             if len(wide):
                 attention.append(('Very volatile',', '.join(f'{ticker} {vol:.0%}/yr' for ticker,vol in
@@ -2606,14 +2606,14 @@ class _HighlightsMixin(_TableStyleMixin):
             forward=split.iloc[-2]
             verdict=alpha_verdict(forward['Annual alpha'],forward['Alpha t-stat'])
             (well if verdict.startswith('survives') else attention).append(
-                ('Out-of-sample alpha',f'{forward["Annual alpha"]:+.0%}/yr (t {forward["Alpha t-stat"]:.2f}): {verdict}.'))
+                ('Out-of-sample alpha',f'{forward["Annual alpha"]:.0%}/yr (t {forward["Alpha t-stat"]:.2f}): {verdict}.'))
         summary=getattr(self,'factor_model_summary',None)
         if summary is not None:
             strong=summary.drop(index='Alpha',errors='ignore')
             strong=strong[strong['HAC t-stat'].abs()>=SIGNIFICANT_T]
             if len(strong):
                 well.append(('Factor exposures','Significant: '+', '.join(
-                    f'{name} {row["Beta"]:+.2f} (t {row["HAC t-stat"]:.1f})' for name,row in strong.iterrows())+'.'))
+                    f'{name} {row["Beta"]:.2f} (t {row["HAC t-stat"]:.1f})' for name,row in strong.iterrows())+'.'))
         premia=getattr(self,'factor_premia',None)
         if premia is not None and len(premia):
             best=premia['FM t-stat'].abs().idxmax()
@@ -2628,9 +2628,9 @@ class _HighlightsMixin(_TableStyleMixin):
         for label,result in getattr(self,'style_results',{}).items():
             fit,model=result['summary'],result['model'].drop(index='Alpha (intercept)',errors='ignore')
             strong=model[model['HAC t-stat'].abs()>=SIGNIFICANT_T]
-            text=(f'Alpha {fit["Alpha (/yr)"]:+.0%}/yr (t {fit["Alpha t-stat"]:.2f}), R² {fit["R-squared"]:.0%}, '
+            text=(f'Alpha {fit["Alpha (/yr)"]:.0%}/yr (t {fit["Alpha t-stat"]:.2f}), R² {fit["R-squared"]:.0%}, '
                   f'{fit["Periods"]} to {fit["To"]}'
-                  +('; significant: '+', '.join(f'{name} {row["Beta"]:+.2f}' for name,row in strong.iterrows())
+                  +('; significant: '+', '.join(f'{name} {row["Beta"]:.2f}' for name,row in strong.iterrows())
                     if len(strong) else '')+'.')
             if '(actual)' not in label:
                 attention.append((label,text+' In-sample, not a measure of skill.'))
@@ -2670,7 +2670,7 @@ class _HighlightsMixin(_TableStyleMixin):
                 well.append(('Universe change',('Added: '+', '.join(added)+'. ' if added else '')
                              +('Dropped: '+', '.join(removed)+'.' if removed else '')))
         since=SinceLastRun(last_run=pd.Timestamp(baseline['ts']) if baseline else None,
-                           changes=[(row['Metric'],f"{row['Last run']:,.3f}",f"{row['Now']:,.3f}",f"{row['Change']:+,.3f}")
+                           changes=[(row['Metric'],f"{row['Last run']:,.3f}",f"{row['Now']:,.3f}",f"{row['Change']:,.3f}")
                                     for row in changes])
         panel=getattr(self,'_highlights_panel',None)
         (panel.show if panel is not None else show_highlight_block)(well,attention,since)

@@ -142,7 +142,7 @@ def market_highlights(universe: pd.DataFrame, view: str) -> tuple[list, list]:
     if len(changes):
         up = (changes[CHANGE] > 0).mean()
         well.append(("Breadth", f"{up:.0%} of {len(changes):,} markets are up over 24h; median change "
-                                f"{changes[CHANGE].median():+.2f}%."))
+                                f"{changes[CHANGE].median():.2f}%."))
         # Gainers must be up and losers down: in a falling market the "top 3" are only the smallest
         # declines, and a small view could otherwise list one market as both.
         gainers, losers = changes[changes[CHANGE] > 0], changes[changes[CHANGE] < 0]
@@ -163,9 +163,9 @@ def market_highlights(universe: pd.DataFrame, view: str) -> tuple[list, list]:
                               f"{len(hot)} markets; " + names(hot.head(5), FUNDING, "+.4f")
                               + " (%; positive means longs pay)."))
         top, bottom = funding.loc[funding[FUNDING].idxmax()], funding.loc[funding[FUNDING].idxmin()]
-        well.append(("Funding range", f"highest {top['Ticker']} {top[FUNDING]:+.4f}% "
-                                      f"(~{top[FUNDING] * 3 * 365:+.0f}%/yr), lowest {bottom['Ticker']} "
-                                      f"{bottom[FUNDING]:+.4f}% (~{bottom[FUNDING] * 3 * 365:+.0f}%/yr)."))
+        well.append(("Funding range", f"highest {top['Ticker']} {top[FUNDING]:.4f}% "
+                                      f"(~{top[FUNDING] * 3 * 365:.0f}%/yr), lowest {bottom['Ticker']} "
+                                      f"{bottom[FUNDING]:.4f}% (~{bottom[FUNDING] * 3 * 365:.0f}%/yr)."))
     volume = universe.dropna(subset=[VOLUME])
     if len(volume) and volume[VOLUME].sum() > 0:
         leaders = volume.nlargest(3, VOLUME)

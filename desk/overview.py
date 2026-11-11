@@ -61,7 +61,7 @@ def _signed_style(row_index, column, value, row):
 
 
 def _signed_percent(value):
-    return "" if value is None or not math.isfinite(value) else f"{value:+.2%}"
+    return "" if value is None or not math.isfinite(value) else f"{value:.2%}"
 
 
 def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], float] | None) -> pd.DataFrame:
@@ -597,7 +597,7 @@ class DeskOverview:
              + " IB cash; HL collateral is in the account values"),
             ("Margin used", _money(sum(snapshot.margin_used_usd for snapshot in trading))),
             ("Gross exposure", f"{_money(gross)} ({gross / trading_equity:.2f}x trading equity)" if trading_equity else _money(gross)),
-            ("Net exposure", f"{_money(net)} ({net / trading_equity:+.2f}x trading equity)" if trading_equity else _money(net)),
+            ("Net exposure", f"{_money(net)} ({net / trading_equity:.2f}x trading equity)" if trading_equity else _money(net)),
             ("Long / short", f"{_money(sum(p.notional_usd for _, p in positions if p.quantity > 0))} / "
                              f"{_money(sum(p.notional_usd for _, p in positions if p.quantity < 0))}"),
             ("Unrealized PnL", f"{_money(sum(snapshot.unrealized_usd for snapshot in trading))}"),
@@ -643,7 +643,7 @@ class DeskOverview:
                 # The % is unrealized PnL over the position's entry value, as in the movers table.
                 share = _pnl_share(position)
                 return (f"{position.symbol} {signed_money(position.unrealized_usd)}"
-                        + (f" ({share:+.1%})" if math.isfinite(share) else ""))
+                        + (f" ({share:.1%})" if math.isfinite(share) else ""))
             if winners:
                 well.append(("Largest winners", ", ".join(mover(p) for _, p in winners) + "."))
             if losers:
@@ -655,7 +655,7 @@ class DeskOverview:
                                                    f"value ({money(abs(largest.notional_usd))}, {label})."))
         if trading_equity:
             leverage = gross / trading_equity
-            text = f"Gross {leverage:.2f}x and net {net / trading_equity:+.2f}x trading equity."
+            text = f"Gross {leverage:.2f}x and net {net / trading_equity:.2f}x trading equity."
             (attention if leverage > HIGH_LEVERAGE else well).append(("Leverage", text))
             available = sum(snapshot.available_usd for snapshot in trading)
             if available / trading_equity < LOW_AVAILABLE_PCT:

@@ -18,19 +18,19 @@ function usd(value) {
 }
 function signedUsd(value) {
   if (!isNum(value)) return "";
-  return (value < 0 ? "-$" : value > 0 ? "+$" : "$") + usdFormat.format(Math.abs(value));
+  return (value < 0 ? "-$" : "$") + usdFormat.format(Math.abs(value));
 }
-// Whole dollars with thousands separators: $12,345 (or +$123 when signed).
+// Whole dollars with thousands separators: $12,345 (no "+" on positive values).
 function wholeUsd(value, signed = false) {
   if (!isNum(value)) return "n/a";
   const rounded = Math.round(value);
-  const sign = rounded < 0 ? "-$" : signed && rounded > 0 ? "+$" : "$";
+  const sign = rounded < 0 ? "-$" : "$";
   return sign + wholeUsdFormat.format(Math.abs(rounded));
 }
 function pct(value, digits = 1, signed = false) {
   if (!isNum(value)) return "";
   const text = (value * 100).toFixed(digits) + "%";
-  return signed && value > 0 ? "+" + text : text;
+  return text;  // positive values carry no "+" sign
 }
 function number(value) {
   if (!isNum(value)) return "";
@@ -177,7 +177,7 @@ function tile(label, value, sub, extra) {
   ]);
 }
 
-// "24h +$123 (+1.2%)", net of deposits, withdrawals and transfers; per-account parts on hover.
+// "24h $123 (1.2%)", net of deposits, withdrawals and transfers; per-account parts on hover.
 function dayChangeLine(day) {
   if (!day || !isNum(day.change)) return { text: "24h change n/a", cls: "muted" };
   const share = isNum(day.pct) ? ` (${pct(day.pct, 1, true)})` : "";
@@ -211,7 +211,7 @@ function renderTiles(k) {
     tile("Drawdown now", pct(k.drawdown, 1), k.drawdown < 0 ? `Below the peak of ${day(k.peak_date)}` : "At the peak",
       { valueClass: k.drawdown <= -0.10 ? "neg" : "" }),
     tile("Gross leverage", isNum(k.gross_leverage) ? k.gross_leverage.toFixed(2) + "×" : "n/a",
-      isNum(k.net_leverage) ? `Net ${k.net_leverage >= 0 ? "+" : ""}${k.net_leverage.toFixed(2)}× trading equity` : ""),
+      isNum(k.net_leverage) ? `Net ${k.net_leverage.toFixed(2)}× trading equity` : ""),
   ];
   document.getElementById("tiles").replaceChildren(...tiles);
 }

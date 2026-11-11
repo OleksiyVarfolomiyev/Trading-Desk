@@ -18,7 +18,7 @@ RESIZE_TOLERANCE_PCT = 0.5
 
 
 def _usd(value: float) -> str:
-    return f"-${abs(value):,.2f}" if value < 0 else f"+${value:,.2f}"
+    return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
 
 
 def _position_key(row: dict[str, Any]) -> str:
@@ -26,7 +26,7 @@ def _position_key(row: dict[str, Any]) -> str:
 
 
 def _pct(share: float) -> str:
-    return f" ({share:+.1%})" if pd.notna(share) and np.isfinite(share) else ""
+    return f" ({share:.1%})" if pd.notna(share) and np.isfinite(share) else ""
 
 
 def _ticker_list(amounts: pd.Series, bases: pd.Series | None = None) -> str:
@@ -99,7 +99,7 @@ def _window_rows(
         (well if amount > 0 else attention).append({"Window": window, "Update": update, "Detail": detail})
     if pd.notna(pnl) and pnl != 0:
         base = equity - pnl
-        share = f" ({pnl / base * 100:+.2f}%)" if base > 0 else ""
+        share = f" ({pnl / base * 100:.2f}%)" if base > 0 else ""
         add("PnL including open positions", pnl, f"{_usd(pnl)}{share}")
     if not fills.empty:
         # Opening fills only carry a fee, so gross PnL identifies actual closes.

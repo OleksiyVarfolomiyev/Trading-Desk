@@ -214,7 +214,7 @@ def check_limit_price(limit: float, last: float) -> str:
         return "no last trade to check limit_price against"
     gap = limit / last - 1
     if abs(gap) > LIMIT_PRICE_MAX_GAP_PCT:
-        return (f"limit_price {limit:,.6g} is {gap:+.1%} from the last trade {last:,.6g} "
+        return (f"limit_price {limit:,.6g} is {gap:.1%} from the last trade {last:,.6g} "
                 f"(more than {LIMIT_PRICE_MAX_GAP_PCT:.0%}; check for a typo)")
     return ""
 
@@ -1019,9 +1019,9 @@ def print_protection_plans(plans: list[ProtectionPlan], with_targets: bool) -> N
                     f"{size:g} @ {stop_text(stop)}" + (f" / target {target:,.4g}" if with_targets else "")
                     for size, stop, target in plan.ladder))
             else:
-                parts.append(f"{stop_text(plan.stop_price)} {(plan.stop_price / plan.mark - 1):+.1%}")
+                parts.append(f"{stop_text(plan.stop_price)} {(plan.stop_price / plan.mark - 1):.1%}")
                 if with_targets:
-                    parts.append(f"target {plan.target_price:,.4g} ({(plan.target_price / plan.mark - 1):+.1%})")
+                    parts.append(f"target {plan.target_price:,.4g} ({(plan.target_price / plan.mark - 1):.1%})")
             parts.append(f"risk to stop ${plan.risk_usd:,.2f}")
             covered = f"already covered: stop {plan.existing_stop_quantity:g}, target {plan.existing_target_quantity:g}"
             adds = f"add stop {plan.stop_quantity_to_add:g}" + (

@@ -33,20 +33,20 @@ def money(value: float) -> str:
 def signed_money(value: float) -> str:
     if value is None or not math.isfinite(value):
         return "n/a"
-    return f"-${abs(value):,.2f}" if value < 0 else f"+${value:,.2f}"
+    return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
 
 
 def percent(value: float, signed: bool = False, digits: int = 1) -> str:
     if value is None or not math.isfinite(value):
         return "n/a"
-    return f"{value:+.{digits}%}" if signed else f"{value:.{digits}%}"
+    return f"{value:.{digits}%}"  # positive values carry no "+" sign anywhere on the desk
 
 
 FORMATS = {
     "usd": (money, signed_money),
-    "pct": (lambda v: percent(v, digits=2), lambda v: f"{v * 100:+.2f} pts" if math.isfinite(v) else "n/a"),
-    "num": (lambda v: f"{v:,.2f}" if math.isfinite(v) else "n/a", lambda v: f"{v:+,.2f}" if math.isfinite(v) else "n/a"),
-    "int": (lambda v: f"{v:,.0f}", lambda v: f"{v:+,.0f}"),
+    "pct": (lambda v: percent(v, digits=2), lambda v: f"{v * 100:.2f} pts" if math.isfinite(v) else "n/a"),
+    "num": (lambda v: f"{v:,.2f}" if math.isfinite(v) else "n/a", lambda v: f"{v:,.2f}" if math.isfinite(v) else "n/a"),
+    "int": (lambda v: f"{v:,.0f}", lambda v: f"{v:,.0f}"),
 }
 
 

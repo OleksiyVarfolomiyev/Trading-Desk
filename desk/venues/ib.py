@@ -7,7 +7,9 @@ the TWS session is the authentication.
 
 from __future__ import annotations
 
+import asyncio
 import math
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -379,6 +381,33 @@ def resolve_contract(ib, spec: ContractSpec):
 
 class HistoryUnavailable(ValueError):
     """IB's historical data service did not answer on this connection."""
+
+
+# TWS can accept connections while IB's contract service does not answer (after a lost link to
+# IBKR, during its nightly reset). Each lookup then waits out the request timeout, one position
+# after another, so the first one that times out stops IB history lookups in this process for a while.
+DETAILS_DOWN_SECONDS = 600
+_details_down_until = 0.0
+
+
+def contract_lookups_down() -> bool:
+    """True while a recent contract lookup went unanswered (see ``qualify_for_history``)."""
+    return time.time() < _details_down_until
+
+
+def qualify_for_history(ib, contract):
+    """``ib.qualifyContracts`` for read-only history, failing fast once IB has stopped answering lookups."""
+    global _details_down_until
+    label = contract_symbol(contract) or f"conId {getattr(contract, 'conId', '?')}"
+    if getattr(ib, "desk_history_down", False) or time.time() < _details_down_until:
+        raise HistoryUnavailable(f"IB is not answering contract lookups; skipped {label}.")
+    try:
+        return ib.qualifyContracts(contract)
+    except (TimeoutError, asyncio.TimeoutError):
+        ib.desk_history_down = True
+        _details_down_until = time.time() + DETAILS_DOWN_SECONDS
+        raise HistoryUnavailable(f"IB did not answer the contract lookup for {label}; IB price history is "
+                                 f"skipped for {DETAILS_DOWN_SECONDS // 60} minutes.") from None
 
 
 def _history(ib, contract, duration: str, what: str, mark_down: bool = True):

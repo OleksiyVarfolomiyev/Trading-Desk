@@ -66,7 +66,7 @@ def _pnl_style(row_index, column, value, row):
 
 def _mover(row) -> str:
     share = row["uPnL (%)"]
-    return f"{row['Symbol']} {signed_money(row['uPnL'])}" + (f" ({share:+.1%})" if np.isfinite(share) else "")
+    return f"{row['Symbol']} {signed_money(row['uPnL'])}" + (f" ({share:.1%})" if np.isfinite(share) else "")
 
 
 def _returns(bars: pd.DataFrame) -> pd.Series:
@@ -182,7 +182,7 @@ class IBAccountAnalytics:
             for position in snapshot.positions:
                 try:
                     contract = Contract(conId=int(position.ref))
-                    ib.qualifyContracts(contract)
+                    ib_venue.qualify_for_history(ib, contract)
                     self.bars[position.symbol] = ib_venue.daily_bars(ib, contract, "1 Y")
                 except ib_venue.HistoryUnavailable as exc:
                     skipped.append(position.symbol)
@@ -330,7 +330,7 @@ class IBAccountAnalytics:
         today = self.pnl.get("dailyPnL", np.nan)
         text = f"Account value {_money(equity)}, {len(self.positions)} open positions"
         if np.isfinite(today):
-            text += f"; today {signed_money(today)} ({today / (equity - today):+.2%})" if equity - today else ""
+            text += f"; today {signed_money(today)} ({today / (equity - today):.2%})" if equity - today else ""
         (well if not np.isfinite(today) or today >= 0 else attention).append(("Account", text + "."))
         positions = self.positions
         if not positions.empty:
@@ -350,7 +350,7 @@ class IBAccountAnalytics:
             if len(moves):
                 moves = moves.reindex(moves["24h change (%)"].abs().sort_values(ascending=False).index).head(HIGHLIGHT_MOVERS)
                 well.append(("Biggest moves since last close", ", ".join(
-                    f"{row['Symbol']} {row['24h change (%)']:+.1%}" for _, row in moves.iterrows()) + "."))
+                    f"{row['Symbol']} {row['24h change (%)']:.1%}" for _, row in moves.iterrows()) + "."))
             top = positions.loc[positions["% of account"].idxmax()]
             if top["% of account"] > CONCENTRATION_PCT:
                 attention.append(("Concentration", f"{top['Symbol']} {top['Side'].lower()} is "
@@ -471,7 +471,7 @@ class IBAccountAnalytics:
                                                      "Stop", "Target")}
         formatters.update({column: _money for column in ("Value", "uPnL", "Risk to stop")})
         formatters["% of account"] = _percent
-        formatters.update({column: (lambda value: "n/a" if not np.isfinite(value) else f"{value:+.2%}")
+        formatters.update({column: (lambda value: "n/a" if not np.isfinite(value) else f"{value:.2%}")
                            for column in ("uPnL (%)", "24h change (%)")})
         formatters[f"Beta {BETA_LOOKBACK_DAYS}d"] = lambda value: "n/a" if not np.isfinite(value) else f"{value:.2f}"
         display_interactive_table(frame, formatters=formatters, cell_style=_pnl_style, bold_last=True,

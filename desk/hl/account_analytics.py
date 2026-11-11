@@ -1559,8 +1559,8 @@ def display_positions(rows,show_wallet=False):
         'Sz':lambda v:f'{v:,.2f}','Pos':lambda v:f'${v:,.0f}','Margin':lambda v:f'${v:,.0f}',
         'Liq %':lambda v:f'{v:.2f}%' if pd.notna(v) else 'n/a',
         'ROE':lambda v:f'{v:.2f}%','uPnL':usd,'Funding (since open)':usd,
-        'uPnL (%)':lambda v:f'{v:+.2f}%' if pd.notna(v) else 'n/a',
-        '24h change (%)':lambda v:f'{v:+.2f}%' if pd.notna(v) else 'n/a',
+        'uPnL (%)':lambda v:f'{v:.2f}%' if pd.notna(v) else 'n/a',
+        '24h change (%)':lambda v:f'{v:.2f}%' if pd.notna(v) else 'n/a',
         'Fees / Position (%)':lambda v:f'{v:.3f}%' if pd.notna(v) else 'n/a',
         'Position / Account (%)':lambda v:f'{v:.2f}%' if pd.notna(v) else 'n/a',
         'Funding (1h)':lambda v:f'{v:.6f}%' if pd.notna(v) else 'n/a',
@@ -2069,7 +2069,7 @@ def _signed_usd_plain(value):
 
 
 def _signed_usd(value):
-    return f"{'-' if value < 0 else '+'}${abs(value):,.2f}"
+    return f"{'-' if value < 0 else ''}${abs(value):,.2f}"
 
 
 def display_liquidation_events(realized_df, title='LIQUIDATIONS'):
@@ -2715,7 +2715,7 @@ class _BtcExposureMixin:
         price = float(mids.get('BTC') or 0.0)
         first, last = windows[0], windows[-1]
         def money(value):
-            return f"{'-' if value < 0 else '+'}${abs(value):,.0f}" if pd.notna(value) else 'n/a'
+            return f"{'-' if value < 0 else ''}${abs(value):,.0f}" if pd.notna(value) else 'n/a'
         headline = (f"NET BTC EXPOSURE, BETA-WEIGHTED (HL + wallet tokens, excl. IB): {money(net[f'BTC-eq {first}d'])} "
                     f"({first}d) / {money(net[f'BTC-eq {last}d'])} ({last}d)")
         formats = {'Value': lambda value: money(value)}
