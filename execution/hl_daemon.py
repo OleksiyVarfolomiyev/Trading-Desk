@@ -1032,6 +1032,251 @@ class RegimeGuard:
             self.trims[regime] = self.trims.get(regime, 0) + 1
 
 
+# ----------------------------------------------------------------------------------------------
+# Market-making ladders: post-only quotes around a position you opened, leaning with it
+
+LADDERS_FILE = daemon_link.RUN_DIR / "ladders.json"
+LADDER_CONFIG = daemon_link.RUN_DIR / "ladder.json"
+LADDER_DEFAULTS = {
+    "levels": 5,                 # quotes per side
+    "spacing_atr": 0.10,         # level spacing as a share of the coin's daily ATR(14)
+    "min_spacing_pct": 0.001,    # never closer than 0.1% of the price
+    "add_first": 0.5,            # first adding quote this many spacings from the mid (the lean)
+    "trim_first": 1.0,           # first trimming quote this many spacings from the mid
+    "add_level_pct": 0.05,       # each adding quote: this share of the size you opened
+    "trim_level_pct": 0.03,      # each trimming quote
+    "band": 0.50,                # the position stays within (1 -/+ band) x the size you opened
+    "replace_move": 1.0,         # re-centre once the mid moves this many spacings
+    "min_replace_seconds": 20,
+    "refresh_seconds": 600,      # re-centre at least this often
+    "pause_adds_at_health": 0.50,  # stop adding once the account is this far toward liquidation
+}
+LADDER_CLOID_PREFIX = "0x1add"   # marks the ladder's own orders (client order ids)
+MIN_ORDER_USD = 10.0
+
+
+def ladder_config() -> dict:
+    config = dict(LADDER_DEFAULTS)
+    try:
+        config.update(json.loads(LADDER_CONFIG.read_text()))
+    except (OSError, ValueError):
+        pass
+    return config
+
+
+def ladder_quotes(position: float, base: float, mid: float, best_bid: float, best_ask: float, atr: float,
+                  size_decimals: int, config: dict, allow_adds: bool = True) -> list[dict]:
+    """The ladder's post-only quotes: ``{is_buy, price, size, reduce_only}``.
+
+    ``base`` is the signed size you opened. The adding side (bids under a long, asks over a short)
+    starts ``add_first`` spacings from the mid with ``add_level_pct`` of the base per level; the
+    trimming side starts ``trim_first`` spacings away with ``trim_level_pct`` (reduce-only). The adds
+    stop at (1 + band) x base and the trims at (1 - band) x base, so the position stays in its band.
+    """
+    side = 1.0 if base > 0 else -1.0
+    spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
+    held = side * position                       # on the base side: positive
+    room_add = max(0.0, (1 + config["band"]) * abs(base) - held) if allow_adds else 0.0
+    room_trim = max(0.0, held - (1 - config["band"]) * abs(base))
+    step = 10 ** -size_decimals
+    tick = ht._price_tick(mid, size_decimals)
+    quotes = []
+    for kind, first, share, room in (("add", config["add_first"], config["add_level_pct"], room_add),
+                                     ("trim", config["trim_first"], config["trim_level_pct"], room_trim)):
+        is_buy = (kind == "add") == (side > 0)
+        for level in range(int(config["levels"])):
+            size = int(min(share * abs(base), room) / step + 1e-9) * step
+            if size <= 0:
+                break
+            offset = (first + level) * spacing
+            price = mid - offset if is_buy else mid + offset
+            price = min(price, best_ask - tick) if is_buy else max(price, best_bid + tick)  # never cross: post-only
+            if price <= 0 or size * price < MIN_ORDER_USD:
+                break
+            quotes.append({"is_buy": is_buy, "price": ht._round_price(price, size_decimals),
+                           "size": round(size, size_decimals), "reduce_only": kind == "trim", "kind": kind})
+            room -= size
+    return quotes
+
+
+class Ladders:
+    """Runs the ladders: re-centres on the mid, keeps the position in its band, survives restarts."""
+
+    def __init__(self, daemon: "Daemon", path: Path | None = LADDERS_FILE):
+        self.daemon = daemon
+        self.path = path
+        self.lock = threading.RLock()
+        self.ladders: dict[tuple[str, str], dict] = {}
+        self.backoff_until = 0.0
+
+    # -- bookkeeping
+    def save(self) -> None:
+        if self.path is None:
+            return
+        with self.lock:
+            records = [{"wallet": item["wallet"], "coin": item["coin"], "dex": item["dex"], "base": item["base"],
+                        "started": item["started"]} for item in self.ladders.values()]
+        self.path.write_text(json.dumps(records, indent=1))
+
+    def resume(self) -> None:
+        if self.path is None or not self.path.exists():
+            return
+        try:
+            records = json.loads(self.path.read_text())
+        except ValueError:
+            return
+        for record in records:
+            self._cancel_own(record["wallet"], record["coin"], record["dex"])
+            self._add(record["wallet"], record["coin"], record["dex"], record["base"], record["started"])
+            log(f"ladder resumed: ...{record['wallet'][-4:]} {record['coin']} around {record['base']:g}")
+
+    def _add(self, wallet: str, coin: str, dex: str, base: float, started: str) -> None:
+        with self.lock:
+            self.ladders[(wallet, coin)] = {"wallet": wallet, "coin": coin, "dex": dex, "base": base, "started": started,
+                                            "oids": [], "center": None, "placed_position": None, "placed_at": 0.0,
+                                            "atr": None, "atr_day": "", "fills": 0}
+        self.save()
+
+    def _cancel_own(self, wallet: str, coin: str, dex: str) -> None:
+        """Cancel every resting order of this coin that the ladder placed (by its client order id)."""
+        exchange = self.daemon.exchanges.get(wallet)
+        if exchange is None:
+            return
+        try:
+            orders = ht.fetch_open_orders(wallet, [dex])
+        except Exception:
+            return
+        mine = [{"coin": coin, "oid": int(order["oid"])} for order in orders
+                if order.get("coin") == coin and str(order.get("cloid") or "").startswith(LADDER_CLOID_PREFIX)]
+        if mine:
+            exchange.bulk_cancel(mine)
+
+    # -- commands
+    def start(self, wallet: str, coin: str, session: "Session") -> int:
+        dex = coin.split(":")[0] if ":" in coin else ""
+        quantity = self.daemon.state.position_quantity(wallet, coin, dex)
+        if not quantity:
+            print(f"No {coin} position in ...{wallet[-4:]}: open it first, then start the ladder.")
+            return 1
+        if wallet not in self.daemon.exchanges:
+            print(f"...{wallet[-4:]} is read-only in the daemon (no key).")
+            return 1
+        quotes, spacing = self.preview(wallet, coin, dex, quantity)
+        config = ladder_config()
+        side = "LONG" if quantity > 0 else "SHORT"
+        print(f"Ladder for ...{wallet[-4:]} {coin} {side} {abs(quantity):g}: {config['levels']} post-only quotes per side, "
+              f"{spacing:.6g} apart ({config['spacing_atr']:g} x daily ATR); position kept between "
+              f"{(1 - config['band']) * abs(quantity):g} and {(1 + config['band']) * abs(quantity):g}.")
+        for quote in quotes:
+            print(f"  {'BUY ' if quote['is_buy'] else 'SELL'} {quote['size']:g} @ {quote['price']:.6g} ({quote['kind']})")
+        if session.ask("Type START LADDER to quote these live: ") != "START LADDER":
+            print("Confirmation did not match; no ladder started.")
+            return 0
+        self._add(wallet, coin, dex, quantity, time.strftime("%Y-%m-%d %H:%M", time.gmtime()))
+        print("Ladder started; the daemon re-centres it as the price moves (hl_daemon.py status shows it).")
+        return 0
+
+    def stop(self, wallet: str, coin: str) -> int:
+        with self.lock:
+            ladder = self.ladders.pop((wallet, coin), None)
+        if ladder is None:
+            print(f"No ladder runs for ...{wallet[-4:]} {coin}.")
+            return 1
+        self.save()
+        self._cancel_own(wallet, coin, ladder["dex"])
+        print(f"Ladder stopped for ...{wallet[-4:]} {coin}; its orders are cancelled, the position stays.")
+        return 0
+
+    # -- quoting
+    def _atr(self, ladder: dict) -> float:
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if ladder["atr"] is None or ladder["atr_day"] != today:
+            candles = ht.fetch_daily_candles(ladder["coin"].split(":")[-1], ladder["dex"])
+            ladder["atr"], ladder["atr_day"] = float(ht.wilder_atr(candles, 14)), today
+        return ladder["atr"]
+
+    def _book(self, coin: str, dex: str) -> tuple[float, float]:
+        request = {"type": "l2Book", "coin": coin}
+        if dex:
+            request["dex"] = dex
+        levels = ht.post_info(request)["levels"]
+        return float(levels[0][0]["px"]), float(levels[1][0]["px"])
+
+    def preview(self, wallet: str, coin: str, dex: str, base: float) -> tuple[list[dict], float]:
+        market = self.daemon.state.markets([(coin, dex)])[coin]
+        bid, ask = self._book(coin, dex)
+        atr = float(ht.wilder_atr(ht.fetch_daily_candles(coin.split(":")[-1], dex), 14))
+        config = ladder_config()
+        mid = (bid + ask) / 2
+        spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
+        return ladder_quotes(base, base, mid, bid, ask, atr, market.size_decimals, config), spacing
+
+    def run(self) -> None:
+        while not self.daemon.stopped.wait(5):
+            if time.time() < self.backoff_until:
+                continue
+            with self.lock:
+                items = list(self.ladders.values())
+            for ladder in items:
+                try:
+                    self.step(ladder, time.time())
+                except Exception as exc:
+                    text = str(exc)
+                    if "rate limit" in text.lower() or "too many" in text.lower():
+                        self.backoff_until = time.time() + 600
+                        log(f"ladder: HL rate limit ({text[:120]}); pausing the ladders for 10 minutes")
+                    else:
+                        log(f"ladder ...{ladder['wallet'][-4:]} {ladder['coin']} failed ({type(exc).__name__}: {exc}); retrying")
+
+    def step(self, ladder: dict, now: float) -> None:
+        wallet, coin, dex, base = ladder["wallet"], ladder["coin"], ladder["dex"], ladder["base"]
+        position = self.daemon.state.position_quantity(wallet, coin, dex)
+        if position is None:
+            return  # stale state: wait for fresh data
+        if abs(position) < 0.01 * abs(base) or position * base < 0:
+            with self.lock:
+                self.ladders.pop((wallet, coin), None)
+            self.save()
+            self._cancel_own(wallet, coin, dex)
+            log(f"ladder ...{wallet[-4:]} {coin}: the position is closed or flipped; ladder stopped and its orders cancelled")
+            return
+        config = ladder_config()
+        bid, ask = self._book(coin, dex)
+        mid = (bid + ask) / 2
+        atr = self._atr(ladder)
+        spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
+        level_size = config["trim_level_pct"] * abs(base)
+        moved = ladder["center"] is None or abs(mid - ladder["center"]) >= config["replace_move"] * spacing
+        filled = ladder["placed_position"] is not None and abs(position - ladder["placed_position"]) >= 0.5 * level_size
+        stale = now - ladder["placed_at"] >= config["refresh_seconds"]
+        if not (moved or filled or stale) or now - ladder["placed_at"] < config["min_replace_seconds"]:
+            return
+        health = self.daemon.margin_guard.latest_health.get(wallet, 0.0)
+        allow_adds = health < config["pause_adds_at_health"]
+        market = self.daemon.state.markets([(coin, dex)])[coin]
+        quotes = ladder_quotes(position, base, mid, bid, ask, atr, market.size_decimals, config, allow_adds)
+        exchange = self.daemon.exchanges[wallet]
+        if ladder["oids"]:
+            exchange.bulk_cancel([{"coin": coin, "oid": oid} for oid in ladder["oids"]])
+            ladder["oids"] = []
+        if filled:
+            ladder["fills"] += 1
+        from hyperliquid.utils.types import Cloid
+
+        requests_ = [{"coin": coin, "is_buy": quote["is_buy"], "sz": quote["size"], "limit_px": quote["price"],
+                      "order_type": {"limit": {"tif": "Alo"}}, "reduce_only": quote["reduce_only"],
+                      "cloid": Cloid.from_str(LADDER_CLOID_PREFIX + os.urandom(14).hex())} for quote in quotes]
+        if requests_:
+            response = exchange.bulk_orders(requests_)
+            for status in ht._status_rows(response):
+                if isinstance(status, dict) and status.get("resting"):
+                    ladder["oids"].append(int(status["resting"]["oid"]))
+        ladder.update(center=mid, placed_position=position, placed_at=now)
+        if moved or filled:
+            log(f"ladder ...{wallet[-4:]} {coin}: {len(ladder['oids'])} quotes around {mid:.6g} (position {position:g}, "
+                f"base {base:g}{'' if allow_adds else ', adds paused: margin'})")
+
+
 class Session:
     """One client connection: text out, typed answers in."""
 
@@ -1072,6 +1317,7 @@ class Daemon:
         self.trade_lock = threading.Lock()
         self.margin_guard = MarginGuard(self)
         self.regime_guard = RegimeGuard(self)
+        self.ladders = Ladders(self, None if paper else LADDERS_FILE)
         self.streams: list[Stream] = []
         self.market_stream: Stream | None = None
         self.stopped = threading.Event()
@@ -1189,6 +1435,11 @@ class Daemon:
                 return self.trade(request, session) if command == "trade" else self.reattach(request, session)
             finally:
                 self.trade_lock.release()
+        if command == "ladder":
+            wallet = self.wallet(str(request.get("wallet", "")))
+            coin = str(request.get("coin", "")).strip()
+            coin = coin if ":" in coin else coin.upper()
+            return self.ladders.stop(wallet, coin) if request.get("stop") else self.ladders.start(wallet, coin, session)
         if command == "stop":
             return self.stop_request(session)
         print(f"Unknown command {command!r}.")
@@ -1228,6 +1479,9 @@ class Daemon:
             "margin_guard": {"enabled": margin_config()["enabled"], "act": margin_config()["act_maintenance"],
                              "used": {wallet[-4:]: used for wallet, used in self.margin_guard.latest.items()},
                              "health": {wallet[-4:]: share for wallet, share in self.margin_guard.latest_health.items()}},
+            "ladders": [{"wallet": item["wallet"][-4:], "coin": item["coin"], "base": item["base"],
+                         "quotes": len(item["oids"]), "center": item["center"], "fills": item["fills"]}
+                        for item in list(self.ladders.ladders.values())],
             "regime_guard": {"enabled": regime_config()["enabled"],
                              "levels": {key: value for key, value in self.regime_guard.latest.items() if not key.startswith("_")}},
         }
@@ -1501,6 +1755,8 @@ def serve(args: argparse.Namespace) -> int:
     threading.Thread(target=daemon.refresher, name="refresher", daemon=True).start()
     threading.Thread(target=daemon.margin_guard.run, name="margin-guard", daemon=True).start()
     threading.Thread(target=daemon.regime_guard.run, name="regime-guard", daemon=True).start()
+    daemon.ladders.resume()
+    threading.Thread(target=daemon.ladders.run, name="ladders", daemon=True).start()
 
     server = _Server(str(daemon_link.SOCKET_PATH), _Handler)
     os.chmod(daemon_link.SOCKET_PATH, 0o600)
@@ -1588,6 +1844,10 @@ def print_data(command: str | None, data: Any) -> None:
         health = ", ".join(f"...{wallet} {share:.0%}" for wallet, share in margin.get("health", {}).items()) or "not read yet"
         print(f"  margin guard {'ON' if margin['enabled'] else 'dry run (logs only)'}: way to liquidation {health} "
               f"(acts at {margin.get('act', 0):.0%})")
+    for ladder in data.get("ladders", []):
+        center = f"{ladder['center']:.6g}" if ladder["center"] else "not placed yet"
+        print(f"  ladder ...{ladder['wallet']} {ladder['coin']} around {ladder['base']:g}: {ladder['quotes']} quotes "
+              f"centred at {center}, {ladder['fills']} re-centres on fills")
     regime = data.get("regime_guard")
     if regime:
         levels = ", ".join(f"{key.replace('_', ' ')} {value}" for key, value in regime["levels"].items()) or "not read yet"
@@ -1627,6 +1887,10 @@ def main(argv: list[str] | None = None) -> int:
     reattach.add_argument("--wallet", required=True)
     reattach.add_argument("--coins", help="comma-separated markets (default: every position with a stop)")
     reattach.add_argument("--live", action="store_true")
+    ladder = commands.add_parser("ladder", help="market-making ladder around a position you opened (or --stop it)")
+    ladder.add_argument("--wallet", required=True, help="wallet: address or its last 4+ characters")
+    ladder.add_argument("--coin", required=True, help="the position's coin (xyz:NVDA for a HIP-3 market)")
+    ladder.add_argument("--stop", action="store_true", help="stop the ladder and cancel its orders")
     commands.add_parser("stop", help="stop the daemon (guards resume on the next start)")
     args = parser.parse_args(argv)
 
@@ -1645,6 +1909,8 @@ def main(argv: list[str] | None = None) -> int:
                    "signals": str(args.signals.resolve()) if args.signals else None,
                    "actions": str(args.actions.resolve()) if args.actions else None}
         return call(request)
+    if args.command == "ladder":
+        return call({"cmd": "ladder", "wallet": args.wallet, "coin": args.coin, "stop": args.stop})
     if args.command == "reattach":
         return call({"cmd": "reattach", "wallet": args.wallet, "live": args.live,
                      "coins": [item for item in (args.coins or "").split(",") if item.strip()]})

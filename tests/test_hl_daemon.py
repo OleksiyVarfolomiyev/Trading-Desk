@@ -499,3 +499,42 @@ class RegimeTargetTests(unittest.TestCase):
         self.assertEqual([p.coin for p in alts], ["ICP"])  # not BTC, not the VVV hedge, not longs or equity perps
         equities = hl_daemon.regime_targets(positions, "0xabc07f2", "equity_selloff", ["07f2:VVV"])
         self.assertEqual([p.coin for p in equities], ["xyz:NVDA"])  # equity-perp longs only
+
+
+class LadderQuoteTests(unittest.TestCase):
+    config = {**hl_daemon.LADDER_DEFAULTS}
+
+    def quotes(self, position, base=100.0, allow_adds=True, mid=10.0, atr=1.0):
+        return hl_daemon.ladder_quotes(position, base, mid, mid - 0.01, mid + 0.01, atr, 1, self.config, allow_adds)
+
+    def test_a_long_leans_bids_closer_and_bigger(self):
+        quotes = self.quotes(100.0)
+        bids = [q for q in quotes if q["is_buy"]]
+        asks = [q for q in quotes if not q["is_buy"]]
+        self.assertEqual((len(bids), len(asks)), (5, 5))
+        self.assertAlmostEqual(bids[0]["price"], 9.95)   # half a spacing (0.1 x ATR) under the mid
+        self.assertAlmostEqual(asks[0]["price"], 10.1)   # a full spacing over it
+        self.assertEqual(bids[0]["size"], 5.0)           # 5% of the size opened
+        self.assertEqual(asks[0]["size"], 3.0)           # 3%
+        self.assertTrue(all(q["reduce_only"] for q in asks) and not any(q["reduce_only"] for q in bids))
+
+    def test_a_short_mirrors_it(self):
+        quotes = self.quotes(-100.0, base=-100.0)
+        asks = [q for q in quotes if not q["is_buy"]]
+        self.assertEqual(asks[0]["kind"], "add")
+        self.assertAlmostEqual(asks[0]["price"], 10.05)
+
+    def test_the_band_stops_adds_and_trims(self):
+        full = self.quotes(148.0)                        # 2 left before 150% of the base
+        self.assertEqual(sum(q["size"] for q in full if q["kind"] == "add"), 2.0)
+        thin = self.quotes(52.0)                         # 2 left before 50%
+        self.assertEqual(sum(q["size"] for q in thin if q["kind"] == "trim"), 2.0)
+
+    def test_adds_pause_when_margin_is_stretched_and_quotes_never_cross(self):
+        self.assertFalse(any(q["kind"] == "add" for q in self.quotes(100.0, allow_adds=False)))
+        tight = hl_daemon.ladder_quotes(100.0, 100.0, 10.0, 9.99, 10.01, 0.0001, 1, self.config)
+        self.assertTrue(all(q["price"] < 10.01 for q in tight if q["is_buy"]))
+        self.assertTrue(all(q["price"] > 9.99 for q in tight if not q["is_buy"]))
+
+    def test_orders_under_ten_dollars_are_left_out(self):
+        self.assertEqual(hl_daemon.ladder_quotes(10.0, 10.0, 10.0, 9.99, 10.01, 1.0, 1, self.config), [])
