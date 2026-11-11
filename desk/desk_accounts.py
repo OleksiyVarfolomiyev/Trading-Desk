@@ -35,7 +35,10 @@ ROOT_DATA = Path(__file__).resolve().parents[1] / "data"
 RESEARCH_PRICES = Path(__file__).resolve().parents[1] / "research" / "data" / "daily_prices_usd.csv"
 # IB NAV is end of the US trading day; stamp it at 21:00 UTC (16:00-17:00 New York).
 IB_CLOSE_HOUR_UTC = 21
-WINDOWS = {"7D": 7, "30D": 30, "90D": 90}
+WINDOWS = {"7D": 7, "30D": 30, "90D": 90, "1Y": 365}
+# The performance table's periods: the windows, then since each account's (or the desk's) first day.
+INCEPTION = "since inception"
+PERIODS = [*WINDOWS, INCEPTION]
 ACCOUNTS_HIGHLIGHTS_STATE = "desk_accounts_highlights_state.json"
 DEEP_DRAWDOWN = -0.10   # the desk this far below its peak is flagged
 
@@ -392,6 +395,8 @@ class DeskAccounts:
                 row[f"PnL {label}"] = float(frame["pnl"].iloc[-1] - before["pnl"].iloc[-1])
                 prior = index[index.index <= cutoff]
                 row[f"Return {label}"] = float(index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
+            row[f"PnL {INCEPTION}"] = float(frame["pnl"].iloc[-1] - frame["pnl"].iloc[0])
+            row[f"Return {INCEPTION}"] = float(index.iloc[-1] / index.iloc[0] - 1) if len(index) else np.nan
             rows.append(row)
         return pd.DataFrame(rows)
 
@@ -400,14 +405,14 @@ class DeskAccounts:
         table = self.account_pnl()
         returns = self.desk_returns()
         desk = {"Account": "Desk (combined)", "Value": table["Value"].sum()}
-        for label in WINDOWS:
-            desk[f"Return {label}"] = returns.get(label, np.nan)
+        for label in PERIODS:
+            desk[f"Return {label}"] = returns.get("since start" if label == INCEPTION else label, np.nan)
             desk[f"PnL {label}"] = table[f"PnL {label}"].sum(min_count=1)
         table = pd.concat([table, pd.DataFrame([desk])], ignore_index=True)
-        return table[["Account", "Value"] + [f"{kind} {label}" for label in WINDOWS for kind in ("PnL", "Return")]]
+        return table[["Account", "Value"] + [f"{kind} {label}" for label in PERIODS for kind in ("PnL", "Return")]]
 
     def show_performance(self):
-        """Desk and per-account returns and PnL over 7, 30 and 90 days and since the shared start."""
+        """Desk and per-account returns and PnL over 7, 30 and 90 days, a year and since inception."""
         if not self._require():
             return
         table = self.performance_frame()

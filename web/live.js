@@ -20,7 +20,7 @@
   const STOP_ATR_MULTIPLE = 1.25, RESERVE_PCT = 0.20, RISK_PCT_OF_USABLE = 0.05, MAX_TOTAL_RISK_PCT = 0.33;
   const FUNDING_HORIZON_HOURS = 120, FUNDING_PERCENTILE = 0.95, FUNDING_LOOKBACK_DAYS = 20;
   const ATR_PERIOD = 14, CANDLE_DAYS = 200, RISK_DAYS = 90;
-  const WINDOWS = { "7D": 7, "30D": 30, "90D": 90 };
+  const WINDOWS = { "7D": 7, "30D": 30, "90D": 90, "1Y": 365 };
   const MOVERS = 5, HIGHLIGHT_MOVERS = 3;
   const CONCENTRATION_PCT = 0.25, HIGH_LEVERAGE = 2.0, LOW_AVAILABLE_PCT = 0.10, NEAR_CAP_PCT = 0.80, DEEP_DRAWDOWN = -0.10;
   const CRYPTO_HIP3_DEXES = new Set(["hyna"]);
@@ -673,9 +673,11 @@
     const performanceRows = traders.map((a) => {
       const own = (historyOf[a.id] || []).length ? twrIndex([historyOf[a.id]]) : [];
       const r = windowReturns(own, now);
-      return { "Account": a.label, "Return 7D": r["7D"], "Return 30D": r["30D"], "Return 90D": r["90D"] };
+      return { "Account": a.label, "Return 7D": r["7D"], "Return 30D": r["30D"], "Return 90D": r["90D"], "Return 1Y": r["1Y"],
+        "Return since inception": r.since_start };
     });
-    performanceRows.push({ "Account": "Desk (combined)", "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"] });
+    performanceRows.push({ "Account": "Desk (combined)", "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"],
+      "Return 1Y": returns["1Y"], "Return since inception": returns.since_start });
 
     // -- wallet holdings outside HL
     const walletRows = wallets.flatMap((a) => a.positions.map((p) => {
@@ -777,8 +779,9 @@
       "Risk equity": "usd", "Open risk": "usd", "Long": "usd", "Short": "usd", "VaR 95%": "usd", "VaR 99%": "usd" };
     const signed = { "uPnL": "susd", "Net": "susd", "Value": "susd" };
     const tables = {
-      performance: table(performanceRows, ["Account", "Return 7D", "Return 30D", "Return 90D"],
-        { "Return 7D": "spct", "Return 30D": "spct", "Return 90D": "spct" }, { totalLast: true, key: { "Return 30D": "abs" } }),
+      performance: table(performanceRows, ["Account", "Return 7D", "Return 30D", "Return 90D", "Return 1Y", "Return since inception"],
+        { "Return 7D": "spct", "Return 30D": "spct", "Return 90D": "spct", "Return 1Y": "spct", "Return since inception": "spct" },
+        { totalLast: true, key: { "Return 30D": "abs" } }),
       accounts: table(accountRows, ["Venue", "Account", "% of desk", "Cash / equity", "Margin used / equity", "Available / equity",
         "uPnL / equity", "Gross / equity", "Net / equity", "Positions"],
       { "% of desk": "pct", "Cash / equity": "pct", "Margin used / equity": "pct", "Available / equity": "pct",

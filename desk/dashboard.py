@@ -39,7 +39,7 @@ from desk import emphasis
 from desk.privacy import mask
 from desk.day_change import DayChange, desk_day_change, position_changes
 from desk.overview import with_position_returns
-from desk.desk_accounts import ROOT_DATA, WINDOWS, DeskAccounts
+from desk.desk_accounts import PERIODS, ROOT_DATA, WINDOWS, DeskAccounts
 
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
 DEFAULT_PORT = 8050
@@ -238,8 +238,8 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
                                      "Positions": "int", "% of desk": "pct"}, account_total,
                           key={"% of desk": "max"}),
         # Returns only: the dollar PnL is in the accounts' value chart and the desk value tile.
-        "performance": table(desk.performance_frame()[["Account"] + [f"Return {label}" for label in WINDOWS]],
-                             {f"Return {label}": "spct" for label in WINDOWS}, total_last=True,
+        "performance": table(desk.performance_frame()[["Account"] + [f"Return {label}" for label in PERIODS]],
+                             {f"Return {label}": "spct" for label in PERIODS}, total_last=True,
                              key={"Return 30D": "abs"}),
         "exposure": table(overview.exposure_frame(), {**money, "Net": "susd", "Gross / equity": "pct",
                                                       "Net / equity": "spct"}, total_last=True,
