@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+from desk.accounts import Account
 from desk.desk_accounts import DeskAccounts, wallet_performance
 from desk.venues.onchain_history import load_returns, price_moves
 
@@ -39,10 +40,10 @@ class WalletPerformanceTests(unittest.TestCase):
                 Path(folder) / "onchain_returns_07f2.csv", index=False)
             pd.DataFrame({"date": ["2026-01-01", "2026-01-02", "2026-01-03"], "value_usd": [100.0, 110.0, 105.0]}).to_csv(
                 Path(folder) / "onchain_value_backfill_07f2.csv", index=False)
-            accounts = [SimpleNamespace(venue="hl", id=WALLET, onchain=True, name="HL 07f2")]
+            accounts = [Account(venue="hl", id=WALLET, label="")]
             histories = wallet_performance(accounts, folder)
-            self.assertEqual(list(histories), ["HL 07f2 wallet"])
-            frame = histories["HL 07f2 wallet"]
+            self.assertEqual(list(histories), ["07f2 wallet"])
+            frame = histories["07f2 wallet"]
             self.assertEqual(frame["pnl"].tolist(), [10.0, 5.0])
             self.assertEqual(frame["ts"].dt.strftime("%Y-%m-%d").tolist(), ["2026-01-03", "2026-01-04"])
             self.assertEqual(frame["accountValue"].iloc[-1], 105.0)

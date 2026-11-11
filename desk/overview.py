@@ -272,7 +272,7 @@ class DeskOverview:
         # Per wallet, so one unreadable wallet does not hide the others' risk.
         risk_jobs = [pool.submit(attempt, f"{account.name} risk", lambda account=account: hl_book_entry([account.id], account.name))
                      for account in (hl_accounts if include_risk else [])]
-        wallet_jobs = [(account, pool.submit(attempt, f"{account.name} wallet",
+        wallet_jobs = [(account, pool.submit(attempt, account.wallet_name,
                                              lambda account=account: onchain.wallet_snapshot_cached(account)))
                        for account in hl_accounts if account.onchain]
         for job in hl_jobs:
@@ -319,10 +319,10 @@ class DeskOverview:
                     account, self.data_dir,
                     desk_wallets={item.id.lower(): item.name for item in hl_accounts})
                 self.wallet_activity[account.name] = activity
-                self.problems.extend(f"{account.name} wallet: {note}" for note in notes
+                self.problems.extend(f"{account.wallet_name}: {note}" for note in notes
                                      if "unavailable" in note)
             except Exception as exc:
-                self.problems.append(f"{account.name} wallet activity: {type(exc).__name__}: {exc}")
+                self.problems.append(f"{account.wallet_name} activity: {type(exc).__name__}: {exc}")
         pool.shutdown(wait=False)
         return self.snapshots
 

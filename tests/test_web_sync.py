@@ -95,7 +95,7 @@ class DailySyncTests(unittest.TestCase):
         report, *_, push, nav_only = self.run_daily(lambda account: (None, snap))
         push.assert_called_once()
         nav_only.assert_not_called()
-        self.assertEqual(report, ["HL 07f2: history saved", "HL 07f2 wallet: performance saved (2 days)",
+        self.assertEqual(report, ["HL 07f2: history saved", "07f2 wallet: performance saved (2 days)",
                                   "IB 6543: Flex NAV saved", "IB 6543: sent to the relay (2 positions)",
                                   "wallets: performance sent to the relay"])
 

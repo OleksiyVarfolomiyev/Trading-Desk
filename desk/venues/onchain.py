@@ -751,7 +751,7 @@ def wallet_snapshot(account: Account, chains: list[str] | None = None) -> tuple[
         notes.append(f"{unpriced} unpriced token balance(s) ignored (mostly spam airdrops)")
     equity = sum(position.notional_usd for position in positions)
     snapshot = VenueAccount(
-        venue=VENUE, account=wallet, label=f"{account.name} wallet", equity_usd=equity, cash_usd=equity,
+        venue=VENUE, account=wallet, label=account.wallet_name, equity_usd=equity, cash_usd=equity,
         margin_used_usd=0.0, available_usd=equity, unrealized_usd=float("nan"),
         positions=tuple(positions), notes=tuple(notes),
     )

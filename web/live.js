@@ -278,7 +278,7 @@
       for (const [key, change] of Object.entries(moved.coins || {})) changes[key.toLowerCase()] = num(change) / 100;
     }
     return replies.map(({ wallet, reply, error }) => {
-      const label = `${wallet.label} wallet`;
+      const label = `${wallet.label.replace(/^HL /, "")} wallet`;  // its tokens are not HL trading
       if (error) return { venue: "onchain", id: wallet.id, label, error: String(error.message || error) };
       const positions = [], notes = (reply.problems || []).map((problem) => `${label}: ${problem}`);
       let unpriced = 0;

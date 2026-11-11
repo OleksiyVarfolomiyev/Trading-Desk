@@ -203,9 +203,9 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
         if account.onchain:
             try:
                 days = len(update_wallet_returns(account, Path(data_dir))[0])
-                report.append(f"HL {short_id(account.id)} wallet: performance saved ({days} days)")
+                report.append(f"{short_id(account.id)} wallet: performance saved ({days} days)")
             except Exception as exc:
-                report.append(f"HL {short_id(account.id)} wallet: performance not saved ({type(exc).__name__}: {exc})")
+                report.append(f"{short_id(account.id)} wallet: performance not saved ({type(exc).__name__}: {exc})")
     for account in accounts_for("ib", load_accounts()):
         # accounts.json may leave the IB number out (TWS supplies it): then the Flex file names it.
         ident, flex_note = account.id, ""

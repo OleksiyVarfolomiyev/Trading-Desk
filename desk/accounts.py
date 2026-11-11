@@ -60,6 +60,14 @@ class Account:
         return f"IB {short_id(self.id)}" if self.id else "IB"  # only the last four characters are shown
 
 
+def _wallet_name(self) -> str:
+    """The wallet's name on its own (``07f2 wallet``): its tokens are not HL trading, so no ``HL`` in front."""
+    return f"{self.name.removeprefix('HL ')} wallet"
+
+
+Account.wallet_name = property(_wallet_name)
+
+
 def short_id(account_id: str) -> str:
     """The last four characters of an account ID, the only part shown on screen (``U98768440`` -> ``8440``)."""
     return str(account_id or "")[-4:]
