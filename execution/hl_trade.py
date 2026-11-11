@@ -50,8 +50,9 @@ from desk.risk import (  # noqa: E402
     RESERVE_PCT,
     REWARD_RISK_RATIO,
     RISK_PCT_OF_USABLE_MARGIN,
-    STOP_ATR_MULTIPLE,
+    CONVICTION_NOTIONAL_PCT,
 )
+from desk.risk import HL_STOP_ATR_MULTIPLE as STOP_ATR_MULTIPLE  # noqa: E402
 FUNDING_STRESS_PERCENTILE = 0.95
 MIN_ORDER_VALUE_USD = 10.0
 ENTRY_TIMEOUT_SECONDS = 5 * 60
@@ -163,6 +164,7 @@ class PlannedTrade:
     leverage: int
     block_reason: str = ""
     price_stop_distance: float = 0.0
+    conviction: bool = False  # no stop, no take-profit, no loss guard (sized by notional)
 
 
 @dataclass
@@ -501,10 +503,18 @@ def position_risk(
     funding: pd.DataFrame,
     taker_fee_rate: float,
     maker_fee_rate: float = 0.0,
+    stop_price: float | None = None,
 ) -> float:
-    """Estimate a position's stop, adverse-funding, and round-trip fee risk."""
+    """Estimate a position's stop, adverse-funding, and round-trip fee risk.
+
+    With its ``stop_price`` (a resting reduce-only stop) the price risk runs from the mark to that stop;
+    without one it is the ATR stop distance the executor would use.
+    """
     side = "LONG" if position.quantity > 0 else "SHORT"
     atr = wilder_atr(candles, 14)
+    price_risk = atr * STOP_ATR_MULTIPLE
+    if stop_price and stop_price > 0:
+        price_risk = max(0.0, (position.mark_price - stop_price) if position.quantity > 0 else (stop_price - position.mark_price))
     funding_reserve = adverse_funding_cost_per_unit(
         funding,
         side,
@@ -514,8 +524,33 @@ def position_risk(
     )
     fee_reserve_per_unit = position.mark_price * (maker_fee_rate + taker_fee_rate)
     return abs(position.quantity) * (
-        atr * STOP_ATR_MULTIPLE + funding_reserve + fee_reserve_per_unit
+        price_risk + funding_reserve + fee_reserve_per_unit
     )
+
+
+def resting_stops(wallets: list[str], dexes: list[str] | None = None) -> dict[tuple[str, str], list[float]]:
+    """(wallet, coin) -> trigger prices of the resting reduce-only stops, for each position that has one."""
+    def read(wallet: str) -> list[tuple[str, str, float]]:
+        found = []
+        for order in fetch_open_orders(wallet, dexes):
+            kind = str(order.get("orderType", ""))
+            if order.get("reduceOnly") and kind.startswith("Stop") and float(order.get("triggerPx") or 0) > 0:
+                found.append((wallet.lower(), str(order["coin"]), float(order["triggerPx"])))
+        return found
+
+    stops: dict[tuple[str, str], list[float]] = {}
+    for rows in _gather([lambda wallet=wallet: read(wallet) for wallet in wallets]):
+        for wallet, coin, price in rows:
+            stops.setdefault((wallet, coin), []).append(price)
+    return stops
+
+
+def nearest_stop(position: Position, stops: dict[tuple[str, str], list[float]] | None) -> float | None:
+    """The stop that would close the position first: the lowest above a short, the highest below a long."""
+    prices = (stops or {}).get((position.wallet.lower(), position.coin))
+    if not prices:
+        return None
+    return min(prices) if position.quantity < 0 else max(prices)
 
 
 def _order_side_direction(order: dict[str, Any]) -> int:
@@ -889,8 +924,14 @@ def size_trade(
     available_margin: float,
     maker_fee_rate: float,
     taker_fee_rate: float,
+    conviction_notional: float | None = None,
 ) -> PlannedTrade:
-    """Calculate an entry quantity constrained by risk, margin, and leverage."""
+    """Calculate an entry quantity constrained by risk, margin, and leverage.
+
+    With ``conviction_notional`` the trade has no stop: its size is that notional instead of the
+    per-position risk budget, still within the margin and the aggregate risk headroom (its risk is
+    counted at the ATR stop distance it does not have).
+    """
     direction = side_to_direction(side)
     if not np.isfinite(equity) or equity <= 0:
         raise ValueError("Account equity must be positive and finite.")
@@ -915,10 +956,14 @@ def size_trade(
     if leverage < 1:
         raise ValueError(f"Invalid leverage metadata for {coin}.")
     available_risk = max(0.0, min(per_position_budget, risk_headroom))
+    if conviction_notional is not None:
+        available_risk = max(0.0, risk_headroom)
     raw_quantity = min(
         available_risk / price_risk_per_unit,
         max(0.0, available_margin) * leverage / market.mark_price,
     )
+    if conviction_notional is not None:
+        raw_quantity = min(raw_quantity, max(0.0, conviction_notional) / market.mark_price)
     quantity_step = 10 ** -market.size_decimals
     quantity = round(math.floor(raw_quantity / quantity_step + 1e-12) * quantity_step, market.size_decimals)
     price_stop_distance = max(
@@ -962,6 +1007,7 @@ def size_trade(
         leverage=leverage,
         block_reason=reason,
         price_stop_distance=price_stop_distance,
+        conviction=conviction_notional is not None,
     )
 
 
@@ -1058,10 +1104,16 @@ def plan_trades(
     markets: dict[str, Market],
     snapshot: AccountSnapshot,
     include_external: bool = True,
+    stops: dict[tuple[str, str], list[float]] | None = None,
+    conviction: bool = False,
+    conviction_pct: float = CONVICTION_NOTIONAL_PCT,
 ) -> tuple[list[PlannedTrade], float]:
     """Build risk- and margin-limited entry plans and report current portfolio risk.
 
-    Current risk includes other desk venues unless ``include_external`` is False.
+    Current risk includes other desk venues unless ``include_external`` is False. ``stops`` (from
+    ``resting_stops``) prices each open position's risk to its own stop. ``conviction`` plans entries
+    without a stop: sized at ``conviction_pct`` of the trading wallet's equity, within its margin and
+    the desk's aggregate risk cap.
     """
     caches: dict[tuple[str, str], tuple[pd.DataFrame, pd.DataFrame]] = {}
     current_risk = snapshot.external_risk if include_external else 0.0
@@ -1078,6 +1130,7 @@ def plan_trades(
             caches[key][1],
             snapshot.taker_fee_rate,
             snapshot.maker_fee_rate,
+            stop_price=nearest_stop(position, stops),
         )
 
     total_risk_cap = snapshot.desk_equity * MAX_TOTAL_RISK_PCT
@@ -1120,6 +1173,7 @@ def plan_trades(
             available_margin,
             snapshot.maker_fee_rate,
             snapshot.taker_fee_rate,
+            conviction_notional=conviction_pct * snapshot.target_equity if conviction else None,
         )
         plans.append(plan)
         risk_headroom -= plan.risk_budget
@@ -2055,8 +2109,10 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
     for plan in plans:
         print(
             f"{plan.coin} {plan.side}: quantity={plan.quantity:g}, reference=${plan.entry_reference:,.6g}, "
-            f"stop=${plan.stop_price:,.6g}, target=${plan.target_price:,.6g}, "
-            f"risk=${plan.risk_budget:,.2f}, funding reserve/unit=${plan.funding_reserve_per_unit:,.6g}, "
+            + (f"notional=${plan.quantity * plan.entry_reference:,.2f}, CONVICTION: no stop or take-profit "
+               f"(risk counted at a {STOP_ATR_MULTIPLE:g} x ATR move, ${plan.stop_price:,.6g}), "
+               if plan.conviction else f"stop=${plan.stop_price:,.6g}, target=${plan.target_price:,.6g}, ")
+            + f"risk=${plan.risk_budget:,.2f}, funding reserve/unit=${plan.funding_reserve_per_unit:,.6g}, "
             f"estimated entry+stop fees=${plan.quantity * plan.entry_reference * (plan.maker_fee_rate + plan.taker_fee_rate):,.2f}, "
             f"expected 5d PnL=${plan.expected_pnl.net_pnl:,.2f} "
             f"(price ${plan.expected_pnl.price_pnl:,.2f}; funding ${plan.expected_pnl.funding_pnl:,.2f})"
@@ -2836,6 +2892,10 @@ def execute_plans(
                 )
             else:
                 quantity, entry_price = _place_entry(exchange, wallet, plan, market, fast=fast)
+            if plan.conviction:
+                print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; conviction trade, "
+                      "so no stop, take-profit or loss guard (the daemon's margin guard still watches the account).")
+                continue
             try:
                 stop_oid, target_oid = _place_exit_orders(
                     exchange,
@@ -3104,6 +3164,19 @@ def main(argv: list[str] | None = None) -> int:
         f"(stops if the price runs {FAST_CHASE_MAX_DRIFT * 100:.0f}%% of the stop distance away).",
     )
     parser.add_argument(
+        "--conviction",
+        action="store_true",
+        help="With --signals: a high-conviction entry with no stop, take-profit or loss guard, sized at "
+        "--conviction-pct of the trading wallet's equity (within its margin and the aggregate risk cap).",
+    )
+    parser.add_argument(
+        "--conviction-pct",
+        type=float,
+        default=CONVICTION_NOTIONAL_PCT * 100,
+        help=f"With --conviction: position notional as a percent of the trading wallet's equity "
+        f"(default {CONVICTION_NOTIONAL_PCT * 100:g}).",
+    )
+    parser.add_argument(
         "--slippage",
         type=float,
         default=URGENT_SLIPPAGE * 100,
@@ -3298,7 +3371,9 @@ def main(argv: list[str] | None = None) -> int:
         markets = fetch_markets(dexes)
         risk_wallets = read_target_wallets(args.wallet, args.risk_wallets)
         snapshot = urgent_fees(attach_other_venues(collect_snapshot(risk_wallets, dexes, markets), args), args.urgent)
-        plans, current_risk = plan_trades(signals, markets, snapshot)
+        stops = resting_stops(risk_wallets, sorted({position.dex for position in snapshot.positions}))
+        conviction = dict(conviction=args.conviction, conviction_pct=args.conviction_pct / 100)
+        plans, current_risk = plan_trades(signals, markets, snapshot, stops=stops, **conviction)
         if args.urgent:
             print(f"Urgent entry: immediate-or-cancel at most {args.slippage:g}% from the mid (taker fee).")
         print_plan(snapshot, plans, current_risk)
@@ -3316,7 +3391,7 @@ def main(argv: list[str] | None = None) -> int:
         fresh_snapshot = urgent_fees(
             attach_other_venues(collect_snapshot(risk_wallets, dexes, fresh_markets), args), args.urgent
         )
-        fresh_plans, fresh_current_risk = plan_trades(signals, fresh_markets, fresh_snapshot)
+        fresh_plans, fresh_current_risk = plan_trades(signals, fresh_markets, fresh_snapshot, stops=stops, **conviction)
         print("Refreshed preflight immediately before live submission:")
         print_plan(fresh_snapshot, fresh_plans, fresh_current_risk)
         if not any(plan.quantity > 0 for plan in fresh_plans):

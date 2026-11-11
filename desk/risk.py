@@ -21,7 +21,13 @@ RESERVE_PCT = 0.20
 RISK_PCT_OF_USABLE_MARGIN = 0.05
 MAX_TOTAL_RISK_PCT = 0.33  # raised from 0.20 on 2026-11-09 at the user's request
 MAX_RISK_PCT_OVERRIDE_LIMIT = 50.0
-STOP_ATR_MULTIPLE = 1.25
+STOP_ATR_MULTIPLE = 1.25  # IB stops
+# HL stops sit wider (from 2026-11-11): at 1.25 x ATR normal noise closed volatile names (INIT, the equity
+# perps) at a loss before the move. The same risk budget buys a smaller position.
+HL_STOP_ATR_MULTIPLE = 3.0
+# A conviction trade (no stop, no take-profit, no loss guard) is sized by notional instead: this share of
+# the trading wallet's equity, still inside its margin and the desk's aggregate risk cap.
+CONVICTION_NOTIONAL_PCT = 0.50
 REWARD_RISK_RATIO = 1.0
 ATR_PERIOD = 14
 # Without usable price history, a position is assumed able to lose this share of its value.
@@ -152,7 +158,8 @@ def hl_book_entry(wallets: list[str], label: str = "") -> BookEntry:
     dexes = executor.get_dexes([])
     markets = executor.fetch_markets(dexes)
     snapshot = executor.collect_snapshot(wallets, dexes, markets)
-    _, risk = executor.plan_trades([], markets, snapshot, include_external=False)
+    stops = executor.resting_stops(wallets, sorted({position.dex for position in snapshot.positions}))
+    _, risk = executor.plan_trades([], markets, snapshot, include_external=False, stops=stops)
     return BookEntry(
         venue="hl",
         label=label or f"HL ({len(snapshot.risk_wallets)} wallet{'s' if len(snapshot.risk_wallets) != 1 else ''})",

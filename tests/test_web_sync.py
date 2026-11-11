@@ -74,6 +74,7 @@ class DailySyncTests(unittest.TestCase):
                 patch("desk.venues.ib_flex.update_nav_history") as flex, \
                 patch.object(web_sync, "read_ib", side_effect=read_ib), \
                 patch.object(web_sync, "push_wallets", return_value={"ok": True}), \
+                patch.object(web_sync, "push_regime", return_value={"ok": True}), \
                 patch.object(web_sync, "push_ib", return_value={"ok": True}) as push, \
                 patch.object(web_sync, "push_nav_only", return_value={"ok": True}) as nav_only, \
                 patch("desk.day_change.position_changes", return_value={}):
@@ -86,7 +87,7 @@ class DailySyncTests(unittest.TestCase):
         flex.assert_called_once()
         push.assert_not_called()
         nav_only.assert_called_once()
-        self.assertIn("daily NAV sent", report[-2])
+        self.assertIn("daily NAV sent", report[-3])
         self.assertNotIn(ACCOUNT, " ".join(report))
         self.assertNotIn(WALLET, " ".join(report))
 
@@ -97,7 +98,7 @@ class DailySyncTests(unittest.TestCase):
         nav_only.assert_not_called()
         self.assertEqual(report, ["HL 07f2: history saved", "07f2 wallet: performance saved (2 days)",
                                   "IB 6543: Flex NAV saved", "IB 6543: sent to the relay (2 positions)",
-                                  "wallets: performance sent to the relay"])
+                                  "regime: reading sent to the relay", "wallets: performance sent to the relay"])
 
     def test_the_job_runs_daily_from_the_repository(self):
         job = web_sync.job_plist()

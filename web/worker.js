@@ -111,8 +111,18 @@ async function hlAccount(user) {
     hl({ type: "userFees", user }),
     ...dexes.map((dex) => hl(dex ? { type: "clearinghouseState", user, dex } : { type: "clearinghouseState", user })),
   ]);
+  // Resting reduce-only stops, so open risk runs to a position's own stop (on the DEXes holding positions).
+  const held = dexes.filter((dex, index) => (states[index].assetPositions || []).length);
+  const orders = await Promise.all(held.map((dex) => hl(dex ? { type: "frontendOpenOrders", user, dex } : { type: "frontendOpenOrders", user })));
+  const stops = {};
+  orders.flat().forEach((order) => {
+    if (order && order.reduceOnly && String(order.orderType || "").startsWith("Stop") && Number(order.triggerPx) > 0) {
+      (stops[order.coin] = stops[order.coin] || []).push(Number(order.triggerPx));
+    }
+  });
   return {
     abstraction,
+    stops,
     spot: (spot && spot.balances) || [],
     // Only the two rates: the full fee answer can name linked accounts.
     fees: { maker: Number(fees.userAddRate), taker: Number(fees.userCrossRate) },
@@ -370,12 +380,12 @@ async function ingest(request, env, kind, id, wallets) {
   } catch (error) {
     return reply({ error: "the body is not JSON" }, 400);
   }
-  if (kind === "ib" || kind === "wallets") {
+  if (kind === "ib" || kind === "wallets" || kind === "regime") {
     const text = JSON.stringify(body);
     if (/(?:DU|U)\d{5,}/.test(text) || Object.values(wallets).some((a) => text.toLowerCase().includes(a.slice(2).toLowerCase()))) {
       return reply({ error: "refused: the body holds a full account identifier" }, 400);
     }
-    await env.DESK.put(kind === "ib" ? "ib" : "walletperf", text);
+    await env.DESK.put(kind === "wallets" ? "walletperf" : kind, text);
     return reply({ ok: true, bytes: text.length });
   }
   if (kind === "history" && wallets[id] && Array.isArray(body.points)) {
@@ -443,6 +453,10 @@ export default {
     if (kind === "sync" && !id) {  // the last scheduled capture: when, days saved per wallet, problems
       const saved = env.DESK ? await env.DESK.get("sync", "json") : null;
       return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no scheduled capture has run yet" }, 404);
+    }
+    if (kind === "regime" && !id) {  // the market regime reading, sent by the Mac (POST /ingest/regime)
+      const saved = env.DESK ? await env.DESK.get("regime", "json") : null;
+      return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no regime reading has been sent yet" }, 404);
     }
     if (kind === "walletperf" && !id) {  // the wallets' token performance, sent by the desk's Mac
       const saved = env.DESK ? await env.DESK.get("walletperf", "json") : null;

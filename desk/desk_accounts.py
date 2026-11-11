@@ -628,6 +628,13 @@ class DeskAccounts:
                         "Desk return 30D": (returns.get("30D", np.nan), "pct"),
                         "Drawdown now": (drawdown, "pct"), "Sharpe (current regime)": (sharpe, "num"),
                         "Beta SPY (current book)": (beta_spy, "num"), "Beta BTC (current book)": (beta_btc, "num")})
+        try:  # alt season or equity sell-off forming (desk/market_regime.py; read at most every 6 hours)
+            from desk import market_regime
+
+            for row in reversed(market_regime.notices(market_regime.current())):
+                attention.insert(0, row)
+        except Exception as exc:
+            self.notes.append(f"Market regime not read ({type(exc).__name__}: {exc}).")
         return well, attention, metrics, items
 
     def risk_metrics(self) -> pd.DataFrame:

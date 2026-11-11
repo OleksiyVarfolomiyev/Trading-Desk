@@ -927,6 +927,111 @@ class MarginGuard:
                 log(f"margin guard {tag}: the reduction failed ({type(exc).__name__}: {exc}); will retry")
 
 
+# ----------------------------------------------------------------------------------------------
+# Regime guard: trim the book's exposed side when a regime change is read with high confidence
+
+REGIME_CONFIG = daemon_link.RUN_DIR / "regime_guard.json"
+REGIME_DEFAULTS = {
+    "enabled": False,               # False: only log what it would trim
+    "trim_fraction": 0.20,          # share of each exposed position closed per trim
+    "max_trims_per_episode": 3,     # an episode ends when the regime reading is back to "none"
+    "check_seconds": 1800,
+}
+MAJORS = {"BTC", "ETH"}
+
+
+def regime_config() -> dict:
+    config = dict(REGIME_DEFAULTS)
+    try:
+        config.update(json.loads(REGIME_CONFIG.read_text()))
+    except (OSError, ValueError):
+        pass
+    return config
+
+
+def regime_targets(positions, wallet: str, regime: str, protect: list[str]) -> list:
+    """The positions a regime change hurts: alt shorts (main-DEX perps other than BTC and ETH) in an alt
+    season, equity-perp longs (xyz:) in an equity sell-off; protected positions (the VVV hedge) are left."""
+    protected = {str(item).lower() for item in protect}
+    chosen = []
+    for position in positions:
+        if not position.quantity or f"{wallet[-4:]}:{position.coin}".lower() in protected:
+            continue
+        if regime == "alt_season" and position.quantity < 0 and ":" not in position.coin and position.coin not in MAJORS:
+            chosen.append(position)
+        elif regime == "equity_selloff" and position.quantity > 0 and position.coin.startswith("xyz:"):
+            chosen.append(position)
+    return chosen
+
+
+class RegimeGuard:
+    """Reads the market regime (desk/market_regime.py); on "high", trims the exposed positions once a day."""
+
+    def __init__(self, daemon: "Daemon"):
+        self.daemon = daemon
+        self.trims: dict[str, int] = {}          # regime -> trims in the current episode
+        self.last_day: dict[str, str] = {}       # regime -> UTC day of the last trim
+        self.latest: dict = {}
+
+    def run(self) -> None:
+        while not self.daemon.stopped.wait(60):
+            config = regime_config()
+            if time.time() - self.latest.get("_checked", 0.0) < config["check_seconds"]:
+                continue
+            try:
+                self.step(config)
+            except Exception as exc:  # keep watching
+                log(f"regime guard failed ({type(exc).__name__}: {exc}); retrying")
+            self.latest["_checked"] = time.time()
+
+    def step(self, config: dict) -> None:
+        from desk import market_regime
+
+        state = market_regime.current()
+        self.latest.update({key: state[key]["level"] for key in ("alt_season", "equity_selloff")})
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        for regime in ("alt_season", "equity_selloff"):
+            part = state[regime]
+            if part["level"] == "none":
+                self.trims[regime] = 0
+            if part["level"] != "high":
+                continue
+            if self.last_day.get(regime) == today or self.trims.get(regime, 0) >= config["max_trims_per_episode"]:
+                continue
+            protect = margin_config().get("protect", [])
+            orders = []
+            for wallet in self.daemon.state.wallets:
+                snapshot = self.daemon.state.snapshot([wallet])
+                for position in regime_targets(snapshot.positions, wallet, regime, protect):
+                    orders.append((wallet, position, _slice(position, config["trim_fraction"])))
+            label = regime.replace("_", " ")
+            if regime == "equity_selloff":
+                log("regime: equity sell-off at high confidence; IB stock longs are not traded by the daemon, trim them by hand.")
+            if not orders:
+                log(f"regime: {label} at high confidence, but no exposed HL position to trim ({part['detail']}).")
+                self.last_day[regime] = today
+                continue
+            plan = ", ".join(f"...{wallet[-4:]} {position.coin} {quantity:g}" for wallet, position, quantity in orders)
+            if not config["enabled"]:
+                log(f"regime guard (dry run, not enabled) would trim {config['trim_fraction']:.0%} for {label}: {plan} "
+                    f"({part['detail']})")
+                self.last_day[regime] = today
+                continue
+            log(f"regime guard: {label} at high confidence ({part['detail']}); trimming {config['trim_fraction']:.0%}: {plan}")
+            for wallet, position, quantity in orders:
+                exchange = self.daemon.exchanges.get(wallet)
+                if exchange is None:
+                    log(f"regime guard: ...{wallet[-4:]} is read-only, cannot trim {position.coin}")
+                    continue
+                try:
+                    response = exchange.market_close(position.coin, quantity)
+                    log(f"regime guard ...{wallet[-4:]}: {position.coin} {response.get('status', response)}")
+                except Exception as exc:
+                    log(f"regime guard ...{wallet[-4:]}: trimming {position.coin} failed ({type(exc).__name__}: {exc})")
+            self.last_day[regime] = today
+            self.trims[regime] = self.trims.get(regime, 0) + 1
+
+
 class Session:
     """One client connection: text out, typed answers in."""
 
@@ -966,6 +1071,7 @@ class Daemon:
         self.guards = Guards(self.state, guards_path)
         self.trade_lock = threading.Lock()
         self.margin_guard = MarginGuard(self)
+        self.regime_guard = RegimeGuard(self)
         self.streams: list[Stream] = []
         self.market_stream: Stream | None = None
         self.stopped = threading.Event()
@@ -1094,7 +1200,8 @@ class Daemon:
             return None
         markets = self.state.markets()
         snapshot = self.state.snapshot(wallets, markets)
-        _, risk = ht.plan_trades([], markets, snapshot, include_external=False)
+        stops = ht.resting_stops(wallets, sorted({position.dex for position in snapshot.positions}))
+        _, risk = ht.plan_trades([], markets, snapshot, include_external=False, stops=stops)
         age = max(time.time() - self.state.state_time.get(wallet, 0.0) for wallet in wallets)
         return {"equity": snapshot.equity, "risk": risk, "margin_used": snapshot.margin_used,
                 "positions": len(snapshot.positions), "age": age}
@@ -1121,6 +1228,8 @@ class Daemon:
             "margin_guard": {"enabled": margin_config()["enabled"], "act": margin_config()["act_maintenance"],
                              "used": {wallet[-4:]: used for wallet, used in self.margin_guard.latest.items()},
                              "health": {wallet[-4:]: share for wallet, share in self.margin_guard.latest_health.items()}},
+            "regime_guard": {"enabled": regime_config()["enabled"],
+                             "levels": {key: value for key, value in self.regime_guard.latest.items() if not key.startswith("_")}},
         }
 
     def _other_book(self, ignore_unreachable: bool, live: bool):
@@ -1150,7 +1259,10 @@ class Daemon:
             book = self._other_book(bool(request.get("ignore_unreachable")), live)
             snapshot = dataclasses.replace(snapshot, external_equity=book.equity_usd, external_risk=book.risk_usd)
             snapshot = ht.urgent_fees(snapshot, bool(request.get("urgent")))
-            plans, risk = ht.plan_trades(signals, markets, snapshot)
+            stops = ht.resting_stops(risk_wallets, sorted({position.dex for position in snapshot.positions}))
+            plans, risk = ht.plan_trades(signals, markets, snapshot, stops=stops,
+                                         conviction=bool(request.get("conviction")),
+                                         conviction_pct=float(request.get("conviction_pct") or ht.CONVICTION_NOTIONAL_PCT * 100) / 100)
             ht.print_plan(snapshot, plans, risk)
             return "signals", plans, markets, snapshot
         actions = ht.read_position_actions(Path(request["actions"]))
@@ -1388,6 +1500,7 @@ def serve(args: argparse.Namespace) -> int:
     threading.Thread(target=daemon.guards.run, name="guards", daemon=True).start()
     threading.Thread(target=daemon.refresher, name="refresher", daemon=True).start()
     threading.Thread(target=daemon.margin_guard.run, name="margin-guard", daemon=True).start()
+    threading.Thread(target=daemon.regime_guard.run, name="regime-guard", daemon=True).start()
 
     server = _Server(str(daemon_link.SOCKET_PATH), _Handler)
     os.chmod(daemon_link.SOCKET_PATH, 0o600)
@@ -1475,6 +1588,10 @@ def print_data(command: str | None, data: Any) -> None:
         health = ", ".join(f"...{wallet} {share:.0%}" for wallet, share in margin.get("health", {}).items()) or "not read yet"
         print(f"  margin guard {'ON' if margin['enabled'] else 'dry run (logs only)'}: way to liquidation {health} "
               f"(acts at {margin.get('act', 0):.0%})")
+    regime = data.get("regime_guard")
+    if regime:
+        levels = ", ".join(f"{key.replace('_', ' ')} {value}" for key, value in regime["levels"].items()) or "not read yet"
+        print(f"  regime guard {'ON' if regime['enabled'] else 'dry run (logs only)'}: {levels}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1493,6 +1610,12 @@ def main(argv: list[str] | None = None) -> int:
                        help="enter at once: immediate-or-cancel at most --slippage from the mid (taker fee)")
     trade.add_argument("--fast", action="store_true",
                        help="post-only limit re-priced every 2s until fully filled (stops if the price runs away)")
+    trade.add_argument("--conviction", action="store_true",
+                       help="high-conviction entry: no stop, take-profit or loss guard, sized by --conviction-pct")
+    from desk.risk import CONVICTION_NOTIONAL_PCT
+
+    trade.add_argument("--conviction-pct", type=float, default=CONVICTION_NOTIONAL_PCT * 100,
+                       help="with --conviction: notional as a percent of the trading wallet's equity")
     trade.add_argument("--slippage", type=float, default=URGENT_SLIPPAGE_PCT,
                        help=f"with --urgent: percent beyond the mid the entry may pay (default {URGENT_SLIPPAGE_PCT:g})")
     trade.add_argument("--max-risk-pct", type=float, help="aggregate risk cap for this run only, in percent")
@@ -1515,6 +1638,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.urgent and args.fast:
             parser.error("choose --urgent or --fast, not both.")
         request = {"cmd": "trade", "wallet": args.wallet, "live": args.live, "urgent": args.urgent, "fast": args.fast,
+                   "conviction": args.conviction, "conviction_pct": args.conviction_pct,
                    "slippage": args.slippage, "max_risk_pct": args.max_risk_pct,
                    "ignore_unreachable": args.ignore_unreachable,
                    "risk_wallets": [item.strip() for item in args.risk_wallets.split(",")] if args.risk_wallets else None,

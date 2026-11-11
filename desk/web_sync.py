@@ -156,6 +156,14 @@ def wallet_payload(data_dir: Path | str = REPO / "data") -> dict:
     return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "series": series}
 
 
+def push_regime() -> dict:
+    """Send the market regime reading (desk/market_regime.py) to the relay for the web dashboard."""
+    from desk import market_regime
+
+    state = market_regime.current()
+    return _post("/ingest/regime", {**state, "notices": market_regime.notices(state)})
+
+
 def push_wallets(data_dir: Path | str = REPO / "data") -> dict:
     return _post("/ingest/wallets", wallet_payload(data_dir))
 
@@ -232,6 +240,11 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
                               + ("daily NAV sent, positions kept from the last send" if sent else "nothing on the relay to update"))
             except Exception as inner:
                 report.append(f"{label}: TWS not readable ({reason}) and NAV not sent ({inner})")
+    try:
+        push_regime()
+        report.append("regime: reading sent to the relay")
+    except Exception as exc:
+        report.append(f"regime: not sent ({type(exc).__name__}: {exc})")
     try:
         push_wallets(data_dir)
         report.append("wallets: performance sent to the relay")

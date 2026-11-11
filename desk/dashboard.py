@@ -443,6 +443,7 @@ class Dashboard:
             try:
                 web_sync.push_ib(snapshot, entry, moves)
                 web_sync.push_wallets(self.desk.data_dir)
+                web_sync.push_regime()
             except Exception as exc:  # the web dashboard keeps the last IB it received
                 print(f"Sending IB to the web dashboard failed: {exc}")
 

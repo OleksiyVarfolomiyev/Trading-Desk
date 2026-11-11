@@ -17,7 +17,7 @@
   const LLAMA = "https://coins.llama.fi";
   const DAY_MS = 86400000, HOUR_MS = 3600000;
   // Sizing rules shared with the executors (desk/risk.py).
-  const STOP_ATR_MULTIPLE = 1.25, RESERVE_PCT = 0.20, RISK_PCT_OF_USABLE = 0.05, MAX_TOTAL_RISK_PCT = 0.33;
+  const STOP_ATR_MULTIPLE = 3.0, RESERVE_PCT = 0.20, RISK_PCT_OF_USABLE = 0.05, MAX_TOTAL_RISK_PCT = 0.33;
   const FUNDING_HORIZON_HOURS = 120, FUNDING_PERCENTILE = 0.95, FUNDING_LOOKBACK_DAYS = 20;
   const ATR_PERIOD = 14, CANDLE_DAYS = 200, RISK_DAYS = 90;
   const WINDOWS = { "7D": 7, "30D": 30, "90D": 90, "1Y": 365 };
@@ -251,6 +251,7 @@
       // Executor risk equity: USDC collateral on a unified account, else perp account value.
       collateral: unified ? usdc : perpEquity,
       fees: data.fees || { maker: 0, taker: 0 },
+      stops: data.stops || {},  // coin -> resting reduce-only stop prices
     };
   }
 
@@ -512,6 +513,7 @@
     });
     const ibData = await every("ib", 5 * 60000, () => relay("/ib")).catch(() => null);
     const walletPerf = await every("walletperf", 30 * 60000, () => relay("/walletperf")).catch(() => null);
+    const regime = await every("regime", 30 * 60000, () => relay("/regime")).catch(() => null);
     const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];
     ibs.forEach((account) => {
       const age = Date.now() - account.asOf;
@@ -566,7 +568,11 @@
         let reserve = adverseFundingPerUnit(fundingOf[p.coin] || [], side, context.oracle);
         if (!fin(reserve)) { reserve = 0; riskNotes.push(`${p.coin}: not enough funding history for a reserve`); }
         if (fin(atr)) {
-          risk += Math.abs(p.quantity) * (atr * STOP_ATR_MULTIPLE + reserve + p.mark_price * (account.fees.maker + account.fees.taker));
+          // To the position's own resting stop when it has one (the nearest), else the executor's ATR stop.
+          const own = (account.stops || {})[p.coin] || [];
+          const stop = own.length ? (p.quantity < 0 ? Math.min(...own) : Math.max(...own)) : NaN;
+          const priceRisk = fin(stop) ? Math.max(0, p.quantity < 0 ? stop - p.mark_price : p.mark_price - stop) : atr * STOP_ATR_MULTIPLE;
+          risk += Math.abs(p.quantity) * (priceRisk + reserve + p.mark_price * (account.fees.maker + account.fees.taker));
         } else {
           risk += Math.abs(value(p)) * 0.10;
           riskNotes.push(`${p.coin}: no price history, assumed a 10% move`);
@@ -817,6 +823,7 @@
       well.push(["Risk-adjusted", `Current book: volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr, 1-day VaR 95% ${signedMoney(-riskRow["VaR 95%"])}${betas}.`]);
     }
     if (problems.length) attention.unshift(["Unreadable accounts", problems.join("; ") + " Totals leave them out."]);
+    ((regime && regime.notices) || []).slice().reverse().forEach((row) => attention.unshift(row));  // desk/market_regime.py
 
     const money2 = { "Equity": "usd", "Cash": "usd", "Margin used": "usd", "Available": "usd", "Gross": "usd", "Value": "usd",
       "Risk equity": "usd", "Open risk": "usd", "Long": "usd", "Short": "usd", "VaR 95%": "usd", "VaR 99%": "usd" };

@@ -486,3 +486,16 @@ class MarginPlanTests(unittest.TestCase):
         plan = hl_daemon.margin_plan([self.position("ICP", -100, 2.5, 2.4, 1000)], 1000.0, 1000.0, "0xabc07f2",
                                      self.config(), maintenance=610.0)
         self.assertAlmostEqual(plan["action"]["fraction"], 160 / 610)  # to 45%: 160 of the 610
+
+
+class RegimeTargetTests(unittest.TestCase):
+    position = MarginPlanTests.position
+
+    def test_each_regime_hits_its_own_side_and_spares_the_hedge(self):
+        positions = [self.position("ICP", -100, 2.5, 2.6, 300), self.position("BTC", -0.01, 80000, 79000, 200),
+                     self.position("VVV", -122, 19.5, 19.0, 800, 2), self.position("xyz:NVDA", 2, 180, 190, 100),
+                     self.position("xyz:QNT", -3, 41, 40, 100), self.position("SOL", 5, 150, 160, 200)]
+        alts = hl_daemon.regime_targets(positions, "0xabc07f2", "alt_season", ["07f2:VVV"])
+        self.assertEqual([p.coin for p in alts], ["ICP"])  # not BTC, not the VVV hedge, not longs or equity perps
+        equities = hl_daemon.regime_targets(positions, "0xabc07f2", "equity_selloff", ["07f2:VVV"])
+        self.assertEqual([p.coin for p in equities], ["xyz:NVDA"])  # equity-perp longs only

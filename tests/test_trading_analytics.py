@@ -82,6 +82,7 @@ from hl_trade import (
     read_position_actions,
     _matching_protection_orders,
     _price_tick,
+    STOP_ATR_MULTIPLE,
     _round_price,
     _submit_protection_order,
     size_trade,
@@ -1141,6 +1142,65 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertLessEqual(planned.risk_budget, 40)
         self.assertLessEqual(planned.quantity * market.mark_price / planned.leverage, 10)
 
+    def test_conviction_sizes_by_notional_within_margin_and_headroom(self):
+        candles, funding = make_candles(), make_funding()
+        market = Market("BTC", "", 100, 100, 3, 10)
+        normal = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
+                            available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004)
+        conviction = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
+                                available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004,
+                                conviction_notional=900)
+        self.assertTrue(conviction.conviction)
+        self.assertFalse(normal.conviction)
+        self.assertAlmostEqual(conviction.quantity * market.mark_price, 900, delta=1)  # the notional, not the 5% budget
+        self.assertGreater(conviction.quantity, normal.quantity)
+        squeezed = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
+                              available_margin=50, maker_fee_rate=0.0001, taker_fee_rate=0.0004,
+                              conviction_notional=900)
+        self.assertLessEqual(squeezed.quantity * market.mark_price / squeezed.leverage, 50 + 1e-9)  # margin still binds
+        capped = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=0,
+                            available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004,
+                            conviction_notional=900)
+        self.assertEqual(capped.quantity, 0)  # the aggregate risk cap still binds
+
+    def test_open_risk_runs_to_the_resting_stop_when_there_is_one(self):
+        from hl_trade import Position, nearest_stop, position_risk
+
+        candles, funding = make_candles(), make_funding()
+        market = Market("BTC", "", 100, 100, 3, 10)
+        short = Position("0xabc", "BTC", "", -2.0, 100.0, 100.0, 100.0, 50.0, market)
+        no_stop = position_risk(short, candles, funding, 0.0, 0.0)
+        with_stop = position_risk(short, candles, funding, 0.0, 0.0, stop_price=104.0)
+        self.assertAlmostEqual(with_stop - (no_stop - 2.0 * wilder_atr(candles, 14) * STOP_ATR_MULTIPLE), 8.0, places=6)
+        stops = {("0xabc", "BTC"): [110.0, 104.0]}
+        self.assertEqual(nearest_stop(short, stops), 104.0)  # the lower one closes a short first
+        self.assertIsNone(nearest_stop(short, {}))
+
+    def test_a_conviction_trade_gets_no_exits_and_no_guard(self):
+        import dataclasses
+
+        import hl_trade
+
+        candles, funding = make_candles(), make_funding()
+        market = Market("BTC", "", 100, 100, 3, 10)
+        plan = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
+                          available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004, conviction_notional=500)
+        with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
+                patch.object(hl_trade, "_set_leverage"), \
+                patch.object(hl_trade, "_place_entry", return_value=(plan.quantity, 100.0)), \
+                patch.object(hl_trade, "_place_exit_orders") as exits:
+            active, failures = hl_trade.execute_plans(MagicMock(), "0xabc", [plan], {"BTC": market})
+        exits.assert_not_called()
+        self.assertEqual((active, failures), ([], []))
+        normal = dataclasses.replace(plan, conviction=False)
+        with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
+                patch.object(hl_trade, "_set_leverage"), \
+                patch.object(hl_trade, "_place_entry", return_value=(plan.quantity, 100.0)), \
+                patch.object(hl_trade, "_place_exit_orders", return_value=(1, 2)) as exits:
+            active, _ = hl_trade.execute_plans(MagicMock(), "0xabc", [normal], {"BTC": market})
+        exits.assert_called_once()
+        self.assertEqual(len(active), 1)
+
     def test_post_only_entry_price_never_crosses_book(self):
         book = {
             "levels": [
@@ -1255,11 +1315,11 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertLess(plan.target_steps[-1].price, plan.target_steps[0].price)
         self.assertEqual(
             plan.stop_steps[-1].price,
-            _round_price(position.mark_price + plan.atr * 1.25, market.size_decimals),
+            _round_price(position.mark_price + plan.atr * STOP_ATR_MULTIPLE, market.size_decimals),
         )
         self.assertEqual(
             plan.target_steps[-1].price,
-            _round_price(position.mark_price - plan.atr * 1.25, market.size_decimals),
+            _round_price(position.mark_price - plan.atr * STOP_ATR_MULTIPLE, market.size_decimals),
         )
 
     def test_protection_ladder_reduces_steps_to_meet_exchange_minimum_order_value(self):
