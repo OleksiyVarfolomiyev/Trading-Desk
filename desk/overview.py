@@ -684,9 +684,18 @@ class DeskOverview:
             ranked = sorted(positions, key=lambda item: item[1].unrealized_usd)
             winners = [item for item in ranked[::-1] if item[1].unrealized_usd > 0][:HIGHLIGHT_MOVERS]
             losers = [item for item in ranked if item[1].unrealized_usd < 0][:HIGHLIGHT_MOVERS]
+            def split(group):  # "IB -$415 on $3,100 (-13.4%)"
+                value = sum(abs(position.notional_usd) for _, position in group)
+                pnl = sum(position.unrealized_usd for _, position in group)
+                return f"{signed_money(pnl)} on {money(value)} ({percent(pnl / value, signed=True) if value else 'n/a'})"
+
+            ib = [item for item in positions if item[0].startswith("IB")]
+            rest = [item for item in positions if not item[0].startswith("IB")]
+            parts = [f"{name} {split(group)}" for name, group in (("IB", ib), ("HL + wallets", rest)) if group]
             (well if unrealized >= 0 else attention).append(
                 ("Unrealized PnL", f"{signed_money(unrealized)} on {money(gross)} of positions "
-                                   f"({percent(unrealized / gross, signed=True) if gross else 'n/a'})."))
+                                   f"({percent(unrealized / gross, signed=True) if gross else 'n/a'}): "
+                                   + ", ".join(parts) + ". Wallet tokens have no cost basis, so HL carries all of that group's PnL."))
             def mover(position):
                 # The % is unrealized PnL over the position's entry value, as in the movers table.
                 share = _pnl_share(position)

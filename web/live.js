@@ -684,14 +684,14 @@
 
     // -- accounts in percent
     const accountRows = accounts.map((a) => ({
-      "Venue": a.venue, "Account": a.label, "% of desk": deskEquity ? a.equity / deskEquity : NaN,
+      "Account": a.label, "% of desk": deskEquity ? a.equity / deskEquity : NaN,
       "Cash / equity": a.equity > 0 ? a.cash / a.equity : NaN, "Margin used / equity": a.equity > 0 ? a.margin_used / a.equity : NaN,
       "Available / equity": a.equity > 0 ? a.available / a.equity : NaN,
       "uPnL / equity": a.equity > 0 ? a.unrealized / a.equity : NaN,
       "Gross / equity": a.equity > 0 ? sum(a.positions.map((p) => Math.abs(value(p)))) / a.equity : NaN,
       "Net / equity": a.equity > 0 ? sum(a.positions.map(value)) / a.equity : NaN, "Positions": a.positions.length,
     }));
-    const accountTotal = { "Venue": "Total", "Account": "", "% of desk": 1, "Positions": sum(accounts.map((a) => a.positions.length)),
+    const accountTotal = { "Account": "Total", "% of desk": 1, "Positions": sum(accounts.map((a) => a.positions.length)),
       "Cash / equity": sum(accounts.map((a) => a.cash)) / deskEquity, "Margin used / equity": sum(accounts.map((a) => a.margin_used)) / deskEquity,
       "Available / equity": sum(accounts.map((a) => a.available)) / deskEquity,
       "uPnL / equity": sum(accounts.map((a) => a.unrealized)) / deskEquity,
@@ -803,7 +803,13 @@
       if (worst["Return 30D"] < 0) attention.splice(1, 0, ["Worst account, 30D", `${worst.Account} ${percent(worst["Return 30D"], true)}.`]);
     }
     if (tradePositions.length) {
-      (unrealized >= 0 ? well : attention).push(["uPnL", `${signedMoney(unrealized)} on ${money(gross)} of positions (${gross ? percent(unrealized / gross, true) : "n/a"}).`]);
+      const splitOf = (group) => {  // "IB -$415 on $3,100 (-13.4%)"
+        const notional = sum(group.map((p) => Math.abs(value(p)))), pnl = sum(group.map((p) => p.unrealized));
+        return `${signedMoney(pnl)} on ${money(notional)} (${notional ? percent(pnl / notional, true) : "n/a"})`;
+      };
+      const ibGroup = tradePositions.filter((p) => p.venue === "ib"), restGroup = tradePositions.filter((p) => p.venue !== "ib");
+      const parts = [["IB", ibGroup], ["HL + wallets", restGroup]].filter(([, group]) => group.length).map(([name, group]) => `${name} ${splitOf(group)}`);
+      (unrealized >= 0 ? well : attention).push(["uPnL", `${signedMoney(unrealized)} on ${money(gross)} of positions (${gross ? percent(unrealized / gross, true) : "n/a"}): ${parts.join(", ")}. Wallet tokens have no cost basis, so HL carries all of that group's PnL.`]);
       const mover = (p) => `${p.symbol} ${signedMoney(p.unrealized)}${fin(share(p)) ? ` (${percent(share(p), true)})` : ""}`;
       const winners = ranked.slice().reverse().filter((p) => p.unrealized > 0).slice(0, HIGHLIGHT_MOVERS);
       const losers = ranked.filter((p) => p.unrealized < 0).slice(0, HIGHLIGHT_MOVERS);
@@ -882,7 +888,7 @@
       performance: table(performanceRows, ["Account", "Return 24h", "Return 7D", "Return 30D", "Return 90D", "Return 1Y", "Return since inception", "Since"],
         { "Return 24h": "spct", "Return 7D": "spct", "Return 30D": "spct", "Return 90D": "spct", "Return 1Y": "spct", "Return since inception": "spct" },
         { totalLast: true, key: { "Return 30D": "abs" } }),
-      accounts: table(accountRows, ["Venue", "Account", "% of desk", "Cash / equity", "Margin used / equity", "Available / equity",
+      accounts: table(accountRows, ["Account", "% of desk", "Cash / equity", "Margin used / equity", "Available / equity",
         "uPnL / equity", "Gross / equity", "Net / equity", "Positions"],
       { "% of desk": "pct", "Cash / equity": "pct", "Margin used / equity": "pct", "Available / equity": "pct",
         "uPnL / equity": "spct", "Gross / equity": "pct", "Net / equity": "spct", "Positions": "int" },
