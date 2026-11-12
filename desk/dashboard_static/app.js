@@ -303,6 +303,18 @@ function renderCharts(charts) {
       font: { color: token("--muted"), size: 11 },
     }];
   }
+  // End values, as on the return chart: each stacked layer's own value at the top of its layer, then the
+  // line with wallets. Labels sit on the plot's right edge (the layers can end on different days).
+  const money = (v) => (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  let stackTop = 0;
+  const valueEnds = value.filter((trace) => trace.y && trace.y.length).map((trace) => {
+    const own = trace.y[trace.y.length - 1];
+    const y = trace.stackgroup ? (stackTop += own) : own;
+    return { x: trace.x[trace.x.length - 1], y, xanchor: "left", xshift: 6, showarrow: false, text: money(own),
+             font: { color: trace.line.color, size: 11 } };
+  });
+  valueLayout.annotations = (valueLayout.annotations || []).concat(valueEnds);
+  valueLayout.margin = Object.assign({}, valueLayout.margin, { r: 88 });
   Plotly.react("chart-value", value, valueLayout, CONFIG);
 
   const twr = (charts.twr || []).map((s, i) => ({

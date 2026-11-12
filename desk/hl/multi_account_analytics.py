@@ -251,7 +251,7 @@ class _MultiWalletAccountMixin:
         chart_metrics.daily_unrealized=self.account_metrics.daily_unrealized.combine_first(
             unrealized_by_wallet.sum(axis=1).reindex(self.account_metrics.day_index)
         )
-        plot_account_dashboard(chart_metrics)
+        plot_account_dashboard(chart_metrics, value_title='Accounts Value')  # every wallet together
 
     def show_account_vs_btc(self):
         data=self._require_data()

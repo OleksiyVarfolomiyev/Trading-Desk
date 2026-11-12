@@ -1107,16 +1107,41 @@ def clip_inactive_periods(fig, periods, axis_selector=None):
     )
 
 
-def plot_account_dashboard(metrics):
+PNL_GREEN, PNL_RED = '#16a34a', '#dc2626'
+
+
+def split_at_zero(series: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Two copies of a line, one shown where it is at or above zero and one where it is at or below.
+
+    A point where the line crosses zero (linear between days) is added to both, so the green and red
+    parts join. Elsewhere each copy is NaN, which Plotly leaves as a gap.
+    """
+    values = series.dropna().astype(float)
+    if values.empty:
+        return values, values
+    times, points = list(values.index), list(values.to_numpy())
+    out_t, out_v = [times[0]], [points[0]]
+    for (t0, v0), (t1, v1) in zip(zip(times, points), zip(times[1:], points[1:])):
+        if (v0 > 0 > v1) or (v0 < 0 < v1):
+            share = v0 / (v0 - v1)
+            out_t.append(t0 + (t1 - t0) * share)
+            out_v.append(0.0)
+        out_t.append(t1)
+        out_v.append(v1)
+    line = pd.Series(out_v, index=pd.Index(out_t))
+    return line.where(line >= 0), line.where(line <= 0)
+
+
+def plot_account_dashboard(metrics, value_title='Account Value'):
     'Show account history and PnL distribution in ' \
         'linked Plotly subplots.'
     # Only the three time panels share an axis; the histogram's x-axis is a return.
     fig = make_subplots(rows=4, cols=1, vertical_spacing=0.08,
-        subplot_titles=('Account Value', 'Daily Realized and Unrealized PnL', 'Cumulative PnL',
+        subplot_titles=(value_title, 'Daily Realized and Unrealized PnL', 'Cumulative PnL',
             'Weekly Return Distribution'), row_heights=[0.28, 0.28, 0.24, 0.2])
     if not metrics.daily_account.empty:
         fig.add_trace(go.Scatter(x=metrics.daily_account.index,
-                y=metrics.daily_account.values, name='Account Value', line={'color': '#6c757d',
+                y=metrics.daily_account.values, name=value_title, line={'color': '#6c757d',
                     'width': 2}), row=1, col=1)
     if not metrics.daily_realized.empty:
         fig.add_trace(go.Scatter(x=metrics.day_index, y=metrics.daily_realized.values,
@@ -1126,9 +1151,11 @@ def plot_account_dashboard(metrics):
                 name='Unrealized', mode='lines+markers', connectgaps=True,
                 line={'color': '#e76f51'}), row=2, col=1)
     if not metrics.cumulative_pnl.empty:
-        fig.add_trace(go.Scatter(x=metrics.cumulative_pnl.index,
-                y=metrics.cumulative_pnl.values, name='Cumulative PnL', line={'color': '#8e44ad',
-                    'width': 2}), row=3, col=1)
+        # Green while in the money (above zero), red while out of it; the two meet where the line crosses zero.
+        above, below = split_at_zero(metrics.cumulative_pnl)
+        for part, name, color in ((above, 'Cumulative PnL', PNL_GREEN), (below, 'Cumulative PnL', PNL_RED)):
+            fig.add_trace(go.Scatter(x=part.index, y=part.values, name=name, connectgaps=False, legendgroup='cumulative-pnl',
+                    line={'color': color, 'width': 2}, hovertemplate='%{y:$,.2f}<extra></extra>'), row=3, col=1)
     periods = inactive_periods(pd.Index(metrics.day_index)[
         np.asarray(metrics.daily_realized.values) != 0
     ]) if not metrics.daily_realized.empty else []
@@ -1144,8 +1171,9 @@ def plot_account_dashboard(metrics):
             fig.add_trace(go.Histogram(x=display_returns.values, name='Weekly returns',
                     marker_color='#457b9d', opacity=0.8, xbins={'size': 2.5},
                         showlegend=False), row=4, col=1)
-            fig.add_vline(x=float(display_returns.mean()), line_dash='dash',
-                line_color='#e76f51', annotation_text='Average', row=4, col=1)
+            average = float(display_returns.mean())
+            fig.add_vline(x=average, line_dash='dash', line_color='#e76f51',
+                annotation_text=f"Average {'-' if average < 0 else ''}{abs(average):.2f}%", row=4, col=1)
             fig.add_vline(x=0, line_color='#9ca3af', row=4, col=1)
             if excluded:
                 notes.append(f'Weekly return chart omits {excluded} return(s) below -100%; '
@@ -1299,9 +1327,15 @@ def plot_volume_pnl(realized_df):
             fig.add_trace(go.Scatter(x=x_line, y=slope * x_line + intercept,
                     mode="lines", name=f"{asset_type.title()} trend", line={"color": "#f4a261",
                         "dash": "dash"}, showlegend=False), row=1, col=column)
+            # The fitted line's slope: realized PnL per $1,000 traded (a per-dollar slope is a tiny number).
+            per_thousand = slope * 1000
+            fig.add_annotation(x=float(x_line[-1]), y=float(slope * x_line[-1] + intercept), row=1, col=column,
+                    text=f"Slope: {'-' if per_thousand < 0 else ''}${abs(per_thousand):,.2f} per $1,000 traded",
+                    showarrow=False, xanchor="right", yanchor="bottom", yshift=8,
+                    font={"color": "#f4a261", "size": 12})
         fig.add_hline(y=0, line_color="#777", line_width=1, row=1, col=column)
-        fig.update_xaxes(title_text="Daily traded volume ($)", row=1, col=column)
-        fig.update_yaxes(title_text="Daily realized PnL ($)", row=1, col=column)
+        fig.update_xaxes(title_text="Daily traded volume ($)", tickformat="$,.0f", row=1, col=column)
+        fig.update_yaxes(title_text="Daily realized PnL ($)", tickformat="$,.0f", row=1, col=column)
     fig.update_layout(height=520, width=max(760, 650 * len(market_types)),
         template="plotly_dark", title="Daily Traded Volume vs Realized PnL", showlegend=False)
     show_chart(fig)

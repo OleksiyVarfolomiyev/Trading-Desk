@@ -589,6 +589,8 @@
     const book = trading.map((account) => {
       let risk = 0;
       for (const p of account.positions) {
+        // A hedge counts nothing toward the cap (HEDGED_POSITIONS in desk/risk.py): the 07f2 VVV short offsets the staked sVVV.
+        if (String(account.id).slice(-4).toLowerCase() === "07f2" && p.coin === "VVV") continue;
         const side = p.quantity > 0 ? "LONG" : "SHORT";
         const atr = wilderAtr(candleOf[p.coin] || []);
         const context = contexts[p.coin] || { mark: p.mark_price, oracle: p.mark_price };
@@ -773,7 +775,10 @@
       const days = dailyLast(history, "value");
       return { name: a.label, x: [...days.keys()], y: [...days.values()].map((v) => Math.round(v * 100) / 100) };
     }).filter((s) => s.x.length);
-    const lastDay = valueSeries.reduce((latest, s) => (s.x[s.x.length - 1] > latest ? s.x[s.x.length - 1] : latest), "");
+    // Each layer ends today at the account's live value (as the accounts table), so the chart's end labels are
+    // current values rather than the last saved day (IB's NAV is yesterday's close).
+    const today = dayKey(now);
+    const lastDay = valueSeries.reduce((latest, s) => (s.x[s.x.length - 1] > latest ? s.x[s.x.length - 1] : latest), today);
     valueSeries.forEach((s) => {  // carry each layer to the last day, as the local dashboard does
       const known = new Map(s.x.map((d, i) => [d, s.y[i]]));
       const x = [], y = [];
@@ -783,8 +788,37 @@
         if (known.has(d)) carried = known.get(d);
         if (carried !== null) { x.push(d); y.push(carried); }
       }
+      const live = traders.find((a) => a.label === s.name);
+      if (live && fin(live.equity) && y.length) y[y.length - 1] = Math.round(live.equity * 100) / 100;
       s.x = x; s.y = y;
     });
+    // The dashed "incl. wallets" line, as on the local dashboard: the stacked accounts plus the wallets' tokens
+    // on other chains, only on days the wallet values are known (relay /walletperf), never a stacked layer
+    // (a layer reads as $0 where it has no data). Today's point is the live desk value.
+    const valueWithWallets = () => {
+      const walletDays = new Map();
+      walletSeries.forEach(({ points }) => {
+        const days = dailyLast(points, "value");
+        let carried = null;
+        const first = [...days.keys()][0];
+        if (!first) return;
+        for (let t = Date.parse(first); dayKey(t) <= today; t += DAY_MS) {  // carry each wallet forward
+          const d = dayKey(t);
+          if (days.has(d) && fin(num(days.get(d)))) carried = num(days.get(d));
+          if (carried !== null) walletDays.set(d, (walletDays.get(d) || 0) + carried);
+        }
+      });
+      if (walletDays.size < 2) return null;
+      const stackedOn = (d) => sum(valueSeries.map((s) => {
+        let last = NaN;
+        for (let i = 0; i < s.x.length && s.x[i] <= d; i += 1) last = s.y[i];
+        return last;
+      }));
+      const x = [...walletDays.keys()].filter((d) => d >= valueSeries.reduce((a, s) => (s.x[0] < a ? s.x[0] : a), today)).sort();
+      const y = x.map((d) => Math.round((stackedOn(d) + walletDays.get(d)) * 100) / 100);
+      if (x.length && x[x.length - 1] === today && fin(deskEquity)) y[y.length - 1] = Math.round(deskEquity * 100) / 100;
+      return x.length > 1 ? { name: "Desk value incl. wallets outside HL", note: "", x, y } : null;
+    };
     const indexDays = dailyLast(index, "v");
     const firstLevel = index.length ? index[0].v : 1;
     const twr = [{ name: "Desk (net of deposits)", x: [...indexDays.keys()], y: [...indexDays.values()].map((v) => Math.round(1e5 * v / firstLevel) / 1e3) }];
@@ -997,7 +1031,7 @@
       },
       highlights: { well, attention },
       tables,
-      charts: { value: valueSeries, value_with_wallets: null, twr, value_idle: [] },
+      charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [] },
       problems, notes,
       accounts_status: status,
     });

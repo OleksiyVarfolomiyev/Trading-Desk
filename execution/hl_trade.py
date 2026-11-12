@@ -51,6 +51,7 @@ from desk.risk import (  # noqa: E402
     REWARD_RISK_RATIO,
     RISK_PCT_OF_USABLE_MARGIN,
     CONVICTION_NOTIONAL_PCT,
+    is_hedged,
 )
 from desk.risk import HL_STOP_ATR_MULTIPLE as STOP_ATR_MULTIPLE  # noqa: E402
 FUNDING_STRESS_PERCENTILE = 0.95
@@ -1128,6 +1129,8 @@ def plan_trades(
     caches: dict[tuple[str, str], tuple[pd.DataFrame, pd.DataFrame]] = {}
     current_risk = snapshot.external_risk if include_external else 0.0
     for position in snapshot.positions:
+        if is_hedged(position.wallet, position.coin):
+            continue  # a hedge (07f2 VVV against the staked sVVV) counts nothing toward the cap
         key = (position.coin, position.dex)
         if key not in caches:
             caches[key] = (
@@ -1227,6 +1230,8 @@ def plan_position_actions(
     current_risk = snapshot.external_risk
     risk_by_position: dict[tuple[str, str, str], float] = {}
     for position in snapshot.positions:
+        if is_hedged(position.wallet, position.coin):
+            continue
         key = (position.coin, position.dex)
         if key not in candles_by_market:
             candles_by_market[key] = fetch_daily_candles(position.coin.split(":")[-1], position.dex)

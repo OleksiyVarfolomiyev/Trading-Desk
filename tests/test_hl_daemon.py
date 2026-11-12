@@ -749,3 +749,12 @@ class LadderArmingTests(unittest.TestCase):
         self.assertNotIn(grid[0], to_place)
         to_place, _ = hl_daemon.arm_plan(grid, 100.0, 1.0, self.config, now=60.0)
         self.assertIn(grid[0], to_place)
+
+
+class HedgeRiskTests(unittest.TestCase):
+    def test_a_hedge_counts_nothing_toward_the_risk_cap(self):
+        from desk.risk import is_hedged
+
+        self.assertTrue(is_hedged("0x" + "a" * 36 + "07f2", "VVV"))
+        self.assertFalse(is_hedged("0x" + "a" * 36 + "c248", "VVV"))   # another wallet's VVV is a normal position
+        self.assertFalse(is_hedged("0x" + "a" * 36 + "07f2", "ICP"))

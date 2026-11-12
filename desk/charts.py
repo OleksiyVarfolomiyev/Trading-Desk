@@ -72,12 +72,14 @@ def dollar_axes(fig):
             continue
         axis = fig.layout[name]
         text = axis.title.text if axis.title and axis.title.text else ""
+        # A chart that already chose a dollar format (whole dollars, "$,.0f") keeps it.
+        ticks = {} if (axis.tickformat or "").startswith("$") else USD_TICKS
         if _USD_ONLY.match(text):
-            axis.update(title_text=None, **USD_TICKS)
+            axis.update(title_text=None, **ticks)
         elif _USD_UNIT.search(text):
-            axis.update(title_text=_USD_UNIT.sub("", text), **USD_TICKS)
+            axis.update(title_text=_USD_UNIT.sub("", text), **ticks)
         elif axis.tickprefix == "$" or text.lower().startswith("value of $"):
-            axis.update(**USD_TICKS)
+            axis.update(**ticks)
     return fig
 
 
@@ -87,13 +89,105 @@ def _has_panel_titles(fig) -> bool:
                for note in fig.layout.annotations or ())
 
 
+END_LABEL_MARGIN_PX = 84   # right margin that fits an end label such as "$12,345.67"
+
+
+def _axis_name(ref: str | None, kind: str) -> str:
+    """``'y3'`` -> ``'yaxis3'``; ``None`` or ``'y'`` -> ``'yaxis'``."""
+    suffix = (ref or kind)[1:]
+    return f"{kind}axis{suffix}"
+
+
+def _end_text(value: float, axis, chart_title: str = "") -> str:
+    """The end value in its axis's own units: $1,234.56, 12.34%, or 104.3 on an index (start = 100)."""
+    title = ((axis.title.text or "") if axis and axis.title else "") + " " + (chart_title or "")
+    if axis is not None and ((axis.tickformat or "").startswith("$") or axis.tickprefix == "$"):
+        return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
+    if axis is not None and (axis.ticksuffix == "%" or "%" in (axis.tickformat or "")):
+        return f"{value:.2f}%"
+    if "index" in title.lower() or "start = 100" in title or "of $100" in title:
+        return f"{value:,.1f}"
+    return f"{value:,.2f}"
+
+
+def _is_time(values) -> bool:
+    """Whether a trace's x values are dates (time series get end labels; returns or regressions do not)."""
+    import numpy as np
+    import pandas as pd
+
+    if values is None or not len(values):
+        return False
+    first = values[0]
+    if isinstance(first, (pd.Timestamp, np.datetime64)) or hasattr(first, "year"):
+        return True
+    if isinstance(first, str):
+        try:
+            pd.Timestamp(first)
+            return not first.replace(".", "", 1).lstrip("-").isdigit()
+        except (ValueError, TypeError):
+            return False
+    return False
+
+
+def end_labels(fig):
+    """Write each time-series line's last value at its right end, as on the web dashboard. Returns ``fig``.
+
+    A stacked layer's label sits at the top of its layer and shows the layer's own value. Lines drawn
+    as markers only (a live point, scatter points) and charts without dates on x are left alone.
+    """
+    import math
+
+    import pandas as pd
+
+    stacked: dict[tuple, float] = {}
+    labels = []
+    ends: dict[str, int] = {}   # legend group -> index of the label that ends latest
+    chart_title = fig.layout.title.text if fig.layout.title and fig.layout.title.text else ""
+    for trace in fig.data:
+        if getattr(trace, "type", "scatter") != "scatter" or trace.visible is False:
+            continue
+        mode = trace.mode or "lines"
+        if "lines" not in mode or not _is_time(trace.x) or trace.y is None:
+            continue
+        points = [(x, float(y)) for x, y in zip(trace.x, trace.y) if y is not None and math.isfinite(float(y))]
+        if not points:
+            continue
+        x, y = points[-1]
+        top = y
+        if trace.stackgroup:  # the layer's label sits where the layer ends on the stack
+            key = (trace.xaxis, trace.yaxis, trace.stackgroup)
+            top = stacked.get(key, 0.0) + y
+            stacked[key] = top
+        axis = fig.layout[_axis_name(trace.yaxis, "y")]
+        color = (trace.line.color if trace.line and trace.line.color else None)
+        group = trace.legendgroup  # one line drawn as several traces (green above zero, red below): label its real end
+        if group:
+            earlier = ends.get(group)
+            if earlier is not None:
+                if pd.Timestamp(labels[earlier]["x"]) >= pd.Timestamp(x):
+                    continue
+                labels[earlier] = None
+            ends[group] = len(labels)
+        labels.append({"x": x, "y": top, "xref": trace.xaxis or "x", "yref": trace.yaxis or "y",
+                       "text": _end_text(y, axis, chart_title), "showarrow": False, "xanchor": "left", "xshift": 6,
+                       "font": {"size": 11, **({"color": color} if color else {})}})
+    labels = [label for label in labels if label]
+    for label in labels:
+        fig.add_annotation(**label)
+    if labels:
+        right = (fig.layout.margin.r if fig.layout.margin and fig.layout.margin.r is not None else 0)
+        fig.update_layout(margin={"r": max(right, END_LABEL_MARGIN_PX)})
+    return fig
+
+
 def style(fig):
-    """Legend on top and a wrapped title, with a top margin that fits both. Returns ``fig``.
+    """Legend on top, a wrapped title and end-value labels, with a top margin that fits. Returns ``fig``.
 
     Positions are in pixels from the top of the figure (``yref='container'``): title first, then
     the legend rows, then room for subplot titles, then the plot.
     """
     dollar_axes(fig)
+    end_labels(fig)
     width = fig.layout.width or DEFAULT_WIDTH_PX
     height = fig.layout.height or DEFAULT_HEIGHT_PX
     title = fig.layout.title.text if fig.layout.title else None

@@ -29,6 +29,16 @@ HL_STOP_ATR_MULTIPLE = 3.0
 # the trading wallet's equity, still inside its margin and the desk's aggregate risk cap.
 CONVICTION_NOTIONAL_PCT = 0.50
 REWARD_RISK_RATIO = 1.0
+# Positions that hedge a holding elsewhere count nothing toward the aggregate risk cap while the hedge stands:
+# the 07f2 VVV short offsets the sVVV staked in c248 (a loss on one is a gain on the other), and it carries no
+# stop. Its margin still counts. Remove the entry once the sVVV is sold and decide on the perp then.
+# (web/live.js keeps the same list.)
+HEDGED_POSITIONS = frozenset({("07f2", "VVV")})
+
+
+def is_hedged(wallet: str, coin: str) -> bool:
+    """Whether a position (wallet, coin) is a hedge left out of the risk cap."""
+    return (str(wallet)[-4:].lower(), coin) in HEDGED_POSITIONS
 ATR_PERIOD = 14
 # Without usable price history, a position is assumed able to lose this share of its value.
 FALLBACK_RISK_PCT = 0.10

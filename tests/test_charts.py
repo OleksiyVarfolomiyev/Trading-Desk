@@ -44,3 +44,14 @@ class ChartStyleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WholeDollarAxisTests(unittest.TestCase):
+    def test_an_axis_that_chose_whole_dollars_keeps_them(self):
+        import plotly.graph_objects as go
+
+        fig = go.Figure(go.Scatter(x=[1, 2], y=[1, 2]))
+        fig.update_xaxes(title_text="Volume ($)", tickformat="$,.0f")
+        fig.update_yaxes(title_text="PnL ($)")
+        dollar_axes(fig)
+        self.assertEqual((fig.layout.xaxis.tickformat, fig.layout.yaxis.tickformat), ("$,.0f", "$,.1f"))

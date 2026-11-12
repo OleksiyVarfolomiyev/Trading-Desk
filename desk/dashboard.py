@@ -340,8 +340,16 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     # and IB's Flex NAV stops at the last completed session (Friday, on a weekend). The last known
     # value carries forward; a layer still starts at its own first day.
     last_day = max(series.index.max() for series in daily_values.values()) if daily_values else None
+    # Each layer ends today at the account's live value (the accounts table's), so the chart's end labels
+    # are current values rather than the last saved day (IB's Flex NAV is yesterday's close).
+    current = {snapshot.label: snapshot.equity_usd for snapshot in trading}
+    today = pd.Timestamp.now(tz="UTC").normalize()
+    if last_day is not None and current:
+        last_day = max(last_day, today)
     for name, series in daily_values.items():
         series = series.reindex(pd.date_range(series.index.min(), last_day, freq="D")).ffill()
+        if name in current and np.isfinite(current[name]) and len(series):
+            series.iloc[-1] = current[name]
         series = series[series.index >= start.normalize()]
         value_series.append({"name": name, "x": [ts.strftime("%Y-%m-%d") for ts in series.index],
                              "y": series.round(2).tolist()})
