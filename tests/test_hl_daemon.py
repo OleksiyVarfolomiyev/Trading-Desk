@@ -210,10 +210,14 @@ class DaemonTradeTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         for name, value in (("_current_position_quantity", 0.0), ("_book_mid", 8.0), ("kill_switch_engaged", False),
-                            ("fetch_market_response", [META, CTXS])):
+                            ("fetch_market_response", [META, CTXS]), ("resting_stops", {})):
             patcher = patch.object(ht, name, return_value=value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        # No network in tests: the stress check's view of the other venues and the wallets.
+        patcher = patch("desk.stress.desk_exposures", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.output = io.StringIO()
         patcher = patch("sys.stdout", self.output)
         patcher.start()
@@ -538,3 +542,40 @@ class LadderQuoteTests(unittest.TestCase):
 
     def test_orders_under_ten_dollars_are_left_out(self):
         self.assertEqual(hl_daemon.ladder_quotes(10.0, 10.0, 10.0, 9.99, 10.01, 1.0, 1, self.config), [])
+
+
+class LadderArmingTests(unittest.TestCase):
+    config = {**hl_daemon.LADDER_DEFAULTS}
+
+    def grid(self):
+        # Sells above and buys below a mid of 100, one step (1.0) apart.
+        return [{"price": 100 + step, "is_buy": False, "oid": None} for step in range(1, 6)] + \
+               [{"price": 100 - step, "is_buy": True, "oid": None} for step in range(1, 6)]
+
+    def test_only_quotes_near_the_price_go_on_the_book(self):
+        to_place, to_cancel = hl_daemon.arm_plan(self.grid(), 100.0, 1.0, self.config, now=0.0)
+        self.assertEqual(sorted(quote["price"] for quote in to_place), [98, 99, 101, 102])  # within 2 steps
+        self.assertEqual(to_cancel, [])
+
+    def test_a_quote_is_pulled_once_the_price_leaves_it_behind(self):
+        grid = self.grid()
+        for quote in grid:
+            if quote["price"] in (98, 99, 101, 102):
+                quote["oid"] = int(quote["price"])
+        to_place, to_cancel = hl_daemon.arm_plan(grid, 102.5, 1.0, self.config, now=0.0)
+        self.assertEqual(sorted(quote["price"] for quote in to_cancel), [98, 99])          # more than 3 steps away
+        self.assertEqual(sorted(quote["price"] for quote in to_place), [103, 104])         # newly within 2 steps
+
+    def test_between_the_two_limits_nothing_changes(self):
+        grid = self.grid()
+        grid[2]["oid"] = 7                                    # the sell at 103 is resting
+        to_place, to_cancel = hl_daemon.arm_plan(grid, 100.4, 1.0, self.config, now=0.0)
+        self.assertNotIn(grid[2], to_cancel)                  # 2.6 steps away: inside cancel_beyond, it stays
+
+    def test_a_refused_quote_waits_before_trying_again(self):
+        grid = self.grid()
+        grid[0]["retry_after"] = 50.0
+        to_place, _ = hl_daemon.arm_plan(grid, 100.0, 1.0, self.config, now=10.0)
+        self.assertNotIn(grid[0], to_place)
+        to_place, _ = hl_daemon.arm_plan(grid, 100.0, 1.0, self.config, now=60.0)
+        self.assertIn(grid[0], to_place)

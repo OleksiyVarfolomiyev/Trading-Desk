@@ -287,7 +287,8 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
 
         daemon_state = daemon_alerts.read() or {}
         quotes = {(item["wallet"], item["coin"]): item["quotes"] for item in daemon_state.get("ladders", [])}
-        frame = market_making.market_making_frame(quotes)
+        queued = {(item["wallet"], item["coin"]): item.get("queued", 0) for item in daemon_state.get("ladders", [])}
+        frame = market_making.market_making_frame(quotes, queued)
         tables["market_making"] = (table(frame, market_making.FORMATS, market_making.total_row(frame),
                                          key={"Ladder PnL": "abs"}) if len(frame) else table(frame, {}))
     except Exception as exc:

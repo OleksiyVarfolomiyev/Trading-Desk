@@ -833,14 +833,16 @@ class Alerts:
 
     def refresh_market_making(self, daemon: "Daemon") -> None:
         """The ladders' metrics (desk/market_making.py) for the dashboards, every five minutes."""
-        self.ladders = [{"wallet": item["wallet"][-4:], "coin": item["coin"], "quotes": len(item["oids"])}
+        self.ladders = [{"wallet": item["wallet"][-4:], "coin": item["coin"], "quotes": len(item["oids"]),
+                         "queued": max(0, len(item.get("grid", [])) - len(item["oids"]))}
                         for item in list(daemon.ladders.ladders.values())]
         if time.time() - self.market_making_at < 300:
             return
         self.market_making_at = time.time()
         from desk import market_making
 
-        frame = market_making.market_making_frame({(item["wallet"], item["coin"]): item["quotes"] for item in self.ladders})
+        frame = market_making.market_making_frame({(item["wallet"], item["coin"]): item["quotes"] for item in self.ladders},
+                                                  {(item["wallet"], item["coin"]): item["queued"] for item in self.ladders})
         rows = json.loads(frame.to_json(orient="records"))
         if [row.get("Fills") for row in rows] != [row.get("Fills") for row in self.market_making] or len(rows) != len(self.market_making):
             self.dirty = True
@@ -911,6 +913,13 @@ class Alerts:
             self.set("streams", "websocket down", "Disconnected: " + ", ".join(down) + "; reconnecting")
         else:
             self.clear("streams")
+        read_only = [wallet for wallet in daemon.state.wallets if wallet not in daemon.exchanges] if not daemon.paper else []
+        if read_only:
+            self.set("read-only", "daemon cannot trade (no signing client)",
+                     ", ".join(f"...{wallet[-4:]}" for wallet in read_only) + ": guards, the margin guard and ladders cannot "
+                     "act there (the exchange stops stay on HL). Restart the daemon.")
+        else:
+            self.clear("read-only")
         failing = [entry for entry in list(daemon.guards.entries.values())
                    if entry.failing_since is not None and now - entry.failing_since > 300]
         if failing:
@@ -1189,6 +1198,11 @@ LADDER_DEFAULTS = {
     "min_replace_seconds": 20,
     "refresh_seconds": 600,      # re-centre at least this often
     "pause_adds_at_health": 0.50,  # stop adding once the account is this far toward liquidation
+    # The full grid of quotes is kept in memory; a quote goes on HL's book only once the price comes within
+    # place_within spacings of it, and is pulled again past cancel_beyond, so few orders rest at a time.
+    "place_within": 2.0,
+    "cancel_beyond": 3.0,
+    "reject_retry_seconds": 30,   # a post-only quote HL refused (it would have crossed) is tried again after this
 }
 LADDER_CLOID_PREFIX = "0x1add"   # marks the ladder's own orders (client order ids)
 MIN_ORDER_USD = 10.0
@@ -1238,8 +1252,24 @@ def ladder_quotes(position: float, base: float, mid: float, best_bid: float, bes
     return quotes
 
 
+def arm_plan(grid: list[dict], mid: float, spacing: float, config: dict, now: float) -> tuple[list[dict], list[dict]]:
+    """Which in-memory quotes to place on the book and which to pull: ``(to_place, to_cancel)``.
+
+    A quote is placed once the price is within ``place_within`` spacings of it (and HL has not just refused
+    it), and pulled once the price is more than ``cancel_beyond`` spacings away; between the two it stays as
+    it is, so a price wobbling near the edge does not place and cancel it over and over.
+    """
+    near, far = config["place_within"] * spacing, config["cancel_beyond"] * spacing
+    to_cancel = [quote for quote in grid if quote.get("oid") and abs(quote["price"] - mid) > far]
+    to_place = [quote for quote in grid if not quote.get("oid") and abs(quote["price"] - mid) <= near
+                and quote.get("retry_after", 0.0) <= now]
+    return to_place, to_cancel
+
+
 class Ladders:
-    """Runs the ladders: re-centres on the mid, keeps the position in its band, survives restarts."""
+    """Runs the ladders: re-centres on the mid, keeps the position in its band, survives restarts.
+
+    Each ladder's quotes live in memory (``grid``); only those near the price rest on HL's book."""
 
     def __init__(self, daemon: "Daemon", path: Path | None = LADDERS_FILE):
         self.daemon = daemon
@@ -1272,8 +1302,8 @@ class Ladders:
     def _add(self, wallet: str, coin: str, dex: str, base: float, started: str) -> None:
         with self.lock:
             self.ladders[(wallet, coin)] = {"wallet": wallet, "coin": coin, "dex": dex, "base": base, "started": started,
-                                            "oids": [], "center": None, "placed_position": None, "placed_at": 0.0,
-                                            "atr": None, "atr_day": "", "fills": 0}
+                                            "oids": [], "grid": [], "center": None, "placed_position": None,
+                                            "placed_at": 0.0, "atr": None, "atr_day": "", "fills": 0, "spacing": None}
         self.save()
 
     def _cancel_own(self, wallet: str, coin: str, dex: str) -> None:
@@ -1350,8 +1380,16 @@ class Ladders:
         spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
         return ladder_quotes(base, base, mid, bid, ask, atr, market.size_decimals, config), spacing
 
+    def _mid(self, coin: str, dex: str) -> float:
+        """The live mark from the websocket (a price a second for held coins); the book over REST if it is stale."""
+        mark = self.daemon.state.mark(coin)
+        if mark:
+            return mark
+        bid, ask = self._book(coin, dex)
+        return (bid + ask) / 2
+
     def run(self) -> None:
-        while not self.daemon.stopped.wait(5):
+        while not self.daemon.stopped.wait(2):
             if time.time() < self.backoff_until:
                 continue
             with self.lock:
@@ -1401,16 +1439,21 @@ class Ladders:
                                    "the ladder only works it back. Rebalance by hand, or stop and restart the ladder at the new size.")
         else:
             self.daemon.alerts.clear(band_key)
-        bid, ask = self._book(coin, dex)
-        mid = (bid + ask) / 2
+        mid = self._mid(coin, dex)
         atr = self._atr(ladder)
         spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
         level_size = config["trim_level_pct"] * abs(base)
         moved = ladder["center"] is None or abs(mid - ladder["center"]) >= config["replace_move"] * spacing
         filled = ladder["placed_position"] is not None and abs(position - ladder["placed_position"]) >= 0.5 * level_size
         stale = now - ladder["placed_at"] >= config["refresh_seconds"]
-        if not (moved or filled or stale) or now - ladder["placed_at"] < config["min_replace_seconds"]:
-            return
+        exchange = self.daemon.exchanges[wallet]
+        if (moved or filled or stale) and (ladder["center"] is None or now - ladder["placed_at"] >= config["min_replace_seconds"]):
+            self._rebuild(ladder, position, now, config, atr, filled)
+        self._arm(ladder, mid, exchange, config, now)
+
+    def _rebuild(self, ladder: dict, position: float, now: float, config: dict, atr: float, filled: bool) -> None:
+        """A fresh grid of quotes around the mid, kept in memory; the quotes resting on the book are pulled first."""
+        wallet, coin, dex, base = ladder["wallet"], ladder["coin"], ladder["dex"], ladder["base"]
         health = self.daemon.margin_guard.latest_health.get(wallet, 0.0)
         allow_adds = health < config["pause_adds_at_health"]
         if allow_adds:
@@ -1418,28 +1461,43 @@ class Ladders:
         else:
             self.daemon.alerts.set(f"ladder-adds:{wallet}:{coin}", f"ladder adds paused (...{wallet[-4:]} {coin})",
                                    f"The account is {health:.0%} of the way to liquidation, so the ladder only trims.")
+        bid, ask = self._book(coin, dex)  # the true book, so no quote crosses it
+        mid = (bid + ask) / 2
         market = self.daemon.state.markets([(coin, dex)])[coin]
         quotes = ladder_quotes(position, base, mid, bid, ask, atr, market.size_decimals, config, allow_adds)
-        exchange = self.daemon.exchanges[wallet]
-        if ladder["oids"]:
-            exchange.bulk_cancel([{"coin": coin, "oid": oid} for oid in ladder["oids"]])
-            ladder["oids"] = []
+        live = [quote["oid"] for quote in ladder["grid"] if quote.get("oid")] or ladder["oids"]
+        if live:
+            self.daemon.exchanges[wallet].bulk_cancel([{"coin": coin, "oid": oid} for oid in live])
         if filled:
             ladder["fills"] += 1
-        from hyperliquid.utils.types import Cloid
+        ladder.update(grid=[{**quote, "oid": None} for quote in quotes], oids=[], center=mid, placed_position=position,
+                      placed_at=now, spacing=max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"]))
+        log(f"ladder ...{wallet[-4:]} {coin}: {len(quotes)} quotes in memory around {mid:.6g} (position {position:g}, "
+            f"base {base:g}{'' if allow_adds else ', adds paused: margin'}); placed as the price nears them")
 
-        requests_ = [{"coin": coin, "is_buy": quote["is_buy"], "sz": quote["size"], "limit_px": quote["price"],
-                      "order_type": {"limit": {"tif": "Alo"}}, "reduce_only": quote["reduce_only"],
-                      "cloid": Cloid.from_str(LADDER_CLOID_PREFIX + os.urandom(14).hex())} for quote in quotes]
-        if requests_:
-            response = exchange.bulk_orders(requests_)
-            for status in ht._status_rows(response):
+    def _arm(self, ladder: dict, mid: float, exchange, config: dict, now: float) -> None:
+        """Place the in-memory quotes the price has come near, and pull those it has left behind."""
+        coin = ladder["coin"]
+        to_place, to_cancel = arm_plan(ladder["grid"], mid, ladder["spacing"] or 0.0, config, now)
+        if to_cancel:
+            exchange.bulk_cancel([{"coin": coin, "oid": quote["oid"]} for quote in to_cancel])
+            for quote in to_cancel:
+                quote["oid"] = None
+        if to_place:
+            from hyperliquid.utils.types import Cloid
+
+            requests_ = [{"coin": coin, "is_buy": quote["is_buy"], "sz": quote["size"], "limit_px": quote["price"],
+                          "order_type": {"limit": {"tif": "Alo"}}, "reduce_only": quote["reduce_only"],
+                          "cloid": Cloid.from_str(LADDER_CLOID_PREFIX + os.urandom(14).hex())} for quote in to_place]
+            statuses = ht._status_rows(exchange.bulk_orders(requests_))
+            for quote, status in zip(to_place, statuses):
                 if isinstance(status, dict) and status.get("resting"):
-                    ladder["oids"].append(int(status["resting"]["oid"]))
-        ladder.update(center=mid, placed_position=position, placed_at=now)
-        if moved or filled:
-            log(f"ladder ...{wallet[-4:]} {coin}: {len(ladder['oids'])} quotes around {mid:.6g} (position {position:g}, "
-                f"base {base:g}{'' if allow_adds else ', adds paused: margin'})")
+                    quote["oid"] = int(status["resting"]["oid"])
+                elif isinstance(status, dict) and status.get("filled"):
+                    quote["oid"], quote["retry_after"] = None, now + config["reject_retry_seconds"]  # the fill re-centres
+                else:  # post-only refused (it would have crossed) or another error: try again a little later
+                    quote["retry_after"] = now + config["reject_retry_seconds"]
+        ladder["oids"] = [quote["oid"] for quote in ladder["grid"] if quote.get("oid")]
 
 
 class Session:
@@ -1514,12 +1572,21 @@ class Daemon:
         def build(wallet: str) -> tuple[str, Any]:
             if self.paper:
                 return wallet, PaperExchange(wallet)
-            try:
-                return wallet, SerialExchange(ht.build_exchange(wallet, ht._load_key_from_keychain(wallet),
-                                                                self.state.dexes))
-            except Exception as exc:
-                log(f"wallet ...{wallet[-4:]} is read-only in the daemon: {exc}")
-                return wallet, None
+            # Building a client downloads HL's market metadata; a rate-limited answer (429) is retried with
+            # backoff, so a busy minute does not leave the daemon without its signing clients.
+            for attempt in range(6):
+                try:
+                    return wallet, SerialExchange(ht.build_exchange(wallet, ht._load_key_from_keychain(wallet),
+                                                                    self.state.dexes))
+                except Exception as exc:
+                    if "429" in str(exc)[:20] and attempt < 5:
+                        wait = 10 * 2 ** attempt
+                        log(f"wallet ...{wallet[-4:]}: HL rate-limited the client setup; retrying in {wait}s")
+                        time.sleep(wait)
+                        continue
+                    log(f"wallet ...{wallet[-4:]} is read-only in the daemon: {str(exc)[:160]}")
+                    return wallet, None
+            return wallet, None
 
         for wallet, exchange in ht._gather([lambda wallet=wallet: build(wallet) for wallet in self.state.wallets]):
             if exchange is not None:
@@ -1646,7 +1713,8 @@ class Daemon:
                              "used": {wallet[-4:]: used for wallet, used in self.margin_guard.latest.items()},
                              "health": {wallet[-4:]: share for wallet, share in self.margin_guard.latest_health.items()}},
             "ladders": [{"wallet": item["wallet"][-4:], "coin": item["coin"], "base": item["base"],
-                         "quotes": len(item["oids"]), "center": item["center"], "fills": item["fills"]}
+                         "quotes": len(item["oids"]), "queued": max(0, len(item.get("grid", [])) - len(item["oids"])),
+                         "center": item["center"], "fills": item["fills"]}
                         for item in list(self.ladders.ladders.values())],
             "regime_guard": {"enabled": regime_config()["enabled"],
                              "levels": {key: value for key, value in self.regime_guard.latest.items() if not key.startswith("_")}},
@@ -2016,8 +2084,8 @@ def print_data(command: str | None, data: Any) -> None:
               f"(acts at {margin.get('act', 0):.0%})")
     for ladder in data.get("ladders", []):
         center = f"{ladder['center']:.6g}" if ladder["center"] else "not placed yet"
-        print(f"  ladder ...{ladder['wallet']} {ladder['coin']} around {ladder['base']:g}: {ladder['quotes']} quotes "
-              f"centred at {center}, {ladder['fills']} re-centres on fills")
+        print(f"  ladder ...{ladder['wallet']} {ladder['coin']} around {ladder['base']:g}: {ladder['quotes']} quotes on the book, "
+              f"{ladder.get('queued', 0)} queued in memory, centred at {center}, {ladder['fills']} re-centres on fills")
     regime = data.get("regime_guard")
     if regime:
         levels = ", ".join(f"{key.replace('_', ' ')} {value}" for key, value in regime["levels"].items()) or "not read yet"

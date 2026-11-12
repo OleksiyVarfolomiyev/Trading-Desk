@@ -914,8 +914,8 @@
         if (!rows.length) return { columns: [], rows: [], total: null };
         const total = { "Account": "Total" };
         ["Fills", "Volume", "Spread captured", "Ladder PnL", "Fees"].forEach((k) => { total[k] = sum(rows.map((r) => r[k])); });
-        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Ladder PnL", "Fees", "Position vs base", "Quotes"],
-          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Ladder PnL": "susd", "Fees": "usd", "Position vs base": "spct", "Quotes": "int" },
+        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Ladder PnL", "Fees", "Position vs base", "Quotes", "Queued"],
+          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Ladder PnL": "susd", "Fees": "usd", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
           { total, key: { "Ladder PnL": "abs" } });
       })(),
       wallets: table(walletRows, ["Wallet", "Chain", "Symbol", "Value", "% of desk", "Amount", "Price", "Note"],

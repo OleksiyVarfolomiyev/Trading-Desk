@@ -27,9 +27,9 @@ LADDER_CLOID_PREFIX = "0x1add"
 DISPLAY_TIMEZONE = "America/New_York"  # the desk's clock: times are shown in Eastern time
 BAND = 0.50
 COLUMNS = ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Ladder PnL", "Fees",
-           "Position vs base", "Quotes"]
+           "Position vs base", "Quotes", "Queued"]
 FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Ladder PnL": "susd", "Fees": "usd",
-           "Position vs base": "spct", "Quotes": "int"}
+           "Position vs base": "spct", "Quotes": "int", "Queued": "int"}
 
 
 def eastern(utc_text: str) -> str:
@@ -78,10 +78,12 @@ def metrics(fills: list[dict], mark: float) -> dict:
     return {"Fills": len(fills), "Volume": cost + proceeds, "Spread captured": captured, "Ladder PnL": pnl, "Fees": fees}
 
 
-def market_making_frame(quotes: dict[tuple[str, str], int] | None = None) -> pd.DataFrame:
+def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
+                        queued: dict[tuple[str, str], int] | None = None) -> pd.DataFrame:
     """One row per ladder (running, or stopped with fills in the last 30 days) and a total.
 
-    ``quotes`` ((wallet last four, coin) -> resting quotes) comes from the daemon when it is known.
+    ``quotes`` ((wallet last four, coin) -> quotes resting on HL's book) and ``queued`` (quotes the daemon holds
+    in memory until the price nears them) come from the daemon when it is known.
     """
     from desk.accounts import load_accounts
     from desk.hl.account_analytics import post
@@ -117,7 +119,8 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None) -> pd.
                    "Status": "quoting" if ladder else "stopped",
                    "Since": eastern(ladder["started"]) if ladder else "", **metrics(own, mark),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
-                   "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan"))}
+                   "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan")),
+                   "Queued": (queued or {}).get((short_id(wallet), coin), float("nan"))}
             rows.append(row)
     frame = pd.DataFrame(rows, columns=COLUMNS)
     return frame
@@ -151,6 +154,7 @@ def show_market_making() -> None:
         formatters={"Volume": money, "Spread captured": money, "Ladder PnL": money, "Fees": money,
                     "Fills": lambda value: "" if value != value else f"{value:,.0f}",
                     "Quotes": lambda value: "" if value != value else f"{value:,.0f}",
+                    "Queued": lambda value: "" if value != value else f"{value:,.0f}",
                     "Position vs base": lambda value: "" if value != value else f"{value:.1%}"},
         key_columns={"Ladder PnL": "abs"})
     print("Ladder PnL is the ladders' own trading (each fill's cash, plus what they still hold net at today's mark, "
