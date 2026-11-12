@@ -40,15 +40,21 @@ class JournalTests(unittest.TestCase):
         at = (time.time() - 3600) * 1000
         fills = {WALLET: [
             {"coin": "ICP", "px": "2.5", "sz": "100", "closedPnl": "20", "fee": "1", "time": at, "cloid": None},
-            {"coin": "VVV", "px": "20", "sz": "2", "closedPnl": "3", "fee": "0.1", "time": at, "cloid": "0x1add" + "0" * 28},
-            {"coin": "OLD", "px": "1", "sz": "10", "closedPnl": "-5", "fee": "0.2", "time": at, "cloid": None},
-            {"coin": "@107", "px": "70", "sz": "1", "closedPnl": "9", "fee": "0", "time": at}]}
-        positions = {WALLET: [{"coin": "VVV", "szi": "-100", "unrealizedPnl": "12"}, {"coin": "ICP", "szi": "-50", "unrealizedPnl": "-7"}]}
+            # the ladder buys back 2 VVV at 20 (HL books 3 of the short's profit); VVV is 19 now
+            {"coin": "VVV", "side": "B", "px": "20", "sz": "2", "closedPnl": "3", "fee": "0.1", "time": at, "cloid": "0x1add" + "0" * 28},
+            {"coin": "OLD", "side": "A", "px": "1", "sz": "10", "closedPnl": "-5", "fee": "0.2", "time": at, "cloid": None},
+            {"coin": "@107", "side": "A", "px": "70", "sz": "1", "closedPnl": "9", "fee": "0", "time": at}]}
+        positions = {WALLET: [{"coin": "VVV", "szi": "-100", "unrealizedPnl": "12", "positionValue": "1900"},
+                              {"coin": "ICP", "szi": "-50", "unrealizedPnl": "-7", "positionValue": "120"}]}
         frame = journal.split_by_strategy(entries, fills, positions).set_index("Strategy")
         self.assertEqual(frame.loc["directional", "Realized PnL (30d)"], 19.0)
         self.assertEqual(frame.loc["directional", "Unrealized PnL"], -7.0)
         self.assertEqual(frame.loc["hedge", "Unrealized PnL"], 12.0)             # the position is the hedge's...
-        self.assertAlmostEqual(frame.loc["market making", "Realized PnL (30d)"], 2.9)  # ...its ladder fills are market making
+        # ...the ladder only gets the fill against holding: bought 2 at 20, worth 19 now, less the fee
+        self.assertAlmostEqual(frame.loc["market making", "Realized PnL (30d)"], -2.1)
+        self.assertAlmostEqual(frame.loc["hedge", "Realized PnL (30d)"], 5.0)    # the short's profit stays with the hedge
+        self.assertAlmostEqual(frame.loc["market making", "Fees (30d)"], 0.1)
+        self.assertAlmostEqual(frame["Realized PnL (30d)"].sum(), 19.0 + 2.9 - 5.2)  # still HL's realized total
         self.assertAlmostEqual(frame.loc[journal.UNTAGGED, "Realized PnL (30d)"], -5.2)
         self.assertEqual(int(frame["Fills (30d)"].sum()), 3)                      # spot is left out
 

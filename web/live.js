@@ -27,7 +27,7 @@
   const CRYPTO_HIP3_MARKETS = new Set(["cash:BTC", "cash:ETH", "flx:BTC", "flx:USDE", "flx:XMR", "io:PRL",
     "para:ANSEM", "para:BTCD", "para:HYPE2", "para:OTHERS", "para:TOTAL2"]);
   const USD_STABLES = ["USDC", "USDT", "USDE", "DAI", "USDH"];
-  const COLORED = new Set(["susd", "vusd", "vpct", "spct", "rusd", "rpct", "side"]);
+  const COLORED = new Set(["susd", "vusd", "vpct", "spct", "sbps", "rusd", "rpct", "side"]);
   // Wallet tokens: DefiLlama price keys; a staking receipt is priced as the token it represents.
   const NATIVE = "0x0000000000000000000000000000000000000000";
   const NATIVE_PRICE = { base: "coingecko:ethereum", ethereum: "coingecko:ethereum" };
@@ -916,10 +916,15 @@
         const rows = (daemonAlerts && daemonAlerts.market_making) || [];
         if (!rows.length) return { columns: [], rows: [], total: null };
         const total = { "Account": "Total" };
-        ["Fills", "Volume", "Spread captured", "Ladder PnL", "Fees"].forEach((k) => { total[k] = sum(rows.map((r) => r[k])); });
+        ["Fills", "Volume", "Spread captured", "Inventory drift", "Ladder PnL", "Fees"].forEach((k) => { total[k] = sum(rows.map((r) => r[k])); });
         total["Captured per $1k"] = total.Volume ? (total["Spread captured"] - total.Fees) / total.Volume * 1000 : NaN;
-        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Captured per $1k", "Ladder PnL", "Fees", "Position vs base", "Quotes", "Queued"],
-          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Captured per $1k": "susd", "Ladder PnL": "susd", "Fees": "usd", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
+        ["Markout 1m (bps)", "Markout 15m (bps)"].forEach((k) => {  // weighted by each ladder's fills
+          const known = rows.filter((r) => Number.isFinite(r[k]));
+          const fills = sum(known.map((r) => r.Fills));
+          total[k] = fills ? sum(known.map((r) => r[k] * r.Fills)) / fills : NaN;
+        });
+        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"],
+          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "usd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
           { total, key: { "Ladder PnL": "abs" } });
       })(),
       strategies: (() => {  // desk/journal.py, as the daemon last sent it (the last row is the total)

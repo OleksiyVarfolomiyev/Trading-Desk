@@ -61,6 +61,8 @@ const FORMATS = {
   // Prices in USD at full precision (small coins need more than two decimals).
   price: { text: (v) => (isNum(v) ? "$" + number(v) : ""), num: true },
   num2: { text: (v) => (isNum(v) ? v.toFixed(2) : ""), num: true },
+  // Basis points, coloured by sign (markouts).
+  sbps: { text: (v) => (isNum(v) ? v.toFixed(1) : ""), num: true, signed: true },
   int: { text: (v) => (isNum(v) ? Math.round(v).toLocaleString("en-US") : ""), num: true },
   text: { text: (v) => (v === null || v === undefined ? "" : String(v)), num: false },
   // LONG green, SHORT red.

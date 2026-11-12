@@ -548,6 +548,29 @@ class LadderQuoteTests(unittest.TestCase):
     def test_orders_under_ten_dollars_are_left_out(self):
         self.assertEqual(hl_daemon.ladder_quotes(10.0, 10.0, 10.0, 9.99, 10.01, 1.0, 1, self.config), [])
 
+    def test_trims_can_be_switched_off_leaving_the_adds(self):
+        quotes = hl_daemon.ladder_quotes(-100.0, -100.0, 10.0, 9.99, 10.01, 1.0, 1, self.config, True, False)
+        self.assertTrue(quotes)
+        self.assertTrue(all(q["kind"] == "add" and not q["is_buy"] for q in quotes))
+
+
+class TrendPauseTests(unittest.TestCase):
+    config = {**hl_daemon.LADDER_DEFAULTS}
+
+    def test_efficiency_ratio(self):
+        self.assertEqual(hl_daemon.efficiency_ratio([10, 9, 8, 7]), (1.0, -1.0))          # a straight fall
+        self.assertEqual(hl_daemon.efficiency_ratio([10, 11, 10, 11, 10]), (0.0, 0.0))     # churn
+        self.assertAlmostEqual(hl_daemon.efficiency_ratio([10, 12, 11, 13])[0], 3 / 5)
+        self.assertEqual(hl_daemon.efficiency_ratio([10]), (0.0, 0.0))
+
+    def test_trims_pause_only_when_the_trend_runs_the_positions_way(self):
+        falling, rising = (0.6, -1.0), (0.6, 1.0)
+        self.assertTrue(hl_daemon.trims_paused(*falling, -100.0, self.config))    # a short in a fall: keep it
+        self.assertFalse(hl_daemon.trims_paused(*rising, -100.0, self.config))    # against the short: trims stay
+        self.assertTrue(hl_daemon.trims_paused(*rising, 100.0, self.config))      # a long in a rise
+        self.assertFalse(hl_daemon.trims_paused(0.2, -1.0, -100.0, self.config))  # choppy: the ladder trades both ways
+        self.assertFalse(hl_daemon.trims_paused(*falling, -100.0, {**self.config, "trend_pause_er": 0}))  # switched off
+
 
 class LadderArmingTests(unittest.TestCase):
     config = {**hl_daemon.LADDER_DEFAULTS}

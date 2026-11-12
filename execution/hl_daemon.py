@@ -834,7 +834,9 @@ class Alerts:
     def refresh_market_making(self, daemon: "Daemon") -> None:
         """The ladders' metrics (desk/market_making.py) for the dashboards, every five minutes."""
         self.ladders = [{"wallet": item["wallet"][-4:], "coin": item["coin"], "quotes": len(item["oids"]),
-                         "queued": max(0, len(item.get("grid", [])) - len(item["oids"]))}
+                         "queued": max(0, len(item.get("grid", [])) - len(item["oids"])),
+                         "status": f"quoting, trims paused (trend {item['trend'][0]:.2f})" if item.get("trims_paused")
+                         else "quoting"}
                         for item in list(daemon.ladders.ladders.values())]
         if time.time() - self.market_making_at < 300:
             return
@@ -842,7 +844,8 @@ class Alerts:
         from desk import market_making
 
         frame = market_making.market_making_frame({(item["wallet"], item["coin"]): item["quotes"] for item in self.ladders},
-                                                  {(item["wallet"], item["coin"]): item["queued"] for item in self.ladders})
+                                                  {(item["wallet"], item["coin"]): item["queued"] for item in self.ladders},
+                                                  {(item["wallet"], item["coin"]): item["status"] for item in self.ladders})
         rows = json.loads(frame.to_json(orient="records"))
         if [row.get("Fills") for row in rows] != [row.get("Fills") for row in self.market_making] or len(rows) != len(self.market_making):
             self.dirty = True
@@ -1205,6 +1208,13 @@ LADDER_DEFAULTS = {
     "max_live_per_side": 1,       # at most this many quotes per side on the book at once: the nearest
 
     "reject_retry_seconds": 30,   # a post-only quote HL refused (it would have crossed) is tried again after this
+    # Trend pause: while the price trends the position's way (efficiency ratio of the last trend_bars
+    # candles at or above trend_pause_er, moving in the position's favour), the trims (buying back a short,
+    # selling a long) pause, so the ladder does not hand back the trend; the adds keep quoting. 0 turns it off.
+    "trend_interval": "1h",
+    "trend_bars": 12,
+    "trend_pause_er": 0.40,
+    "trend_refresh_seconds": 300,
 }
 LADDER_CLOID_PREFIX = "0x1add"   # marks the ladder's own orders (client order ids)
 MIN_ORDER_USD = 10.0
@@ -1219,20 +1229,39 @@ def ladder_config() -> dict:
     return config
 
 
+def efficiency_ratio(closes: list[float]) -> tuple[float, float]:
+    """``(efficiency, direction)`` of a run of closes: the net move over the sum of the moves (0 = churn, 1 = a
+    straight line), and the net move's sign (+1 up, -1 down, 0 flat or too few closes)."""
+    if len(closes) < 2:
+        return 0.0, 0.0
+    path = sum(abs(later - earlier) for earlier, later in zip(closes, closes[1:]))
+    net = closes[-1] - closes[0]
+    if not path:
+        return 0.0, 0.0
+    return abs(net) / path, (1.0 if net > 0 else -1.0 if net < 0 else 0.0)
+
+
+def trims_paused(efficiency: float, direction: float, base: float, config: dict) -> bool:
+    """True while the price trends the position's way strongly enough that trimming would hand back the trend."""
+    threshold = float(config.get("trend_pause_er") or 0)
+    return bool(threshold) and efficiency >= threshold and direction * base > 0
+
+
 def ladder_quotes(position: float, base: float, mid: float, best_bid: float, best_ask: float, atr: float,
-                  size_decimals: int, config: dict, allow_adds: bool = True) -> list[dict]:
+                  size_decimals: int, config: dict, allow_adds: bool = True, allow_trims: bool = True) -> list[dict]:
     """The ladder's post-only quotes: ``{is_buy, price, size, reduce_only}``.
 
     ``base`` is the signed size you opened. The adding side (bids under a long, asks over a short)
     starts ``add_first`` spacings from the mid with ``add_level_pct`` of the base per level; the
     trimming side starts ``trim_first`` spacings away with ``trim_level_pct`` (reduce-only). The adds
     stop at (1 + band) x base and the trims at (1 - band) x base, so the position stays in its band.
+    ``allow_adds`` / ``allow_trims`` False drop that side (margin pause, trend pause).
     """
     side = 1.0 if base > 0 else -1.0
     spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
     held = side * position                       # on the base side: positive
     room_add = max(0.0, (1 + config["band"]) * abs(base) - held) if allow_adds else 0.0
-    room_trim = max(0.0, held - (1 - config["band"]) * abs(base))
+    room_trim = max(0.0, held - (1 - config["band"]) * abs(base)) if allow_trims else 0.0
     step = 10 ** -size_decimals
     tick = ht._price_tick(mid, size_decimals)
     quotes = []
@@ -1322,7 +1351,8 @@ class Ladders:
         with self.lock:
             self.ladders[(wallet, coin)] = {"wallet": wallet, "coin": coin, "dex": dex, "base": base, "started": started,
                                             "oids": [], "grid": [], "center": None, "placed_position": None,
-                                            "placed_at": 0.0, "atr": None, "atr_day": "", "fills": 0, "spacing": None}
+                                            "placed_at": 0.0, "atr": None, "atr_day": "", "fills": 0, "spacing": None,
+                                            "trend": (0.0, 0.0), "trend_at": 0.0, "trims_paused": False}
         self.save()
 
     def _cancel_own(self, wallet: str, coin: str, dex: str) -> None:
@@ -1382,6 +1412,25 @@ class Ladders:
             candles = ht.fetch_daily_candles(ladder["coin"].split(":")[-1], ladder["dex"])
             ladder["atr"], ladder["atr_day"] = float(ht.wilder_atr(candles, 14)), today
         return ladder["atr"]
+
+    def _trend(self, ladder: dict, now: float, config: dict) -> tuple[float, float]:
+        """The efficiency ratio and direction of the last ``trend_bars`` closed candles, refreshed every few minutes."""
+        if not config.get("trend_pause_er"):
+            return 0.0, 0.0
+        if now - ladder.get("trend_at", 0.0) >= config["trend_refresh_seconds"]:
+            interval, bars = config["trend_interval"], int(config["trend_bars"])
+            seconds = {"m": 60, "h": 3600, "d": 86400}[interval[-1]] * int(interval[:-1])
+            market_coin, dex = ladder["coin"].split(":")[-1], ladder["dex"]
+            request = {"type": "candleSnapshot", "req": {"coin": market_coin, "interval": interval,
+                                                         "startTime": int((now - (bars + 3) * seconds) * 1000),
+                                                         "endTime": int(now * 1000)}}
+            if dex:
+                request["dex"] = dex
+            candles = sorted(ht.post_info(request) or [], key=lambda candle: int(candle["t"]))
+            # bars moves ending now: the forming candle's close is the live price
+            ladder["trend"] = efficiency_ratio([float(candle["c"]) for candle in candles][-(bars + 1):])
+            ladder["trend_at"] = now
+        return ladder["trend"]
 
     def _book(self, coin: str, dex: str) -> tuple[float, float]:
         request = {"type": "l2Book", "coin": coin}
@@ -1465,14 +1514,25 @@ class Ladders:
         moved = ladder["center"] is None or abs(mid - ladder["center"]) >= config["replace_move"] * spacing
         filled = ladder["placed_position"] is not None and abs(position - ladder["placed_position"]) >= 0.5 * level_size
         stale = now - ladder["placed_at"] >= config["refresh_seconds"]
+        # Trend pause; never while the position is over its band (the trims are then the way back in).
+        efficiency, direction = self._trend(ladder, now, config)
+        paused = trims_paused(efficiency, direction, base, config) and held <= high
+        flipped = paused != ladder.get("trims_paused", False)
+        if flipped:
+            log(f"ladder ...{wallet[-4:]} {coin}: trims {'paused' if paused else 'resumed'} (trend efficiency "
+                f"{efficiency:.2f} over {config['trend_bars']} x {config['trend_interval']}, "
+                f"{'with' if direction * base > 0 else 'against'} the position)")
+        ladder["trims_paused"] = paused
         exchange = self.daemon.exchanges[wallet]
-        if (moved or filled or stale) and (ladder["center"] is None or now - ladder["placed_at"] >= config["min_replace_seconds"]):
+        if (moved or filled or stale or flipped) and (ladder["center"] is None or flipped
+                                                      or now - ladder["placed_at"] >= config["min_replace_seconds"]):
             self._rebuild(ladder, position, now, config, atr, filled)
         self._arm(ladder, mid, exchange, config, now)
 
     def _rebuild(self, ladder: dict, position: float, now: float, config: dict, atr: float, filled: bool) -> None:
         """A fresh grid of quotes around the mid, kept in memory; the quotes resting on the book are pulled first."""
         wallet, coin, dex, base = ladder["wallet"], ladder["coin"], ladder["dex"], ladder["base"]
+        allow_trims = not ladder.get("trims_paused", False)
         health = self.daemon.margin_guard.latest_health.get(wallet, 0.0)
         allow_adds = health < config["pause_adds_at_health"]
         if allow_adds:
@@ -1483,7 +1543,7 @@ class Ladders:
         bid, ask = self._book(coin, dex)  # the true book, so no quote crosses it
         mid = (bid + ask) / 2
         market = self.daemon.state.markets([(coin, dex)])[coin]
-        quotes = ladder_quotes(position, base, mid, bid, ask, atr, market.size_decimals, config, allow_adds)
+        quotes = ladder_quotes(position, base, mid, bid, ask, atr, market.size_decimals, config, allow_adds, allow_trims)
         live = [quote["oid"] for quote in ladder["grid"] if quote.get("oid")] or ladder["oids"]
         if live:
             self.daemon.exchanges[wallet].bulk_cancel([{"coin": coin, "oid": oid} for oid in live])
@@ -1492,7 +1552,8 @@ class Ladders:
         ladder.update(grid=[{**quote, "oid": None} for quote in quotes], oids=[], center=mid, placed_position=position,
                       placed_at=now, spacing=max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"]))
         log(f"ladder ...{wallet[-4:]} {coin}: {len(quotes)} quotes in memory around {mid:.6g} (position {position:g}, "
-            f"base {base:g}{'' if allow_adds else ', adds paused: margin'}); placed as the price nears them")
+            f"base {base:g}{'' if allow_adds else ', adds paused: margin'}{'' if allow_trims else ', trims paused: trend'}); "
+            "placed as the price nears them")
 
     def _arm(self, ladder: dict, mid: float, exchange, config: dict, now: float) -> None:
         """Place the in-memory quotes the price has come near, and pull those it has left behind."""

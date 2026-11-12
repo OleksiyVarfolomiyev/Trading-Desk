@@ -114,8 +114,13 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
                       positions_by_wallet: dict[str, list[dict]]) -> pd.DataFrame:
     """Per strategy: open positions and unrealized PnL now; realized PnL, fees, volume and fills from ``fills``.
 
-    ``positions_by_wallet`` holds HL position dicts (``coin``, ``szi``, ``unrealizedPnl``). A position's
-    unrealized PnL goes to its journal strategy (the ladder trades around it, but the position is yours).
+    ``positions_by_wallet`` holds HL position dicts (``coin``, ``szi``, ``unrealizedPnl``, ``positionValue``). A
+    position's unrealized PnL goes to its journal strategy (the ladder trades around it, but the position is yours).
+
+    A ladder fill's realized PnL is split: market making gets only what the fill made against holding, its
+    cash plus its size at today's mark less its fee (summed, the ladder PnL of desk/market_making.py); the
+    rest, the position's own profit the fill happened to realize, stays with the position's strategy. The
+    ladder's fees, volume and fills count under market making; the rows still add up to HL's realized PnL.
     """
     rows: dict[str, dict] = {}
 
@@ -124,21 +129,36 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
                                       "Fees (30d)": 0.0, "Volume (30d)": 0.0, "Fills (30d)": 0})
 
     now_ms = time.time() * 1000
+    marks: dict[tuple[str, str], float] = {}
     for wallet, positions in positions_by_wallet.items():
         for position in positions:
-            if not float(position.get("szi") or 0):
+            size = float(position.get("szi") or 0)
+            if not size:
                 continue
+            if position.get("positionValue"):
+                marks[(wallet, position["coin"])] = abs(float(position["positionValue"]) / size)
             target = row(strategy_at(entries, wallet, position["coin"], now_ms))
             target["Open positions"] += 1
             target["Unrealized PnL"] += float(position.get("unrealizedPnl") or 0)
+    for wallet, fills in fills_by_wallet.items():  # no open position (or no value given): the coin's last fill price
+        for fill in sorted(fills, key=lambda item: item["time"], reverse=True):
+            marks.setdefault((wallet, fill["coin"]), float(fill["px"]))
     for wallet, fills in fills_by_wallet.items():
         for fill in fills:
             if str(fill["coin"]).startswith("@") or "/" in str(fill["coin"]):
                 continue  # spot
-            target = row(fill_strategy(entries, wallet, fill))
-            target["Realized PnL (30d)"] += float(fill.get("closedPnl") or 0) - float(fill.get("fee") or 0)
-            target["Fees (30d)"] += float(fill.get("fee") or 0)
-            target["Volume (30d)"] += float(fill["px"]) * float(fill["sz"])
+            price, size, fee = float(fill["px"]), float(fill["sz"]), float(fill.get("fee") or 0)
+            realized = float(fill.get("closedPnl") or 0) - fee
+            strategy = fill_strategy(entries, wallet, fill)
+            if strategy == MARKET_MAKING:
+                side = 1.0 if fill["side"] == "B" else -1.0
+                own = side * size * (marks[(wallet, fill["coin"])] - price) - fee  # the fill against holding
+                row(strategy_at(entries, wallet, fill["coin"], fill["time"]))["Realized PnL (30d)"] += realized - own
+                realized = own
+            target = row(strategy)
+            target["Realized PnL (30d)"] += realized
+            target["Fees (30d)"] += fee
+            target["Volume (30d)"] += price * size
             target["Fills (30d)"] += 1
     order = {name: index for index, name in enumerate((*STRATEGIES, MARKET_MAKING, UNTAGGED))}
     frame = pd.DataFrame(sorted(rows.values(), key=lambda item: order.get(item["Strategy"], 99)), columns=COLUMNS)

@@ -64,13 +64,13 @@
 
     <section class="card">
       <h2>Market making (ladders)</h2>
-      <p class="sub">The c248 ladders' own trading: fills, volume, spread captured and their PnL (each fill's cash plus what they still hold net at today's mark, less fees), apart from the position you opened. Position vs base: the band is set in ladder.json (now ±25%). Quotes rest on HL's book; Queued are held in memory until the price nears them.</p>
+      <p class="sub">The ladders' own trading (c248, and VVV in 07f2). Ladder PnL is their result against simply holding the position you opened: spread captured (round trips) plus inventory drift (what the unmatched buys or sells made as the price moved) less fees. Markouts: the move 1 and 15 minutes after each fill, for (+) or against (−) it, in bps over the last 3 days; negative means the price runs through the quotes. Status says when the trims pause because the price trends the position's way. Position vs base: the band is in ladder.json (±25%). Quotes rest on HL's book; Queued are held in memory until the price nears them.</p>
       <div class="table-wrap" id="t-market_making"></div>
     </section>
 
     <section class="card">
       <h2>Results by strategy</h2>
-      <p class="sub">HL positions and the last 30 days' fills, by the journal's tag: directional, conviction, hedge, and the ladders' market making. Fills from before the journal began are untagged.</p>
+      <p class="sub">HL positions and the last 30 days' fills, by the journal's tag: directional, conviction, hedge, and the ladders' market making. The market-making row gets only the ladders' own result against holding (as in the table above); the profit a ladder realizes by trimming a position stays with that position's strategy. Fills from before the journal began are untagged.</p>
       <div class="table-wrap" id="t-strategies"></div>
     </section>
 

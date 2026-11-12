@@ -7,11 +7,17 @@ Per ladder, from those fills alone:
 * Fills, Volume: how many ladder orders filled, and their notional;
 * Spread captured: the matched part (as much bought as sold) times the average sell less the
   average buy: what the round trips earned;
-* Ladder PnL: every ladder fill's cash, plus what the ladder still holds net at today's mark, less
-  fees: the strategy's own result, apart from the position you opened;
+* Inventory drift: what the unmatched part (bought more than sold, or the other way) made or lost
+  as the price moved: what trimming into a trend costs;
 * Fees: paid, or negative for maker rebates;
-* Position vs base: the position now against the size the ladder was started on (its band is
-  +/-50%).
+* Ladder PnL = spread captured + inventory drift - fees: every ladder fill's cash, plus what the
+  ladder still holds net at today's mark, less fees: the strategy's result against simply holding
+  the position you opened;
+* Markout 1m / 15m: how far the price moved for (+) or against (-) each fill 1 and 15 minutes
+  later, in basis points, averaged over the fills of the last three days. Negative means the
+  quotes fill when the price runs through them (adverse selection), which the spacing has to beat;
+* Position vs base: the position now against the size the ladder was started on (its band is in
+  ``~/.trading-desk/ladder.json``).
 """
 
 from __future__ import annotations
@@ -25,10 +31,12 @@ import pandas as pd
 LADDERS_FILE = Path.home() / ".trading-desk" / "ladders.json"
 LADDER_CLOID_PREFIX = "0x1add"
 DISPLAY_TIMEZONE = "America/New_York"  # the desk's clock: times are shown in Eastern time
-BAND = 0.50
-COLUMNS = ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Captured per $1k", "Ladder PnL", "Fees",
-           "Position vs base", "Quotes", "Queued"]
-FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Captured per $1k": "susd", "Ladder PnL": "susd", "Fees": "usd",
+MARKOUT_MINUTES = (1, 15)
+MARKOUT_DAYS = 3  # HL serves about 3.5 days of 1-minute candles
+COLUMNS = ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees",
+           "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"]
+FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "usd",
+           "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps",
            "Position vs base": "spct", "Quotes": "int", "Queued": "int"}
 
 
@@ -78,16 +86,53 @@ def metrics(fills: list[dict], mark: float) -> dict:
     volume = cost + proceeds
     # The ladder's edge, apart from where the price went: what the round trips earned, net of fees, per $1,000 traded.
     per_thousand = (captured - fees) / volume * 1000 if volume else float("nan")
-    return {"Fills": len(fills), "Volume": volume, "Spread captured": captured, "Captured per $1k": per_thousand,
-            "Ladder PnL": pnl, "Fees": fees}
+    return {"Fills": len(fills), "Volume": volume, "Spread captured": captured, "Inventory drift": pnl - captured + fees,
+            "Captured per $1k": per_thousand, "Ladder PnL": pnl, "Fees": fees}
+
+
+def markouts(fills: list[dict], closes: pd.Series, minutes: tuple[int, ...] = MARKOUT_MINUTES) -> dict[str, float]:
+    """The average move after each fill, in basis points, for (+) or against (-) the fill, ``minutes`` later.
+
+    ``closes`` holds 1-minute closes indexed by the candle's open time in ms; a fill counts only once a
+    candle covers ``fill time + minutes``.
+    """
+    result = {}
+    for minute in minutes:
+        moves = []
+        if len(closes):
+            times, values, last = closes.index.to_numpy(), closes.to_numpy(), closes.index[-1]
+            for fill in fills:
+                target = fill["time"] + minute * 60_000
+                if target < times[0] or target > last + 60_000:
+                    continue
+                later = values[times.searchsorted(target, side="right") - 1]
+                side = 1.0 if fill["side"] == "B" else -1.0
+                moves.append(side * (later / float(fill["px"]) - 1) * 1e4)
+        result[f"Markout {minute}m (bps)"] = sum(moves) / len(moves) if moves else float("nan")
+    return result
+
+
+def minute_closes(coin: str, since_ms: int) -> pd.Series:
+    """1-minute closes of an HL market from ``since_ms`` (at most the last ``MARKOUT_DAYS``), by open time in ms."""
+    from desk.hl.account_analytics import post
+
+    now = int(time.time() * 1000)
+    start = max(since_ms, now - MARKOUT_DAYS * 86_400_000)
+    request = {"type": "candleSnapshot", "req": {"coin": coin.split(":")[-1], "interval": "1m", "startTime": start, "endTime": now}}
+    if ":" in coin:
+        request["dex"] = coin.split(":")[0]
+    candles = post(request) or []
+    return pd.Series({int(candle["t"]): float(candle["c"]) for candle in candles}, dtype=float).sort_index()
 
 
 def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
-                        queued: dict[tuple[str, str], int] | None = None) -> pd.DataFrame:
+                        queued: dict[tuple[str, str], int] | None = None,
+                        status: dict[tuple[str, str], str] | None = None) -> pd.DataFrame:
     """One row per ladder (running, or stopped with fills in the last 30 days) and a total.
 
-    ``quotes`` ((wallet last four, coin) -> quotes resting on HL's book) and ``queued`` (quotes the daemon holds
-    in memory until the price nears them) come from the daemon when it is known.
+    ``quotes`` ((wallet last four, coin) -> quotes resting on HL's book), ``queued`` (quotes the daemon holds
+    in memory until the price nears them) and ``status`` (e.g. trims paused in a trend) come from the daemon
+    when it is known.
     """
     from desk.accounts import load_accounts
     from desk.hl.account_analytics import post
@@ -118,10 +163,14 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
             if mark != mark and own:
                 mark = float(own[-1]["px"])
             base = float(ladder["base"]) if ladder else float("nan")
+            try:
+                closes = minute_closes(coin, min(fill["time"] for fill in own)) if own else pd.Series(dtype=float)
+            except Exception:  # markouts are extra: the table shows without them
+                closes = pd.Series(dtype=float)
             row = {"Account": wallets[wallet].name, "Coin": coin,
                    "Side": ("LONG" if base > 0 else "SHORT") if ladder else "",
-                   "Status": "quoting" if ladder else "stopped",
-                   "Since": eastern(ladder["started"]) if ladder else "", **metrics(own, mark),
+                   "Status": ((status or {}).get((short_id(wallet), coin), "quoting")) if ladder else "stopped",
+                   "Since": eastern(ladder["started"]) if ladder else "", **metrics(own, mark), **markouts(own, closes),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
                    "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan")),
                    "Queued": (queued or {}).get((short_id(wallet), coin), float("nan"))}
@@ -132,8 +181,11 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
 
 def total_row(frame: pd.DataFrame) -> dict:
     row = {"Account": "Total", **{column: frame[column].sum() for column in ("Fills", "Volume", "Spread captured",
-                                                                             "Ladder PnL", "Fees")}}
+                                                                             "Inventory drift", "Ladder PnL", "Fees")}}
     row["Captured per $1k"] = (row["Spread captured"] - row["Fees"]) / row["Volume"] * 1000 if row["Volume"] else float("nan")
+    for column in (f"Markout {minute}m (bps)" for minute in MARKOUT_MINUTES):  # weighted by each ladder's fills
+        known = frame[frame[column].notna()]
+        row[column] = (known[column] * known["Fills"]).sum() / known["Fills"].sum() if known["Fills"].sum() else float("nan")
     return row
 
 
@@ -155,14 +207,18 @@ def show_market_making() -> None:
         return
     frame = pd.concat([frame, pd.DataFrame([total_row(frame)])], ignore_index=True)
     money = lambda value: "" if value != value else (f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")
+    bps = lambda value: "" if value != value else f"{value:.1f}"
     display_interactive_table(
         frame, bold_last=True, title="MARKET MAKING (LADDERS)",
-        formatters={"Volume": money, "Spread captured": money, "Ladder PnL": money, "Fees": money, "Captured per $1k": money,
+        formatters={"Volume": money, "Spread captured": money, "Inventory drift": money, "Ladder PnL": money, "Fees": money,
+                    "Captured per $1k": money, "Markout 1m (bps)": bps, "Markout 15m (bps)": bps,
                     "Fills": lambda value: "" if value != value else f"{value:,.0f}",
                     "Quotes": lambda value: "" if value != value else f"{value:,.0f}",
                     "Queued": lambda value: "" if value != value else f"{value:,.0f}",
                     "Position vs base": lambda value: "" if value != value else f"{value:.1%}"},
         key_columns={"Ladder PnL": "abs"})
-    print("Ladder PnL is the ladders' own trading (each fill's cash, plus what they still hold net at today's mark, "
-          "less fees), apart from the position you opened. Captured per $1k is the edge apart from the price's path: "
-          "spread captured less fees, per $1,000 traded; judge a ladder on it. Position vs base: the band is in ladder.json.")
+    print("Ladder PnL is the ladders' result against simply holding the position you opened: spread captured (round "
+          "trips) plus inventory drift (what the unmatched buys or sells made as the price moved) less fees. Captured per "
+          "$1k is the edge apart from the price's path. Markouts: the move 1 and 15 minutes after each fill, for (+) or "
+          "against (-) it, in bps over the last 3 days; negative means the price runs through the quotes. "
+          "Position vs base: the band is in ladder.json.")
