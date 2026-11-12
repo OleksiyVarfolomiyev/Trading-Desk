@@ -70,6 +70,14 @@ HISTORY_COLUMNS = [
 ]
 
 
+_ZERO_TEXT = re.compile(r'^-?(\$0(\.0+)?|0(\.0+)?%|0\.0+)$')
+
+
+def is_zero_text(text: str) -> bool:
+    """True for a displayed zero amount: $0.00, -$0.0, 0.0%, 0.00 (a bare whole-number 0, a count, is not.)"""
+    return bool(_ZERO_TEXT.match(text.strip()))
+
+
 def display_interactive_table(frame, formatters=None, cell_style=None, bold_last=False,
     columns=None, blank_missing_cells=None, html_columns=(), title=None, key_columns=None, key_rows=None):
     'Display a self-contained HTML table with text' \
@@ -106,8 +114,8 @@ def display_interactive_table(frame, formatters=None, cell_style=None, bold_last
                 formatter = formatters.get(column)
                 visible = formatter(value) if formatter else str(value)
                 visible = re.sub(r'(?<![\w.])\+(\$?)(?=\d|\.\d)', r'\1', visible)
-                if str(visible).strip().lower() == 'n/a':  # formatters that spell out "not available": blank too
-                    visible = ''
+                if str(visible).strip().lower() == 'n/a' or is_zero_text(str(visible)):
+                    visible = ''  # "not available" and a zero amount ($0.00, 0.0%, 0.00) are empty cells
                 sort_value = str(value) if visible != '' else ''
             style = cell_style(row_index, column, value, row) if cell_style else ''
             if not style and not missing and isinstance(value, (int, float, np.number)) \

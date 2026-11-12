@@ -1,5 +1,7 @@
 import tempfile
+import re
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -204,3 +206,26 @@ class MissingValueCellTests(unittest.TestCase):
                 patch.object(account_analytics, "HTML", side_effect=lambda markup: SimpleNamespace(data=markup)):
             account_analytics.display_interactive_table(frame, formatters={"Value": lambda v: f"${v:,.2f}"})
         self.assertNotIn("n/a", shown[0].replace("var ", ""))   # neither the NaN, the "n/a" text nor the None
+
+
+class ZeroCellTests(unittest.TestCase):
+    def test_displayed_zeros_are_empty_cells_but_counts_stay(self):
+        from desk.hl.account_analytics import is_zero_text
+
+        for text in ("$0.00", "-$0.00", "$0", "0.0%", "0.00%", "-0.0%", "0.00", "0.0"):
+            self.assertTrue(is_zero_text(text), text)
+        for text in ("0", "$0.01", "0.1%", "10.0%", "$10.00", "-$0.50", "1.00", "n/a", ""):
+            self.assertFalse(is_zero_text(text), text)
+
+    def test_the_table_leaves_zero_amount_cells_empty(self):
+        import pandas as pd
+        from desk.hl import account_analytics
+
+        shown = []
+        frame = pd.DataFrame({"Coin": ["A", "B"], "PnL": [0.0, 5.0], "Share": [0.0, 0.25], "Fills": [0, 3]})
+        with patch.object(account_analytics, "display", side_effect=lambda obj, **kw: shown.append(obj.data)), \
+                patch.object(account_analytics, "HTML", side_effect=lambda markup: SimpleNamespace(data=markup)):
+            account_analytics.display_interactive_table(
+                frame, formatters={"PnL": lambda v: f"${v:,.2f}", "Share": lambda v: f"{v:.1%}", "Fills": lambda v: f"{v:,.0f}"})
+        cells = re.findall(r"<td[^>]*>([^<]*)</td>", shown[0])
+        self.assertEqual(cells, ["A", "", "", "0", "B", "$5.00", "25.0%", "3"])

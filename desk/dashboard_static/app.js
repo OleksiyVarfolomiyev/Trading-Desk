@@ -150,6 +150,8 @@ function renderTable(id, spec) {
     });
     standout[column.key] = best;
   });
+  // A displayed zero amount ($0.00, -$0.00, 0.0%, 0.00) is an empty cell; a whole-number 0 (a count) stays.
+  const ZERO_TEXT = /^-?(\$0(\.0+)?|0(\.0+)?%|0\.0+)$/;
   const cell = (row, column, index) => {
     const format = FORMATS[column.fmt] || FORMATS.text;
     const value = row[column.key];
@@ -158,7 +160,8 @@ function renderTable(id, spec) {
       : format.tone && isNum(value) && value > 0 ? format.tone : "";
     const key = column.emphasis ? (index !== undefined && standout[column.key] === index ? "key key-top" : "key") : "";
     const classes = [format.num ? "num" : "", tone, key].filter(Boolean).join(" ");
-    return el("td", { class: classes, text: format.text(value) });
+    const text = format.text(value);
+    return el("td", { class: classes, text: ZERO_TEXT.test(text) ? "" : text });
   };
   const body = el("tbody", {}, rows.map((row, index) => el("tr", {}, spec.columns.map((column) => cell(row, column, index)))));
   const parts = [el("thead", {}, head), body];
