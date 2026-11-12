@@ -40,7 +40,7 @@ class ReportHighlightTests(unittest.TestCase):
         universe = pd.DataFrame({"Ticker": ["A", "B", "C"], CHANGE: [5.0, -3.0, 1.0],
                                  FUNDING: [0.08, -0.001, 0.01], VOLUME: [1e8, 5e7, 1e7]})
         well, attention = market_highlights(universe, "crypto")
-        self.assertIn("1 markets; A +0.0800", dict(attention)["Funding beyond ±0.05%/8h"])
+        self.assertIn("1 markets; A 0.0800", dict(attention)["Funding beyond ±0.05%/8h"])
         self.assertIn("67% of 3 markets are up", dict(well)["Breadth"])
 
     def test_backtest_highlights_split_pnl_and_flag_losing_signals(self):
@@ -79,7 +79,7 @@ class MarketMoverSignTests(unittest.TestCase):
 
         well, attention = market_highlights(self.universe([3.0, 1.0, -0.5]), "crypto")
         updates = {area: text for area, text in well + attention}
-        self.assertEqual(updates["Biggest gainers"], "T0 +3.00, T1 +1.00 (%).")
+        self.assertEqual(updates["Biggest gainers"], "T0 3.00, T1 1.00 (%).")
         self.assertEqual(updates["Biggest losers"], "T2 -0.50 (%).")
 
 

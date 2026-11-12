@@ -140,12 +140,12 @@ def levels(signals: pd.DataFrame, names: list[str], confirm: int, window: int) -
 # ---------------------------------------------------------------------------
 
 def _describe_alts(row: pd.Series) -> str:
-    return (f"alts {row['rel7']:+.1%} vs BTC over 7 days (top {1 - row['rel7_rank']:.0%} of the year), "
-            f"{row['breadth7']:.0%} of alts beat BTC, {row['rel30']:+.1%} over 30 days")
+    return (f"alts {row['rel7']:.1%} vs BTC over 7 days (top {1 - row['rel7_rank']:.0%} of the year), "
+            f"{row['breadth7']:.0%} of alts beat BTC, {row['rel30']:.1%} over 30 days")
 
 
 def _describe_equities(row: pd.Series) -> str:
-    return (f"SPY {row['drawdown60']:+.1%} from its 60-day high, VIX {row['vix']:.1f} ({row['vix5']:+.0%} in 5 sessions), "
+    return (f"SPY {row['drawdown60']:.1%} from its 60-day high, VIX {row['vix']:.1f} ({row['vix5']:.0%} in 5 sessions), "
             f"10-day volatility {row['vol10']:.0%}")
 
 

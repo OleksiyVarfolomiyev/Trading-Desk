@@ -23,12 +23,14 @@ STAKED = 100.06  # sVVV on Base in wallet c248
 mask_output()
 wallet = hl_wallet("07f2")
 state = ht.post_info({"type": "clearinghouseState", "user": wallet})
-short = next(-float(p["position"]["szi"]) for p in state["assetPositions"] if p["position"]["coin"] == "VVV")
+short = next((-float(p["position"]["szi"]) for p in state["assetPositions"] if p["position"]["coin"] == "VVV"), 0.0)
+if short <= 0:  # no VVV short open (closed, or a long): nothing to size
+    sys.exit("No VVV short is open in this wallet; nothing to do.")
 excess = round(short - STAKED, 2)
 print(f"VVV short {short:g}, staked {STAKED:g}: cancel its stop and take-profit, buy back {excess:g}.")
 if input("Type LIVE TRADING to go ahead: ").strip() != "LIVE TRADING":
     sys.exit("Cancelled.")
-exchange = ht.build_exchange(wallet, ht._load_key_from_keychain(wallet), [])
+exchange = ht.build_exchange(wallet, ht._load_key_from_keychain(wallet), [""])  # the default DEX must be loaded to cancel its orders
 for order in ht.post_info({"type": "frontendOpenOrders", "user": wallet}):
     if order["coin"] == "VVV":
         exchange.cancel("VVV", int(order["oid"]))

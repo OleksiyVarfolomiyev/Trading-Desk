@@ -1042,7 +1042,7 @@ class MarginGuard:
                        f"{tag} is {plan['health']:.0%} of the way to liquidation; the guard reduces positions "
                        f"(next: {action['coin']} {action['side']}) until about {config['target_maintenance']:.0%}")
             what = (f"reduce {action['coin']} {action['side']} by {action['quantity']:g} ({action['fraction']:.0%}, "
-                    f"unrealized ${action['unrealized']:+,.2f}){' as a last resort (protected)' if plan['last_resort'] else ''}; "
+                    f"unrealized ${action['unrealized']:,.2f}){' as a last resort (protected)' if plan['last_resort'] else ''}; "
                     f"the account is {plan['health']:.0%} of the way to liquidation, act at {config['act_maintenance']:.0%}")
             if now - self.last_action.get(wallet, 0.0) < config["cooldown_seconds"]:
                 continue

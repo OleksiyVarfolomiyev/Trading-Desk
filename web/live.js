@@ -359,6 +359,11 @@
 
   // ------------------------------------------------------------------ IB (sent by the desk's Mac)
   const IB_STALE_MS = 26 * HOUR_MS;
+  // The desk's clock is Eastern time: stamps (a Date, ms or ISO text) are shown as "2026-11-11 17:24 ET".
+  const eastern = (stamp, utcText) => {
+    const date = utcText ? new Date(String(stamp).slice(0, 19) + "Z") : new Date(stamp);
+    return Number.isNaN(date.getTime()) ? "?" : date.toLocaleString("sv-SE", { timeZone: "America/New_York" }).slice(0, 16) + " ET";
+  };
 
   function ibAccount(data) {
     const label = data.label, a = data.account || {};
@@ -837,7 +842,7 @@
     ];
     const staleFeeds = flow.filter(([, stamp, limit]) => minutesSince(stamp) > limit);
     if (staleFeeds.length) {
-      const describe = ([name, stamp, , note]) => `${name}: ${fin(stamp) ? `last ${new Date(stamp).toISOString().slice(0, 16).replace("T", " ")} UTC` : "never received"} (${note})`;
+      const describe = ([name, stamp, , note]) => `${name}: ${fin(stamp) ? `last ${eastern(stamp)}` : "never received"} (${note})`;
       attention.unshift(["Data flow down", staleFeeds.map(describe).join("; ") + "."]);
     }
     if (daemonAlerts) {  // the trading daemon's problems (desk/alerts.py), first
@@ -845,7 +850,7 @@
       const rows = age > 15
         ? [["Desk alert: trading daemon not reporting", `No word from the trading daemon for ${age.toFixed(0)} minutes: guards, the margin guard and the ladders are not running.`]]
         : (daemonAlerts.alerts || []).filter((a) => !a.expires || a.expires > Date.now() / 1000)
-          .map((a) => [`Desk alert: ${a.title}`, `${a.text} (since ${String(a.since || "").slice(0, 16).replace("T", " ")} UTC)`]);
+          .map((a) => [`Desk alert: ${a.title}`, `${a.text} (since ${eastern(a.since, true)})`]);
       rows.reverse().forEach((row) => attention.unshift(row));
     }
 
@@ -897,7 +902,7 @@
     };
 
     if (ibs.length) {
-      notes.push(`${ibs[0].label} is read through TWS on the desk's Mac, which sends it to the relay every 10 minutes while the local dashboard runs; sent ${ibData.as_of.slice(0, 16).replace("T", " ")} UTC.`);
+      notes.push(`${ibs[0].label} is read through TWS on the desk's Mac, which sends it to the relay every 10 minutes while the local dashboard runs; sent ${eastern(ibData.as_of)}.`);
       notes.push(`${ibs[0].label} stocks are in the current-holdings risk table, priced from Yahoo Finance's daily closes that the desk's Mac sends.`);
     } else {
       notes.push("IB is not included yet: the desk's Mac has not sent it (python -m desk.web_sync --push-ib).");

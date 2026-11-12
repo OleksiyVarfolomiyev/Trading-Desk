@@ -11,6 +11,8 @@ import json
 import time
 from pathlib import Path
 
+import pandas as pd
+
 ALERTS_FILE = Path.home() / ".trading-desk" / "daemon_alerts.json"
 STALE_SECONDS = 15 * 60
 
@@ -32,5 +34,11 @@ def rows(state: dict | None, now: float | None = None) -> list[tuple[str, str]]:
         return [("Desk alert: trading daemon not reporting",
                  f"No word from the trading daemon for {age / 60:.0f} minutes: guards, the margin guard and the ladders "
                  "are not running. Start it: .venv/bin/python execution/hl_daemon.py serve")]
-    return [(f"Desk alert: {item['title']}", f"{item['text']} (since {item.get('since', '?')[:16].replace('T', ' ')} UTC)")
+    def eastern(stamp: str) -> str:
+        try:
+            return f"{pd.Timestamp(stamp, tz='UTC').tz_convert('America/New_York'):%Y-%m-%d %H:%M} ET"
+        except (ValueError, TypeError):
+            return "?"
+
+    return [(f"Desk alert: {item['title']}", f"{item['text']} (since {eastern(item.get('since', ''))})")
             for item in state.get("alerts", []) if float(item.get("expires", 0) or 0) == 0 or float(item["expires"]) > now]

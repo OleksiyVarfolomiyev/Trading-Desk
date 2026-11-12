@@ -147,12 +147,12 @@ def market_highlights(universe: pd.DataFrame, view: str) -> tuple[list, list]:
         # declines, and a small view could otherwise list one market as both.
         gainers, losers = changes[changes[CHANGE] > 0], changes[changes[CHANGE] < 0]
         if len(gainers):
-            well.append(("Biggest gainers", names(gainers.nlargest(3, CHANGE), CHANGE, "+.2f") + " (%)."))
+            well.append(("Biggest gainers", names(gainers.nlargest(3, CHANGE), CHANGE, ".2f") + " (%)."))
         else:
             attention.append(("No gainers", f"none of {len(changes):,} markets is up over 24h; the smallest "
-                                            f"declines are {names(changes.nlargest(3, CHANGE), CHANGE, '+.2f')} (%)."))
+                                            f"declines are {names(changes.nlargest(3, CHANGE), CHANGE, '.2f')} (%)."))
         if len(losers):
-            attention.append(("Biggest losers", names(losers.nsmallest(3, CHANGE), CHANGE, "+.2f") + " (%)."))
+            attention.append(("Biggest losers", names(losers.nsmallest(3, CHANGE), CHANGE, ".2f") + " (%)."))
         else:
             well.append(("No losers", f"none of {len(changes):,} markets is down over 24h."))
     funding = universe.dropna(subset=[FUNDING])
@@ -160,7 +160,7 @@ def market_highlights(universe: pd.DataFrame, view: str) -> tuple[list, list]:
         hot = funding[funding[FUNDING].abs() >= HIGH_FUNDING_8H].sort_values(FUNDING, key=abs, ascending=False)
         if len(hot):
             attention.append((f"Funding beyond ±{HIGH_FUNDING_8H}%/8h",
-                              f"{len(hot)} markets; " + names(hot.head(5), FUNDING, "+.4f")
+                              f"{len(hot)} markets; " + names(hot.head(5), FUNDING, ".4f")
                               + " (%; positive means longs pay)."))
         top, bottom = funding.loc[funding[FUNDING].idxmax()], funding.loc[funding[FUNDING].idxmin()]
         well.append(("Funding range", f"highest {top['Ticker']} {top[FUNDING]:.4f}% "

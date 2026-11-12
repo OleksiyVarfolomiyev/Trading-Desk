@@ -24,11 +24,19 @@ import pandas as pd
 
 LADDERS_FILE = Path.home() / ".trading-desk" / "ladders.json"
 LADDER_CLOID_PREFIX = "0x1add"
+DISPLAY_TIMEZONE = "America/New_York"  # the desk's clock: times are shown in Eastern time
 BAND = 0.50
 COLUMNS = ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Ladder PnL", "Fees",
            "Position vs base", "Quotes"]
 FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Ladder PnL": "susd", "Fees": "usd",
            "Position vs base": "spct", "Quotes": "int"}
+
+
+def eastern(utc_text: str) -> str:
+    """A UTC ``YYYY-MM-DD HH:MM`` stamp (as the daemon records it) in Eastern time, ``2026-11-11 17:24 ET``."""
+    if not utc_text:
+        return ""
+    return f"{pd.Timestamp(utc_text, tz='UTC').tz_convert(DISPLAY_TIMEZONE):%Y-%m-%d %H:%M} ET"
 
 
 def running_ladders(path: Path = LADDERS_FILE) -> list[dict]:
@@ -107,7 +115,7 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None) -> pd.
             row = {"Account": wallets[wallet].name, "Coin": coin,
                    "Side": ("LONG" if base > 0 else "SHORT") if ladder else "",
                    "Status": "quoting" if ladder else "stopped",
-                   "Since": ladder["started"] if ladder else "", **metrics(own, mark),
+                   "Since": eastern(ladder["started"]) if ladder else "", **metrics(own, mark),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
                    "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan"))}
             rows.append(row)
@@ -124,9 +132,17 @@ def show_market_making() -> None:
     """The ladders' table for the notebooks."""
     from desk.hl.account_analytics import display_interactive_table
 
-    frame = market_making_frame()
+    ladders = running_ladders()
+    print(f"Ladders on file: {', '.join(item['coin'] + ' (...' + item['wallet'][-4:] + ')' for item in ladders) or 'none'} "
+          f"({LADDERS_FILE}).")
+    try:
+        frame = market_making_frame()
+    except Exception as exc:  # say what failed instead of showing nothing
+        print(f"Market-making metrics could not be read: {type(exc).__name__}: {exc}")
+        return
     if frame.empty:
-        print("No market-making ladder has run (hl_daemon.py ladder starts one).")
+        print("No market-making ladder is running or has traded in the last 30 days: start one with "
+              "hl_daemon.py ladder --wallet c248 --coin X (the trading daemon runs the ladders).")
         return
     frame = pd.concat([frame, pd.DataFrame([total_row(frame)])], ignore_index=True)
     money = lambda value: "" if value != value else (f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")
