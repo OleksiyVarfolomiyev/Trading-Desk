@@ -36,6 +36,18 @@ RESEARCH_PRICES = Path(__file__).resolve().parents[1] / "research" / "data" / "d
 # IB NAV is end of the US trading day; stamp it at 21:00 UTC (16:00-17:00 New York).
 IB_CLOSE_HOUR_UTC = 21
 WINDOWS = {"7D": 7, "30D": 30, "90D": 90, "1Y": 365}
+# A window may start up to this far past its cut. HL's month history begins exactly 30 days before its latest
+# sample, so a young account's first point (c248, funded 2026-10-21) sits on the 30D cut and was read as just
+# too late about half the time, leaving the 30D return blank. Same rule as WINDOW_EDGE_MS in web/live.js.
+WINDOW_EDGE = pd.Timedelta(days=1)
+
+
+def through(series, cutoff: pd.Timestamp):
+    """The points at or before ``cutoff``; when there are none, the first point if it is within ``WINDOW_EDGE``."""
+    before = series[series.index <= cutoff]
+    if before.empty and len(series) and series.index[0] <= cutoff + WINDOW_EDGE:
+        return series.iloc[:1]
+    return before
 # The performance table's periods: the windows, then since each account's (or the desk's) first day.
 INCEPTION = "since inception"
 PERIODS = [*WINDOWS, INCEPTION]
@@ -418,12 +430,12 @@ class DeskAccounts:
             index.index = pd.to_datetime(index.index, utc=True)
             for label, days in WINDOWS.items():
                 cutoff = now - pd.Timedelta(days=days)
-                before = frame[frame.index <= cutoff]
+                before = through(frame, cutoff)
                 if before.empty:
                     row[f"PnL {label}"] = row[f"Return {label}"] = np.nan
                     continue
                 row[f"PnL {label}"] = float(frame["pnl"].iloc[-1] - before["pnl"].iloc[-1])
-                prior = index[index.index <= cutoff]
+                prior = through(index, cutoff)
                 row[f"Return {label}"] = float(index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
             row[f"PnL {INCEPTION}"] = float(frame["pnl"].iloc[-1] - frame["pnl"].iloc[0])
             row[f"Return {INCEPTION}"] = float(index.iloc[-1] / index.iloc[0] - 1) if len(index) else np.nan
@@ -461,11 +473,11 @@ class DeskAccounts:
             row = {"Account": name, "Value": float(history["accountValue"].iloc[-1])}
             for label, days in WINDOWS.items():
                 cutoff = now - pd.Timedelta(days=days)
-                before = level[level.index <= cutoff]
+                before = through(level, cutoff)
                 if before.empty:
                     row[f"PnL {label}"] = row[f"Return {label}"] = np.nan
                     continue
-                row[f"PnL {label}"] = float(pnl.iloc[-1] - pnl[pnl.index <= cutoff].iloc[-1])
+                row[f"PnL {label}"] = float(pnl.iloc[-1] - through(pnl, cutoff).iloc[-1])
                 row[f"Return {label}"] = float(level.iloc[-1] / before.iloc[-1] - 1)
             row[f"PnL {INCEPTION}"] = float(pnl.iloc[-1])
             row[f"Return {INCEPTION}"] = float(level.iloc[-1] - 1)
@@ -497,7 +509,7 @@ class DeskAccounts:
             now = pd.Timestamp.now(tz="UTC")
             every = {INCEPTION: float(index.iloc[-1] / index.iloc[0] - 1) if len(index) else np.nan}
             for label, days in WINDOWS.items():
-                prior = index[index.index <= now - pd.Timedelta(days=days)]
+                prior = through(index, now - pd.Timedelta(days=days))
                 every[label] = float(index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
             rows.append(combined("Desk incl. wallets", pd.concat([trading, wallets]), every,
                                  f"{index.index[0]:%Y-%m-%d}" if len(index) else ""))
@@ -538,7 +550,7 @@ class DeskAccounts:
         now = pd.Timestamp.now(tz="UTC")
         returns = {"since start": float(self.index.iloc[-1] / self.index.iloc[0] - 1)}
         for label, days in WINDOWS.items():
-            prior = self.index[self.index.index <= now - pd.Timedelta(days=days)]
+            prior = through(self.index, now - pd.Timedelta(days=days))
             returns[label] = float(self.index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
         return returns
 

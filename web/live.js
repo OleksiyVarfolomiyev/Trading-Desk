@@ -436,10 +436,16 @@
     return firstFunded < 0 ? [] : index.slice(Math.max(firstFunded - 1, 0));
   }
 
+  // A window's start may be up to WINDOW_EDGE_MS past its cut. HL's month history begins exactly 30 days
+  // before its latest sample, so a young account's first point (c248, funded 10-21) sits on the 30D cut:
+  // read a few seconds early, before the cached history aged past it, the 30D cell was blank until a refresh.
+  const WINDOW_EDGE_MS = DAY_MS;
   function windowReturns(index, now) {
     const out = { since_start: index.length ? index[index.length - 1].v / index[0].v - 1 : NaN };
     for (const [label, days] of Object.entries(WINDOWS)) {
-      const prior = index.filter((p) => p.t <= now - days * DAY_MS);
+      const cut = now - days * DAY_MS;
+      let prior = index.filter((p) => p.t <= cut);
+      if (!prior.length && index.length && index[0].t <= cut + WINDOW_EDGE_MS) prior = [index[0]];
       out[label] = prior.length ? index[index.length - 1].v / prior[prior.length - 1].v - 1 : NaN;
     }
     return out;

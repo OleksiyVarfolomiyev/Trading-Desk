@@ -1585,3 +1585,18 @@ class IntradayReturnTests(unittest.TestCase):
         # (600 * 1% + 400 * -1%) / 2,000 = +0.1%
         self.assertAlmostEqual(intraday_return(values, closes, prices, 2_000.0), 0.001)
         self.assertTrue(np.isnan(intraday_return(values, {}, prices, 2_000.0)))
+
+
+class WindowEdgeTests(unittest.TestCase):
+    """A window whose start lands a moment past the cut (a young account) still gets its return."""
+
+    def test_the_first_point_counts_within_a_day_of_the_cut(self):
+        from desk.desk_accounts import through
+
+        cut = pd.Timestamp("2026-10-13 17:29:50", tz="UTC")
+        series = pd.Series([1.0, 1.1], index=pd.to_datetime(["2026-10-13 17:29:55", "2026-11-12 17:29:55"], utc=True))
+        self.assertEqual(list(through(series, cut)), [1.0])                         # 5 s past the cut: used
+        late = pd.Series([1.0], index=pd.to_datetime(["2026-10-16 00:00"], utc=True))
+        self.assertTrue(through(late, cut).empty)                                    # days past: no 30D return
+        early = pd.Series([0.9, 1.0], index=pd.to_datetime(["2026-10-01", "2026-10-20"], utc=True))
+        self.assertEqual(list(through(early, cut)), [0.9])                           # the normal case is unchanged
