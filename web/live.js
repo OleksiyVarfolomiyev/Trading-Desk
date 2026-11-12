@@ -679,9 +679,15 @@
     // -- movers (trading positions)
     const share = (p) => { const entry = Math.abs(p.quantity * p.avg_price * (p.multiplier || 1)); return entry ? p.unrealized / entry : NaN; };
     const ranked = tradePositions.filter((p) => fin(p.unrealized)).sort((a, b) => a.unrealized - b.unrealized);
-    const moverList = [...new Set(ranked.slice(-MOVERS).reverse().concat(ranked.slice(0, MOVERS)))];
-    const moverRows = moverList.map((p) => ({ "Account": p.account, "Symbol": p.symbol, "Side": p.quantity > 0 ? "LONG" : "SHORT",
-      "Value": value(p), "uPnL": p.unrealized, "% of position": share(p) }));
+    // Crypto and stocks are ranked apart (stocks: IB and HL equity perps).
+    const marketKind = (p) => (String(p.asset_class || "").startsWith("crypto") ? "Crypto" : "Stocks");
+    const KINDS = ["Crypto", "Stocks"];
+    const moverRows = (kind) => {  // crypto and stocks are two tables: never ranked together
+      const group = ranked.filter((p) => marketKind(p) === kind);
+      return [...new Set(group.slice(-MOVERS).reverse().concat(group.slice(0, MOVERS)))].map((p) => ({
+        "Account": p.account, "Symbol": p.symbol, "Side": p.quantity > 0 ? "LONG" : "SHORT",
+        "Value": value(p), "uPnL": p.unrealized, "% of position": share(p) }));
+    };
 
     // -- accounts in percent
     const accountRows = accounts.map((a) => ({
@@ -812,10 +818,13 @@
       const parts = [["IB", ibGroup], ["HL + wallets", restGroup]].filter(([, group]) => group.length).map(([name, group]) => `${name} ${splitOf(group)}`);
       (unrealized >= 0 ? well : attention).push(["uPnL", `${signedMoney(unrealized)} on ${money(gross)} of positions (${gross ? percent(unrealized / gross, true) : "n/a"}): ${parts.join(", ")}. Wallet tokens have no cost basis, so HL carries all of that group's PnL.`]);
       const mover = (p) => `${p.symbol} ${signedMoney(p.unrealized)}${fin(share(p)) ? ` (${percent(share(p), true)})` : ""}`;
-      const winners = ranked.slice().reverse().filter((p) => p.unrealized > 0).slice(0, HIGHLIGHT_MOVERS);
-      const losers = ranked.filter((p) => p.unrealized < 0).slice(0, HIGHLIGHT_MOVERS);
-      if (winners.length) well.push(["Largest winners", winners.map(mover).join(", ") + "."]);
-      if (losers.length) attention.push(["Largest losers", losers.map(mover).join(", ") + "."]);
+      KINDS.forEach((kind) => {  // crypto and stocks ranked apart
+        const group = ranked.filter((p) => marketKind(p) === kind);
+        const winners = group.slice().reverse().filter((p) => p.unrealized > 0).slice(0, HIGHLIGHT_MOVERS);
+        const losers = group.filter((p) => p.unrealized < 0).slice(0, HIGHLIGHT_MOVERS);
+        if (winners.length) well.push([`Largest winners (${kind.toLowerCase()})`, winners.map(mover).join(", ") + "."]);
+        if (losers.length) attention.push([`Largest losers (${kind.toLowerCase()})`, losers.map(mover).join(", ") + "."]);
+      });
       const largest = tradePositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
       const concentration = deskEquity ? Math.abs(value(largest)) / deskEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {
@@ -898,7 +907,9 @@
       { total: accountTotal, key: { "% of desk": "max" } }),
       exposure: table(exposureRows, ["Asset class", "Long", "Short", "Net", "Gross", "Gross / equity", "Net / equity"],
         Object.assign({}, money2, { "Net": "susd", "Gross / equity": "pct", "Net / equity": "spct" }), { totalLast: true, key: { "Net / equity": "abs" } }),
-      movers: table(moverRows, ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
+      movers: table(moverRows("Crypto"), ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
+        { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
+      movers_stocks: table(moverRows("Stocks"), ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
         { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
       positions: table(positionRows, ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
         "uPnL", "uPnL (%)", "24h change (%)", "Weight", "Exposure / desk value"],

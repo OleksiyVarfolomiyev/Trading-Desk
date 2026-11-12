@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 import pandas as pd
@@ -126,3 +127,80 @@ class ReloadDeskTests(unittest.TestCase):
         reload_desk()
         self.assertIn("key_columns", inspect.signature(overview.display_interactive_table).parameters)
         self.assertIs(overview.display_interactive_table, analytics.display_interactive_table)
+
+
+class MarketKindSplitTests(unittest.TestCase):
+    """Crypto and stocks are never ranked against each other."""
+
+    def test_a_mixed_view_gets_highlights_per_kind(self):
+        import pandas as pd
+        from desk.hl.market_research import market_highlights
+
+        universe = pd.DataFrame([
+            {"Ticker": "ZORA", "Dex": "", "Category": "", CHANGE: 12.0, FUNDING: 0.01, VOLUME: 5e7},
+            {"Ticker": "ICP", "Dex": "", "Category": "", CHANGE: -4.0, FUNDING: 0.01, VOLUME: 9e7},
+            {"Ticker": "xyz:NVDA", "Dex": "xyz", "Category": "stocks", CHANGE: 3.0, FUNDING: 0.001, VOLUME: 4e8},
+            {"Ticker": "xyz:TSLA", "Dex": "xyz", "Category": "stocks", CHANGE: -2.0, FUNDING: 0.001, VOLUME: 2e8}])
+        well, attention = market_highlights(universe, "trending")
+        labels = dict(well + attention)
+        self.assertTrue(labels["Biggest gainers (crypto)"].startswith("ZORA"))
+        self.assertTrue(labels["Biggest gainers (stocks)"].startswith("xyz:NVDA"))
+        self.assertTrue(labels["Most traded (stocks)"].startswith("xyz:NVDA"))
+        self.assertNotIn("xyz", labels["Most traded (crypto)"])
+
+    def test_a_single_kind_view_keeps_plain_labels(self):
+        import pandas as pd
+        from desk.hl.market_research import market_highlights
+
+        universe = pd.DataFrame([{"Ticker": "ZORA", "Dex": "", "Category": "", CHANGE: 12.0, FUNDING: 0.01, VOLUME: 5e7}])
+        self.assertIn("Biggest gainers", dict(market_highlights(universe, "crypto")[0]))
+
+    def test_market_kinds(self):
+        from desk.hl.market_research import market_kind
+
+        self.assertEqual(market_kind("ICP", "", ""), "Crypto")
+        self.assertEqual(market_kind("HYPE/USDC", None, "spot"), "Crypto")
+        self.assertEqual(market_kind("para:TOTAL2", "para", "crypto"), "Crypto")
+        self.assertEqual(market_kind("xyz:NVDA", "xyz", "stock"), "Stocks")
+        self.assertEqual(market_kind("xyz:GOLD", "xyz", "commodities"), "Commodities & FX")
+
+    def test_hl_highlights_list_crypto_and_stocks_apart(self):
+        import pandas as pd
+        from desk.hl.highlights import _by_kind
+
+        groups = dict(_by_kind(pd.Series({"ICP": 5.0, "xyz:RELIANCE": 2.0})))
+        self.assertEqual(sorted(groups), [" (crypto)", " (stocks)"])
+        self.assertEqual(list(dict(_by_kind(pd.Series({"ICP": 5.0}))).keys()), [""])
+
+
+class MathTypesettingTests(unittest.TestCase):
+    """Two dollar signs in one line must not be read as a math formula by the notebook viewer."""
+
+    def test_highlights_and_tables_are_marked_not_math(self):
+        from unittest.mock import patch
+
+        from desk import notebook_highlights as nh
+
+        shown = []
+        with patch.object(nh, "display", side_effect=lambda obj, **kw: shown.append(obj.data)):
+            nh.show([("Largest winners (crypto)", "MELANIA $110.97 (3.9%), ICP $42.18 (4.5%).")], [])
+        self.assertIn("tex2jax_ignore", shown[0])
+        self.assertIn("MELANIA $110.97 (3.9%), ICP $42.18", shown[0])   # the text itself is untouched
+        self.assertTrue(nh.no_math("<b>$1 and $2</b>").startswith("<div class='tex2jax_ignore'>"))
+
+
+class MissingValueCellTests(unittest.TestCase):
+    def test_missing_values_are_empty_cells_not_n_a(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+
+        import pandas as pd
+        from desk.hl import account_analytics
+
+        shown = []
+        frame = pd.DataFrame({"Coin": ["A", "B", "C"], "Value": [1.0, float("nan"), 3.0], "Note": ["ok", "n/a", None]})
+        with patch.object(account_analytics, "display", side_effect=lambda obj, **kw: shown.append(obj.data)), \
+                patch.object(account_analytics, "HTML", side_effect=lambda markup: SimpleNamespace(data=markup)):
+            account_analytics.display_interactive_table(frame, formatters={"Value": lambda v: f"${v:,.2f}"})
+        self.assertNotIn("n/a", shown[0].replace("var ", ""))   # neither the NaN, the "n/a" text nor the None

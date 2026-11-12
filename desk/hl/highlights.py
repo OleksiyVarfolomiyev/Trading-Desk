@@ -29,6 +29,22 @@ def _pct(share: float) -> str:
     return f" ({share:.1%})" if pd.notna(share) and np.isfinite(share) else ""
 
 
+def _kind(ticker: str) -> str:
+    """``crypto`` or ``stocks`` for a coin (``xyz:NVDA``, ``ICP``, ``ICP (07f2)``): HIP-3 tradfi markets are stocks."""
+    from desk.hl.market_research import CRYPTO_HIP3_DEXES, CRYPTO_HIP3_MARKETS
+
+    name = str(ticker).split(" (")[0]
+    dex = name.split(":")[0] if ":" in name else ""
+    return "crypto" if not dex or dex in CRYPTO_HIP3_DEXES or name in CRYPTO_HIP3_MARKETS else "stocks"
+
+
+def _by_kind(amounts: pd.Series) -> list[tuple[str, pd.Series]]:
+    """``amounts`` split into crypto and stocks; the label suffix is empty when only one kind is present."""
+    kinds = pd.Series([_kind(ticker) for ticker in amounts.index], index=amounts.index, dtype=object)
+    groups = [(kind, amounts[kinds == kind]) for kind in ("crypto", "stocks") if (kinds == kind).any()]
+    return [(f" ({kind})" if len(groups) > 1 else "", group) for kind, group in groups]
+
+
 def _ticker_list(amounts: pd.Series, bases: pd.Series | None = None) -> str:
     """List the largest amounts by ticker, each with its % of ``bases`` (its notional), noting how many were left out."""
     ordered = amounts.reindex(amounts.abs().sort_values(ascending=False).index)
@@ -108,10 +124,10 @@ def _window_rows(
         # Each ticker's % is its realized PnL over the notional it closed.
         notional = closes.groupby("coin")["notional"].sum() if "notional" in closes else None
         winners, losers = by_ticker[by_ticker > 0], by_ticker[by_ticker < 0]
-        if not winners.empty:
-            add("Closed at a profit", 1.0, f"{_usd(winners.sum())}: {_ticker_list(winners, notional)}")
-        if not losers.empty:
-            add("Closed at a loss", -1.0, f"{_usd(losers.sum())}: {_ticker_list(losers, notional)}")
+        for suffix, group in _by_kind(winners):  # crypto and stocks listed apart
+            add(f"Closed at a profit{suffix}", 1.0, f"{_usd(group.sum())}: {_ticker_list(group, notional)}")
+        for suffix, group in _by_kind(losers):
+            add(f"Closed at a loss{suffix}", -1.0, f"{_usd(group.sum())}: {_ticker_list(group, notional)}")
         if "liquidation" in closes:
             liquidated = closes.loc[closes["liquidation"].fillna(False).astype(bool)]
             if not liquidated.empty:
@@ -156,13 +172,12 @@ def build_highlights(
         # A move's % is its change over the position's current value.
         values = pd.Series({f"{row['Coin']} ({row['Wallet']})": float(row.get("Pos") or np.nan)
                             for row in current.values()}, dtype=float)
-        gains, losses = moves[moves > 0].nlargest(3), moves[moves < 0].nsmallest(3)
-        if not gains.empty:
-            run_well.append({"Window": "Since last run", "Update": "Biggest open-position gains",
-                             "Detail": _ticker_list(gains, values)})
-        if not losses.empty:
-            run_attention.append({"Window": "Since last run", "Update": "Biggest open-position losses",
-                                  "Detail": _ticker_list(losses, values)})
+        for suffix, group in _by_kind(moves[moves > 0]):  # crypto and stocks ranked apart
+            run_well.append({"Window": "Since last run", "Update": f"Biggest open-position gains{suffix}",
+                             "Detail": _ticker_list(group.nlargest(3), values)})
+        for suffix, group in _by_kind(moves[moves < 0]):
+            run_attention.append({"Window": "Since last run", "Update": f"Biggest open-position losses{suffix}",
+                                  "Detail": _ticker_list(group.nsmallest(3), values)})
         well, attention = run_well + well, run_attention + attention
 
     def now_row(update: str, detail: str) -> dict[str, str]:

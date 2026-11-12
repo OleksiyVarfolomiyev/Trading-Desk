@@ -32,6 +32,12 @@ from desk.venues.base import VenueAccount
 
 OVERVIEW_HIGHLIGHTS_STATE = "desk_overview_highlights_state.json"
 HIGHLIGHT_MOVERS = 3
+MARKET_KINDS = ("Crypto", "Stocks")
+
+
+def market_kind(position) -> str:
+    """Crypto (crypto perps and spot) or Stocks (stocks, ETFs and other tradfi: IB, HL equity perps)."""
+    return "Crypto" if str(position.asset_class).startswith("crypto") else "Stocks"
 CONCENTRATION_PCT = 0.25   # one position above this share of desk value is flagged
 HIGH_LEVERAGE = 2.0        # gross exposure / trading equity
 LOW_AVAILABLE_PCT = 0.10   # available margin / trading equity
@@ -621,24 +627,25 @@ class DeskOverview:
                                               "% of position value": _percent, "Positions": "{:.0f}".format},
                                   cell_style=_pnl_style, bold_last=True, title="UNREALIZED PNL BY ACCOUNT",
                                   key_columns={"Unrealized PnL": "abs"})
-        movers = self.movers_frame(top)
-        if movers.empty:
-            return
-        movers = movers[emphasis.key_columns_first(list(movers.columns), {"uPnL"}, SIGNED_COLUMNS | {"Side"},
-                                                   text={"Account", "Symbol"})]
-        display_interactive_table(movers, formatters={"Value": _money, "uPnL": _money, "% of position": _signed_percent},
-                                  cell_style=_signed_style, title=f"LARGEST WINNERS AND LOSERS (TOP {top} EACH)",
-                                  key_columns={"uPnL": "abs"})
+        for kind in MARKET_KINDS:  # crypto and stocks are two tables: they are never ranked together
+            movers = self.movers_frame(top, kind)
+            if movers.empty:
+                continue
+            movers = movers[emphasis.key_columns_first(list(movers.columns), {"uPnL"}, SIGNED_COLUMNS | {"Side"},
+                                                       text={"Account", "Symbol"})]
+            display_interactive_table(movers, formatters={"Value": _money, "uPnL": _money, "% of position": _signed_percent},
+                                      cell_style=_signed_style, title=f"LARGEST WINNERS AND LOSERS: {kind.upper()} (TOP {top} EACH)",
+                                      key_columns={"uPnL": "abs"})
         print("Unrealized PnL is on open trading positions (HL and IB); wallet tokens have no cost basis here. "
               "% of position compares the PnL with the position's value at entry.")
 
-    def movers_frame(self, top: int = 5) -> pd.DataFrame:
-        """The largest winning and losing trading positions by unrealized PnL."""
+    def movers_frame(self, top: int = 5, kind: str = "Crypto") -> pd.DataFrame:
+        """The largest winning and losing trading positions by unrealized PnL among ``kind`` ("Crypto" or "Stocks")."""
         positions = pd.DataFrame([{
             "Account": snapshot.label, "Symbol": position.symbol, "Side": position.side,
             "Value": position.notional_usd, "uPnL": position.unrealized_usd,
             "% of position": _pnl_share(position),
-        } for snapshot in self._trading() for position in snapshot.positions])
+        } for snapshot in self._trading() for position in snapshot.positions if market_kind(position) == kind])
         if positions.empty:
             return positions
         ranked = positions.sort_values("uPnL")
@@ -700,8 +707,6 @@ class DeskOverview:
                                    f"wallet holdings {money(wallet_value)}; {len(positions)} open positions."))
         if positions:
             ranked = sorted(positions, key=lambda item: item[1].unrealized_usd)
-            winners = [item for item in ranked[::-1] if item[1].unrealized_usd > 0][:HIGHLIGHT_MOVERS]
-            losers = [item for item in ranked if item[1].unrealized_usd < 0][:HIGHLIGHT_MOVERS]
             def split(group):  # "IB -$415 on $3,100 (-13.4%)"
                 value = sum(abs(position.notional_usd) for _, position in group)
                 pnl = sum(position.unrealized_usd for _, position in group)
@@ -719,10 +724,14 @@ class DeskOverview:
                 share = _pnl_share(position)
                 return (f"{position.symbol} {signed_money(position.unrealized_usd)}"
                         + (f" ({share:.1%})" if math.isfinite(share) else ""))
-            if winners:
-                well.append(("Largest winners", ", ".join(mover(p) for _, p in winners) + "."))
-            if losers:
-                attention.append(("Largest losers", ", ".join(mover(p) for _, p in losers) + "."))
+            for kind in MARKET_KINDS:  # crypto and stocks ranked apart
+                group = [item for item in ranked if market_kind(item[1]) == kind]
+                winners = [item for item in group[::-1] if item[1].unrealized_usd > 0][:HIGHLIGHT_MOVERS]
+                losers = [item for item in group if item[1].unrealized_usd < 0][:HIGHLIGHT_MOVERS]
+                if winners:
+                    well.append((f"Largest winners ({kind.lower()})", ", ".join(mover(p) for _, p in winners) + "."))
+                if losers:
+                    attention.append((f"Largest losers ({kind.lower()})", ", ".join(mover(p) for _, p in losers) + "."))
             label, largest = max(positions, key=lambda item: abs(item[1].notional_usd))
             share = abs(largest.notional_usd) / self.desk_equity if self.desk_equity else float("nan")
             if share > CONCENTRATION_PCT:

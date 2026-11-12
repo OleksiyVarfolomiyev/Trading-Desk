@@ -12,7 +12,14 @@ import pandas as pd
 from desk.hl.trade_analytics import post_info
 
 TOP_N = 20
-TRADFI_CATEGORIES = {"stocks", "indices", "commodities", "fx", "preipo", "rates"}
+TRADFI_CATEGORIES = {"stocks", "stock", "indices", "commodities", "fx", "preipo", "rates"}
+# Highlights and tables are split by kind of market, so crypto and stocks are never ranked together.
+STOCK_CATEGORIES = {"stocks", "stock", "indices", "preipo"}
+COMMODITY_FX_CATEGORIES = {"commodities", "fx", "rates"}
+CRYPTO_HIP3_DEXES = {"hyna"}
+CRYPTO_HIP3_MARKETS = {"cash:BTC", "cash:ETH", "flx:BTC", "flx:USDE", "flx:XMR", "io:PRL", "para:ANSEM",
+                       "para:BTCD", "para:HYPE2", "para:OTHERS", "para:TOTAL2"}
+MARKET_KINDS = ("Crypto", "Stocks", "Commodities & FX", "Other")
 TRENDING_MIN_VOLUME = 30_000_000.0
 CHANGE = "24h Change (%)"
 FUNDING = "8h Funding (%)"
@@ -27,6 +34,27 @@ def asset_class(dex: str | None, category: str | None) -> str:
     if not dex:
         return "Crypto"
     return "Tradfi" if str(category or "").lower() in TRADFI_CATEGORIES else "HIP-3"
+
+
+def market_kind(ticker: str, dex: str | None, category: str | None) -> str:
+    """Crypto (main DEX, spot, crypto HIP-3), Stocks (stocks, indices, pre-IPO), Commodities & FX, or Other."""
+    category = str(category or "").lower()
+    if not dex or category == "crypto" or dex in CRYPTO_HIP3_DEXES or ticker in CRYPTO_HIP3_MARKETS:
+        return "Crypto"
+    if category in STOCK_CATEGORIES:
+        return "Stocks"
+    if category in COMMODITY_FX_CATEGORIES:
+        return "Commodities & FX"
+    return "Other"
+
+
+def by_kind(markets: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+    """The markets split by kind, in ``MARKET_KINDS`` order; one unnamed group without Dex/Category columns."""
+    if markets.empty or not {"Dex", "Category"}.issubset(markets.columns):
+        return [("", markets)]
+    kinds = pd.Series([market_kind(row["Ticker"], row["Dex"], row["Category"]) for _, row in markets.iterrows()],
+                      index=markets.index)
+    return [(kind, markets[kinds == kind]) for kind in MARKET_KINDS if (kinds == kind).any()]
 
 
 def _number(value: object) -> float:
@@ -105,7 +133,7 @@ def select_view(markets: pd.DataFrame, view: str) -> pd.DataFrame:
 
 
 def trending_markets(markets: pd.DataFrame) -> pd.DataFrame:
-    """Return what the Trending tab lists: the biggest loser and three biggest gainers."""
+    """Return what the Trending tab lists: the biggest loser and three biggest gainers (of the markets given)."""
     ranked = select_view(markets, "trending").dropna(subset=[CHANGE]).sort_values(CHANGE)
     picked = pd.concat([ranked.iloc[:1], ranked.iloc[-3:]])
     return picked[~picked.index.duplicated()].sort_values(CHANGE, ascending=False)
@@ -130,10 +158,28 @@ HIGH_FUNDING_8H = 0.05  # % per 8h; about 55% a year, which makes carrying the p
 
 
 def market_highlights(universe: pd.DataFrame, view: str) -> tuple[list, list]:
-    """What stands out in one market view: biggest moves, funding extremes, and where the volume is."""
-    well, attention = [], []
+    """What stands out in one market view: biggest moves, funding extremes, and where the volume is.
+
+    A view mixing kinds (Trending, HIP-3, Tradfi) gets each line per kind, "Biggest gainers (crypto)",
+    "Biggest gainers (stocks)", so crypto and stocks are never ranked against each other.
+    """
     if universe.empty:
-        return well, [("Markets", "No markets returned for this view.")]
+        return [], [("Markets", "No markets returned for this view.")]
+    groups = by_kind(universe)
+    well, attention = [], []
+    for kind, group in groups:
+        part_well, part_attention = _kind_highlights(group, f" ({kind.lower()})" if len(groups) > 1 else "")
+        well += part_well
+        attention += part_attention
+    if view == "trending":
+        well.append(("Trending pool", f"{len(universe):,} markets above ${TRENDING_MIN_VOLUME / 1e6:,.0f}M 24h volume."))
+    return well, attention
+
+
+def _kind_highlights(universe: pd.DataFrame, suffix: str) -> tuple[list, list]:
+    """One kind's highlights; ``suffix`` (" (crypto)") names the kind in each label when a view mixes kinds."""
+    well, attention = [], []
+    scope = suffix.strip(" ()") if suffix else "the view's"
 
     def names(frame: pd.DataFrame, column: str, fmt: str) -> str:
         return ", ".join(f"{row['Ticker']} {format(row[column], fmt)}" for _, row in frame.iterrows())
@@ -141,39 +187,37 @@ def market_highlights(universe: pd.DataFrame, view: str) -> tuple[list, list]:
     changes = universe.dropna(subset=[CHANGE])
     if len(changes):
         up = (changes[CHANGE] > 0).mean()
-        well.append(("Breadth", f"{up:.0%} of {len(changes):,} markets are up over 24h; median change "
+        well.append((f"Breadth{suffix}", f"{up:.0%} of {len(changes):,} markets are up over 24h; median change "
                                 f"{changes[CHANGE].median():.2f}%."))
         # Gainers must be up and losers down: in a falling market the "top 3" are only the smallest
         # declines, and a small view could otherwise list one market as both.
         gainers, losers = changes[changes[CHANGE] > 0], changes[changes[CHANGE] < 0]
         if len(gainers):
-            well.append(("Biggest gainers", names(gainers.nlargest(3, CHANGE), CHANGE, ".2f") + " (%)."))
+            well.append((f"Biggest gainers{suffix}", names(gainers.nlargest(3, CHANGE), CHANGE, ".2f") + " (%)."))
         else:
-            attention.append(("No gainers", f"none of {len(changes):,} markets is up over 24h; the smallest "
+            attention.append((f"No gainers{suffix}", f"none of {len(changes):,} markets is up over 24h; the smallest "
                                             f"declines are {names(changes.nlargest(3, CHANGE), CHANGE, '.2f')} (%)."))
         if len(losers):
-            attention.append(("Biggest losers", names(losers.nsmallest(3, CHANGE), CHANGE, ".2f") + " (%)."))
+            attention.append((f"Biggest losers{suffix}", names(losers.nsmallest(3, CHANGE), CHANGE, ".2f") + " (%)."))
         else:
-            well.append(("No losers", f"none of {len(changes):,} markets is down over 24h."))
+            well.append((f"No losers{suffix}", f"none of {len(changes):,} markets is down over 24h."))
     funding = universe.dropna(subset=[FUNDING])
     if len(funding):
         hot = funding[funding[FUNDING].abs() >= HIGH_FUNDING_8H].sort_values(FUNDING, key=abs, ascending=False)
         if len(hot):
-            attention.append((f"Funding beyond ±{HIGH_FUNDING_8H}%/8h",
+            attention.append((f"Funding beyond ±{HIGH_FUNDING_8H}%/8h{suffix}",
                               f"{len(hot)} markets; " + names(hot.head(5), FUNDING, ".4f")
                               + " (%; positive means longs pay)."))
         top, bottom = funding.loc[funding[FUNDING].idxmax()], funding.loc[funding[FUNDING].idxmin()]
-        well.append(("Funding range", f"highest {top['Ticker']} {top[FUNDING]:.4f}% "
+        well.append((f"Funding range{suffix}", f"highest {top['Ticker']} {top[FUNDING]:.4f}% "
                                       f"(~{top[FUNDING] * 3 * 365:.0f}%/yr), lowest {bottom['Ticker']} "
                                       f"{bottom[FUNDING]:.4f}% (~{bottom[FUNDING] * 3 * 365:.0f}%/yr)."))
     volume = universe.dropna(subset=[VOLUME])
     if len(volume) and volume[VOLUME].sum() > 0:
         leaders = volume.nlargest(3, VOLUME)
         share = leaders[VOLUME].sum() / volume[VOLUME].sum()
-        well.append(("Most traded", ", ".join(f"{row['Ticker']} ${row[VOLUME] / 1e6:,.0f}M" for _, row in leaders.iterrows())
-                     + f" ({share:.0%} of the view's 24h volume)."))
-    if view == "trending":
-        well.append(("Trending pool", f"{len(universe):,} markets above ${TRENDING_MIN_VOLUME / 1e6:,.0f}M 24h volume."))
+        well.append((f"Most traded{suffix}", ", ".join(f"{row['Ticker']} ${row[VOLUME] / 1e6:,.0f}M" for _, row in leaders.iterrows())
+                     + f" ({share:.0%} of {scope} 24h volume)."))
     return well, attention
 
 
@@ -212,17 +256,25 @@ def show_market_research(view: str) -> None:
     show_highlights(*market_highlights(universe, view))
     print(f"{label}: {len(universe):,} markets. Change is mid vs prior-day price; funding is the "
           "current hourly rate x 8. Positive funding means longs pay shorts.")
+    groups = by_kind(universe)
+    if len(groups) > 1:
+        print("Crypto and stocks are ranked separately: " + ", ".join(f"{kind} {len(group):,}" for kind, group in groups) + ".")
     if view == "trending":
         print(f"Trending lists the biggest loser and three biggest gainers with over "
-              f"${TRENDING_MIN_VOLUME:,.0f} 24h volume. The ranked tables below use that same pool.")
-        show("HL TRENDING", trending_markets(markets), {CHANGE: "abs"})
-    for name, metric, top in (
-        ("24H CHANGE", CHANGE, True), ("24H CHANGE", CHANGE, False),
-        ("8H FUNDING", FUNDING, True), ("8H FUNDING", FUNDING, False),
-    ):
-        ranked = rank_markets(universe, metric, top)
-        available = int(universe[metric].notna().sum())
-        # Real counts in the title: a small view is split between its top and bottom tables.
-        scope = f" OF {available}" if available < 2 * TOP_N else ""
-        # The ranking metric is the key column; its extreme (the top or bottom market) stands out.
-        show(f"{'TOP' if top else 'BOTTOM'} {len(ranked)}{scope} BY {name}", ranked, {metric: "max" if top else "min"})
+              f"${TRENDING_MIN_VOLUME:,.0f} 24h volume, per kind. The ranked tables below use that same pool.")
+        for kind, group in groups:
+            show(f"HL TRENDING{' - ' + kind.upper() if kind else ''}", trending_markets(group), {CHANGE: "abs"})
+    for kind, group in groups:
+        tag = f" - {kind.upper()}" if len(groups) > 1 else ""
+        for name, metric, top in (
+            ("24H CHANGE", CHANGE, True), ("24H CHANGE", CHANGE, False),
+            ("8H FUNDING", FUNDING, True), ("8H FUNDING", FUNDING, False),
+        ):
+            ranked = rank_markets(group, metric, top)
+            available = int(group[metric].notna().sum())
+            if not available:
+                continue  # e.g. no funding on spot pairs
+            # Real counts in the title: a small view is split between its top and bottom tables.
+            scope = f" OF {available}" if available < 2 * TOP_N else ""
+            # The ranking metric is the key column; its extreme (the top or bottom market) stands out.
+            show(f"{'TOP' if top else 'BOTTOM'} {len(ranked)}{scope} BY {name}{tag}", ranked, {metric: "max" if top else "min"})

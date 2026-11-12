@@ -1100,8 +1100,9 @@ class OverviewSectionsTests(unittest.TestCase):
         holdings = tables["WALLET HOLDINGS OUTSIDE HL"]
         self.assertEqual((holdings.iloc[0]["Token"], holdings.iloc[0]["Chain"], holdings.iloc[0]["Note"]),
                          ("sVVV", "base", "VVV staked on Venice"))
-        movers = tables["LARGEST WINNERS AND LOSERS (TOP 5 EACH)"]
+        movers = tables["LARGEST WINNERS AND LOSERS: CRYPTO (TOP 5 EACH)"]
         self.assertEqual(list(movers["Symbol"]), ["ETH", "SOL"])
+        self.assertNotIn("Market", movers.columns)
         self.assertAlmostEqual(movers.iloc[0]["% of position"], 100 / 2100)
 
 

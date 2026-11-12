@@ -19,6 +19,16 @@ import pandas as pd
 from IPython.display import HTML, display
 
 Row = tuple[str, str]
+
+
+def no_math(markup: str) -> str:
+    """Mark HTML so notebook viewers do not typeset it as math.
+
+    Jupyter and nbconvert pass HTML outputs through MathJax, which reads the text between two ``$`` as a
+    formula: "MELANIA $110.97 (3.9%), ICP $42.18" lost its dollar signs and set the amounts in math italics.
+    ``tex2jax_ignore`` is the class MathJax skips. Every ``display(HTML(...))`` of desk output goes through here.
+    """
+    return f"<div class='tex2jax_ignore'>{markup}</div>"
 GOOD = "#188038"
 BAD = "#d93025"
 NEUTRAL = "#5f6368"
@@ -159,7 +169,7 @@ def render(well: list[Row], attention: list[Row], since: SinceLastRun | None = N
 
 
 def show(well: list[Row], attention: list[Row], since: SinceLastRun | None = None, footnote: str = "") -> None:
-    display(HTML(render(well, attention, since, footnote)))
+    display(HTML(no_math(render(well, attention, since, footnote))))
 
 
 class HighlightsPanel:
@@ -169,11 +179,11 @@ class HighlightsPanel:
                    "have run (Run All fills this in).</div>")
 
     def __init__(self):
-        self.handle = display(HTML(self.PLACEHOLDER), display_id=True)
+        self.handle = display(HTML(no_math(self.PLACEHOLDER)), display_id=True)
 
     def show(self, well: list[Row], attention: list[Row], since: SinceLastRun | None = None,
              footnote: str = "") -> None:
-        block = HTML(render(well, attention, since, footnote))
+        block = HTML(no_math(render(well, attention, since, footnote)))
         if self.handle is not None:
             self.handle.update(block)
             print("Highlights updated at the top of the notebook.")

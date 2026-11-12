@@ -260,8 +260,9 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         "exposure": table(overview.exposure_frame(), {**money, "Net": "susd", "Gross / equity": "pct",
                                                       "Net / equity": "spct"}, total_last=True,
                           key={"Net / equity": "abs"}),
-        "movers": table(overview.movers_frame(MOVERS), {"Side": "side", "Value": "susd", "uPnL": "susd",
-                                                        "% of position": "spct"}, key={"uPnL": "abs"}),
+        **{key: table(overview.movers_frame(MOVERS, kind), {"Side": "side", "Value": "susd", "uPnL": "susd",
+                                                            "% of position": "spct"}, key={"uPnL": "abs"})
+           for key, kind in (("movers", "Crypto"), ("movers_stocks", "Stocks"))},
     }
     if len(positions):
         ordered = with_position_returns(positions, moves)

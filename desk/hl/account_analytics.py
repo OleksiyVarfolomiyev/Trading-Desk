@@ -100,14 +100,15 @@ def display_interactive_table(frame, formatters=None, cell_style=None, bold_last
             value = row[column]
             missing = pd.isna(value)
             if missing:
-                visible = '' if blank_missing_cells and (row_index,
-                    column) in blank_missing_cells else 'n/a'
+                visible = ''  # a missing value is an empty cell, not "n/a"
                 sort_value = ''
             else:
                 formatter = formatters.get(column)
                 visible = formatter(value) if formatter else str(value)
                 visible = re.sub(r'(?<![\w.])\+(\$?)(?=\d|\.\d)', r'\1', visible)
-                sort_value = str(value)
+                if str(visible).strip().lower() == 'n/a':  # formatters that spell out "not available": blank too
+                    visible = ''
+                sort_value = str(value) if visible != '' else ''
             style = cell_style(row_index, column, value, row) if cell_style else ''
             if not style and not missing and isinstance(value, (int, float, np.number)) \
                 and not isinstance(value, (bool, np.bool_)):
@@ -186,7 +187,9 @@ undefined, {{numeric:true, sensitivity:'base'}});
         }});
       }})();
     </script>"""
-    display(HTML(markup))
+    from desk.notebook_highlights import no_math
+
+    display(HTML(no_math(markup)))
 
 
 def post(payload):

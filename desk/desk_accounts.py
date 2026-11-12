@@ -733,7 +733,7 @@ class DeskAccounts:
                    "Alpha vs BTC (/yr)": "{:.1%}", "Alpha vs SPY (/yr)": "{:.1%}", "Periods": "{:.0f}"}
         formats["Coverage"] = "{:.0%}"
         basis = table.set_index("Basis")
-        styler = basis.style.format({k: v for k, v in formats.items() if k in table}, na_rep="n/a")
+        styler = basis.style.format({k: v for k, v in formats.items() if k in table}, na_rep="")
         # Dollar VaR and the BTC beta are what the risk row is read for.
         display(emphasis.style_frame(styler, basis, {"VaR 95%": None, "Beta BTC": None}, title="DESK RISK METRICS"))
         print(RISK_NOTE)
