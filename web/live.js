@@ -917,21 +917,21 @@
         if (!rows.length) return { columns: [], rows: [], total: null };
         const total = { "Account": "Total" };
         ["Fills", "Volume", "Spread captured", "Inventory drift", "Ladder PnL", "Fees"].forEach((k) => { total[k] = sum(rows.map((r) => r[k])); });
-        total["Captured per $1k"] = total.Volume ? (total["Spread captured"] - total.Fees) / total.Volume * 1000 : NaN;
+        total["Captured per $1k"] = total.Volume ? (total["Spread captured"] + total.Fees) / total.Volume * 1000 : NaN;
         ["Markout 1m (bps)", "Markout 15m (bps)"].forEach((k) => {  // weighted by each ladder's fills
           const known = rows.filter((r) => Number.isFinite(r[k]));
           const fills = sum(known.map((r) => r.Fills));
           total[k] = fills ? sum(known.map((r) => r[k] * r.Fills)) / fills : NaN;
         });
         return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"],
-          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "usd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
+          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "susd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
           { total, key: { "Ladder PnL": "abs" } });
       })(),
       strategies: (() => {  // desk/journal.py, as the daemon last sent it (the last row is the total)
         const rows = (research && research.strategies) || [];
         if (rows.length < 2) return { columns: [], rows: [], total: null };
         return table(rows.slice(0, -1), ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL (30d)", "Fees (30d)", "Volume (30d)", "Fills (30d)"],
-          { "Open positions": "int", "Unrealized PnL": "susd", "Realized PnL (30d)": "susd", "Fees (30d)": "usd", "Volume (30d)": "usd", "Fills (30d)": "int" },
+          { "Open positions": "int", "Unrealized PnL": "susd", "Realized PnL (30d)": "susd", "Fees (30d)": "susd", "Volume (30d)": "usd", "Fills (30d)": "int" },
           { total: rows[rows.length - 1] });
       })(),
       candidates: (() => {  // desk/screener.py

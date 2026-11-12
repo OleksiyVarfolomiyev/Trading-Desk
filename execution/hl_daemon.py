@@ -47,6 +47,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -613,7 +614,7 @@ def trade_to_json(wallet: str, trade: ht.ActiveTrade) -> dict:
             "entry_price": trade.entry_price, "baseline_quantity": trade.baseline_quantity,
             "stop_oid": trade.stop_oid, "target_oid": trade.target_oid,
             "started_at": trade.started_at.isoformat(), "prior_funding_pnl": trade.prior_funding_pnl,
-            "exiting": trade.exiting}
+            "exiting": trade.exiting, "hidden_target": trade.hidden_target}
 
 
 def trade_from_json(record: dict) -> tuple[str, ht.ActiveTrade]:
@@ -624,8 +625,34 @@ def trade_from_json(record: dict) -> tuple[str, ht.ActiveTrade]:
         baseline_quantity=float(record["baseline_quantity"]), stop_oid=int(record["stop_oid"]),
         target_oid=int(record["target_oid"]), started_at=pd.Timestamp(record["started_at"]),
         prior_funding_pnl=float(record.get("prior_funding_pnl", 0.0)), exiting=bool(record.get("exiting", False)),
+        hidden_target=float(record.get("hidden_target", 0.0)),
     )
     return record["wallet"], trade
+
+
+# Take-profits are held in the daemon's memory and go on HL's book only once the price comes within
+# TARGET_PLACE_WITHIN of them (as a share of the trade's stop distance); they are pulled again past
+# TARGET_CANCEL_BEYOND, so a price wobbling at the edge does not place and cancel over and over.
+# Stops stay on HL at all times: they are trigger orders (not on the public book) and they are what
+# protects a position while the daemon is down.
+TARGET_PLACE_WITHIN = 0.10
+TARGET_CANCEL_BEYOND = 0.20
+
+
+def target_action(mark: float, target: float, stop_distance: float, direction: float, on_book: bool) -> str:
+    """``"place"``, ``"pull"`` or ``""`` for a take-profit at ``target`` with the price at ``mark``.
+
+    ``direction`` is the position's (+1 long: the target is above; -1 short: below). A price already
+    through the target counts as near, so the take-profit goes on at once.
+    """
+    if target <= 0 or stop_distance <= 0:
+        return ""
+    gap = direction * (target - mark)  # how far the price still has to go to reach the target
+    if on_book and gap > TARGET_CANCEL_BEYOND * stop_distance:
+        return "pull"
+    if not on_book and gap <= TARGET_PLACE_WITHIN * stop_distance:
+        return "place"
+    return ""
 
 
 @dataclasses.dataclass
@@ -638,6 +665,7 @@ class GuardEntry:
     funding_time: float = 0.0
     failing_since: float | None = None
     last_warning: float = 0.0
+    target_retry: float = 0.0   # a take-profit HL would not rest is tried again after this
 
     @property
     def coin(self) -> str:
@@ -738,6 +766,64 @@ class Guards:
                 log(f"{plan.coin}: guard close failed ({exc}); retrying.")
             entry.next_check = now + EXIT_RETRY_SECONDS
 
+    def manage_target(self, entry: GuardEntry, now: float) -> None:
+        """Hold the take-profit in memory; put it on HL's book only while the price is near it.
+
+        A take-profit the executor just placed is adopted (its price read from HL) and pulled while the
+        price is far from it. The stop is never touched: it stays on HL whatever the daemon does.
+        """
+        trade, plan = entry.trade, entry.trade.plan
+        if trade.exiting:
+            return
+        if trade.target_oid and not trade.hidden_target:  # resting since the entry: adopt its price
+            order = ht._order_status(entry.wallet, trade.target_oid).get("order", {})
+            if str(order.get("status", "")).lower() != "open":
+                return  # filled or gone: the full check settles it
+            trade.hidden_target = float(order["order"]["limitPx"])
+            self.save()
+        mark = self.state.mark(plan.coin)
+        if mark is None or not trade.hidden_target:
+            return
+        direction = ht.side_to_direction(plan.side)
+        distance = float(plan.price_stop_distance or plan.stop_distance or 0.0)
+        action = target_action(mark, trade.hidden_target, distance, direction, bool(trade.target_oid))
+        if action == "pull":
+            oid = trade.target_oid
+            entry.exchange.cancel(plan.coin, oid)
+            order = ht._order_status(entry.wallet, oid).get("order", {})
+            if str(order.get("status", "")).lower() == "filled":
+                entry.next_check = 0.0  # it filled first: the full check closes the guard
+                return
+            trade.target_oid = 0
+            self.save()
+            log(f"{plan.coin}: take-profit at ${trade.hidden_target:,.6g} back in memory (price ${mark:,.6g}); "
+                "it goes on the book again as the price nears it.")
+        elif action == "place" and now >= entry.target_retry:
+            quantity = self.state.position_quantity(entry.wallet, plan.coin, plan.dex)
+            if quantity is None:
+                return
+            market = self.state.markets([(plan.coin, plan.dex)])[plan.coin]
+            step = 10 ** -market.size_decimals
+            size = min(trade.quantity, direction * (quantity - trade.baseline_quantity))
+            size = round(int(size / step + 1e-9) * step, market.size_decimals)
+            if size <= 0:
+                return
+            response = entry.exchange.order(plan.coin, direction < 0, size, trade.hidden_target,
+                                            {"limit": {"tif": "Alo"}}, reduce_only=True)
+            try:
+                oid = ht._oid_from_status(ht._status_rows(response)[0])
+            except ValueError:
+                oid = None
+            if oid is None:  # the price is already through the target: rest just outside the spread
+                oid = ht._resend_passive_target(entry.exchange, plan, size, trade.hidden_target, market.size_decimals)
+            if oid:
+                trade.target_oid = int(oid)
+                self.save()
+                log(f"{plan.coin}: take-profit {size:g} at ${trade.hidden_target:,.6g} placed on the book "
+                    f"(price ${mark:,.6g} is near it).")
+            else:
+                entry.target_retry = now + 30
+
     def refresh_funding(self, entry: GuardEntry, now: float) -> None:
         if now - entry.funding_time < FUNDING_REFRESH_SECONDS:
             return
@@ -758,6 +844,7 @@ class Guards:
             try:
                 self.refresh_funding(entry, now)
                 self.fast_check(entry, now)
+                self.manage_target(entry, now)
                 if now >= entry.next_check:
                     plan = entry.trade.plan
                     message = self.check(entry.exchange, entry.wallet, entry.trade,
@@ -775,6 +862,149 @@ class Guards:
                     entry.last_warning = now
                     log(f"{entry.coin}: guard check failed ({type(exc).__name__}: {exc}); retrying. "
                         "The exchange stop stays active.")
+
+
+# ----------------------------------------------------------------------------------------------
+# Take-profits on positions without a guard (conviction trades, the VVV hedge, older positions)
+
+HELD_TARGETS_FILE = daemon_link.RUN_DIR / "held_targets.json"
+HELD_SCAN_SECONDS = 60
+HELD_DISTANCE_ATR = 3.0   # the reach target_action measures in: 0.3 x ATR to place, 0.6 x ATR to pull
+
+
+class HeldTargets:
+    """Resting reduce-only take-profit limits on unguarded positions, held in memory like the guards' own.
+
+    Every minute the wallets' open orders are read: a reduce-only limit that is not a ladder quote and
+    not a guarded coin's is adopted (price and size noted) and pulled while the price is far from it.
+    It goes back on the book as the price nears it, sized to what is still open. A take-profit that
+    fills or that someone cancels on HL is dropped; so is one whose position closed or flipped. Stops
+    (trigger orders) are never touched.
+    """
+
+    def __init__(self, daemon: "Daemon", path: Path | None = HELD_TARGETS_FILE):
+        self.daemon = daemon
+        self.path = path
+        self.lock = threading.RLock()
+        self.items: list[dict] = []
+        self.next_scan = 0.0
+        self.atr: dict[tuple[str, str, str], float] = {}
+
+    def save(self) -> None:
+        if self.path is None:
+            return
+        with self.lock:
+            self.path.write_text(json.dumps(self.items, indent=1))
+
+    def resume(self) -> None:
+        if self.path is None or not self.path.exists():
+            return
+        try:
+            self.items = json.loads(self.path.read_text())
+        except ValueError:
+            self.items = []
+        for item in self.items:
+            self.daemon.watch(item["coin"])
+
+    def run(self) -> None:
+        while not self.daemon.stopped.wait(2):
+            try:
+                self.step(time.time())
+            except Exception as exc:  # never stops; the stops on HL keep protecting
+                log(f"held take-profits: check failed ({type(exc).__name__}: {exc}); retrying")
+
+    def _atr(self, coin: str, dex: str) -> float:
+        key = (coin, dex, time.strftime("%Y-%m-%d", time.gmtime()))
+        if key not in self.atr:
+            self.atr[key] = float(ht.wilder_atr(ht.fetch_daily_candles(coin.split(":")[-1], dex), 14))
+        return self.atr[key]
+
+    def scan(self) -> None:
+        """Adopt new resting take-profits; drop those filled, cancelled on HL, or whose position is gone."""
+        guarded = {(wallet, coin) for wallet, coin in self.daemon.guards.entries}
+        for wallet in list(self.daemon.exchanges):
+            with self.daemon.state.lock:
+                dexes = [dex for dex, state in self.daemon.state.states.get(wallet, {}).items()
+                         if state.get("assetPositions")]
+            orders = ht.fetch_open_orders(wallet, dexes or [""])
+            live = {int(order["oid"]): order for order in orders}
+            with self.lock:
+                mine = [item for item in self.items if item["wallet"] == wallet]
+                known = {item["oid"] for item in mine if item.get("oid")}
+                for item in mine:
+                    if item.get("oid") and item["oid"] not in live:  # filled, or cancelled by hand on HL
+                        state = str(ht._order_status(wallet, item["oid"]).get("order", {}).get("status", "")).lower()
+                        self.items.remove(item)
+                        log(f"...{wallet[-4:]} {item['coin']}: take-profit at ${item['price']:,.6g} {state or 'gone'}; "
+                            "no longer held.")
+                    elif item.get("oid"):
+                        item["size"] = float(live[item["oid"]]["sz"])  # a partial fill leaves less to take
+                for order in orders:
+                    coin, oid = order["coin"], int(order["oid"])
+                    if (oid in known or order.get("isTrigger") or not order.get("reduceOnly")
+                            or str(order.get("cloid") or "").startswith(LADDER_CLOID_PREFIX) or (wallet, coin) in guarded
+                            or any(item["wallet"] == wallet and item["coin"] == coin and abs(item["price"] - float(order["limitPx"])) < 1e-12
+                                   for item in self.items)):
+                        continue
+                    dex = coin.split(":")[0] if ":" in coin else ""
+                    self.items.append({"wallet": wallet, "coin": coin, "dex": dex, "is_buy": order["side"] == "B",
+                                       "price": float(order["limitPx"]), "size": float(order["sz"]), "oid": oid})
+                    self.daemon.watch(coin)
+                    log(f"...{wallet[-4:]} {coin}: take-profit {order['sz']} at ${float(order['limitPx']):,.6g} "
+                        "now held by the daemon (on the book only as the price nears it).")
+        self.save()
+
+    def step(self, now: float) -> None:
+        if now >= self.next_scan:
+            self.next_scan = now + HELD_SCAN_SECONDS
+            self.scan()
+        for item in list(self.items):
+            wallet, coin, dex = item["wallet"], item["coin"], item["dex"]
+            exchange = self.daemon.exchanges.get(wallet)
+            position = self.daemon.state.position_quantity(wallet, coin, dex)
+            mark = self.daemon.state.mark(coin)
+            if exchange is None or position is None or mark is None:
+                continue
+            direction = -1.0 if item["is_buy"] else 1.0  # a buy take-profit closes a short
+            if position * direction <= 0:  # closed or flipped: the take-profit has nothing left to take
+                if item.get("oid"):
+                    exchange.cancel(coin, item["oid"])
+                with self.lock:
+                    self.items.remove(item)
+                self.save()
+                log(f"...{wallet[-4:]} {coin}: position closed; its held take-profit is dropped.")
+                continue
+            reach = HELD_DISTANCE_ATR * self._atr(coin, dex)
+            action = target_action(mark, item["price"], reach, direction, bool(item.get("oid")))
+            if action == "pull":
+                oid = item["oid"]
+                exchange.cancel(coin, oid)
+                if str(ht._order_status(wallet, oid).get("order", {}).get("status", "")).lower() == "filled":
+                    continue  # the next scan drops it
+                item["oid"] = None
+                self.save()
+                log(f"...{wallet[-4:]} {coin}: take-profit at ${item['price']:,.6g} back in memory (price ${mark:,.6g}).")
+            elif action == "place" and now >= item.get("retry_after", 0.0):
+                market = self.daemon.state.markets([(coin, dex)])[coin]
+                step = 10 ** -market.size_decimals
+                size = round(int(min(item["size"], abs(position)) / step + 1e-9) * step, market.size_decimals)
+                if size <= 0:
+                    continue
+                response = exchange.order(coin, item["is_buy"], size, item["price"], {"limit": {"tif": "Alo"}},
+                                          reduce_only=True)
+                try:
+                    oid = ht._oid_from_status(ht._status_rows(response)[0])
+                except ValueError:
+                    oid = None
+                if oid is None:  # already through the price: rest just outside the spread
+                    plan = SimpleNamespace(coin=coin, dex=dex, side="LONG" if direction > 0 else "SHORT")
+                    oid = ht._resend_passive_target(exchange, plan, size, item["price"], market.size_decimals)
+                if oid:
+                    item["oid"], item["size"] = int(oid), size
+                    self.save()
+                    log(f"...{wallet[-4:]} {coin}: take-profit {size:g} at ${item['price']:,.6g} placed (price ${mark:,.6g}).")
+                else:
+                    item["retry_after"] = now + 30
 
 
 # ----------------------------------------------------------------------------------------------
@@ -1687,6 +1917,7 @@ class Daemon:
         self.margin_guard = MarginGuard(self)
         self.regime_guard = RegimeGuard(self)
         self.ladders = Ladders(self, None if paper else LADDERS_FILE)
+        self.held = HeldTargets(self, None if paper else HELD_TARGETS_FILE)
         self.research = ResearchFeed(self, None if paper else RESEARCH_FILE)
         self.streams: list[Stream] = []
         self.market_stream: Stream | None = None
@@ -1845,7 +2076,8 @@ class Daemon:
             mark = self.state.mark(plan.coin, max_age=60)
             guards.append({"wallet": entry.wallet[-4:], "coin": plan.coin, "side": plan.side, "quantity": trade.quantity,
                            "entry": trade.entry_price, "mark": mark, "loss_limit": entry.budget(),
-                           "exiting": trade.exiting})
+                           "exiting": trade.exiting, "target": trade.hidden_target,
+                           "target_on_book": bool(trade.target_oid)})
         return {
             "paper": self.paper, "uptime_s": now - self.started,
             "wallets": [{"wallet": wallet[-4:], "trading": wallet in self.exchanges,
@@ -1862,6 +2094,9 @@ class Daemon:
                          "quotes": len(item["oids"]), "queued": max(0, len(item.get("grid", [])) - len(item["oids"])),
                          "center": item["center"], "fills": item["fills"]}
                         for item in list(self.ladders.ladders.values())],
+            "held_targets": [{"wallet": item["wallet"][-4:], "coin": item["coin"], "side": "buy" if item["is_buy"] else "sell",
+                              "size": item["size"], "price": item["price"], "on_book": bool(item.get("oid"))}
+                             for item in list(self.held.items)],
             "regime_guard": {"enabled": regime_config()["enabled"],
                              "levels": {key: value for key, value in self.regime_guard.latest.items() if not key.startswith("_")}},
         }
@@ -2014,13 +2249,18 @@ class Daemon:
         keys = [key for key in self.guards.entries if key[0] == wallet and key[1] in coins]
         if not keys or self.paper:
             return
+        held_targets = {}
         for key in keys:
             with self.guards.lock:
-                self.guards.entries.pop(key, None)
+                old = self.guards.entries.pop(key, None)
+            if old is not None and old.trade.hidden_target:
+                held_targets[key[1]] = old.trade.hidden_target
         markets = self.state.markets()
         rebuilt = ht.plan_guard_reattachment(wallet, self.state.dexes, markets, {key[1].upper() for key in keys})
         for item in rebuilt:
             if item.trade is not None:
+                if not item.trade.target_oid and item.coin in held_targets:  # no take-profit on the book: keep the one in memory
+                    item.trade.hidden_target = held_targets[item.coin]
                 self.guards.add(wallet, item.trade, self.exchanges[wallet])
                 print(f"{item.coin}: guard rebuilt for the new size ({item.note}).")
         self.guards.save()
@@ -2142,6 +2382,8 @@ def serve(args: argparse.Namespace) -> int:
     threading.Thread(target=daemon.alerts.run, args=(daemon,), name="alerts", daemon=True).start()
     daemon.ladders.resume()
     threading.Thread(target=daemon.ladders.run, name="ladders", daemon=True).start()
+    daemon.held.resume()
+    threading.Thread(target=daemon.held.run, name="held-targets", daemon=True).start()
     threading.Thread(target=daemon.research.run, name="research", daemon=True).start()
 
     server = _Server(str(daemon_link.SOCKET_PATH), _Handler)
@@ -2224,7 +2466,12 @@ def print_data(command: str | None, data: Any) -> None:
         mark = f"${guard['mark']:,.6g}" if guard["mark"] else "n/a"
         print(f"  guard ...{guard['wallet']} {guard['coin']} {guard['side']} {guard['quantity']:g} "
               f"@ ${guard['entry']:,.6g}, mark {mark}, loss limit ${guard['loss_limit']:,.2f}"
+              + (f", take-profit ${guard['target']:,.6g} {'on the book' if guard.get('target_on_book') else 'in memory'}"
+                 if guard.get("target") else "")
               + (" — EXITING" if guard["exiting"] else ""))
+    for held in data.get("held_targets", []):
+        print(f"  take-profit ...{held['wallet']} {held['coin']} {held['side']} {held['size']:g} at ${held['price']:,.6g}, "
+              f"{'on the book' if held['on_book'] else 'in memory'}")
     margin = data.get("margin_guard")
     if margin:
         health = ", ".join(f"...{wallet} {share:.0%}" for wallet, share in margin.get("health", {}).items()) or "not read yet"

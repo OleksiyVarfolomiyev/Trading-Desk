@@ -14,7 +14,8 @@ class LadderMetricsTests(unittest.TestCase):
                  {"side": "B", "px": "99", "sz": "2", "fee": "0.1"}]
         row = market_making.metrics(fills, mark=97.0)
         self.assertAlmostEqual(row["Ladder PnL"], 102 - 100 - 198 + 2 * 97 - 0.3)   # 2 still held net, at 97
-        self.assertAlmostEqual(row["Spread captured"] + row["Inventory drift"] - row["Fees"], row["Ladder PnL"])
+        self.assertAlmostEqual(row["Spread captured"] + row["Inventory drift"] + row["Fees"], row["Ladder PnL"])
+        self.assertAlmostEqual(row["Fees"], -0.3)  # paid: negative
         self.assertLess(row["Inventory drift"], 0)  # bought into a fall
 
     def test_markouts_are_signed_for_the_fill(self):

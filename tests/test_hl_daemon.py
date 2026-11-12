@@ -139,6 +139,13 @@ class GuardTests(unittest.TestCase):
     def setUp(self):
         self.state = live_state()
         self.exchange = MagicMock()
+        # The take-profit (order 12) rests at 7.0 until the guard reads it; no test reaches HL.
+        status = patch.object(ht, "_order_status", return_value={"order": {"status": "open", "order": {"limitPx": "7.0"}}})
+        self.order_status = status.start()
+        self.addCleanup(status.stop)
+        logging = patch.object(hl_daemon, "log")
+        logging.start()
+        self.addCleanup(logging.stop)
         self.guards = hl_daemon.Guards(self.state, path=None, check=MagicMock(return_value=""))
         self.guards.add(WALLET, active_trade(), self.exchange)
         self.entry = self.guards.entries[(WALLET, "AVAX")]
@@ -184,6 +191,130 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(resumed.plan.leverage, 4)
         self.assertEqual((resumed.stop_oid, resumed.target_oid, resumed.quantity), (11, 12, 10.0))
         self.assertEqual(resumed.started_at, trade.started_at)
+
+    # -- take-profits held in memory (the short's target is 7.0, its stop distance 1.0)
+    def test_a_take_profit_far_from_the_price_comes_off_the_book_and_into_memory(self):
+        self.price(8.0)
+        self.guards.manage_target(self.entry, time.time())
+        self.exchange.cancel.assert_called_once_with("AVAX", 12)
+        self.assertEqual((self.entry.trade.target_oid, self.entry.trade.hidden_target), (0, 7.0))
+        self.exchange.cancel.reset_mock()
+        self.guards.manage_target(self.entry, time.time())    # nothing more to do while the price stays away
+        self.exchange.cancel.assert_not_called()
+        self.exchange.order.assert_not_called()
+
+    def test_a_take_profit_goes_on_the_book_as_the_price_nears_it(self):
+        self.entry.trade.target_oid, self.entry.trade.hidden_target = 0, 7.0
+        self.price(7.15)                                       # 0.15 away: not yet (within 0.10)
+        self.guards.manage_target(self.entry, time.time())
+        self.exchange.order.assert_not_called()
+        self.exchange.order.return_value = statuses({"resting": {"oid": 99}})
+        self.price(7.08)
+        self.guards.manage_target(self.entry, time.time())
+        self.exchange.order.assert_called_once_with("AVAX", True, 10.0, 7.0, {"limit": {"tif": "Alo"}}, reduce_only=True)
+        self.assertEqual(self.entry.trade.target_oid, 99)
+        self.price(7.15)                                       # back out, but inside 0.20: it stays
+        self.guards.manage_target(self.entry, time.time())
+        self.exchange.cancel.assert_not_called()
+
+    def test_a_price_already_through_the_target_rests_it_just_outside_the_spread(self):
+        self.entry.trade.target_oid, self.entry.trade.hidden_target = 0, 7.0
+        self.exchange.order.return_value = statuses({"error": "Post only order would have immediately matched"})
+        self.price(6.9)
+        with patch.object(ht, "_resend_passive_target", return_value=77) as passive:
+            self.guards.manage_target(self.entry, time.time())
+        passive.assert_called_once()
+        self.assertEqual(self.entry.trade.target_oid, 77)
+
+    def test_a_take_profit_that_filled_before_the_cancel_is_left_for_the_check(self):
+        self.entry.trade.hidden_target = 7.0
+        self.order_status.return_value = {"order": {"status": "filled", "order": {"limitPx": "7.0"}}}
+        self.entry.next_check = time.time() + 3600
+        self.price(8.0)
+        self.guards.manage_target(self.entry, time.time())
+        self.assertEqual((self.entry.trade.target_oid, self.entry.next_check), (12, 0.0))
+
+    def test_the_take_profit_in_memory_survives_a_restart(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "guards.json"
+            trade = active_trade(target_oid=0)
+            trade.hidden_target = 7.0
+            hl_daemon.Guards(self.state, path=path).add(WALLET, trade, self.exchange)
+            [(_, resumed)] = hl_daemon.Guards(self.state, path=path).load()
+        self.assertEqual((resumed.target_oid, resumed.hidden_target), (0, 7.0))
+
+
+class HeldTargetTests(unittest.TestCase):
+    """Take-profits on positions without a guard: adopted from HL, held in memory, placed as the price nears."""
+
+    def setUp(self):
+        self.state = live_state()                                  # short 10 AVAX
+        self.exchange = MagicMock()
+        daemon = SimpleNamespace(state=self.state, exchanges={WALLET: self.exchange}, guards=SimpleNamespace(entries={}),
+                                 watch=lambda coin: None, stopped=threading.Event())
+        self.held = hl_daemon.HeldTargets(daemon, path=None)
+        self.held._atr = lambda coin, dex: 0.5                     # reach 1.5: placed within 0.15, pulled past 0.30
+        self.orders = [{"coin": "AVAX", "oid": 5, "side": "B", "limitPx": "7.0", "sz": "10", "reduceOnly": True},
+                       {"coin": "AVAX", "oid": 6, "side": "B", "limitPx": "9.5", "sz": "10", "reduceOnly": True,
+                        "isTrigger": True},                         # the stop: never touched
+                       {"coin": "AVAX", "oid": 7, "side": "A", "limitPx": "8.2", "sz": "1", "reduceOnly": False,
+                        "cloid": "0x1add" + "0" * 28}]              # a ladder quote: the ladder's own
+        for name, value in (("fetch_open_orders", lambda wallet, dexes: self.orders),
+                            ("_order_status", lambda wallet, oid: {"order": {"status": "canceled"}})):
+            patcher = patch.object(ht, name, side_effect=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        logging = patch.object(hl_daemon, "log")
+        logging.start()
+        self.addCleanup(logging.stop)
+
+    def price(self, mark):
+        self.state.on_market("activeAssetCtx", {"coin": "AVAX", "ctx": {"markPx": str(mark), "oraclePx": str(mark)}})
+
+    def test_only_the_take_profit_is_adopted_and_pulled_while_the_price_is_far(self):
+        self.price(8.0)
+        self.held.step(time.time())
+        self.assertEqual([(item["oid"], item["price"]) for item in self.held.items], [(None, 7.0)])
+        self.exchange.cancel.assert_called_once_with("AVAX", 5)
+
+    def test_it_goes_back_on_the_book_near_the_price_and_is_dropped_once_filled(self):
+        self.price(8.0)
+        self.held.step(time.time())
+        self.exchange.order.return_value = statuses({"resting": {"oid": 9}})
+        self.price(7.1)
+        self.held.step(time.time())
+        self.exchange.order.assert_called_once_with("AVAX", True, 10.0, 7.0, {"limit": {"tif": "Alo"}}, reduce_only=True)
+        self.assertEqual(self.held.items[0]["oid"], 9)
+        self.orders = []                                            # order 9 is gone from HL: it filled
+        self.held.next_scan = 0.0
+        self.held.step(time.time())
+        self.assertEqual(self.held.items, [])
+
+    def test_guarded_coins_are_left_to_their_guard(self):
+        self.held.daemon.guards.entries = {(WALLET, "AVAX"): object()}
+        self.price(8.0)
+        self.held.step(time.time())
+        self.assertEqual(self.held.items, [])
+        self.exchange.cancel.assert_not_called()
+
+    def test_a_closed_position_drops_its_take_profit(self):
+        self.price(8.0)
+        self.held.step(time.time())
+        self.state.on_wallet(WALLET, "allDexsClearinghouseState", {"clearinghouseStates": [["", account_state(())]]})
+        self.orders = []
+        self.held.step(time.time())
+        self.assertEqual(self.held.items, [])
+
+
+class TargetActionTests(unittest.TestCase):
+    def test_place_near_pull_far_for_both_sides(self):
+        self.assertEqual(hl_daemon.target_action(7.05, 7.0, 1.0, -1.0, on_book=False), "place")   # short nearing
+        self.assertEqual(hl_daemon.target_action(7.5, 7.0, 1.0, -1.0, on_book=False), "")
+        self.assertEqual(hl_daemon.target_action(7.5, 7.0, 1.0, -1.0, on_book=True), "pull")
+        self.assertEqual(hl_daemon.target_action(6.5, 7.0, 1.0, -1.0, on_book=False), "place")    # through it
+        self.assertEqual(hl_daemon.target_action(10.95, 11.0, 1.0, 1.0, on_book=False), "place")  # long nearing
+        self.assertEqual(hl_daemon.target_action(10.5, 11.0, 1.0, 1.0, on_book=True), "pull")
+        self.assertEqual(hl_daemon.target_action(10.5, 0.0, 1.0, 1.0, on_book=False), "")         # no target
 
 
 class FakeSession:

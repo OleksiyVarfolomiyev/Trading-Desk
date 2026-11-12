@@ -9,8 +9,8 @@ Per ladder, from those fills alone:
   average buy: what the round trips earned;
 * Inventory drift: what the unmatched part (bought more than sold, or the other way) made or lost
   as the price moved: what trimming into a trend costs;
-* Fees: paid, or negative for maker rebates;
-* Ladder PnL = spread captured + inventory drift - fees: every ladder fill's cash, plus what the
+* Fees: what the ladders paid, as a negative amount (a maker rebate would be positive);
+* Ladder PnL = spread captured + inventory drift + fees: every ladder fill's cash, plus what the
   ladder still holds net at today's mark, less fees: the strategy's result against simply holding
   the position you opened;
 * Markout 1m / 15m: how far the price moved for (+) or against (-) each fill 1 and 15 minutes
@@ -35,7 +35,7 @@ MARKOUT_MINUTES = (1, 15)
 MARKOUT_DAYS = 3  # HL serves about 3.5 days of 1-minute candles
 COLUMNS = ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees",
            "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"]
-FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "usd",
+FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "susd",
            "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps",
            "Position vs base": "spct", "Quotes": "int", "Queued": "int"}
 
@@ -86,8 +86,9 @@ def metrics(fills: list[dict], mark: float) -> dict:
     volume = cost + proceeds
     # The ladder's edge, apart from where the price went: what the round trips earned, net of fees, per $1,000 traded.
     per_thousand = (captured - fees) / volume * 1000 if volume else float("nan")
+    # Fees paid are a cost: shown negative, so spread captured + inventory drift + fees = ladder PnL.
     return {"Fills": len(fills), "Volume": volume, "Spread captured": captured, "Inventory drift": pnl - captured + fees,
-            "Captured per $1k": per_thousand, "Ladder PnL": pnl, "Fees": fees}
+            "Captured per $1k": per_thousand, "Ladder PnL": pnl, "Fees": -fees}
 
 
 def markouts(fills: list[dict], closes: pd.Series, minutes: tuple[int, ...] = MARKOUT_MINUTES) -> dict[str, float]:
@@ -182,7 +183,7 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
 def total_row(frame: pd.DataFrame) -> dict:
     row = {"Account": "Total", **{column: frame[column].sum() for column in ("Fills", "Volume", "Spread captured",
                                                                              "Inventory drift", "Ladder PnL", "Fees")}}
-    row["Captured per $1k"] = (row["Spread captured"] - row["Fees"]) / row["Volume"] * 1000 if row["Volume"] else float("nan")
+    row["Captured per $1k"] = (row["Spread captured"] + row["Fees"]) / row["Volume"] * 1000 if row["Volume"] else float("nan")
     for column in (f"Markout {minute}m (bps)" for minute in MARKOUT_MINUTES):  # weighted by each ladder's fills
         known = frame[frame[column].notna()]
         row[column] = (known[column] * known["Fills"]).sum() / known["Fills"].sum() if known["Fills"].sum() else float("nan")
@@ -218,7 +219,7 @@ def show_market_making() -> None:
                     "Position vs base": lambda value: "" if value != value else f"{value:.1%}"},
         key_columns={"Ladder PnL": "abs"})
     print("Ladder PnL is the ladders' result against simply holding the position you opened: spread captured (round "
-          "trips) plus inventory drift (what the unmatched buys or sells made as the price moved) less fees. Captured per "
+          "trips) plus inventory drift (what the unmatched buys or sells made as the price moved) plus fees (paid: negative). Captured per "
           "$1k is the edge apart from the price's path. Markouts: the move 1 and 15 minutes after each fill, for (+) or "
           "against (-) it, in bps over the last 3 days; negative means the price runs through the quotes. "
           "Position vs base: the band is in ladder.json.")

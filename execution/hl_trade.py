@@ -188,6 +188,9 @@ class ActiveTrade:
     prior_funding_pnl: float = 0.0
     # Set once the guard decides to exit; it then retries the close until flat.
     exiting: bool = False
+    # The take-profit price the trading daemon holds in memory, off HL's book until the price nears it
+    # (target_oid is then the resting order, or 0 while it waits). 0.0: not held by the daemon.
+    hidden_target: float = 0.0
 
 
 @dataclass(frozen=True)

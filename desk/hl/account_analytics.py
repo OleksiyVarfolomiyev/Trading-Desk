@@ -2086,12 +2086,12 @@ def display_liquidation_events(realized_df, title='LIQUIDATIONS'):
         if column == 'Realized PnL' and pd.notna(value):
             return 'color:#188038;' if value > 0 else 'color:#c62828;' if value < 0 else ''
         if column == 'Fees' and pd.notna(value) and value > 0:
-            return 'color:#c62828;'  # fees are a cost, stored as positive amounts
+            return 'color:#c62828;'  # fees are a cost: stored positive, shown negative in red
         # Counts and sizes are not gains: keep them neutral instead of the helper's sign colours.
         return 'color:inherit;'
     display_interactive_table(table, formatters={
         'Positions': lambda value: f'{value:,.0f}', 'Notional': lambda value: f'${value:,.0f}',
-        'Realized PnL': _signed_usd_plain, 'Fees': _signed_usd_plain,
+        'Realized PnL': _signed_usd_plain, 'Fees': lambda value: _signed_usd_plain(-value),
     }, cell_style=style, bold_last=True, title=title, key_columns={'Realized PnL': 'min'})
     print('Each row is one forced close: positions sharing cross margin are liquidated together. '
           'Realized PnL is closedPnl on the liquidation fills after fees (Fees shows that part); losses '
@@ -2403,7 +2403,7 @@ class _ExecutionQualityMixin:
         display_interactive_table(summary, formatters={
             'Notional': lambda value: f'${value:,.2f}',
             'Share (%)': lambda value: f'{value:.1f}%',
-            'Fees': lambda value: f'${value:,.2f}',
+            'Fees': lambda value: f'-${abs(value):,.2f}' if value else '$0.00',  # paid: a cost
             'Fees (bps)': lambda value: f'{value:.2f}',
         }, cell_style=lambda *cell: 'color:#c62828;' if cell[1] in {'Fees', 'Fees (bps)'} else '',
             bold_last=True, title=f'EXECUTION QUALITY: LAST {days} DAYS', key_columns={'Fees (bps)': 'max'})

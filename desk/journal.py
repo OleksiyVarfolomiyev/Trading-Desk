@@ -35,7 +35,7 @@ UNTAGGED = "untagged (before the journal)"
 LADDER_CLOID_PREFIX = "0x1add"
 REVIEW_AFTER_DAYS = 7  # directional trades held longer lost money in the desk's history (desk/trade_rules.py)
 COLUMNS = ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL (30d)", "Fees (30d)", "Volume (30d)", "Fills (30d)"]
-FORMATS = {"Open positions": "int", "Unrealized PnL": "susd", "Realized PnL (30d)": "susd", "Fees (30d)": "usd",
+FORMATS = {"Open positions": "int", "Unrealized PnL": "susd", "Realized PnL (30d)": "susd", "Fees (30d)": "susd",
            "Volume (30d)": "usd", "Fills (30d)": "int"}
 
 
@@ -157,7 +157,7 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
                 realized = own
             target = row(strategy)
             target["Realized PnL (30d)"] += realized
-            target["Fees (30d)"] += fee
+            target["Fees (30d)"] -= fee  # paid: a cost, shown negative
             target["Volume (30d)"] += price * size
             target["Fills (30d)"] += 1
     order = {name: index for index, name in enumerate((*STRATEGIES, MARKET_MAKING, UNTAGGED))}

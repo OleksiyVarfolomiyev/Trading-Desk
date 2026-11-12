@@ -53,7 +53,7 @@ class JournalTests(unittest.TestCase):
         # ...the ladder only gets the fill against holding: bought 2 at 20, worth 19 now, less the fee
         self.assertAlmostEqual(frame.loc["market making", "Realized PnL (30d)"], -2.1)
         self.assertAlmostEqual(frame.loc["hedge", "Realized PnL (30d)"], 5.0)    # the short's profit stays with the hedge
-        self.assertAlmostEqual(frame.loc["market making", "Fees (30d)"], 0.1)
+        self.assertAlmostEqual(frame.loc["market making", "Fees (30d)"], -0.1)  # paid: negative
         self.assertAlmostEqual(frame["Realized PnL (30d)"].sum(), 19.0 + 2.9 - 5.2)  # still HL's realized total
         self.assertAlmostEqual(frame.loc[journal.UNTAGGED, "Realized PnL (30d)"], -5.2)
         self.assertEqual(int(frame["Fills (30d)"].sum()), 3)                      # spot is left out
