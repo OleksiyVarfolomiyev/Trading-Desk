@@ -1433,8 +1433,8 @@ LADDER_DEFAULTS = {
     "pause_adds_at_health": 0.50,  # stop adding once the account is this far toward liquidation
     # The full grid of quotes is kept in memory; a quote goes on HL's book only once the price comes within
     # place_within spacings of it, and is pulled again past cancel_beyond, so few orders rest at a time.
-    "place_within": 1.25,
-    "cancel_beyond": 2.0,
+    "place_within": 0.5,         # the nearest quote sits 1 spacing from the mid, so none rests until the price is half way to it
+    "cancel_beyond": 1.0,
     "max_live_per_side": 1,       # at most this many quotes per side on the book at once: the nearest
 
     "reject_retry_seconds": 30,   # a post-only quote HL refused (it would have crossed) is tried again after this
@@ -1450,12 +1450,21 @@ LADDER_CLOID_PREFIX = "0x1add"   # marks the ladder's own orders (client order i
 MIN_ORDER_USD = 10.0
 
 
-def ladder_config() -> dict:
+def ladder_config(coin: str | None = None) -> dict:
+    """The ladder settings: defaults, then ladder.json, then that file's ``"coins"`` entry for ``coin``.
+
+    A coin's own entry overrides any setting for that coin's ladder only, for example
+    ``"coins": {"ETH": {"spacing_atr": 0.10}}`` widens ETH's spacing and leaves the other ladders alone.
+    """
     config = dict(LADDER_DEFAULTS)
     try:
-        config.update(json.loads(LADDER_CONFIG.read_text()))
+        saved = json.loads(LADDER_CONFIG.read_text())
     except (OSError, ValueError):
-        pass
+        saved = {}
+    own = saved.pop("coins", None) or {}
+    config.update(saved)
+    if coin:
+        config.update(own.get(coin.split(":")[-1].upper(), {}))
     return config
 
 
@@ -1610,7 +1619,7 @@ class Ladders:
             print(f"...{wallet[-4:]} is read-only in the daemon (no key).")
             return 1
         quotes, spacing = self.preview(wallet, coin, dex, quantity)
-        config = ladder_config()
+        config = ladder_config(coin)
         side = "LONG" if quantity > 0 else "SHORT"
         print(f"Ladder for ...{wallet[-4:]} {coin} {side} {abs(quantity):g}: {config['levels']} post-only quotes per side, "
               f"{spacing:.6g} apart ({config['spacing_atr']:g} x daily ATR); position kept between "
@@ -1673,7 +1682,7 @@ class Ladders:
         market = self.daemon.state.markets([(coin, dex)])[coin]
         bid, ask = self._book(coin, dex)
         atr = float(ht.wilder_atr(ht.fetch_daily_candles(coin.split(":")[-1], dex), 14))
-        config = ladder_config()
+        config = ladder_config(coin)
         mid = (bid + ask) / 2
         spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
         return ladder_quotes(base, base, mid, bid, ask, atr, market.size_decimals, config), spacing
@@ -1728,7 +1737,7 @@ class Ladders:
             for key in ("band", "adds"):
                 self.daemon.alerts.clear(f"ladder-{key}:{wallet}:{coin}")
             return
-        config = ladder_config()
+        config = ladder_config(coin)
         held, low, high = (1 if base > 0 else -1) * position, (1 - config["band"]) * abs(base), (1 + config["band"]) * abs(base)
         band_key = f"ladder-band:{wallet}:{coin}"
         if held > high * 1.02 or held < low * 0.98:

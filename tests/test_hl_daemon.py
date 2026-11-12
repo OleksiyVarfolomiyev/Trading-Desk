@@ -704,7 +704,8 @@ class TrendPauseTests(unittest.TestCase):
 
 
 class LadderArmingTests(unittest.TestCase):
-    config = {**hl_daemon.LADDER_DEFAULTS}
+    # These test the arming logic itself, at fixed distances (place within 1.25 spacings, pull beyond 2).
+    config = {**hl_daemon.LADDER_DEFAULTS, "place_within": 1.25, "cancel_beyond": 2.0}
 
     def grid(self):
         # Sells above and buys below a mid of 100, one step (1.0) apart.
@@ -758,3 +759,26 @@ class HedgeRiskTests(unittest.TestCase):
         self.assertTrue(is_hedged("0x" + "a" * 36 + "07f2", "VVV"))
         self.assertFalse(is_hedged("0x" + "a" * 36 + "c248", "VVV"))   # another wallet's VVV is a normal position
         self.assertFalse(is_hedged("0x" + "a" * 36 + "07f2", "ICP"))
+
+
+class LadderCoinConfigTests(unittest.TestCase):
+    def test_a_coin_entry_overrides_only_that_coins_ladder(self):
+        import hl_daemon as daemon
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "ladder.json"
+            path.write_text(json.dumps({"spacing_atr": 0.05, "coins": {"ETH": {"spacing_atr": 0.10}, "LIT": {"spacing_atr": 0.12}}}))
+            with patch.object(daemon, "LADDER_CONFIG", path):
+                self.assertEqual(daemon.ladder_config("ETH")["spacing_atr"], 0.10)
+                self.assertEqual(daemon.ladder_config("xyz:eth")["spacing_atr"], 0.10)   # the coin name alone, any case
+                self.assertEqual(daemon.ladder_config("MELANIA")["spacing_atr"], 0.05)
+                self.assertEqual(daemon.ladder_config()["spacing_atr"], 0.05)
+                self.assertNotIn("coins", daemon.ladder_config("ETH"))
+
+    def test_the_nearest_quote_stays_in_memory_until_the_price_is_half_a_spacing_away(self):
+        config = {**hl_daemon.LADDER_DEFAULTS}
+        grid = [{"price": 101.0, "is_buy": False, "oid": None}, {"price": 99.0, "is_buy": True, "oid": None}]   # 1 spacing out
+        to_place, _ = hl_daemon.arm_plan(grid, 100.0, 1.0, config, now=0.0)
+        self.assertEqual(to_place, [])                                                       # nothing rests at the centre
+        to_place, _ = hl_daemon.arm_plan(grid, 100.6, 1.0, config, now=0.0)                  # the price rose to 0.4 from the sell
+        self.assertEqual([q["price"] for q in to_place], [101.0])
