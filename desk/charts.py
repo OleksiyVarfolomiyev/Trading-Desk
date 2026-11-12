@@ -103,8 +103,10 @@ def _end_text(value: float, axis, chart_title: str = "") -> str:
     title = ((axis.title.text or "") if axis and axis.title else "") + " " + (chart_title or "")
     if axis is not None and ((axis.tickformat or "").startswith("$") or axis.tickprefix == "$"):
         return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
-    if axis is not None and (axis.ticksuffix == "%" or "%" in (axis.tickformat or "")):
-        return f"{value:.2f}%"
+    if axis is not None and (axis.tickformat or "").endswith("%"):
+        return f"{value * 100:.2f}%"  # a d3 "%" format scales: 0.14 is shown as 14%
+    if axis is not None and axis.ticksuffix == "%":
+        return f"{value:.2f}%"  # values already in percent
     if "index" in title.lower() or "start = 100" in title or "of $100" in title:
         return f"{value:,.1f}"
     return f"{value:,.2f}"

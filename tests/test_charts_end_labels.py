@@ -37,6 +37,11 @@ class EndLabelTests(unittest.TestCase):
         apr.update_layout(yaxis_ticksuffix="%")
         self.assertEqual(self.texts(end_labels(apr)), [("7.25%", 7.25)])   # the last finite value
 
+    def test_percent_tickformat_scales_fractions(self):
+        fig = go.Figure(go.Scatter(x=self.days, y=[0.0, 0.05, -0.066]))
+        fig.update_layout(yaxis_tickformat=".0%")
+        self.assertEqual(self.texts(end_labels(fig)), [("-6.60%", -0.066)])
+
     def test_subplot_lines_label_on_their_own_axes(self):
         from plotly.subplots import make_subplots
 
