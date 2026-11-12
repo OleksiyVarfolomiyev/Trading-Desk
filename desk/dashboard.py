@@ -217,7 +217,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     gross = sum(snapshot.gross_usd for snapshot in trading)
     net = sum(snapshot.net_usd for snapshot in trading)
     unrealized = sum(snapshot.unrealized_usd for snapshot in trading)
-    positions = overview.positions_frame()
+    positions = overview.positions_frame(trading_only=True)  # wallet tokens have their own table
     returns = desk.desk_returns()
     peak = desk.index.cummax()
     kpis = {
@@ -264,9 +264,8 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
                                                             "% of position": "spct"}, key={"uPnL": "abs"})
            for key, kind in (("movers", "Crypto"), ("movers_stocks", "Stocks"))},
     }
-    if len(positions):
-        ordered = with_position_returns(positions, moves)
-        ordered = ordered.assign(_abs=ordered["Value"].abs()).sort_values(
+    def position_table(rows):
+        ordered = rows.assign(_abs=rows["Value"].abs()).sort_values(
             ["Asset class", "_abs"], ascending=[True, False]).drop(columns="_abs")
         total = {column: None for column in ordered.columns}
         total.update({"Asset class": "Total", "Value": ordered["Value"].sum(),
@@ -276,12 +275,19 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         cost = (ordered["Value"] - ordered["uPnL"]).abs()[priced].sum()
         total["uPnL (%)"] = ordered["uPnL"][priced].sum() / cost if cost else None
         total["24h change (%)"] = day_change_total(ordered["Value"], ordered["24h change (%)"])
-        tables["positions"] = table(ordered, {"Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
-                                              "uPnL (%)": "spct", "24h change (%)": "spct",
-                                              "Weight": "pct", "Exposure / desk value": "pct"}, total,
-                                    key={"Weight": "max"})
+        return table(ordered, {"Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
+                               "uPnL (%)": "spct", "24h change (%)": "spct",
+                               "Weight": "pct", "Exposure / desk value": "pct"}, total,
+                     key={"Weight": "max"})
+
+    if len(positions):
+        ordered = with_position_returns(positions, moves)
+        crypto = ordered["Asset class"].astype(str).str.startswith("crypto")  # else stocks and tradfi (IB, HL equity perps)
+        tables["positions"] = position_table(ordered[crypto])
+        tables["positions_stocks"] = position_table(ordered[~crypto])
     else:
         tables["positions"] = table(positions, {})
+        tables["positions_stocks"] = table(positions, {})
     try:  # market-making ladders (desk/market_making.py); resting quotes from the trading daemon
         from desk import alerts as daemon_alerts
         from desk import market_making

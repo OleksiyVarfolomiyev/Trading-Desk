@@ -663,13 +663,21 @@
         "Weight": grossAll ? Math.abs(v) / grossAll : NaN, "Exposure / desk value": deskEquity ? Math.abs(v) / deskEquity : NaN,
       };
     }).sort((a, b) => a["Asset class"].localeCompare(b["Asset class"]) || Math.abs(b.Value) - Math.abs(a.Value));
-    const priced = positionRows.filter((r) => fin(r["uPnL (%)"]));
-    const pricedCost = sum(priced.map((r) => Math.abs(r.Value - r["uPnL"])));
-    const positionTotal = { "Asset class": "Total", "Value": sum(positionRows.map((r) => r.Value)),
-      "uPnL": sum(positionRows.map((r) => r["uPnL"])), "Weight": sum(positionRows.map((r) => r.Weight)),
-      "Exposure / desk value": sum(positionRows.map((r) => r["Exposure / desk value"])),
-      "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN,
-      "24h change (%)": dayChangeTotal(positionRows) };
+    // One table per kind: crypto perps, then stocks and tradfi (IB and HL equity perps). Wallet tokens
+    // (crypto spot) have their own table, so weights are re-based on the trading positions.
+    const isCrypto = (r) => r["Asset class"] === "crypto perp";
+    const tableRows = positionRows.filter((r) => r["Asset class"] !== "crypto spot");
+    const tableGross = sum(tableRows.map((r) => Math.abs(r.Value)));
+    tableRows.forEach((r) => { r.Weight = tableGross ? Math.abs(r.Value) / tableGross : NaN; });
+    const positionTotal = (rows) => {
+      const priced = rows.filter((r) => fin(r["uPnL (%)"]));
+      const pricedCost = sum(priced.map((r) => Math.abs(r.Value - r["uPnL"])));
+      return { "Asset class": "Total", "Value": sum(rows.map((r) => r.Value)),
+        "uPnL": sum(rows.map((r) => r["uPnL"])), "Weight": sum(rows.map((r) => r.Weight)),
+        "Exposure / desk value": sum(rows.map((r) => r["Exposure / desk value"])),
+        "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN,
+        "24h change (%)": dayChangeTotal(rows) };
+    };
 
     // -- exposure by asset class
     const classes = {};
@@ -951,11 +959,16 @@
         { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
       movers_stocks: table(moverRows("Stocks"), ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
         { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
-      positions: table(positionRows, ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
+      positions: table(tableRows.filter(isCrypto), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
         "uPnL", "uPnL (%)", "24h change (%)", "Weight", "Exposure / desk value"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
         { "uPnL (%)": "spct", "24h change (%)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
-      { total: positionTotal, key: { "Weight": "max" } }),
+      { total: positionTotal(tableRows.filter(isCrypto)), key: { "Weight": "max" } }),
+      positions_stocks: table(tableRows.filter((r) => !isCrypto(r)), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
+        "uPnL", "uPnL (%)", "24h change (%)", "Weight", "Exposure / desk value"],
+      Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
+        { "uPnL (%)": "spct", "24h change (%)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
+      { total: positionTotal(tableRows.filter((r) => !isCrypto(r))), key: { "Weight": "max" } }),
       open_risk: table(book.map((b) => ({ "Venue": b.venue, "Account": b.label, "Positions": b.positions, "Risk equity": b.equity,
         "Open risk": b.risk, "% of desk equity": riskEquity ? b.risk / riskEquity : NaN }))
         .concat([{ "Venue": "Total", "Account": "", "Positions": sum(book.map((b) => b.positions)), "Risk equity": riskEquity,

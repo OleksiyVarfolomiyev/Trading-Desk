@@ -62,30 +62,6 @@
     </section>
 
     <section class="card">
-      <h2>Market making (ladders)</h2>
-      <p class="sub">The ladders' own trading (c248, and VVV in 07f2). Ladder PnL is their result against simply holding the position you opened: spread captured (round trips) plus inventory drift (what the unmatched buys or sells made as the price moved) less fees. Markouts: the move 1 and 15 minutes after each fill, for (+) or against (−) it, in bps over the last 3 days; negative means the price runs through the quotes. Status says when the trims pause because the price trends the position's way. Position vs base: the band is in ladder.json (±25%). Quotes rest on HL's book; Queued are held in memory until the price nears them.</p>
-      <div class="table-wrap" id="t-market_making"></div>
-    </section>
-
-    <section class="card">
-      <h2>Results by strategy</h2>
-      <p class="sub">HL positions and the last 30 days' fills, by the journal's tag: directional, conviction, hedge, and the ladders' market making. The market-making row gets only the ladders' own result against holding (as in the table above); the profit a ladder realizes by trimming a position stays with that position's strategy. Fills from before the journal began are untagged.</p>
-      <div class="table-wrap" id="t-strategies"></div>
-    </section>
-
-    <section class="card">
-      <h2>Short candidates (screener)</h2>
-      <p class="sub">The 40 most liquid HL perps ranked by the signals the research harness validated (or the desk's own record until one is). Size at budget is what the 5% risk budget buys at the 3 × ATR stop; nothing trades until you run it.</p>
-      <div class="table-wrap" id="t-candidates"></div>
-    </section>
-
-    <section class="card">
-      <h2>Market-making candidates</h2>
-      <p class="sub">Liquid coins that have gone nowhere over 30 days (low efficiency: net move against the sum of daily moves), so ladder quotes on both sides keep filling.</p>
-      <div class="table-wrap" id="t-mm_candidates"></div>
-    </section>
-
-    <section class="card">
       <h2>Accounts</h2>
       <p class="caption">Each account's share of the desk; the other columns are a share of that account's own equity.</p>
       <div class="table-wrap" id="t-accounts"></div>
@@ -121,14 +97,44 @@
     </section>
 
     <section class="card">
-      <h2>Open positions</h2>
-      <p class="caption">Value is signed (shorts negative). Weight is the share of gross exposure (sums to 100%); exposure / desk value sums to gross leverage.</p>
+      <h2>Open positions: crypto</h2>
+      <p class="caption">Value is signed (shorts negative). Weight is the share of gross exposure across both tables (together they sum to 100%); exposure / desk value sums to gross leverage.</p>
       <div class="table-wrap" id="t-positions"></div>
+    </section>
+
+    <section class="card">
+      <h2>Open positions: stocks and tradfi</h2>
+      <p class="caption">IB holdings and Hyperliquid equity, index and commodity perps. Wallet tokens are in the wallet holdings table; weights here are shares of the trading positions.</p>
+      <div class="table-wrap" id="t-positions_stocks"></div>
     </section>
 
     <section class="card">
       <h2>Wallet holdings outside HL</h2>
       <div class="table-wrap" id="t-wallets"></div>
+    </section>
+
+    <section class="card">
+      <h2>Results by strategy</h2>
+      <p class="sub">HL positions and the last 30 days' fills, by the journal's tag: directional, conviction, hedge, and the ladders' market making. The market-making row gets only the ladders' own result against holding (as in the table above); the profit a ladder realizes by trimming a position stays with that position's strategy. Fills from before the journal began are untagged.</p>
+      <div class="table-wrap" id="t-strategies"></div>
+    </section>
+
+    <section class="card">
+      <h2>Market making (ladders)</h2>
+      <p class="sub">The ladders' own trading (c248, and VVV in 07f2). Ladder PnL is their result against simply holding the position you opened: spread captured (round trips) plus inventory drift (what the unmatched buys or sells made as the price moved) less fees. Markouts: the move 1 and 15 minutes after each fill, for (+) or against (−) it, in bps over the last 3 days; negative means the price runs through the quotes. Status says when the trims pause because the price trends the position's way. Position vs base: the band is in ladder.json (±25%). Quotes rest on HL's book; Queued are held in memory until the price nears them.</p>
+      <div class="table-wrap" id="t-market_making"></div>
+    </section>
+
+    <section class="card">
+      <h2>Short candidates (screener)</h2>
+      <p class="sub">The 40 most liquid HL perps ranked by the signals the research harness validated (or the desk's own record until one is). Size at budget is what the 5% risk budget buys at the 3 × ATR stop; nothing trades until you run it.</p>
+      <div class="table-wrap" id="t-candidates"></div>
+    </section>
+
+    <section class="card">
+      <h2>Market-making candidates</h2>
+      <p class="sub">Liquid coins that have gone nowhere over 30 days (low efficiency: net move against the sum of daily moves), so ladder quotes on both sides keep filling.</p>
+      <div class="table-wrap" id="t-mm_candidates"></div>
     </section>
 
     <details class="card notes">

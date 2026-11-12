@@ -383,11 +383,14 @@ class DeskOverview:
             "% of desk": snapshot.equity_usd / self.desk_equity if self.desk_equity else float("nan"),
         } for snapshot in self.snapshots])
 
-    def positions_frame(self) -> pd.DataFrame:
+    def positions_frame(self, trading_only: bool = False) -> pd.DataFrame:
+        """Every position; ``trading_only`` leaves out wallet tokens (crypto spot), which have their own table."""
         equity = self.desk_equity
         rows = []
         for snapshot in self.snapshots:
             for position in snapshot.positions:
+                if trading_only and position.asset_class == "crypto spot":
+                    continue
                 rows.append({
                     "Asset class": position.asset_class, "Venue": position.venue, "Account": snapshot.label,
                     "Symbol": position.symbol, "Side": position.side, "Quantity": position.quantity,
@@ -433,7 +436,7 @@ class DeskOverview:
         """Open positions on every venue, one table per asset class."""
         if not self._require():
             return
-        frame = self.positions_frame()
+        frame = self.positions_frame(trading_only=True)  # wallet tokens are in the wallet holdings table
         if frame.empty:
             print("No open positions.")
             return
@@ -446,8 +449,10 @@ class DeskOverview:
         except Exception:
             moves = {}
         frame = with_position_returns(frame, moves)
-        for klass, group in frame.groupby("Asset class", sort=True):
-            group = group.sort_values("Value", key=abs, ascending=False).drop(columns="Asset class")
+        kinds = frame["Asset class"].map(lambda name: "Crypto" if str(name).startswith("crypto") else "Stocks and tradfi")
+        for klass, group in frame.groupby(kinds, sort=True):  # Crypto, then stocks and tradfi (IB and HL equity perps)
+            group = group.sort_values(["Asset class", "Value"], key=lambda column: column if column.name == "Asset class" else column.abs(),
+                                      ascending=[True, False])
             priced = group["uPnL (%)"].notna()
             cost = (group["Value"] - group["uPnL"]).abs()[priced].sum()
             total = {"Account": "Total", "Symbol": "", "Side": "", "Quantity": float("nan"),
@@ -472,9 +477,9 @@ class DeskOverview:
         frame = frame.assign(gross=frame["Value"].abs())
         leverage = frame["gross"].sum() / self.desk_equity if self.desk_equity else float("nan")
         print("Value is signed (shorts negative). Weight is each position's share of gross exposure (absolute "
-              "values), so weights sum to 100% across all tables. Exposure / desk value is gross value over desk "
-              f"value; summed over every table it is gross leverage ({leverage:.0%} now), above 100% because HL "
-              "perps are traded on margin.")
+              "values), so weights sum to 100% across both tables (wallet tokens are listed separately). Exposure / desk "
+              f"value is gross value over desk value; summed over both tables it is gross leverage ({leverage:.0%} now), "
+              "above 100% because HL perps are traded on margin.")
 
     def exposure_frame(self) -> pd.DataFrame:
         """Long, short, net and gross exposure by asset class, with a Total row last."""
