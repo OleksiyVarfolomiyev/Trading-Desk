@@ -709,6 +709,12 @@ class DeskOverview:
             if available / trading_equity < LOW_AVAILABLE_PCT:
                 attention.append(("Available margin low", f"{money(available)} available, "
                                                           f"{available / trading_equity:.0%} of trading equity."))
+        # Scenario stress (desk/stress.py): what an alt rally or an equity sell-off would cost the whole desk.
+        from desk import stress
+
+        exposures = [row for snapshot in self.snapshots for row in stress.position_exposures(snapshot)]
+        for title, text in reversed(stress.notices(exposures, self.desk_equity)):
+            attention.insert(0, (title, text))
         # Each HL wallet keeps 20% of its equity free (the executor's reserve); past that it refuses new
         # trades. (Near an account-wide liquidation the trading daemon's margin guard reduces positions.)
         for snapshot in trading:

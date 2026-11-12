@@ -1,10 +1,6 @@
 ,Return over sample
-Market (US),0.04109307318693726
-Size (SMB),0.004236561467898373
-Value (HML),-0.0032119617411455257
-Momentum (12-1m),0.02459877369434323
-BTC market excess,0.0686217290742061
-Alt market - BTC,0.13541995660069628
-Funding (low - high),0.017501436101620558
-Specific return (alpha + residual),0.7661709924732161
-Total excess return,1.0544305608577724
+BTC market excess,0.0023156603479840745
+BTC momentum,0.001382758599090101
+Funding (low - high),-0.0020226937299600263
+Specific return (alpha + residual),1.3329102974354439
+Total excess return,1.3345860226525579

@@ -1677,7 +1677,10 @@ class Daemon:
             markets = self.state.markets(trading)
             snapshot = self.state.snapshot(risk_wallets, markets)
             book = self._other_book(bool(request.get("ignore_unreachable")), live)
-            snapshot = dataclasses.replace(snapshot, external_equity=book.equity_usd, external_risk=book.risk_usd)
+            from desk.stress import desk_exposures
+
+            snapshot = dataclasses.replace(snapshot, external_equity=book.equity_usd, external_risk=book.risk_usd,
+                                           external_exposures=tuple(desk_exposures(book)))
             snapshot = ht.urgent_fees(snapshot, bool(request.get("urgent")))
             stops = ht.resting_stops(risk_wallets, sorted({position.dex for position in snapshot.positions}))
             plans, risk = ht.plan_trades(signals, markets, snapshot, stops=stops,

@@ -1201,6 +1201,36 @@ class TradeAnalyticsTests(unittest.TestCase):
         exits.assert_called_once()
         self.assertEqual(len(active), 1)
 
+    def test_plan_trades_cuts_an_entry_that_would_push_a_stress_scenario_past_the_limit(self):
+        from hl_trade import AccountSnapshot, plan_trades
+
+        market = Market("BTC", "", 100, 100, 3, 10)
+        equity = 1_000.0
+
+        def plan(external):
+            snapshot = AccountSnapshot(equity=equity, margin_used=0, target_equity=equity, target_margin_used=0, positions=(),
+                                       maker_fee_rate=0.0001, taker_fee_rate=0.0004, risk_wallets=("0x" + "1" * 40,),
+                                       external_exposures=external)
+            with patch("hl_trade.fetch_daily_candles", return_value=make_candles()), \
+                    patch("hl_trade.fetch_funding_history", return_value=make_funding()):
+                return plan_trades([{"coin": "ALT", "side": "SHORT", "dex": ""}], {"ALT": Market("ALT", "", 100, 100, 3, 10)},
+                                   snapshot)[0][0]
+
+        free = plan(())
+        self.assertGreater(free.quantity, 0)
+        self.assertEqual(free.stress_note, "" if free.quantity * 100 * 0.25 < 0.25 * equity else free.stress_note)
+        # Alt shorts already cost 30% of equity in an alt rally: a further short is cut to the 35% limit.
+        crowded = plan((("crypto perp", "OTHER", -1_200.0),))
+        self.assertLess(crowded.quantity, free.quantity)
+        self.assertIn("alt rally stress", crowded.stress_note)
+        # At the limit already, the entry is refused with the reason.
+        full = plan((("crypto perp", "OTHER", -1_500.0),))
+        self.assertEqual(full.quantity, 0)
+        self.assertIn("entry refused", full.block_reason)
+        # A long alt hedge in the wallets leaves room.
+        hedged = plan((("crypto perp", "OTHER", -1_500.0), ("crypto spot", "STAKED", 1_500.0)))
+        self.assertEqual(hedged.quantity, free.quantity)
+
     def test_post_only_entry_price_never_crosses_book(self):
         book = {
             "levels": [

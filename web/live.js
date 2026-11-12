@@ -359,6 +359,19 @@
 
   // ------------------------------------------------------------------ IB (sent by the desk's Mac)
   const IB_STALE_MS = 26 * HOUR_MS;
+  // Scenario stress (desk/stress.py): what a correlated shock would cost the whole desk, no stop assumed to help.
+  const STRESS_WARN = 0.25, STRESS_BLOCK = 0.35;
+  const STRESS = { "alt rally": { alt: 0.25, major: 0.10 }, "equity sell-off": { equity: -0.10 } };
+  const STRESS_MAJORS = new Set(["BTC", "ETH", "WBTC", "CBBTC", "WETH", "CBETH", "STETH", "WSTETH"]);
+  const STRESS_STABLES = new Set(["USDC", "USDT", "USDE", "DAI", "USDH", "USDBC", "EURC", "GHO", "PYUSD", "FDUSD", "USDS", "SUSDE"]);
+  const STRESS_COMMODITIES = new Set(["GOLD", "SILVER", "BRENTOIL", "WTIOIL", "OIL", "CL", "COPPER", "NATGAS", "PLATINUM", "PALLADIUM", "URANIUM", "PAXG", "XAUT"]);
+  const stressKind = (assetClass, symbol) => {
+    const base = String(symbol).split(":").pop().trim().split(/[ (]/)[0].toUpperCase();
+    if (assetClass === "crypto perp" || assetClass === "crypto spot") return STRESS_STABLES.has(base) ? "stable" : STRESS_MAJORS.has(base) ? "major" : "alt";
+    if (assetClass === "equity") return "equity";
+    if (assetClass === "tradfi perp" || String(symbol).includes(":")) return STRESS_COMMODITIES.has(base) ? "other" : "equity";
+    return "other";
+  };
   // The desk's clock is Eastern time: stamps (a Date, ms or ISO text) are shown as "2026-11-11 17:24 ET".
   const eastern = (stamp, utcText) => {
     const date = utcText ? new Date(String(stamp).slice(0, 19) + "Z") : new Date(stamp);
@@ -831,6 +844,14 @@
     }
     if (problems.length) attention.unshift(["Unreadable accounts", problems.join("; ") + " Totals leave them out."]);
     ((regime && regime.notices) || []).slice().reverse().forEach((row) => attention.unshift(row));  // desk/market_regime.py
+    Object.entries(STRESS).forEach(([name, shocks]) => {  // scenario stress rows (the Python dashboard's, desk/stress.py)
+      const loss = -sum(positionRows.map((r) => (fin(r.Value) ? r.Value * (shocks[stressKind(r["Asset class"], r.Symbol)] || 0) : 0)));
+      const share = deskEquity > 0 ? loss / deskEquity : NaN;
+      if (!(share >= STRESS_WARN)) return;
+      const status = share >= STRESS_BLOCK ? "block" : "warn";
+      const shock = name === "alt rally" ? "alts +25% and BTC/ETH +10%" : "equities -10%";
+      attention.unshift([`Stress: ${name} (${status})`, `If ${shock} at once, with no stop helping, the desk loses ${money(loss)}, ${percent(share, false, 0)} of desk equity (warn at 25%, block at 35%); ${status === "block" ? "new entries that add to it are blocked" : "new entries are shrunk past 35%"}.`]);
+    });
     // Data flow: every feed the page relies on, with how stale it may get before it is a problem.
     const minutesSince = (stamp) => (fin(stamp) ? (Date.now() - stamp) / 60000 : Infinity);
     const flow = [

@@ -16,7 +16,7 @@ import math
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -137,6 +137,9 @@ class AccountSnapshot:
     # Other desk venues (such as IB) that share the aggregate risk cap.
     external_equity: float = 0.0
     external_risk: float = 0.0
+    # (asset_class, symbol, signed notional) of positions on other desk venues and in the wallets, for the
+    # scenario stress check (desk/stress.py).
+    external_exposures: tuple = ()
 
     @property
     def desk_equity(self) -> float:
@@ -165,6 +168,7 @@ class PlannedTrade:
     block_reason: str = ""
     price_stop_distance: float = 0.0
     conviction: bool = False  # no stop, no take-profit, no loss guard (sized by notional)
+    stress_note: str = ""     # the scenario stress check's warning, or why it cut or refused the entry
 
 
 @dataclass
@@ -1139,7 +1143,13 @@ def plan_trades(
         0.0,
         snapshot.target_equity * (1 - RESERVE_PCT) - snapshot.target_margin_used,
     )
+    from desk import stress
+
     plans: list[PlannedTrade] = []
+    # Everything open now, as the stress check sees it: HL positions plus the other venues' and wallets'.
+    exposures = [(("tradfi perp" if position.dex and position.dex not in ("hyna",) else "crypto perp"), position.coin,
+                  position.quantity * position.mark_price) for position in snapshot.positions]
+    exposures += list(snapshot.external_exposures)
     for signal in signals:
         coin, dex = normalize_market(signal["coin"], signal.get("dex", ""))
         market = markets.get(coin)
@@ -1175,6 +1185,18 @@ def plan_trades(
             snapshot.taker_fee_rate,
             conviction_notional=conviction_pct * snapshot.target_equity if conviction else None,
         )
+        if plan.quantity > 0 and snapshot.desk_equity > 0:
+            asset_class = "tradfi perp" if dex and dex != "hyna" else "crypto perp"
+            notional = side_to_direction(signal["side"]) * plan.quantity * market.mark_price
+            fraction, note = stress.fit_entry(exposures, snapshot.desk_equity, asset_class, coin, notional)
+            if fraction < 1.0:
+                step = 10 ** -market.size_decimals
+                cut = round(math.floor(plan.quantity * fraction / step + 1e-12) * step, market.size_decimals)
+                plan = replace(plan, quantity=cut, risk_budget=plan.risk_budget * (cut / plan.quantity) if plan.quantity else 0.0,
+                               block_reason=plan.block_reason or ("" if cut > 0 else note))
+                notional = side_to_direction(signal["side"]) * cut * market.mark_price
+            plan = replace(plan, stress_note=note)
+            exposures.append((asset_class, coin, notional))
         plans.append(plan)
         risk_headroom -= plan.risk_budget
         available_margin -= plan.quantity * market.mark_price / plan.leverage
@@ -2117,6 +2139,7 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
             f"expected 5d PnL=${plan.expected_pnl.net_pnl:,.2f} "
             f"(price ${plan.expected_pnl.price_pnl:,.2f}; funding ${plan.expected_pnl.funding_pnl:,.2f})"
             + (f" — BLOCKED: {plan.block_reason}" if plan.block_reason else "")
+            + (f" — STRESS: {plan.stress_note}" if plan.stress_note and not plan.block_reason else "")
         )
 
 
@@ -3090,7 +3113,10 @@ def attach_other_venues(snapshot: AccountSnapshot, args: argparse.Namespace) -> 
         )
     if book.unreachable:
         print("WARNING: unreachable accounts are left out of desk equity and risk.")
-    return replace(snapshot, external_equity=book.equity_usd, external_risk=book.risk_usd)
+    from desk.stress import desk_exposures
+
+    return replace(snapshot, external_equity=book.equity_usd, external_risk=book.risk_usd,
+                   external_exposures=tuple(desk_exposures(book)))
 
 
 def urgent_fees(snapshot: AccountSnapshot, urgent: bool) -> AccountSnapshot:
