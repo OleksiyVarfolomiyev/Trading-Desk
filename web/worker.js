@@ -454,7 +454,7 @@ export default {
       const saved = env.DESK ? await env.DESK.get("sync", "json") : null;
       return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no scheduled capture has run yet" }, 404);
     }
-    if (kind === "research" && !id) {  // results by strategy, trades due for review, the screener (hourly, from the Mac)
+    if (kind === "research" && !id) {  // performance by strategy, trades due for review, the screener (hourly, from the Mac)
       const saved = env.DESK ? await env.DESK.get("research", "json") : null;
       return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no research has been sent yet" }, 404);
     }

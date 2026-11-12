@@ -304,7 +304,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
                                          key={"Ladder PnL": "abs"}) if len(frame) else table(frame, {}))
     except Exception as exc:
         desk.notes.append(f"Market-making metrics unavailable ({type(exc).__name__}: {exc}).")
-    # Results by strategy, trades due for review and the screener, as the trading daemon last saved them (hourly).
+    # Performance by strategy, trades due for review and the screener, as the trading daemon last saved them (hourly).
     try:
         import json as _json
 

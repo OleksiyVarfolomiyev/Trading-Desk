@@ -987,15 +987,15 @@
         const rows = (daemonAlerts && daemonAlerts.market_making) || [];
         if (!rows.length) return { columns: [], rows: [], total: null };
         const total = { "Account": "Total" };
-        ["Fills", "Volume", "Spread captured", "Inventory drift", "Ladder PnL", "Fees"].forEach((k) => { total[k] = sum(rows.map((r) => r[k])); });
+        ["Fills", "Volume", "Spread captured", "Inventory drift", "Funding", "Ladder PnL", "Fees"].forEach((k) => { total[k] = sum(rows.map((r) => r[k])); });
         total["Captured per $1k"] = total.Volume ? (total["Spread captured"] + total.Fees) / total.Volume * 1000 : NaN;
         ["Markout 1m (bps)", "Markout 15m (bps)"].forEach((k) => {  // weighted by each ladder's fills
           const known = rows.filter((r) => Number.isFinite(r[k]));
           const fills = sum(known.map((r) => r.Fills));
           total[k] = fills ? sum(known.map((r) => r[k] * r.Fills)) / fills : NaN;
         });
-        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"],
-          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "susd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
+        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees", "Funding", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"],
+          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "susd", "Funding": "susd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
           { total, key: { "Ladder PnL": "abs" } });
       })(),
       strategies: (() => {  // desk/journal.py, as the daemon last sent it (the last row is the total)

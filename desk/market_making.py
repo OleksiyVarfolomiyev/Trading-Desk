@@ -10,9 +10,11 @@ Per ladder, from those fills alone:
 * Inventory drift: what the unmatched part (bought more than sold, or the other way) made or lost
   as the price moved: what trimming into a trend costs;
 * Fees: what the ladders paid, as a negative amount (a maker rebate would be positive);
-* Ladder PnL = spread captured + inventory drift + fees: every ladder fill's cash, plus what the
-  ladder still holds net at today's mark, less fees: the strategy's result against simply holding
-  the position you opened;
+* Funding: what the ladder's own inventory (the position above or below its base) earned (+) or paid (-)
+  in funding: each hourly payment times the share of the position that was ladder inventory then;
+* Ladder PnL = spread captured + inventory drift + fees + funding: every ladder fill's cash, plus what the
+  ladder still holds net at today's mark, less fees, plus the funding on that inventory: the strategy's
+  result against simply holding the position you opened;
 * Markout 1m / 15m: how far the price moved for (+) or against (-) each fill 1 and 15 minutes
   later, in basis points, averaged over the fills of the last three days. Negative means the
   quotes fill when the price runs through them (adverse selection), which the spacing has to beat;
@@ -34,9 +36,9 @@ DISPLAY_TIMEZONE = "America/New_York"  # the desk's clock: times are shown in Ea
 MARKOUT_MINUTES = (1, 15)
 MARKOUT_DAYS = 3  # HL serves about 3.5 days of 1-minute candles
 COLUMNS = ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees",
-           "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"]
+           "Funding", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"]
 FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "susd",
-           "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps",
+           "Funding": "susd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps",
            "Position vs base": "spct", "Quotes": "int", "Queued": "int"}
 
 
@@ -67,6 +69,41 @@ def ladder_fill_rows(wallet: str, since_ms: int) -> list[dict]:
         start = max(fill["time"] for fill in batch) + 1
     unique = {fill["tid"]: fill for fill in fills}.values()
     return [fill for fill in unique if str(fill.get("cloid") or "").startswith(LADDER_CLOID_PREFIX)]
+
+
+_FUNDING_EVENTS: dict[str, list[dict]] = {}  # wallet -> funding events already downloaded this run
+
+
+def funding_events(wallet: str, since_ms: int) -> list[dict]:
+    """HL's funding events for a wallet from ``since_ms``, fetching only what is new since the last call."""
+    from desk.hl.account_analytics import _download_user_funding
+
+    events = [event for event in _FUNDING_EVENTS.get(wallet, []) if int(event["time"]) >= since_ms]
+    latest = max((int(event["time"]) for event in events), default=None)
+    fresh = _download_user_funding(wallet, since_ms if latest is None else latest + 1)
+    key = lambda event: (int(event["time"]), (event.get("delta") or {}).get("coin"))
+    seen = {key(event) for event in events}
+    events += [event for event in fresh if key(event) not in seen]
+    _FUNDING_EVENTS[wallet] = events
+    return events
+
+
+def ladder_funding_parts(ladder_fills: list[dict], events: list[dict]):
+    """Each funding event of one coin with the part that belongs to the ladder's inventory: ``(event, amount)``.
+
+    Funding is paid on the whole position (the event's ``szi``). The ladder's inventory at that moment is
+    the net of its fills so far (bought minus sold), so its share of the signed payment ``usdc`` is
+    ``usdc * inventory / szi``. The rest belongs to the position the ladder trades around.
+    """
+    fills = sorted(ladder_fills, key=lambda fill: fill["time"])
+    inventory, index = 0.0, 0
+    for event in sorted(events, key=lambda item: int(item["time"])):
+        while index < len(fills) and fills[index]["time"] <= int(event["time"]):
+            inventory += float(fills[index]["sz"]) * (1.0 if fills[index]["side"] == "B" else -1.0)
+            index += 1
+        delta = event.get("delta") or {}
+        size = float(delta.get("szi") or 0)
+        yield event, (float(delta["usdc"]) * inventory / size if size and delta.get("usdc") is not None else 0.0)
 
 
 def metrics(fills: list[dict], mark: float) -> dict:
@@ -152,7 +189,12 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
         state = post({"type": "clearinghouseState", "user": wallet}) or {}
         positions = {item["position"]["coin"]: item["position"] for item in state.get("assetPositions", [])}
         starts = [pd.Timestamp(item["started"], tz="UTC") for item in by_wallet[wallet]]
-        fills = ladder_fill_rows(wallet, min(month_ago, int(min(starts).timestamp() * 1000)))
+        window_start = min(month_ago, int(min(starts).timestamp() * 1000))
+        fills = ladder_fill_rows(wallet, window_start)
+        try:  # funding is extra: the table shows without it
+            events = funding_events(wallet, window_start)
+        except Exception:
+            events = []
         running = {item["coin"]: item for item in by_wallet[wallet]}
         for coin in sorted(set(running) | {fill["coin"] for fill in fills}):
             ladder = running.get(coin)
@@ -168,10 +210,16 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
                 closes = minute_closes(coin, min(fill["time"] for fill in own)) if own else pd.Series(dtype=float)
             except Exception:  # markouts are extra: the table shows without them
                 closes = pd.Series(dtype=float)
+            earned = sum(amount for _, amount in ladder_funding_parts(
+                own, [event for event in events if (event.get("delta") or {}).get("coin") == coin
+                      and (since is None or int(event["time"]) >= since.timestamp() * 1000)]))
+            measured = metrics(own, mark)
+            measured["Funding"] = earned
+            measured["Ladder PnL"] += earned  # the funding on the ladder's inventory is part of its result
             row = {"Account": wallets[wallet].name, "Coin": coin,
                    "Side": ("LONG" if base > 0 else "SHORT") if ladder else "",
                    "Status": ((status or {}).get((short_id(wallet), coin), "quoting")) if ladder else "stopped",
-                   "Since": eastern(ladder["started"]) if ladder else "", **metrics(own, mark), **markouts(own, closes),
+                   "Since": eastern(ladder["started"]) if ladder else "", **measured, **markouts(own, closes),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
                    "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan")),
                    "Queued": (queued or {}).get((short_id(wallet), coin), float("nan"))}
@@ -182,7 +230,7 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
 
 def total_row(frame: pd.DataFrame) -> dict:
     row = {"Account": "Total", **{column: frame[column].sum() for column in ("Fills", "Volume", "Spread captured",
-                                                                             "Inventory drift", "Ladder PnL", "Fees")}}
+                                                                             "Inventory drift", "Funding", "Ladder PnL", "Fees")}}
     row["Captured per $1k"] = (row["Spread captured"] + row["Fees"]) / row["Volume"] * 1000 if row["Volume"] else float("nan")
     for column in (f"Markout {minute}m (bps)" for minute in MARKOUT_MINUTES):  # weighted by each ladder's fills
         known = frame[frame[column].notna()]
@@ -211,7 +259,7 @@ def show_market_making() -> None:
     bps = lambda value: "" if value != value else f"{value:.1f}"
     display_interactive_table(
         frame, bold_last=True, title="MARKET MAKING (LADDERS)",
-        formatters={"Volume": money, "Spread captured": money, "Inventory drift": money, "Ladder PnL": money, "Fees": money,
+        formatters={"Volume": money, "Spread captured": money, "Inventory drift": money, "Funding": money, "Ladder PnL": money, "Fees": money,
                     "Captured per $1k": money, "Markout 1m (bps)": bps, "Markout 15m (bps)": bps,
                     "Fills": lambda value: "" if value != value else f"{value:,.0f}",
                     "Quotes": lambda value: "" if value != value else f"{value:,.0f}",
@@ -219,7 +267,7 @@ def show_market_making() -> None:
                     "Position vs base": lambda value: "" if value != value else f"{value:.1%}"},
         key_columns={"Ladder PnL": "abs"})
     print("Ladder PnL is the ladders' result against simply holding the position you opened: spread captured (round "
-          "trips) plus inventory drift (what the unmatched buys or sells made as the price moved) plus fees (paid: negative). Captured per "
+          "trips) plus inventory drift (what the unmatched buys or sells made as the price moved) plus fees (paid: negative) plus funding (on the ladder's own inventory only: received positive, paid negative). Captured per "
           "$1k is the edge apart from the price's path. Markouts: the move 1 and 15 minutes after each fill, for (+) or "
           "against (-) it, in bps over the last 3 days; negative means the price runs through the quotes. "
           "Position vs base: the band is in ladder.json.")

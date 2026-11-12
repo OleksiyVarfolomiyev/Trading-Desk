@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from desk import market_making
+
 import os
 
 JOURNAL_FILE = Path(__file__).resolve().parents[1] / "data" / "trade_journal.json"
@@ -166,30 +168,21 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
             target["Volume (30d)"] += price * size
             target["Fills (30d)"] += 1
     for wallet, events in (funding_by_wallet or {}).items():
+        by_coin: dict[str, list[dict]] = {}
         for event in events:
-            delta = event.get("delta") or {}
-            if delta.get("usdc") is None or event.get("time") is None:
-                continue
-            row(strategy_at(entries, wallet, str(delta.get("coin")), int(event["time"])))["Funding (30d)"] += float(delta["usdc"])
+            if (event.get("delta") or {}).get("usdc") is not None and event.get("time") is not None:
+                by_coin.setdefault(str((event["delta"]).get("coin")), []).append(event)
+        for coin, coin_events in by_coin.items():
+            ladder_fills = [fill for fill in fills_by_wallet.get(wallet, []) if fill["coin"] == coin
+                            and str(fill.get("cloid") or "").startswith(LADDER_CLOID_PREFIX)]
+            for event, ladder_part in market_making.ladder_funding_parts(ladder_fills, coin_events):
+                when = int(event["time"])
+                if ladder_part:
+                    row(MARKET_MAKING)["Funding (30d)"] += ladder_part  # the ladder's inventory...
+                row(strategy_at(entries, wallet, coin, when))["Funding (30d)"] += float(event["delta"]["usdc"]) - ladder_part  # ...the rest
     order = {name: index for index, name in enumerate((*STRATEGIES, MARKET_MAKING, UNTAGGED))}
     frame = pd.DataFrame(sorted(rows.values(), key=lambda item: order.get(item["Strategy"], 99)), columns=COLUMNS)
     return frame
-
-
-_FUNDING_EVENTS: dict[str, list[dict]] = {}  # wallet -> funding events already downloaded this run
-
-
-def funding_events(wallet: str, since_ms: int) -> list[dict]:
-    """HL's funding events for a wallet from ``since_ms``, fetching only what is new since the last call."""
-    from desk.hl.account_analytics import _download_user_funding
-
-    events = [event for event in _FUNDING_EVENTS.get(wallet, []) if int(event["time"]) >= since_ms]
-    latest = max((int(event["time"]) for event in events), default=None)
-    fresh = _download_user_funding(wallet, since_ms if latest is None else latest + 1)
-    seen = {(int(event["time"]), (event.get("delta") or {}).get("coin")) for event in events}
-    events += [event for event in fresh if (int(event["time"]), (event.get("delta") or {}).get("coin")) not in seen]
-    _FUNDING_EVENTS[wallet] = events
-    return events
 
 
 def strategy_frame(days: int = 30) -> pd.DataFrame:
@@ -211,7 +204,7 @@ def strategy_frame(days: int = 30) -> pd.DataFrame:
         fills_by_wallet[account.id] = list({fill["tid"]: fill for fill in fills}.values())
         state = post({"type": "clearinghouseState", "user": account.id}) or {}
         positions_by_wallet[account.id] = [item["position"] for item in state.get("assetPositions", [])]
-        funding_by_wallet[account.id] = funding_events(account.id, since)
+        funding_by_wallet[account.id] = market_making.funding_events(account.id, since)
     return split_by_strategy(entries, fills_by_wallet, positions_by_wallet, funding_by_wallet)
 
 
@@ -243,7 +236,7 @@ def show_strategies() -> None:
     frame = pd.concat([frame, pd.DataFrame([total_row(frame)])], ignore_index=True)
     money = lambda value: "" if value != value else (f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")
     count = lambda value: "" if value != value else f"{value:,.0f}"
-    display_interactive_table(frame, bold_last=True, title="RESULTS BY STRATEGY (HL)",
+    display_interactive_table(frame, bold_last=True, title="PERFORMANCE BY STRATEGY (HL)",
                               formatters={"Unrealized PnL": money, "Realized PnL (30d)": money, "Fees (30d)": money,
                                           "Funding (30d)": money, "Volume (30d)": money, "Open positions": count, "Fills (30d)": count},
                               key_columns={"Realized PnL (30d)": "abs"})

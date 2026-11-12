@@ -46,6 +46,18 @@ class JournalTests(unittest.TestCase):
         self.assertAlmostEqual(frame.loc["directional", "Funding (30d)"], -0.5)
         self.assertAlmostEqual(journal.total_row(frame.reset_index())["Funding (30d)"], 1.0)
 
+    def test_the_ladders_inventory_funding_moves_to_market_making_and_the_total_is_unchanged(self):
+        opened = "2026-11-01T00:00:00"
+        entries = [{"wallet": "07f2", "coin": "VVV", "side": "SHORT", "strategy": "hedge", "opened": opened, "closed": None}]
+        at = (time.time() - 3600) * 1000
+        ladder_sell = {"coin": "VVV", "side": "A", "px": "20", "sz": "2", "closedPnl": "0", "fee": "0", "time": at - 2000,
+                       "cloid": "0x1add" + "0" * 28}
+        funding = {"07f2": [{"time": at, "delta": {"coin": "VVV", "szi": "-12", "usdc": "1.2"}}]}
+        frame = journal.split_by_strategy(entries, {"07f2": [ladder_sell]}, {}, funding).set_index("Strategy")
+        self.assertAlmostEqual(frame.loc["market making", "Funding (30d)"], 0.2)   # 2 of the 12 short
+        self.assertAlmostEqual(frame.loc["hedge", "Funding (30d)"], 1.0)
+        self.assertAlmostEqual(frame["Funding (30d)"].sum(), 1.2)
+
     def test_results_split_by_strategy(self):
         opened = "2026-11-01T00:00:00"
         entries = [{"wallet": "07f2", "coin": "VVV", "side": "SHORT", "strategy": "hedge", "opened": opened, "closed": None},

@@ -517,7 +517,7 @@ class DeskAccounts:
         return table[["Account", "Value"] + [f"{kind} {label}" for label in PERIODS for kind in ("PnL", "Return")] + ["Since"]]
 
     def show_strategies(self):
-        """HL results by strategy: directional, conviction, hedge and the ladders' market making (desk/journal.py)."""
+        """HL performance by strategy: directional, conviction, hedge and the ladders' market making (desk/journal.py)."""
         from desk.journal import show_strategies
 
         show_strategies()

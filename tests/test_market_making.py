@@ -34,13 +34,24 @@ class LadderMetricsTests(unittest.TestCase):
 
     def test_the_total_weights_markouts_by_fills(self):
         frame = pd.DataFrame([{"Fills": 3, "Volume": 100.0, "Spread captured": 1.0, "Inventory drift": -2.0, "Ladder PnL": -1.1,
-                               "Fees": 0.1, "Markout 1m (bps)": -2.0, "Markout 15m (bps)": float("nan")},
+                               "Fees": 0.1, "Funding": 0.5, "Markout 1m (bps)": -2.0, "Markout 15m (bps)": float("nan")},
                               {"Fills": 1, "Volume": 100.0, "Spread captured": 0.0, "Inventory drift": 0.0, "Ladder PnL": 0.0,
-                               "Fees": 0.0, "Markout 1m (bps)": 2.0, "Markout 15m (bps)": 4.0}])
+                               "Fees": 0.0, "Funding": 0.0, "Markout 1m (bps)": 2.0, "Markout 15m (bps)": 4.0}])
         total = market_making.total_row(frame)
         self.assertAlmostEqual(total["Markout 1m (bps)"], -1.0)
         self.assertAlmostEqual(total["Markout 15m (bps)"], 4.0)
         self.assertAlmostEqual(total["Inventory drift"], -2.0)
+
+    def test_ladder_funding_is_its_share_of_the_position_at_each_payment(self):
+        # Short 10; the ladder sells 2 more (inventory -2), then buys 1 back (inventory -1).
+        fills = [{"side": "A", "sz": "2", "time": 1_000}, {"side": "B", "sz": "1", "time": 3_000}]
+        events = [{"time": 500, "delta": {"coin": "X", "szi": "-10", "usdc": "1.0"}},     # before any fill: none is the ladder's
+                  {"time": 2_000, "delta": {"coin": "X", "szi": "-12", "usdc": "1.2"}},   # inventory -2 of -12: a sixth
+                  {"time": 4_000, "delta": {"coin": "X", "szi": "-11", "usdc": "1.1"}}]   # inventory -1 of -11: an eleventh
+        parts = [amount for _, amount in market_making.ladder_funding_parts(fills, events)]
+        self.assertEqual(parts[0], 0.0)
+        self.assertAlmostEqual(parts[1], 0.2)
+        self.assertAlmostEqual(parts[2], 0.1)
 
 
 if __name__ == "__main__":

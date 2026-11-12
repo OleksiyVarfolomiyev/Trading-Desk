@@ -1820,14 +1820,14 @@ class Ladders:
 
 
 # ----------------------------------------------------------------------------------------------
-# Research feed: results by strategy, trades due for review and the screener, hourly
+# Research feed: performance by strategy, trades due for review and the screener, hourly
 
 RESEARCH_FILE = Path(__file__).resolve().parents[1] / "data" / "research_state.json"
 RESEARCH_EVERY_SECONDS = 3600
 
 
 class ResearchFeed:
-    """Hourly: syncs the journal, reads results by strategy, flags old directional trades, re-ranks the screener;
+    """Hourly: syncs the journal, reads performance by strategy, flags old directional trades, re-ranks the screener;
     saves it for the local dashboard and notebooks and sends it to the web relay."""
 
     def __init__(self, daemon: "Daemon", path: Path | None = RESEARCH_FILE):
