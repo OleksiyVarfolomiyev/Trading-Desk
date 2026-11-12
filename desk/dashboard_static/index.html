@@ -120,15 +120,15 @@
     </section>
 
     <section class="card">
-      <h2>Market making (ladders)</h2>
-      <p class="sub">The ladders' own trading (c248, and VVV in 07f2). Ladder PnL is their result against simply holding the position you opened: spread captured (round trips) plus inventory drift (what the unmatched buys or sells made as the price moved) less fees. Markouts: the move 1 and 15 minutes after each fill, for (+) or against (−) it, in bps over the last 3 days; negative means the price runs through the quotes. Status says when the trims pause because the price trends the position's way. Position vs base: the band is in ladder.json (±25%). Quotes rest on HL's book; Queued are held in memory until the price nears them.</p>
-      <div class="table-wrap" id="t-market_making"></div>
-    </section>
-
-    <section class="card">
       <h2>Short candidates (screener)</h2>
       <p class="sub">The 40 most liquid HL perps ranked by the signals the research harness validated (or the desk's own record until one is). Size at budget is what the 5% risk budget buys at the 3 × ATR stop; nothing trades until you run it.</p>
       <div class="table-wrap" id="t-candidates"></div>
+    </section>
+
+    <section class="card">
+      <h2>Market making (ladders)</h2>
+      <p class="sub">The ladders' own trading (c248, and VVV in 07f2). Ladder PnL is their result against simply holding the position you opened: spread captured (round trips) plus inventory drift (what the unmatched buys or sells made as the price moved) less fees. Markouts: the move 1 and 15 minutes after each fill, for (+) or against (−) it, in bps over the last 3 days; negative means the price runs through the quotes. Status says when the trims pause because the price trends the position's way. Position vs base: the band is in ladder.json (±25%). Quotes rest on HL's book; Queued are held in memory until the price nears them.</p>
+      <div class="table-wrap" id="t-market_making"></div>
     </section>
 
     <section class="card">
