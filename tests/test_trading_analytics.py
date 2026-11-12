@@ -1,3 +1,8 @@
+import os as _os
+import tempfile as _tempfile
+
+# Trades in these tests must never write to the desk's real journal.
+_os.environ["DESK_JOURNAL_FILE"] = _os.path.join(_tempfile.mkdtemp(prefix="desk-journal-"), "trade_journal.json")
 import io
 from contextlib import redirect_stdout
 import importlib

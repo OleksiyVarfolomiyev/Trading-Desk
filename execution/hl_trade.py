@@ -169,6 +169,8 @@ class PlannedTrade:
     price_stop_distance: float = 0.0
     conviction: bool = False  # no stop, no take-profit, no loss guard (sized by notional)
     stress_note: str = ""     # the scenario stress check's warning, or why it cut or refused the entry
+    strategy: str = "directional"  # the journal's tag: directional, conviction or hedge (desk/journal.py)
+    rule_notes: str = ""      # warnings from the desk's own trade history (desk/trade_rules.py)
 
 
 @dataclass
@@ -1111,6 +1113,7 @@ def plan_trades(
     stops: dict[tuple[str, str], list[float]] | None = None,
     conviction: bool = False,
     conviction_pct: float = CONVICTION_NOTIONAL_PCT,
+    strategy: str | None = None,
 ) -> tuple[list[PlannedTrade], float]:
     """Build risk- and margin-limited entry plans and report current portfolio risk.
 
@@ -1197,6 +1200,11 @@ def plan_trades(
                 notional = side_to_direction(signal["side"]) * cut * market.mark_price
             plan = replace(plan, stress_note=note)
             exposures.append((asset_class, coin, notional))
+        from desk import trade_rules
+
+        tag = "conviction" if conviction else (strategy or "directional")
+        plan = replace(plan, strategy=tag, rule_notes="; ".join(trade_rules.entry_notes(
+            coin, signal["side"], plan.quantity * market.mark_price, tag)) if plan.quantity > 0 else "")
         plans.append(plan)
         risk_headroom -= plan.risk_budget
         available_margin -= plan.quantity * market.mark_price / plan.leverage
@@ -2140,6 +2148,8 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
             f"(price ${plan.expected_pnl.price_pnl:,.2f}; funding ${plan.expected_pnl.funding_pnl:,.2f})"
             + (f" — BLOCKED: {plan.block_reason}" if plan.block_reason else "")
             + (f" — STRESS: {plan.stress_note}" if plan.stress_note and not plan.block_reason else "")
+            + (f" — NOTE: {plan.rule_notes}" if plan.rule_notes and not plan.block_reason else "")
+            + (f" [{plan.strategy}]" if plan.strategy != "directional" else "")
         )
 
 
@@ -2915,6 +2925,12 @@ def execute_plans(
                 )
             else:
                 quantity, entry_price = _place_entry(exchange, wallet, plan, market, fast=fast)
+            try:  # the journal tags the position with its strategy; it never blocks a trade
+                from desk import journal
+
+                journal.record_entry(wallet, plan.coin, plan.side, plan.strategy)
+            except Exception as exc:
+                print(f"{plan.coin}: the journal entry was not saved ({type(exc).__name__}: {exc}).")
             if plan.conviction:
                 print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; conviction trade, "
                       "so no stop, take-profit or loss guard (the daemon's margin guard still watches the account).")
@@ -3196,6 +3212,13 @@ def main(argv: list[str] | None = None) -> int:
         "--conviction-pct of the trading wallet's equity (within its margin and the aggregate risk cap).",
     )
     parser.add_argument(
+        "--strategy",
+        choices=("directional", "hedge"),
+        default="directional",
+        help="With --signals: the journal's tag for the position (--conviction tags it conviction). "
+        "Results are reported per strategy; a hedge is exempt from the history warnings.",
+    )
+    parser.add_argument(
         "--conviction-pct",
         type=float,
         default=CONVICTION_NOTIONAL_PCT * 100,
@@ -3398,7 +3421,7 @@ def main(argv: list[str] | None = None) -> int:
         risk_wallets = read_target_wallets(args.wallet, args.risk_wallets)
         snapshot = urgent_fees(attach_other_venues(collect_snapshot(risk_wallets, dexes, markets), args), args.urgent)
         stops = resting_stops(risk_wallets, sorted({position.dex for position in snapshot.positions}))
-        conviction = dict(conviction=args.conviction, conviction_pct=args.conviction_pct / 100)
+        conviction = dict(conviction=args.conviction, conviction_pct=args.conviction_pct / 100, strategy=args.strategy)
         plans, current_risk = plan_trades(signals, markets, snapshot, stops=stops, **conviction)
         if args.urgent:
             print(f"Urgent entry: immediate-or-cancel at most {args.slippage:g}% from the mid (taker fee).")

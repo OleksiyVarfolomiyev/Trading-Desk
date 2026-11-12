@@ -1753,6 +1753,7 @@ class Daemon:
             stops = ht.resting_stops(risk_wallets, sorted({position.dex for position in snapshot.positions}))
             plans, risk = ht.plan_trades(signals, markets, snapshot, stops=stops,
                                          conviction=bool(request.get("conviction")),
+                                         strategy=request.get("strategy") or "directional",
                                          conviction_pct=float(request.get("conviction_pct") or ht.CONVICTION_NOTIONAL_PCT * 100) / 100)
             ht.print_plan(snapshot, plans, risk)
             return "signals", plans, markets, snapshot
@@ -2108,6 +2109,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="enter at once: immediate-or-cancel at most --slippage from the mid (taker fee)")
     trade.add_argument("--fast", action="store_true",
                        help="post-only limit re-priced every 2s until fully filled (stops if the price runs away)")
+    trade.add_argument("--strategy", choices=("directional", "hedge"), default="directional",
+                       help="the journal's tag for the position (--conviction tags it conviction)")
     trade.add_argument("--conviction", action="store_true",
                        help="high-conviction entry: no stop, take-profit or loss guard, sized by --conviction-pct")
     from desk.risk import CONVICTION_NOTIONAL_PCT
@@ -2140,7 +2143,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.urgent and args.fast:
             parser.error("choose --urgent or --fast, not both.")
         request = {"cmd": "trade", "wallet": args.wallet, "live": args.live, "urgent": args.urgent, "fast": args.fast,
-                   "conviction": args.conviction, "conviction_pct": args.conviction_pct,
+                   "conviction": args.conviction, "conviction_pct": args.conviction_pct, "strategy": args.strategy,
                    "slippage": args.slippage, "max_risk_pct": args.max_risk_pct,
                    "ignore_unreachable": args.ignore_unreachable,
                    "risk_wallets": [item.strip() for item in args.risk_wallets.split(",")] if args.risk_wallets else None,

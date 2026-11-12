@@ -1,5 +1,10 @@
 """The HL trading daemon, the executor's fast paths it uses, and the IB quote fallback."""
 
+import os as _os
+import tempfile as _tempfile
+
+# Trades in these tests must never write to the desk's real journal.
+_os.environ["DESK_JOURNAL_FILE"] = _os.path.join(_tempfile.mkdtemp(prefix="desk-journal-"), "trade_journal.json")
 import io
 import json
 import socket

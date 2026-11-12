@@ -405,6 +405,24 @@ class DeskOverview:
 
         show_market_making()
 
+    def show_strategies(self):
+        """HL realized and unrealized PnL, fees and volume split by strategy (desk/journal.py)."""
+        from desk.journal import show_strategies
+
+        show_strategies()
+
+    def show_candidates(self, top: int = 15):
+        """Daily candidate screener: liquid HL perps ranked with planned size, stop and stress impact."""
+        from desk.screener import show_candidates
+
+        show_candidates(top=top)
+
+    def show_ladder_candidates(self, top: int = 10):
+        """Market-making ladder coin selection: liquid and range-bound perps with spread capture."""
+        from desk.screener import show_ladder_candidates
+
+        show_ladder_candidates(top=top)
+
     def show_positions(self):
         """Open positions on every venue, one table per asset class."""
         if not self._require():
@@ -724,6 +742,16 @@ class DeskOverview:
         exposures = [row for snapshot in self.snapshots for row in stress.position_exposures(snapshot)]
         for title, text in reversed(stress.notices(exposures, self.desk_equity)):
             attention.insert(0, (title, text))
+        # Trade journal: review flag for directional trades held longer than 7 days
+        from desk import journal
+
+        open_set = {(snapshot.account[-4:].lower(), p.symbol) for snapshot in trading for p in snapshot.positions}
+        due = journal.overdue(journal.load(), open_set)
+        if due:
+            names = ", ".join(f"{item['coin']} ({item['days']:.0f}d, ...{item['wallet']})" for item in due)
+            attention.append(("Review overdue directional trades",
+                              f"{len(due)} directional trade{'s' if len(due) != 1 else ''} held > 7 days ({names}); "
+                              "trades held longer lost money in the desk's history."))
         # Each HL wallet keeps 20% of its equity free (the executor's reserve); past that it refuses new
         # trades. (Near an account-wide liquidation the trading daemon's margin guard reduces positions.)
         for snapshot in trading:
