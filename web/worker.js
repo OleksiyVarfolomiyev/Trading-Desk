@@ -380,7 +380,7 @@ async function ingest(request, env, kind, id, wallets) {
   } catch (error) {
     return reply({ error: "the body is not JSON" }, 400);
   }
-  if (kind === "ib" || kind === "wallets" || kind === "regime" || kind === "alerts") {
+  if (kind === "ib" || kind === "wallets" || kind === "regime" || kind === "alerts" || kind === "research") {
     const text = JSON.stringify(body);
     if (/(?:DU|U)\d{5,}/.test(text) || Object.values(wallets).some((a) => text.toLowerCase().includes(a.slice(2).toLowerCase()))) {
       return reply({ error: "refused: the body holds a full account identifier" }, 400);
@@ -453,6 +453,10 @@ export default {
     if (kind === "sync" && !id) {  // the last scheduled capture: when, days saved per wallet, problems
       const saved = env.DESK ? await env.DESK.get("sync", "json") : null;
       return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no scheduled capture has run yet" }, 404);
+    }
+    if (kind === "research" && !id) {  // results by strategy, trades due for review, the screener (hourly, from the Mac)
+      const saved = env.DESK ? await env.DESK.get("research", "json") : null;
+      return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no research has been sent yet" }, 404);
     }
     if (kind === "alerts" && !id) {  // the trading daemon's current alerts and heartbeat
       const saved = env.DESK ? await env.DESK.get("alerts", "json") : null;

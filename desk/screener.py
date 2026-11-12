@@ -1,435 +1,280 @@
-"""Daily candidate screener and market-making coin selection for Hyperliquid perps.
+"""Candidate screener: which HL perps to trade next, ranked, with what the desk would size.
 
-The screener evaluates liquid perps against the signals tested in ``desk.hl.signal_research``:
+Two lists, from the saved daily candles (desk/hl/signal_research.py) and one live market snapshot:
 
-* 7-day and 30-day relative strength vs BTC (``rel7``, ``rel30``);
-* distance from the 60-day high (``from_high60``);
-* current 8h funding rate (``funding8h``);
-* liquidity (24h volume and open interest).
+* Short candidates, among the 40 most liquid main-DEX perps (BTC, ETH and stablecoins left out).
+  The score uses only the signals the research harness validated, each as a cross-sectional
+  z-score in the direction that held up out of sample. With none validated it falls back to the
+  desk's own record (shorting alts already weak against BTC over 30 days won 93% of the time in
+  its history), and says so.
+* Market-making candidates: liquid coins that have been going nowhere, so a ladder's quotes on
+  both sides keep filling. Ranked by liquidity and by a low efficiency ratio over 30 days (net move
+  divided by the sum of daily moves: 1 is a straight line, near 0 is chop).
 
-Each candidate displays the executor's planned size, 3 x ATR stop price, risk budget,
-historical rule warnings (``desk.trade_rules``), and impact on the desk's scenario stress limits
-(``desk.stress``).
+Each candidate shows the executor's stop (3 x ATR), the size the 5% budget would buy at that stop,
+what the alt-rally stress scenario would read with it added (desk/stress.py), and the warnings
+from the desk's history (desk/trade_rules.py). Nothing here trades: pick one and run it as usual.
 
-It also selects range-bound, liquid candidates for market-making ladders (``hl_daemon.py ladder``),
-evaluated on range position, volatility, and historical spread captured per dollar of volume.
+    python -m desk.screener          # rank now and save data/screener.json
 """
 
 from __future__ import annotations
 
 import json
-import math
 import time
-from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from desk.accounts import load_accounts
-from desk.hl import trade_analytics as ta
-from desk.risk import HL_STOP_ATR_MULTIPLE as STOP_ATR_MULTIPLE, per_position_budget
-from desk import stress, trade_rules
+from desk.hl import signal_research as research
 
-CANDIDATES_FILE = Path(__file__).resolve().parents[1] / "data" / "candidates.json"
-EXCLUDED_COINS = {"BTC", "ETH", "USDC", "USDT", "USDE", "DAI", "PAXG", "XAUT"}
-MIN_24H_VOLUME_USD = 10_000_000.0
-
-
-@dataclass
-class ScreenerCandidate:
-    coin: str
-    mark: float
-    side: str
-    rel7: float
-    rel30: float
-    from_high60: float
-    funding8h: float
-    volume24h: float
-    open_interest: float
-    atr14: float
-    planned_size: float
-    planned_notional: float
-    stop_price: float
-    risk_usd: float
-    stress_status: str
-    rule_notes: list[str]
-    command: str
-
-    def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
+ROOT = Path(__file__).resolve().parents[1]
+SCREENER_FILE = ROOT / "data" / "screener.json"
+TOP_N = 10
+MM_TOP_N = 8
+MM_MAX_EFFICIENCY = 0.5                  # a coin moving more than half in a straight line is trending: no ladder
+RISK_BUDGET_PCT = 0.80 * 0.05            # 5% of the 80% usable equity (desk/risk.py)
+# Scores point the way a signal's long side buys, so shorts are the lowest scores. The fallback, the desk's record
+# (short alts already weak against BTC over 30 days), ranks by that return: the weakest score lowest.
+FALLBACK = {"rel30": 1.0}
+CANDIDATE_COLUMNS = ["Coin", "Score", "Basis", "30d vs BTC", "7d vs BTC", "From 60d high", "Funding (8h)", "24h volume",
+                     "Stop (3 ATR)", "Size at budget", "Max by margin", "Alt-rally stress after", "Notes"]
+CANDIDATE_FORMATS = {"Score": "num2", "30d vs BTC": "spct", "7d vs BTC": "spct", "From 60d high": "spct",
+                     "Funding (8h)": "spct", "24h volume": "usd", "Stop (3 ATR)": "pct", "Size at budget": "usd",
+                     "Alt-rally stress after": "pct"}
+MM_COLUMNS = ["Coin", "Efficiency (30d)", "30d move", "Range position (60d)", "Daily range", "24h volume", "Funding (8h)",
+              "Own ladder edge per $1k", "Notes"]
+MM_FORMATS = {"Efficiency (30d)": "num2", "30d move": "spct", "Range position (60d)": "pct", "Daily range": "pct",
+              "24h volume": "usd", "Funding (8h)": "spct", "Own ladder edge per $1k": "susd"}
+MM_EDGE_ZONE = (0.2, 0.8)                # outside this part of the 60-day range a breakout is likelier: flagged
+MAX_LEVERAGE = 4                         # the executor's cap on main-DEX perps
 
 
-def fetch_liquid_perps(min_volume: float = MIN_24H_VOLUME_USD) -> list[dict[str, Any]]:
-    """Fetch all active main-DEX perps meeting minimum 24h volume."""
-    meta, contexts = ta.post_info({"type": "metaAndAssetCtxs"})
-    universe = meta["universe"]
-    liquid = []
-    for asset, ctx in zip(universe, contexts):
-        coin = asset["name"]
-        if coin in EXCLUDED_COINS or coin.startswith("@") or "/" in coin:
-            continue
-        volume = float(ctx.get("dayNtlVlm") or 0)
-        if volume < min_volume:
-            continue
-        liquid.append({
-            "name": coin,
-            "sz_decimals": int(asset["szDecimals"]),
-            "max_leverage": int(asset.get("maxLeverage", 20)),
-            "mark": float(ctx.get("markPx") or ctx.get("midPx") or 0),
-            "prev_day_px": float(ctx.get("prevDayPx") or 0),
-            "funding_hourly": float(ctx.get("funding") or 0),
-            "volume_24h": volume,
-            "open_interest": float(ctx.get("openInterest") or 0) * float(ctx.get("markPx") or 0),
-        })
-    return liquid
+def live_markets() -> pd.DataFrame:
+    """Main-DEX perps now: mark, 24h notional volume, hourly funding, open interest (delisted left out)."""
+    from desk.hl.trade_analytics import post_info
 
-
-def _calculate_metrics(coin: str, mark: float, btc_candles: pd.DataFrame) -> dict[str, float] | None:
-    """Calculate rel7, rel30, from_high60, and ATR(14) using cached completed daily candles."""
-    try:
-        candles = ta.fetch_daily_candles(coin, lookback_days=65)
-    except Exception:
-        return None
-    if len(candles) < 30:
-        return None
-    close = candles["close"].to_numpy()
-    high = candles["high"].to_numpy()
-
-    # Align with BTC dates
-    merged = pd.merge(candles[["time", "close"]], btc_candles[["time", "close"]], on="time", suffixes=("_alt", "_btc"))
-    if len(merged) < 30:
-        return None
-
-    alt_close = merged["close_alt"].to_numpy()
-    btc_close = merged["close_btc"].to_numpy()
-
-    ratio = alt_close / btc_close
-    rel7 = float(ratio[-1] / ratio[-7] - 1) if len(ratio) >= 7 else 0.0
-    rel30 = float(ratio[-1] / ratio[-30] - 1) if len(ratio) >= 30 else 0.0
-
-    high60 = float(high[-min(60, len(high)):].max())
-    from_high60 = float(mark / high60 - 1) if high60 > 0 else 0.0
-
-    atr14 = float(ta.wilder_atr(candles, 14))
-
-    return {
-        "rel7": rel7,
-        "rel30": rel30,
-        "from_high60": from_high60,
-        "atr14": atr14,
-    }
-
-
-def screen_candidates(
-    desk_equity: float | None = None,
-    current_exposures: list[tuple[str, str, float]] | None = None,
-    min_volume: float = MIN_24H_VOLUME_USD,
-) -> list[ScreenerCandidate]:
-    """Rank liquid perps on momentum, high distance, funding, and compute risk-fitted sizing."""
-    if desk_equity is None or current_exposures is None:
-        from desk.overview import DeskOverview
-        overview = DeskOverview(load_accounts())
-        try:
-            overview.fetch_data(include_risk=True)
-            desk_equity = overview.desk_equity
-            current_exposures = [
-                row for snapshot in overview.snapshots for row in stress.position_exposures(snapshot)
-            ]
-        except Exception:
-            desk_equity = desk_equity or 10_000.0
-            current_exposures = current_exposures or []
-
-    btc_candles = ta.fetch_daily_candles("BTC", lookback_days=65)
-    liquid = fetch_liquid_perps(min_volume)
-    candidates = []
-
-    risk_budget = per_position_budget(desk_equity)
-
-    for item in liquid:
-        coin = item["name"]
-        mark = item["mark"]
-        if mark <= 0:
-            continue
-        m = _calculate_metrics(coin, mark, btc_candles)
-        if m is None or m["atr14"] <= 0:
-            continue
-
-        rel7 = m["rel7"]
-        rel30 = m["rel30"]
-        from_high60 = m["from_high60"]
-        atr14 = m["atr14"]
-        funding8h = item["funding_hourly"] * 8 * 100
-
-        # Side selection: weakness against BTC selects SHORT (desk edge); strong momentum selects LONG
-        side = "SHORT" if (rel7 <= 0 or rel30 <= 0) else "LONG"
-
-        stop_dist = STOP_ATR_MULTIPLE * atr14
-        stop_price = mark + stop_dist if side == "SHORT" else mark - stop_dist
-
-        step = 10 ** -item["sz_decimals"]
-        raw_size = risk_budget / stop_dist
-        planned_size = round(math.floor(raw_size / step + 1e-9) * step, item["sz_decimals"])
-        planned_notional = planned_size * mark
-
-        # Stress check impact
-        signed_notional = -planned_notional if side == "SHORT" else planned_notional
-        fraction, stress_note = stress.fit_entry(
-            current_exposures, desk_equity, "crypto perp", coin, signed_notional
-        )
-        if fraction < 1.0:
-            stress_status = f"shrunk to {fraction:.0%}" if fraction > 0 else "blocked by stress cap"
-        else:
-            stress_status = "ok"
-
-        # Trade rules warnings
-        notes = trade_rules.entry_notes(coin, side, planned_notional, "directional")
-
-        cmd = f"python execution/hl_trade.py --signals \"[{{'coin': '{coin}', 'side': '{side}'}}]\""
-
-        candidates.append(ScreenerCandidate(
-            coin=coin,
-            mark=mark,
-            side=side,
-            rel7=rel7,
-            rel30=rel30,
-            from_high60=from_high60,
-            funding8h=funding8h,
-            volume24h=item["volume_24h"],
-            open_interest=item["open_interest"],
-            atr14=atr14,
-            planned_size=planned_size,
-            planned_notional=planned_notional,
-            stop_price=stop_price,
-            risk_usd=planned_size * stop_dist,
-            stress_status=stress_status,
-            rule_notes=notes,
-            command=cmd,
-        ))
-
-    # Rank: shorts by weakness (most negative rel30 & rel7, furthest from high),
-    # longs by strength.
-    candidates.sort(key=lambda c: (c.side == "SHORT", -abs(c.rel30) if c.side == "SHORT" else c.rel30), reverse=True)
-    return candidates
-
-
-def candidates_frame(candidates: list[ScreenerCandidate]) -> pd.DataFrame:
-    """Turn candidates into a presentation DataFrame."""
+    meta, contexts = post_info({"type": "metaAndAssetCtxs"})
     rows = []
-    for c in candidates:
-        rows.append({
-            "Coin": c.coin,
-            "Side": c.side,
-            "Mark": c.mark,
-            "rel7 vs BTC": c.rel7,
-            "rel30 vs BTC": c.rel30,
-            "From 60d High": c.from_high60,
-            "8h Funding": c.funding8h,
-            "24h Volume": c.volume24h,
-            "Planned Size": c.planned_size,
-            "Planned USD": c.planned_notional,
-            "Stop Price": c.stop_price,
-            "Risk (USD)": c.risk_usd,
-            "Stress": c.stress_status,
-            "Rule Warnings": "; ".join(c.rule_notes) if c.rule_notes else "none",
-        })
-    return pd.DataFrame(rows)
+    for asset, context in zip(meta["universe"], contexts):
+        if asset.get("isDelisted"):
+            continue
+        rows.append({"coin": asset["name"], "mark": float(context.get("markPx") or 0),
+                     "volume24h": float(context.get("dayNtlVlm") or 0), "funding_hour": float(context.get("funding") or 0),
+                     "max_leverage": int(asset.get("maxLeverage") or 1)})
+    return pd.DataFrame(rows).set_index("coin")
 
 
-def show_candidates(top: int = 15) -> None:
-    """Display the Candidates table in interactive format."""
+def latest_signals(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Every signal at the last saved close, one row per coin, plus ATR, efficiency and daily range."""
+    close, high, low = data["close"], data["high"], data["low"]
+    signals = research.signal_frames(data)
+    frame = pd.DataFrame({name: values.iloc[-1] for name, values in signals.items()})
+    frame["atr_pct"] = (research.atr(high, low, close) / close).iloc[-1]
+    moves = close.diff().abs().rolling(30, min_periods=20).sum()
+    frame["efficiency"] = ((close - close.shift(30)).abs() / moves).iloc[-1]
+    frame["move30"] = close.pct_change(30, fill_method=None).iloc[-1]
+    frame["range_pct"] = ((high - low) / close).rolling(30, min_periods=20).mean().iloc[-1]
+    low60, high60 = low.rolling(60, min_periods=30).min(), high.rolling(60, min_periods=30).max()
+    frame["range_position"] = ((close - low60) / (high60 - low60)).iloc[-1]
+    return frame
+
+
+def scoring(results: dict | None) -> tuple[dict[str, float], str]:
+    """Signal -> weight (its validated direction), and the basis to show; the desk's record if nothing validated."""
+    validated = {name: item["direction"] for name, item in ((results or {}).get("signals") or {}).items() if item.get("validated")}
+    if validated:
+        return validated, "validated: " + ", ".join(research.SIGNALS[name] for name in validated)
+    return dict(FALLBACK), "desk record only: no signal validated, and the market-wide test does not confirm this ranking"
+
+
+def zscores(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    return (frame[columns] - frame[columns].mean()) / frame[columns].std(ddof=0).replace(0, np.nan)
+
+
+def margin_caps(free_margin: dict[str, float] | None, max_leverage: int) -> str:
+    """The most notional each wallet's free margin (above its 20% reserve) allows: ``07f2 $900, c248 $1,200``."""
+    if not free_margin:
+        return ""
+    leverage = min(MAX_LEVERAGE, max(1, int(max_leverage or 1)))
+    return ", ".join(f"{wallet} ${max(0.0, margin) * leverage:,.0f}" for wallet, margin in sorted(free_margin.items()))
+
+
+def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[str], weights: dict[str, float],
+                     basis: str, desk_equity: float, exposures: list, held: set[str], top: int = TOP_N,
+                     free_margin: dict[str, float] | None = None) -> pd.DataFrame:
+    """The ``top`` short candidates: lowest score first (a high score is what the long side of a signal buys)."""
+    from desk import stress, trade_rules
+
+    names = [coin for coin in tradable if coin in live.index and coin in signals.index]
+    frame = signals.loc[names].copy()
+    usable = [name for name in weights if name in frame.columns]
+    if not usable or frame.empty:
+        return pd.DataFrame(columns=CANDIDATE_COLUMNS)
+    z = zscores(frame, usable)
+    frame["score"] = sum(weights[name] * z[name] for name in usable) / len(usable)
+    frame = frame.dropna(subset=["score"]).sort_values("score").head(top)
+    budget = RISK_BUDGET_PCT * desk_equity
+    rows = []
+    for coin, row in frame.iterrows():
+        stop = 3.0 * row["atr_pct"]
+        size = budget / stop if stop > 0 else float("nan")
+        _, note = stress.fit_entry(exposures, desk_equity, "crypto perp", coin, -size) if desk_equity > 0 and size == size else (1.0, "")
+        after = stress.scenario_losses(list(exposures) + [("crypto perp", coin, -size)])["alt rally"] / desk_equity if desk_equity > 0 else float("nan")
+        notes = trade_rules.entry_notes(coin, "SHORT", size) + ([note] if note else []) + (["already held"] if coin in held else [])
+        rows.append({"Coin": coin, "Score": row["score"], "Basis": basis, "30d vs BTC": row.get("rel30"), "7d vs BTC": row.get("rel7"),
+                     "From 60d high": row.get("from_high60"), "Funding (8h)": live.loc[coin, "funding_hour"] * 8,
+                     "24h volume": live.loc[coin, "volume24h"], "Stop (3 ATR)": stop, "Size at budget": size,
+                     "Max by margin": margin_caps(free_margin, live.loc[coin, "max_leverage"] if "max_leverage" in live.columns else MAX_LEVERAGE),
+                     "Alt-rally stress after": after, "Notes": "; ".join(notes)})
+    return pd.DataFrame(rows, columns=CANDIDATE_COLUMNS)
+
+
+def market_making_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[str], laddered: set[str],
+                             top: int = MM_TOP_N, edges: dict[str, float] | None = None) -> pd.DataFrame:
+    """Liquid coins that have gone nowhere: low efficiency ratio, ranked half by it and half by liquidity."""
+    names = [coin for coin in tradable if coin in live.index and coin in signals.index]
+    columns = ["efficiency", "move30", "range_pct"] + (["range_position"] if "range_position" in signals.columns else [])
+    frame = signals.loc[names, columns].dropna(subset=["efficiency", "move30", "range_pct"]).copy()
+    frame = frame[frame["efficiency"] <= MM_MAX_EFFICIENCY]
+    if frame.empty:
+        return pd.DataFrame(columns=MM_COLUMNS)
+    frame["volume24h"] = live.loc[frame.index, "volume24h"]
+    frame["rank"] = frame["efficiency"].rank() + frame["volume24h"].rank(ascending=False)
+    frame = frame.sort_values("rank").head(top)
+    rows = []
+    for coin, row in frame.iterrows():
+        position = row.get("range_position", float("nan"))
+        notes = (["ladder running"] if coin in laddered else []) + (
+            ["near the edge of its 60-day range: breakout risk"] if position == position and not MM_EDGE_ZONE[0] <= position <= MM_EDGE_ZONE[1] else [])
+        rows.append({"Coin": coin, "Efficiency (30d)": row["efficiency"], "30d move": row["move30"], "Range position (60d)": position,
+                     "Daily range": row["range_pct"], "24h volume": row["volume24h"], "Funding (8h)": live.loc[coin, "funding_hour"] * 8,
+                     "Own ladder edge per $1k": (edges or {}).get(coin, float("nan")), "Notes": "; ".join(notes)})
+    return pd.DataFrame(rows, columns=MM_COLUMNS)
+
+
+def ladder_edges() -> dict[str, float]:
+    """Each coin's own ladder edge where a ladder has traded it: spread captured less fees per $1,000 (desk/market_making.py)."""
+    try:
+        from desk.market_making import market_making_frame
+
+        frame = market_making_frame()
+    except Exception:
+        return {}
+    return {row["Coin"]: row["Captured per $1k"] for _, row in frame.iterrows() if row.get("Volume") and row["Captured per $1k"] == row["Captured per $1k"]}
+
+
+def run(desk_equity: float | None = None, exposures: list | None = None, held: set[str] | None = None,
+        laddered: set[str] | None = None, free_margin: dict[str, float] | None = None) -> dict:
+    """Rank now from the saved candles; save and return the screener state."""
+    panel = research.load_panel()
+    if "BTC" not in panel:
+        raise RuntimeError("no saved candles: run python -m desk.hl.signal_research first")
+    data = research.frames(panel)
+    tradable_frame = research.universe(data["close"], data["dollar_volume"])
+    tradable = [coin for coin, flag in tradable_frame.iloc[-1].items() if flag]
+    live = live_markets()
+    signals = latest_signals(data)
+    weights, basis = scoring(research.load_results())
+    if desk_equity is None or exposures is None or held is None:
+        desk_equity, exposures, held = desk_context()
+    laddered = laddered if laddered is not None else {item["coin"] for item in _ladders()}
+    shorts = short_candidates(signals, live, tradable, weights, basis, desk_equity, exposures, held, free_margin=free_margin)
+    mm = market_making_candidates(signals, live, tradable, laddered, edges=ladder_edges())
+    state = {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "candles_to": f"{data['close'].index[-1]:%Y-%m-%d}",
+             "basis": basis, "universe": len(tradable), "desk_equity": desk_equity,
+             "shorts": json.loads(shorts.to_json(orient="records")), "market_making": json.loads(mm.to_json(orient="records"))}
+    SCREENER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SCREENER_FILE.write_text(json.dumps(state, indent=1))
+    return state
+
+
+def desk_context() -> tuple[float, list, set[str]]:
+    """Desk equity, every position's exposure (desk/stress.py) and the coins held, from a fresh desk read."""
+    from desk import stress
+    from desk.accounts import load_accounts
+    from desk.overview import DeskOverview
+
+    overview = DeskOverview(load_accounts())
+    overview.fetch_data(include_risk=False, record_ib_history=False)
+    exposures = [row for snapshot in overview.snapshots for row in stress.position_exposures(snapshot)]
+    held = {position.symbol for snapshot in overview.snapshots if snapshot.venue == "hl" for position in snapshot.positions}
+    return overview.desk_equity, exposures, held
+
+
+def _ladders() -> list[dict]:
+    from desk.market_making import running_ladders
+
+    return running_ladders()
+
+
+def load(path: Path = SCREENER_FILE) -> dict | None:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _formatters() -> dict:
+    percent = lambda value: "" if value is None or value != value else f"{value:.1%}"
+    money = lambda value: "" if value is None or value != value else f"${value:,.0f}"
+    number = lambda value: "" if value is None or value != value else f"{value:.2f}"
+    funding = lambda value: "" if value is None or value != value else f"{value:.4%}"
+    return {"Score": number, "30d vs BTC": percent, "7d vs BTC": percent, "From 60d high": percent, "Funding (8h)": funding,
+            "24h volume": money, "Stop (3 ATR)": percent, "Size at budget": money, "Alt-rally stress after": percent,
+            "Efficiency (30d)": number, "30d move": percent, "Range position (60d)": percent, "Daily range": percent,
+            "Own ladder edge per $1k": lambda value: "" if value is None or value != value else f"${value:,.2f}"}
+
+
+def show_candidates() -> None:
+    """Short candidates for the notebooks (from the last saved run; the trading daemon re-ranks hourly)."""
     from desk.hl.account_analytics import display_interactive_table
 
-    candidates = screen_candidates()
-    if not candidates:
-        print("No candidates found meeting volume and liquidity criteria.")
+    state = load()
+    if not state:
+        print("No screener run yet: python -m desk.screener")
         return
-    frame = candidates_frame(candidates[:top])
-
-    money = lambda v: f"${v:,.2f}" if v == v else ""
-    vol_money = lambda v: f"${v / 1e6:,.1f}M" if v == v else ""
-    pct = lambda v: f"{v:.1%}" if v == v else ""
-    funding_pct = lambda v: f"{v:.4f}%" if v == v else ""
-
-    display_interactive_table(
-        frame,
-        title=f"DAILY CANDIDATE SCREENER (TOP {len(frame)} LIQUID PERPS)",
-        formatters={
-            "Mark": money,
-            "rel7 vs BTC": pct,
-            "rel30 vs BTC": pct,
-            "From 60d High": pct,
-            "8h Funding": funding_pct,
-            "24h Volume": vol_money,
-            "Planned USD": money,
-            "Stop Price": money,
-            "Risk (USD)": money,
-        },
-        key_columns={"rel30 vs BTC": "min"},
-    )
-    print("Candidates are sized using the executor's 3 x ATR stop budget. Stress status reflects the desk-wide alt-rally/equity-selloff cap.")
+    formats = _formatters()
+    display_interactive_table(pd.DataFrame(state["shorts"], columns=CANDIDATE_COLUMNS), title="SHORT CANDIDATES",
+                              formatters={key: formats[key] for key in CANDIDATE_COLUMNS if key in formats}, key_columns={"Score": "min"})
+    print(f"As of {state['as_of'][:16].replace('T', ' ')} UTC, candles to {state['candles_to']}; {state['universe']} coins in the "
+          f"liquid universe. Score basis: {state['basis']}. Size at budget is what the 5% risk budget buys at the 3 x ATR stop; "
+          "Max by margin is the most each wallet's free margin allows (the executor takes the smaller).")
 
 
-# ---------------------------------------------------------------------------
-# Market-Making Ladder Coin Selection
-# ---------------------------------------------------------------------------
-
-@dataclass
-class LadderCandidate:
-    coin: str
-    mark: float
-    volume24h: float
-    atr_pct: float
-    range_pos60: float
-    trend_rel30: float
-    historical_spread_bps: float
-    mm_score: float
-    reason: str
-
-    def as_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-def ladder_candidates(min_volume: float = 15_000_000.0, top: int = 10) -> list[LadderCandidate]:
-    """Score liquid coins for market-making ladders: range-bound, liquid, with good spread capture."""
-    from desk import market_making
-
-    btc_candles = ta.fetch_daily_candles("BTC", lookback_days=65)
-    liquid = fetch_liquid_perps(min_volume)
-
-    # Historical spread capture performance if available
-    mm_history: dict[str, float] = {}
-    try:
-        past_ladders = market_making.market_making_frame()
-        for _, row in past_ladders.iterrows():
-            coin = row.get("Coin")
-            vol = float(row.get("Volume") or 0)
-            spread = float(row.get("Spread captured") or 0)
-            if vol > 0 and coin:
-                mm_history[coin] = (spread / vol) * 10_000  # bps
-    except Exception:
-        pass
-
-    candidates = []
-    for item in liquid:
-        coin = item["name"]
-        mark = item["mark"]
-        if mark <= 0:
-            continue
-        try:
-            candles = ta.fetch_daily_candles(coin, lookback_days=65)
-        except Exception:
-            continue
-        if len(candles) < 30:
-            continue
-
-        high60 = float(candles["high"][-60:].max())
-        low60 = float(candles["low"][-60:].min())
-        range_span = high60 - low60
-        if range_span <= 0:
-            continue
-
-        range_pos = (mark - low60) / range_span  # 0.0 at low, 1.0 at high
-        atr14 = float(ta.wilder_atr(candles, 14))
-        atr_pct = atr14 / mark if mark > 0 else 0.0
-
-        # Relative trend vs BTC
-        merged = pd.merge(candles[["time", "close"]], btc_candles[["time", "close"]], on="time", suffixes=("_alt", "_btc"))
-        if len(merged) < 30:
-            continue
-        ratio = merged["close_alt"].to_numpy() / merged["close_btc"].to_numpy()
-        trend_rel30 = float(ratio[-1] / ratio[-30] - 1) if len(ratio) >= 30 else 0.0
-
-        # Range-bound suitability:
-        # 1. Centered in 60d range (0.35 - 0.65 is ideal)
-        center_score = 1.0 - 2.0 * abs(range_pos - 0.5)  # 1.0 at midpoint, 0.0 at edges
-        # 2. Low directional trend vs BTC
-        trend_penalty = min(1.0, abs(trend_rel30) * 2.0)
-        # 3. Healthy volatility (2% to 6% daily ATR)
-        vol_score = 1.0 if 0.02 <= atr_pct <= 0.06 else max(0.0, 1.0 - abs(atr_pct - 0.04) * 25.0)
-
-        spread_bps = mm_history.get(coin, 5.0)  # default estimate 5 bps
-
-        score = center_score * 0.4 + (1.0 - trend_penalty) * 0.3 + vol_score * 0.3
-
-        if range_pos < 0.20 or range_pos > 0.80:
-            reason = "near edge of 60d range (breakout risk)"
-        elif abs(trend_rel30) > 0.30:
-            reason = "strong directional trend"
-        else:
-            reason = "range-bound, stable volatility"
-
-        candidates.append(LadderCandidate(
-            coin=coin,
-            mark=mark,
-            volume24h=item["volume_24h"],
-            atr_pct=atr_pct,
-            range_pos60=range_pos,
-            trend_rel30=trend_rel30,
-            historical_spread_bps=spread_bps,
-            mm_score=score,
-            reason=reason,
-        ))
-
-    candidates.sort(key=lambda c: c.mm_score, reverse=True)
-    return candidates[:top]
-
-
-def ladder_candidates_frame(candidates: list[LadderCandidate]) -> pd.DataFrame:
-    rows = []
-    for c in candidates:
-        rows.append({
-            "Coin": c.coin,
-            "Mark": c.mark,
-            "24h Volume": c.volume24h,
-            "ATR (% of px)": c.atr_pct,
-            "60d Range Pos": c.range_pos60,
-            "30d Trend vs BTC": c.trend_rel30,
-            "Hist Spread (bps)": c.historical_spread_bps,
-            "MM Score": c.mm_score,
-            "Assessment": c.reason,
-        })
-    return pd.DataFrame(rows)
-
-
-def show_ladder_candidates(top: int = 10) -> None:
-    """Display the Market Making Ladder Candidates table."""
+def show_ladder_candidates() -> None:
+    """Market-making candidates for the notebooks."""
     from desk.hl.account_analytics import display_interactive_table
 
-    candidates = ladder_candidates(top=top)
-    if not candidates:
-        print("No market-making ladder candidates found.")
+    state = load()
+    if not state:
+        print("No screener run yet: python -m desk.screener")
         return
-    frame = ladder_candidates_frame(candidates)
-
-    display_interactive_table(
-        frame,
-        title="MARKET-MAKING LADDER COIN SELECTION (LIQUID & RANGE-BOUND)",
-        formatters={
-            "Mark": lambda v: f"${v:,.2f}" if v == v else "",
-            "24h Volume": lambda v: f"${v / 1e6:,.1f}M" if v == v else "",
-            "ATR (% of px)": lambda v: f"{v:.1%}" if v == v else "",
-            "60d Range Pos": lambda v: f"{v:.0%}" if v == v else "",
-            "30d Trend vs BTC": lambda v: f"{v:+.1%}" if v == v else "",
-            "Hist Spread (bps)": lambda v: f"{v:.1f}" if v == v else "",
-            "MM Score": lambda v: f"{v:.2f}" if v == v else "",
-        },
-        key_columns={"MM Score": "max"},
-    )
-    print("Ladder candidates are filtered for high liquidity (> $15M 24h volume) and ranked by range-bound stability and spread capture.")
+    formats = _formatters()
+    display_interactive_table(pd.DataFrame(state["market_making"], columns=MM_COLUMNS), title="MARKET-MAKING CANDIDATES",
+                              formatters={key: formats[key] for key in MM_COLUMNS if key in formats}, key_columns={"Efficiency (30d)": "min"})
+    print("Efficiency: the 30-day net move over the sum of daily moves (near 0 is chop, good for a ladder). Own ladder edge: "
+          "spread captured less fees per $1,000 where a ladder has traded the coin.")
 
 
-def save_candidates(path: Path = CANDIDATES_FILE) -> None:
-    """Save screened candidates to JSON for dashboard and web sync."""
-    candidates = screen_candidates()
-    ladders = ladder_candidates()
-    data = {
-        "as_of": pd.Timestamp.now(tz="UTC").isoformat(),
-        "candidates": [c.as_dict() for c in candidates],
-        "ladder_candidates": [l.as_dict() for l in ladders],
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps(data, indent=1))
-    temp.replace(path)
+def show_screener() -> None:
+    """Both candidate lists."""
+    show_candidates()
+    show_ladder_candidates()
+
+
+def main(argv: list[str] | None = None) -> int:
+    from desk.privacy import mask_output
+
+    mask_output()
+    state = run()
+    pd.set_option("display.width", 240)
+    print(f"basis: {state['basis']}; universe {state['universe']}; candles to {state['candles_to']}")
+    print(pd.DataFrame(state["shorts"]).drop(columns=["Basis"]).to_string(index=False, float_format=lambda v: f"{v:.3f}"))
+    print(pd.DataFrame(state["market_making"]).to_string(index=False, float_format=lambda v: f"{v:.3f}"))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

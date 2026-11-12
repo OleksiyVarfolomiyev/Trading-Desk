@@ -293,6 +293,23 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
                                          key={"Ladder PnL": "abs"}) if len(frame) else table(frame, {}))
     except Exception as exc:
         desk.notes.append(f"Market-making metrics unavailable ({type(exc).__name__}: {exc}).")
+    # Results by strategy, trades due for review and the screener, as the trading daemon last saved them (hourly).
+    try:
+        import json as _json
+
+        from desk import journal, screener
+
+        research_path = ROOT_DATA / "research_state.json"
+        research = _json.loads(research_path.read_text()) if research_path.exists() else {}
+        strategies = pd.DataFrame(research.get("strategies", []), columns=journal.COLUMNS)
+        tables["strategies"] = table(strategies, journal.FORMATS, total_last=True) if len(strategies) > 1 else table(strategies, {})
+        screen = research.get("screener") or screener.load() or {}
+        shorts = pd.DataFrame(screen.get("shorts", []), columns=screener.CANDIDATE_COLUMNS)
+        tables["candidates"] = table(shorts, screener.CANDIDATE_FORMATS, key={"Score": "min"}) if len(shorts) else table(shorts, {})
+        mm = pd.DataFrame(screen.get("market_making", []), columns=screener.MM_COLUMNS)
+        tables["mm_candidates"] = table(mm, screener.MM_FORMATS, key={"Efficiency (30d)": "min"}) if len(mm) else table(mm, {})
+    except Exception as exc:
+        desk.notes.append(f"Research tables unavailable ({type(exc).__name__}: {exc}).")
     if overview.book:
         tables["open_risk"] = table(overview.risk_frame(), {**money, "Positions": "int", "Open risk": "rusd",
                                                             "% of desk equity": "rpct"}, total_last=True,

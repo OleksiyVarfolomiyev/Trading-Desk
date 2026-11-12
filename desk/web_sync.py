@@ -240,6 +240,15 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
                               + ("daily NAV sent, positions kept from the last send" if sent else "nothing on the relay to update"))
             except Exception as inner:
                 report.append(f"{label}: TWS not readable ({reason}) and NAV not sent ({inner})")
+    try:  # the research panel: every perp's daily candles, then the signal tests (desk/hl/signal_research.py)
+        from desk.hl import signal_research
+
+        panel = signal_research.refresh_panel(log=lambda *_: None)
+        state = signal_research.run(panel)
+        validated = [item["label"] for item in state["signals"].values() if item.get("validated")]
+        report.append(f"research: {len(panel)} perps' candles saved; validated signals: {', '.join(validated) or 'none'}")
+    except Exception as exc:
+        report.append(f"research: not refreshed ({type(exc).__name__}: {exc})")
     try:
         push_regime()
         report.append("regime: reading sent to the relay")

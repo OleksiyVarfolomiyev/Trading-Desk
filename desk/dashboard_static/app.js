@@ -1,7 +1,7 @@
 "use strict";
 
 const POLL_MS = 5000;
-const TABLES = ["performance", "accounts", "risk", "positions", "exposure", "open_risk", "movers", "wallets", "market_making"];
+const TABLES = ["performance", "accounts", "risk", "positions", "exposure", "open_risk", "movers", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
 const sortState = {};           // table id -> {key, dir}
 let lastRendered = null;        // last_ok of the data currently drawn
 let latest = null;              // latest /api/state document

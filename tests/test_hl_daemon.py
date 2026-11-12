@@ -557,25 +557,36 @@ class LadderArmingTests(unittest.TestCase):
         return [{"price": 100 + step, "is_buy": False, "oid": None} for step in range(1, 6)] + \
                [{"price": 100 - step, "is_buy": True, "oid": None} for step in range(1, 6)]
 
-    def test_only_quotes_near_the_price_go_on_the_book(self):
+    def test_only_the_nearest_quote_per_side_goes_on_the_book(self):
         to_place, to_cancel = hl_daemon.arm_plan(self.grid(), 100.0, 1.0, self.config, now=0.0)
-        self.assertEqual(sorted(quote["price"] for quote in to_place), [98, 99, 101, 102])  # within 2 steps
+        self.assertEqual(sorted(quote["price"] for quote in to_place), [99, 101])     # one a side, within 1.25 steps
         self.assertEqual(to_cancel, [])
 
-    def test_a_quote_is_pulled_once_the_price_leaves_it_behind(self):
+    def test_nothing_is_shown_until_the_price_comes_near(self):
+        to_place, _ = hl_daemon.arm_plan(self.grid(), 100.0, 0.7, self.config, now=0.0)   # quotes 1.4+ steps away
+        self.assertEqual(to_place, [])
+
+    def test_a_quote_is_pulled_once_the_price_leaves_it_behind_and_the_next_one_shows(self):
         grid = self.grid()
         for quote in grid:
-            if quote["price"] in (98, 99, 101, 102):
+            if quote["price"] in (99, 101):
                 quote["oid"] = int(quote["price"])
-        to_place, to_cancel = hl_daemon.arm_plan(grid, 102.5, 1.0, self.config, now=0.0)
-        self.assertEqual(sorted(quote["price"] for quote in to_cancel), [98, 99])          # more than 3 steps away
-        self.assertEqual(sorted(quote["price"] for quote in to_place), [103, 104])         # newly within 2 steps
+        to_place, to_cancel = hl_daemon.arm_plan(grid, 101.6, 1.0, self.config, now=0.0)
+        self.assertEqual(sorted(quote["price"] for quote in to_cancel), [99, 101])  # 99 is 2.6 steps away; 102 is nearer than 101
+        self.assertEqual(sorted(quote["price"] for quote in to_place), [102])       # no buy is near enough to show
 
-    def test_between_the_two_limits_nothing_changes(self):
+    def test_a_nearer_quote_replaces_the_one_on_the_book(self):
         grid = self.grid()
-        grid[2]["oid"] = 7                                    # the sell at 103 is resting
-        to_place, to_cancel = hl_daemon.arm_plan(grid, 100.4, 1.0, self.config, now=0.0)
-        self.assertNotIn(grid[2], to_cancel)                  # 2.6 steps away: inside cancel_beyond, it stays
+        grid[1]["oid"] = 7                                    # the sell at 102 rests
+        to_place, to_cancel = hl_daemon.arm_plan(grid, 100.2, 1.0, self.config, now=0.0)
+        self.assertEqual([quote["price"] for quote in to_place if not quote["is_buy"]], [101])
+        self.assertIn(grid[1], to_cancel)
+
+    def test_a_lowered_limit_pulls_the_extras(self):
+        grid = self.grid()
+        grid[0]["oid"], grid[1]["oid"] = 1, 2                 # two sells rest (an older, higher limit)
+        _, to_cancel = hl_daemon.arm_plan(grid, 100.0, 1.0, self.config, now=0.0)
+        self.assertEqual([quote["price"] for quote in to_cancel], [102])
 
     def test_a_refused_quote_waits_before_trying_again(self):
         grid = self.grid()

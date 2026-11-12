@@ -534,6 +534,7 @@
     const regime = await every("regime", 30 * 60000, () => relay("/regime")).catch(() => null);
     const daemonAlerts = await every("alerts", 60000, () => relay("/alerts")).catch(() => null);
     const syncRun = await every("sync", 30 * 60000, () => relay("/sync")).catch(() => null);
+    const research = await every("research", 15 * 60000, () => relay("/research")).catch(() => null);
     const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];
     ibs.forEach((account) => {
       const age = Date.now() - account.asOf;
@@ -872,6 +873,8 @@
       const describe = ([name, stamp, , note]) => `${name}: ${fin(stamp) ? `last ${eastern(stamp)}` : "never received"} (${note})`;
       attention.unshift(["Data flow down", staleFeeds.map(describe).join("; ") + "."]);
     }
+    ((research && research.overdue) || []).forEach((item) => attention.push([`Review: ${item.coin} held ${Math.round(item.days)} days`,
+      `...${item.wallet} ${item.coin} ${String(item.side).toLowerCase()} is a directional trade open ${Math.round(item.days)} days; in the desk's history trades held over 7 days lost money. Close it, or re-tag it conviction or hedge.`]));
     if (daemonAlerts) {  // the trading daemon's problems (desk/alerts.py), first
       const age = (Date.now() / 1000 - Number(daemonAlerts.heartbeat || 0)) / 60;
       const rows = age > 15
@@ -914,9 +917,29 @@
         if (!rows.length) return { columns: [], rows: [], total: null };
         const total = { "Account": "Total" };
         ["Fills", "Volume", "Spread captured", "Ladder PnL", "Fees"].forEach((k) => { total[k] = sum(rows.map((r) => r[k])); });
-        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Ladder PnL", "Fees", "Position vs base", "Quotes", "Queued"],
-          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Ladder PnL": "susd", "Fees": "usd", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
+        total["Captured per $1k"] = total.Volume ? (total["Spread captured"] - total.Fees) / total.Volume * 1000 : NaN;
+        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Captured per $1k", "Ladder PnL", "Fees", "Position vs base", "Quotes", "Queued"],
+          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Captured per $1k": "susd", "Ladder PnL": "susd", "Fees": "usd", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
           { total, key: { "Ladder PnL": "abs" } });
+      })(),
+      strategies: (() => {  // desk/journal.py, as the daemon last sent it (the last row is the total)
+        const rows = (research && research.strategies) || [];
+        if (rows.length < 2) return { columns: [], rows: [], total: null };
+        return table(rows.slice(0, -1), ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL (30d)", "Fees (30d)", "Volume (30d)", "Fills (30d)"],
+          { "Open positions": "int", "Unrealized PnL": "susd", "Realized PnL (30d)": "susd", "Fees (30d)": "usd", "Volume (30d)": "usd", "Fills (30d)": "int" },
+          { total: rows[rows.length - 1] });
+      })(),
+      candidates: (() => {  // desk/screener.py
+        const rows = (research && research.screener && research.screener.shorts) || [];
+        return rows.length ? table(rows, ["Coin", "Score", "Basis", "30d vs BTC", "7d vs BTC", "From 60d high", "Funding (8h)", "24h volume", "Stop (3 ATR)", "Size at budget", "Max by margin", "Alt-rally stress after", "Notes"],
+          { "Score": "num2", "30d vs BTC": "spct", "7d vs BTC": "spct", "From 60d high": "spct", "Funding (8h)": "spct", "24h volume": "usd", "Stop (3 ATR)": "pct", "Size at budget": "usd", "Alt-rally stress after": "pct" },
+          { key: { "Score": "min" } }) : { columns: [], rows: [], total: null };
+      })(),
+      mm_candidates: (() => {
+        const rows = (research && research.screener && research.screener.market_making) || [];
+        return rows.length ? table(rows, ["Coin", "Efficiency (30d)", "30d move", "Range position (60d)", "Daily range", "24h volume", "Funding (8h)", "Own ladder edge per $1k", "Notes"],
+          { "Efficiency (30d)": "num2", "30d move": "spct", "Range position (60d)": "pct", "Daily range": "pct", "24h volume": "usd", "Funding (8h)": "spct", "Own ladder edge per $1k": "susd" },
+          { key: { "Efficiency (30d)": "min" } }) : { columns: [], rows: [], total: null };
       })(),
       wallets: table(walletRows, ["Wallet", "Chain", "Symbol", "Value", "% of desk", "Amount", "Price", "Note"],
         { "Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct" },

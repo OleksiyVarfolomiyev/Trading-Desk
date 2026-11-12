@@ -1200,8 +1200,10 @@ LADDER_DEFAULTS = {
     "pause_adds_at_health": 0.50,  # stop adding once the account is this far toward liquidation
     # The full grid of quotes is kept in memory; a quote goes on HL's book only once the price comes within
     # place_within spacings of it, and is pulled again past cancel_beyond, so few orders rest at a time.
-    "place_within": 2.0,
-    "cancel_beyond": 3.0,
+    "place_within": 1.25,
+    "cancel_beyond": 2.0,
+    "max_live_per_side": 1,       # at most this many quotes per side on the book at once: the nearest
+
     "reject_retry_seconds": 30,   # a post-only quote HL refused (it would have crossed) is tried again after this
 }
 LADDER_CLOID_PREFIX = "0x1add"   # marks the ladder's own orders (client order ids)
@@ -1257,12 +1259,29 @@ def arm_plan(grid: list[dict], mid: float, spacing: float, config: dict, now: fl
 
     A quote is placed once the price is within ``place_within`` spacings of it (and HL has not just refused
     it), and pulled once the price is more than ``cancel_beyond`` spacings away; between the two it stays as
-    it is, so a price wobbling near the edge does not place and cancel it over and over.
+    it is, so a price wobbling near the edge does not place and cancel it over and over. At most
+    ``max_live_per_side`` quotes per side rest at once, the nearest to the price, so little shows on the book.
     """
     near, far = config["place_within"] * spacing, config["cancel_beyond"] * spacing
-    to_cancel = [quote for quote in grid if quote.get("oid") and abs(quote["price"] - mid) > far]
-    to_place = [quote for quote in grid if not quote.get("oid") and abs(quote["price"] - mid) <= near
-                and quote.get("retry_after", 0.0) <= now]
+    limit = int(config.get("max_live_per_side", 1))
+    distance = lambda quote: abs(quote["price"] - mid)
+    to_cancel = [quote for quote in grid if quote.get("oid") and distance(quote) > far]
+    to_place = []
+    for side in (True, False):
+        live = sorted((quote for quote in grid if quote.get("oid") and quote["is_buy"] == side and quote not in to_cancel), key=distance)
+        to_cancel += live[limit:]                      # more than the limit on the book (a lowered limit): the farthest go
+        live = live[:limit]
+        waiting = sorted((quote for quote in grid if not quote.get("oid") and quote["is_buy"] == side and distance(quote) <= near
+                          and quote.get("retry_after", 0.0) <= now), key=distance)
+        for quote in waiting:
+            if len(live) >= limit:
+                if distance(quote) < distance(live[-1]):   # a nearer quote takes the place of the farthest one on the book
+                    to_cancel.append(live.pop())
+                else:
+                    break
+            to_place.append(quote)
+            live.append(quote)
+            live.sort(key=distance)
     return to_place, to_cancel
 
 
@@ -1500,6 +1519,71 @@ class Ladders:
         ladder["oids"] = [quote["oid"] for quote in ladder["grid"] if quote.get("oid")]
 
 
+# ----------------------------------------------------------------------------------------------
+# Research feed: results by strategy, trades due for review and the screener, hourly
+
+RESEARCH_FILE = Path(__file__).resolve().parents[1] / "data" / "research_state.json"
+RESEARCH_EVERY_SECONDS = 3600
+
+
+class ResearchFeed:
+    """Hourly: syncs the journal, reads results by strategy, flags old directional trades, re-ranks the screener;
+    saves it for the local dashboard and notebooks and sends it to the web relay."""
+
+    def __init__(self, daemon: "Daemon", path: Path | None = RESEARCH_FILE):
+        self.daemon = daemon
+        self.path = path
+        self.last = 0.0
+
+    def run(self) -> None:
+        while not self.daemon.stopped.wait(60):
+            if time.time() - self.last < RESEARCH_EVERY_SECONDS:
+                continue
+            self.last = time.time()
+            try:
+                self.step()
+            except Exception as exc:  # the dashboards keep the last reading
+                log(f"research feed failed ({type(exc).__name__}: {exc})")
+
+    def step(self) -> dict:
+        from desk import journal, screener, stress
+
+        state = self.daemon.state
+        snapshot = state.snapshot(state.wallets)
+        book = state.other[0] if state.other else None
+        open_pairs = {(position.wallet[-4:].lower(), position.coin) for position in snapshot.positions}
+        journal.close_missing(open_pairs)
+        frame = journal.strategy_frame()
+        strategies = json.loads(frame.to_json(orient="records")) + [json.loads(pd.Series(journal.total_row(frame)).to_json())]
+        overdue = [{"wallet": item["wallet"], "coin": item["coin"], "side": item["side"], "days": round(item["days"], 1)}
+                   for item in journal.overdue(journal.load(), open_pairs)]
+        exposures = [(("tradfi perp" if position.dex and position.dex != "hyna" else "crypto perp"), position.coin,
+                      position.quantity * position.mark_price) for position in snapshot.positions]
+        exposures += stress.desk_exposures(book) if book is not None else []
+        desk_equity = snapshot.equity + (book.equity_usd if book is not None else 0.0)
+        laddered = {item["coin"] for item in list(self.daemon.ladders.ladders.values())}
+        free_margin = {}
+        for wallet in state.wallets:  # margin above each wallet's 20% reserve, as the executor counts it
+            own = state.snapshot([wallet])
+            free_margin[wallet[-4:]] = own.target_equity * (1 - ht.RESERVE_PCT) - own.target_margin_used
+        try:
+            screen = screener.run(desk_equity, exposures, {position.coin for position in snapshot.positions}, laddered, free_margin)
+        except Exception as exc:  # no saved candles yet, or HL unreadable: keep the last screen
+            log(f"screener not refreshed ({type(exc).__name__}: {exc})")
+            screen = screener.load()
+        payload = {"as_of": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), "strategies": strategies,
+                   "overdue": overdue, "screener": screen}
+        if self.path is not None:
+            self.path.write_text(json.dumps(payload, indent=1))
+        try:
+            from desk import web_sync
+
+            web_sync._post("/ingest/research", payload)
+        except Exception as exc:
+            log(f"research not sent to the web relay ({type(exc).__name__}: {exc})")
+        return payload
+
+
 class Session:
     """One client connection: text out, typed answers in."""
 
@@ -1542,6 +1626,7 @@ class Daemon:
         self.margin_guard = MarginGuard(self)
         self.regime_guard = RegimeGuard(self)
         self.ladders = Ladders(self, None if paper else LADDERS_FILE)
+        self.research = ResearchFeed(self, None if paper else RESEARCH_FILE)
         self.streams: list[Stream] = []
         self.market_stream: Stream | None = None
         self.stopped = threading.Event()
@@ -1996,6 +2081,7 @@ def serve(args: argparse.Namespace) -> int:
     threading.Thread(target=daemon.alerts.run, args=(daemon,), name="alerts", daemon=True).start()
     daemon.ladders.resume()
     threading.Thread(target=daemon.ladders.run, name="ladders", daemon=True).start()
+    threading.Thread(target=daemon.research.run, name="research", daemon=True).start()
 
     server = _Server(str(daemon_link.SOCKET_PATH), _Handler)
     os.chmod(daemon_link.SOCKET_PATH, 0o600)

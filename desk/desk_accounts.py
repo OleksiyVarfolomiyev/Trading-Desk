@@ -504,6 +504,12 @@ class DeskAccounts:
         table = pd.concat([trading, wallets, pd.DataFrame(rows)], ignore_index=True)
         return table[["Account", "Value"] + [f"{kind} {label}" for label in PERIODS for kind in ("PnL", "Return")] + ["Since"]]
 
+    def show_strategies(self):
+        """HL results by strategy: directional, conviction, hedge and the ladders' market making (desk/journal.py)."""
+        from desk.journal import show_strategies
+
+        show_strategies()
+
     def show_market_making(self):
         """The market-making ladders' fills, volume, spread captured and PnL (desk/market_making.py)."""
         from desk.market_making import show_market_making

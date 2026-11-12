@@ -26,9 +26,9 @@ LADDERS_FILE = Path.home() / ".trading-desk" / "ladders.json"
 LADDER_CLOID_PREFIX = "0x1add"
 DISPLAY_TIMEZONE = "America/New_York"  # the desk's clock: times are shown in Eastern time
 BAND = 0.50
-COLUMNS = ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Ladder PnL", "Fees",
+COLUMNS = ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Captured per $1k", "Ladder PnL", "Fees",
            "Position vs base", "Quotes", "Queued"]
-FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Ladder PnL": "susd", "Fees": "usd",
+FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Captured per $1k": "susd", "Ladder PnL": "susd", "Fees": "usd",
            "Position vs base": "spct", "Quotes": "int", "Queued": "int"}
 
 
@@ -75,7 +75,11 @@ def metrics(fills: list[dict], mark: float) -> dict:
     captured = matched * (proceeds / sold - cost / bought) if bought and sold else 0.0
     net = bought - sold
     pnl = proceeds - cost + (net * mark if mark == mark else 0.0) - fees
-    return {"Fills": len(fills), "Volume": cost + proceeds, "Spread captured": captured, "Ladder PnL": pnl, "Fees": fees}
+    volume = cost + proceeds
+    # The ladder's edge, apart from where the price went: what the round trips earned, net of fees, per $1,000 traded.
+    per_thousand = (captured - fees) / volume * 1000 if volume else float("nan")
+    return {"Fills": len(fills), "Volume": volume, "Spread captured": captured, "Captured per $1k": per_thousand,
+            "Ladder PnL": pnl, "Fees": fees}
 
 
 def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
@@ -127,8 +131,10 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
 
 
 def total_row(frame: pd.DataFrame) -> dict:
-    return {"Account": "Total", **{column: frame[column].sum() for column in ("Fills", "Volume", "Spread captured",
-                                                                              "Ladder PnL", "Fees")}}
+    row = {"Account": "Total", **{column: frame[column].sum() for column in ("Fills", "Volume", "Spread captured",
+                                                                             "Ladder PnL", "Fees")}}
+    row["Captured per $1k"] = (row["Spread captured"] - row["Fees"]) / row["Volume"] * 1000 if row["Volume"] else float("nan")
+    return row
 
 
 def show_market_making() -> None:
@@ -151,11 +157,12 @@ def show_market_making() -> None:
     money = lambda value: "" if value != value else (f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")
     display_interactive_table(
         frame, bold_last=True, title="MARKET MAKING (LADDERS)",
-        formatters={"Volume": money, "Spread captured": money, "Ladder PnL": money, "Fees": money,
+        formatters={"Volume": money, "Spread captured": money, "Ladder PnL": money, "Fees": money, "Captured per $1k": money,
                     "Fills": lambda value: "" if value != value else f"{value:,.0f}",
                     "Quotes": lambda value: "" if value != value else f"{value:,.0f}",
                     "Queued": lambda value: "" if value != value else f"{value:,.0f}",
                     "Position vs base": lambda value: "" if value != value else f"{value:.1%}"},
         key_columns={"Ladder PnL": "abs"})
     print("Ladder PnL is the ladders' own trading (each fill's cash, plus what they still hold net at today's mark, "
-          "less fees), apart from the position you opened. Position vs base: the band is +/-50%.")
+          "less fees), apart from the position you opened. Captured per $1k is the edge apart from the price's path: "
+          "spread captured less fees, per $1,000 traded; judge a ladder on it. Position vs base: the band is in ladder.json.")

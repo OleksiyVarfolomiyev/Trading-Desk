@@ -30,7 +30,6 @@ candidates with the validated signals only.
 from __future__ import annotations
 
 import json
-import pickle
 import time
 from pathlib import Path
 
@@ -38,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
-PANEL_FILE = ROOT / "data" / "api_cache" / "signal_panel.pkl"
+PANEL_FILE = ROOT / "data" / "api_cache" / "signal_panel.csv.gz"   # plain CSV: both Python environments read it
 RESULTS_FILE = ROOT / "data" / "signal_research.json"
 HISTORY_DAYS = 560
 UNIVERSE_SIZE = 40
@@ -79,8 +78,8 @@ def _candles(coin: str, start_ms: int) -> pd.DataFrame:
     rows = post_info({"type": "candleSnapshot", "req": {"coin": coin, "interval": "1d", "startTime": start_ms,
                                                         "endTime": int(time.time() * 1000)}}) or []
     frame = pd.DataFrame(rows)
-    if frame.empty:
-        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+    if frame.empty:  # a coin with no candles in the window (delisted long ago): an empty, date-indexed frame
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"], index=pd.DatetimeIndex([], tz="UTC"), dtype=float)
     frame.index = pd.to_datetime(pd.to_numeric(frame["t"]), unit="ms", utc=True).dt.normalize()
     frame = frame.rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"})
     return frame[["open", "high", "low", "close", "volume"]].astype(float)
@@ -103,6 +102,9 @@ def refresh_panel(days: int = HISTORY_DAYS, spacing: float = REQUEST_SPACING_SEC
             time.sleep(spacing)
             continue
         fresh = fresh[fresh.index < today]  # completed days only
+        if fresh.empty and (saved is None or saved.empty):
+            time.sleep(spacing)
+            continue
         merged = fresh if saved is None or saved.empty else pd.concat([saved[saved.index < fresh.index[0]] if len(fresh) else saved, fresh])
         panel[coin] = merged[~merged.index.duplicated(keep="last")].sort_index()
         if index % 20 == 0:
@@ -113,17 +115,26 @@ def refresh_panel(days: int = HISTORY_DAYS, spacing: float = REQUEST_SPACING_SEC
     return panel
 
 
+COLUMNS = ["open", "high", "low", "close", "volume"]
+
+
 def load_panel(path: Path = PANEL_FILE) -> dict[str, pd.DataFrame]:
+    """Saved daily candles, one frame per coin (date-indexed, UTC)."""
     try:
-        return pickle.loads(path.read_bytes())
-    except (OSError, pickle.UnpicklingError, EOFError):
+        long = pd.read_csv(path)
+    except (OSError, ValueError, EOFError):
         return {}
+    long["date"] = pd.to_datetime(long["date"], utc=True)
+    return {coin: rows.set_index("date")[COLUMNS].astype(float).sort_index() for coin, rows in long.groupby("coin")}
 
 
 def save_panel(panel: dict[str, pd.DataFrame], path: Path = PANEL_FILE) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_bytes(pickle.dumps(panel))
+    frames_ = [frame[COLUMNS].assign(coin=coin).rename_axis("date").reset_index() for coin, frame in panel.items() if len(frame)]
+    long = pd.concat(frames_, ignore_index=True) if frames_ else pd.DataFrame(columns=["date", "coin", *COLUMNS])
+    long["date"] = pd.to_datetime(long["date"], utc=True).dt.strftime("%Y-%m-%d")
+    temporary = path.with_name(path.name + ".tmp")
+    long[["date", "coin", *COLUMNS]].to_csv(temporary, index=False, compression="gzip")
     temporary.replace(path)
 
 
@@ -177,7 +188,7 @@ def universe(close: pd.DataFrame, dollar_volume: pd.DataFrame, size: int = UNIVE
     history = close.notna().cumsum() >= MIN_HISTORY_DAYS
     eligible = liquidity.where(history & close.notna())
     eligible = eligible.drop(columns=[coin for coin in eligible.columns if coin in EXCLUDED])
-    rank = eligible.rank(axis=1, ascending=False)
+    rank = eligible.rank(axis=1, ascending=False, method="first")  # ties (equal volume) still give exactly ``size`` names
     return (rank <= size) & (eligible >= min_volume)
 
 

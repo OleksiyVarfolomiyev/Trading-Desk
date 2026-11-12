@@ -68,6 +68,24 @@
     </section>
 
     <section class="card">
+      <h2>Results by strategy</h2>
+      <p class="sub">HL positions and the last 30 days' fills, by the journal's tag: directional, conviction, hedge, and the ladders' market making. Fills from before the journal began are untagged.</p>
+      <div class="table-wrap" id="t-strategies"></div>
+    </section>
+
+    <section class="card">
+      <h2>Short candidates (screener)</h2>
+      <p class="sub">The 40 most liquid HL perps ranked by the signals the research harness validated (or the desk's own record until one is). Size at budget is what the 5% risk budget buys at the 3 × ATR stop; nothing trades until you run it.</p>
+      <div class="table-wrap" id="t-candidates"></div>
+    </section>
+
+    <section class="card">
+      <h2>Market-making candidates</h2>
+      <p class="sub">Liquid coins that have gone nowhere over 30 days (low efficiency: net move against the sum of daily moves), so ladder quotes on both sides keep filling.</p>
+      <div class="table-wrap" id="t-mm_candidates"></div>
+    </section>
+
+    <section class="card">
       <h2>Accounts</h2>
       <p class="caption">Each account's share of the desk; the other columns are a share of that account's own equity.</p>
       <div class="table-wrap" id="t-accounts"></div>

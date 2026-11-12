@@ -411,17 +411,17 @@ class DeskOverview:
 
         show_strategies()
 
-    def show_candidates(self, top: int = 15):
-        """Daily candidate screener: liquid HL perps ranked with planned size, stop and stress impact."""
+    def show_candidates(self):
+        """Short candidates from the screener (desk/screener.py), as last ranked."""
         from desk.screener import show_candidates
 
-        show_candidates(top=top)
+        show_candidates()
 
-    def show_ladder_candidates(self, top: int = 10):
-        """Market-making ladder coin selection: liquid and range-bound perps with spread capture."""
+    def show_ladder_candidates(self):
+        """Market-making candidates from the screener (desk/screener.py), as last ranked."""
         from desk.screener import show_ladder_candidates
 
-        show_ladder_candidates(top=top)
+        show_ladder_candidates()
 
     def show_positions(self):
         """Open positions on every venue, one table per asset class."""
