@@ -125,7 +125,7 @@
     responses.forEach(([meta, contexts], i) => (meta.universe || []).forEach((asset, j) => {
       const ctx = contexts[j] || {}, mark = num(ctx.markPx);
       if (!(mark > 0)) return;
-      out[asset.name] = { coin: asset.name, dex: dexes[i], mark, oracle: num(ctx.oraclePx) || mark, prevDay: num(ctx.prevDayPx) };
+      out[asset.name] = { coin: asset.name, dex: dexes[i], mark, oracle: num(ctx.oraclePx) || mark, prevDay: num(ctx.prevDayPx), funding: num(ctx.funding) };
     }));
     return out;
   }
@@ -660,6 +660,8 @@
         "Asset class": p.asset_class, "Account": p.account, "Symbol": p.symbol, "Side": p.quantity > 0 ? "LONG" : "SHORT",
         "Quantity": p.quantity, "Avg price": p.avg_price, "Mark": p.mark_price, "Value": v, "uPnL": p.unrealized,
         "uPnL (%)": fin(p.avg_price) && cost > 0 ? p.unrealized / cost : NaN, "24h change (%)": change,
+        // What the position earns (positive) or pays (negative) in funding per 8 hours; HL perps only.
+        "Funding (8h)": p.venue === "hl" && context && fin(context.funding) ? (p.quantity > 0 ? -1 : 1) * context.funding * 8 : NaN,
         "Weight": grossAll ? Math.abs(v) / grossAll : NaN, "Exposure / desk value": deskEquity ? Math.abs(v) / deskEquity : NaN,
       };
     }).sort((a, b) => a["Asset class"].localeCompare(b["Asset class"]) || Math.abs(b.Value) - Math.abs(a.Value));
@@ -676,7 +678,12 @@
         "uPnL": sum(rows.map((r) => r["uPnL"])), "Weight": sum(rows.map((r) => r.Weight)),
         "Exposure / desk value": sum(rows.map((r) => r["Exposure / desk value"])),
         "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN,
-        "24h change (%)": dayChangeTotal(rows) };
+        "24h change (%)": dayChangeTotal(rows), "Funding (8h)": fundingTotal(rows) };
+    };
+    const fundingTotal = (rows) => {  // funding per 8 hours over the gross value of the positions that have a rate
+      const known = rows.filter((r) => fin(r["Funding (8h)"]));
+      const base = sum(known.map((r) => Math.abs(r.Value)));
+      return base ? sum(known.map((r) => Math.abs(r.Value) * r["Funding (8h)"])) / base : NaN;
     };
 
     // -- exposure by asset class
@@ -960,14 +967,14 @@
       movers_stocks: table(moverRows("Stocks"), ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
         { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
       positions: table(tableRows.filter(isCrypto), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
-        "uPnL", "uPnL (%)", "24h change (%)", "Weight", "Exposure / desk value"],
+        "uPnL", "uPnL (%)", "24h change (%)", "Funding (8h)", "Weight", "Exposure / desk value"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
-        { "uPnL (%)": "spct", "24h change (%)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
+        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (8h)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
       { total: positionTotal(tableRows.filter(isCrypto)), key: { "Weight": "max" } }),
       positions_stocks: table(tableRows.filter((r) => !isCrypto(r)), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
-        "uPnL", "uPnL (%)", "24h change (%)", "Weight", "Exposure / desk value"],
+        "uPnL", "uPnL (%)", "24h change (%)", "Funding (8h)", "Weight", "Exposure / desk value"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
-        { "uPnL (%)": "spct", "24h change (%)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
+        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (8h)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
       { total: positionTotal(tableRows.filter((r) => !isCrypto(r))), key: { "Weight": "max" } }),
       open_risk: table(book.map((b) => ({ "Venue": b.venue, "Account": b.label, "Positions": b.positions, "Risk equity": b.equity,
         "Open risk": b.risk, "% of desk equity": riskEquity ? b.risk / riskEquity : NaN }))

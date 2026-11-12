@@ -125,6 +125,26 @@ def desk_day_change(snapshots, now: pd.Timestamp | None = None) -> DayChange | N
     return result if result.parts else None
 
 
+def position_funding(snapshots) -> dict[tuple[str, str], float]:
+    """Each HL perp's funding over 8 hours at the current rate, from the holder's side, keyed (account label,
+    symbol): positive when the position earns it (a short while longs pay), negative when it pays."""
+    positions = [(snapshot.label, position) for snapshot in snapshots if snapshot.venue == "hl"
+                 for position in snapshot.positions]
+    if not positions:
+        return {}
+    from desk.hl.account_analytics import fetch_market_contexts
+
+    contexts = fetch_market_contexts(sorted({position.ref for _, position in positions}))
+    rates: dict[tuple[str, str], float] = {}
+    for label, position in positions:
+        try:
+            rate = float(contexts[(position.ref or "HL", position.symbol)]["funding"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        rates[label, position.symbol] = -rate * 8 if position.quantity > 0 else rate * 8
+    return rates
+
+
 def position_changes(snapshots, now: pd.Timestamp | None = None) -> dict[tuple[str, str], float]:
     """Each open position's 24-hour price change, as a fraction, keyed (account label, symbol).
 

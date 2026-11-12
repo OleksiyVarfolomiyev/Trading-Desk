@@ -2,7 +2,9 @@
 
 const POLL_MS = 5000;
 const TABLES = ["performance", "accounts", "risk", "positions", "positions_stocks", "exposure", "open_risk", "movers", "movers_stocks", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
-const sortState = {};           // table id -> {key, dir}
+const sortState = {            // table id -> {key, dir}; click a header to change it
+  mm_candidates: { key: "Efficiency (30d)", dir: 1 },   // the most mean-reverting coins first
+};
 let lastRendered = null;        // last_ok of the data currently drawn
 let latest = null;              // latest /api/state document
 
@@ -126,7 +128,7 @@ function renderTable(id, spec) {
     const format = FORMATS[column.fmt] || FORMATS.text;
     const sorted = state && state.key === column.key ? (state.dir > 0 ? "ascending" : "descending") : "none";
     const th = el("th", { class: [format.num ? "num" : "", column.emphasis ? "key" : ""].filter(Boolean).join(" "),
-      "aria-sort": sorted, tabindex: "0", text: column.key });
+      "aria-sort": sorted, tabindex: "0", title: "Click to sort", text: column.key });
     const toggle = () => {
       const current = sortState[id];
       const dir = current && current.key === column.key ? -current.dir : (format.num ? -1 : 1);

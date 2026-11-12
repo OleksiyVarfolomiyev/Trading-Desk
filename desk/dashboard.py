@@ -37,8 +37,8 @@ import pandas as pd
 
 from desk import emphasis
 from desk.privacy import mask
-from desk.day_change import DayChange, desk_day_change, position_changes
-from desk.overview import day_change_total, with_position_returns
+from desk.day_change import DayChange, desk_day_change, position_changes, position_funding
+from desk.overview import day_change_total, funding_total, with_position_returns
 from desk.desk_accounts import PERIODS, ROOT_DATA, WINDOWS, DeskAccounts
 
 STATIC_DIR = Path(__file__).resolve().parent / "dashboard_static"
@@ -204,12 +204,14 @@ def with_day_returns(performance: pd.DataFrame, day_change: DayChange | None) ->
 
 
 def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_change: DayChange | None = None,
-                  moves: dict[tuple[str, str], float] | None = None) -> dict:
+                  moves: dict[tuple[str, str], float] | None = None,
+                  funding: dict[tuple[str, str], float] | None = None) -> dict:
     """The page's data from a fetched DeskAccounts: tiles, highlights, tables and chart series.
 
     ``day_change`` is the desk's 24-hour change net of deposits (``desk.day_change``), fetched by
     the refresh loop; without it the tile shows no change. ``moves`` is each position's 24-hour
-    price change ({(account, symbol): fraction}, ``desk.day_change.position_changes``).
+    price change ({(account, symbol): fraction}, ``desk.day_change.position_changes``); ``funding`` is each
+    HL perp's funding per 8 hours from the holder's side (``desk.day_change.position_funding``).
     """
     overview = desk.overview
     trading, wallets = overview._trading(), overview._wallets()
@@ -275,13 +277,14 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         cost = (ordered["Value"] - ordered["uPnL"]).abs()[priced].sum()
         total["uPnL (%)"] = ordered["uPnL"][priced].sum() / cost if cost else None
         total["24h change (%)"] = day_change_total(ordered["Value"], ordered["24h change (%)"])
+        total["Funding (8h)"] = funding_total(ordered["Value"], ordered["Funding (8h)"])
         return table(ordered, {"Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
-                               "uPnL (%)": "spct", "24h change (%)": "spct",
+                               "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (8h)": "spct",
                                "Weight": "pct", "Exposure / desk value": "pct"}, total,
                      key={"Weight": "max"})
 
     if len(positions):
-        ordered = with_position_returns(positions, moves)
+        ordered = with_position_returns(positions, moves, funding)
         crypto = ordered["Asset class"].astype(str).str.startswith("crypto")  # else stocks and tradfi (IB, HL equity perps)
         tables["positions"] = position_table(ordered[crypto])
         tables["positions_stocks"] = position_table(ordered[~crypto])
@@ -448,7 +451,12 @@ class Dashboard:
             except Exception:  # the 24h column is then blank
                 traceback.print_exc()
                 moves = None
-            payload = build_payload(self.desk, self.risk_table, day, moves)
+            try:
+                funding = position_funding(self.desk.overview.snapshots)
+            except Exception:  # the funding column is then blank
+                traceback.print_exc()
+                funding = None
+            payload = build_payload(self.desk, self.risk_table, day, moves, funding)
             payload["accounts_status"] = self.account_status(payload["problems"])
             self._send_ib_to_web(moves)
             with self.lock:

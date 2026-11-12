@@ -55,7 +55,7 @@ def _percent(value):
 
 
 # Columns coloured by sign (green up, red down) and the Side column (LONG green, SHORT red).
-SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "uPnL (%)", "24h change (%)", "% of position"}
+SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "uPnL (%)", "24h change (%)", "Funding (8h)", "% of position"}
 
 
 def _signed_style(row_index, column, value, row):
@@ -71,7 +71,8 @@ def _signed_percent(value):
     return "" if value is None or not math.isfinite(value) else f"{value:.2%}"
 
 
-def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], float] | None) -> pd.DataFrame:
+def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], float] | None,
+                          funding: dict[tuple[str, str], float] | None = None) -> pd.DataFrame:
     """Positions without Venue (the account name says it), with uPnL (%) and 24h change (%) after
     uPnL. uPnL (%) is over the cost basis (value less uPnL), so it is blank where the entry price is
     unknown (wallet tokens); the 24-hour change comes from ``desk.day_change.position_changes``."""
@@ -83,7 +84,19 @@ def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], 
     at = frame.columns.get_loc("uPnL") + 1
     frame.insert(at, "uPnL (%)", upnl_pct)
     frame.insert(at + 1, "24h change (%)", day)
+    # What the position earns (positive) or pays (negative) in funding per 8 hours; blank off HL.
+    frame.insert(at + 2, "Funding (8h)", [(funding or {}).get((account, symbol), float("nan"))
+                                         for account, symbol in zip(frame["Account"], frame["Symbol"])])
     return frame
+
+
+def funding_total(values, rates) -> float:
+    """The book's funding per 8 hours at current rates, over the gross value of the positions that have one."""
+    values = pd.Series(values, dtype=float).reset_index(drop=True).abs()
+    rates = pd.Series(rates, dtype=float).reset_index(drop=True)
+    known = values.notna() & rates.notna()
+    base = values[known].sum()
+    return float((values[known] * rates[known]).sum() / base) if base else float("nan")
 
 
 def day_change_total(values, changes) -> float:
@@ -448,7 +461,13 @@ class DeskOverview:
             moves = position_changes(self.snapshots)
         except Exception:
             moves = {}
-        frame = with_position_returns(frame, moves)
+        try:
+            from desk.day_change import position_funding
+
+            funding = position_funding(self.snapshots)
+        except Exception:
+            funding = {}
+        frame = with_position_returns(frame, moves, funding)
         kinds = frame["Asset class"].map(lambda name: "Crypto" if str(name).startswith("crypto") else "Stocks and tradfi")
         for klass, group in frame.groupby(kinds, sort=True):  # Crypto, then stocks and tradfi (IB and HL equity perps)
             group = group.sort_values(["Asset class", "Value"], key=lambda column: column if column.name == "Asset class" else column.abs(),
@@ -460,6 +479,7 @@ class DeskOverview:
                      "Value": group["Value"].sum(), "uPnL": group["uPnL"].sum(),
                      "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
                      "24h change (%)": day_change_total(group["Value"], group["24h change (%)"]),
+                     "Funding (8h)": funding_total(group["Value"], group["Funding (8h)"]),
                      "Weight": group["Weight"].sum(), "Exposure / desk value": group["Exposure / desk value"].sum()}
             group = pd.concat([group, pd.DataFrame([total])], ignore_index=True)
             group = group[emphasis.key_columns_first(list(group.columns), {"Weight"}, SIGNED_COLUMNS | {"Side"},
@@ -467,7 +487,7 @@ class DeskOverview:
             display_interactive_table(
                 group, formatters={"Quantity": number, "Avg price": usd_price, "Mark": usd_price,
                                    "Value": _money, "uPnL": _money, "uPnL (%)": _signed_percent,
-                                   "24h change (%)": _signed_percent, "Weight": _percent,
+                                   "24h change (%)": _signed_percent, "Funding (8h)": _signed_percent, "Weight": _percent,
                                    "Exposure / desk value": _percent},
                 cell_style=_signed_style, bold_last=True, title=f"OPEN POSITIONS: {klass.upper()}",
                 key_columns={"Weight": "max"},
