@@ -277,9 +277,9 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         cost = (ordered["Value"] - ordered["uPnL"]).abs()[priced].sum()
         total["uPnL (%)"] = ordered["uPnL"][priced].sum() / cost if cost else None
         total["24h change (%)"] = day_change_total(ordered["Value"], ordered["24h change (%)"])
-        total["Funding (8h)"] = funding_total(ordered["Value"], ordered["Funding (8h)"])
+        total["Funding (APR)"] = funding_total(ordered["Value"], ordered["Funding (APR)"])
         return table(ordered, {"Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
-                               "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (8h)": "spct",
+                               "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct",
                                "Weight": "pct", "Exposure / desk value": "pct"}, total,
                      key={"Weight": "max"})
 

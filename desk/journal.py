@@ -34,9 +34,10 @@ MARKET_MAKING = "market making"
 UNTAGGED = "untagged (before the journal)"
 LADDER_CLOID_PREFIX = "0x1add"
 REVIEW_AFTER_DAYS = 7  # directional trades held longer lost money in the desk's history (desk/trade_rules.py)
-COLUMNS = ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL (30d)", "Fees (30d)", "Volume (30d)", "Fills (30d)"]
+COLUMNS = ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL (30d)", "Fees (30d)", "Funding (30d)", "Volume (30d)",
+           "Fills (30d)"]
 FORMATS = {"Open positions": "int", "Unrealized PnL": "susd", "Realized PnL (30d)": "susd", "Fees (30d)": "susd",
-           "Volume (30d)": "usd", "Fills (30d)": "int"}
+           "Funding (30d)": "susd", "Volume (30d)": "usd", "Fills (30d)": "int"}
 
 
 def load(path: Path | None = None) -> list[dict]:
@@ -111,7 +112,8 @@ def fill_strategy(entries: list[dict], wallet: str, fill: dict) -> str:
 
 
 def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]],
-                      positions_by_wallet: dict[str, list[dict]]) -> pd.DataFrame:
+                      positions_by_wallet: dict[str, list[dict]],
+                      funding_by_wallet: dict[str, list[dict]] | None = None) -> pd.DataFrame:
     """Per strategy: open positions and unrealized PnL now; realized PnL, fees, volume and fills from ``fills``.
 
     ``positions_by_wallet`` holds HL position dicts (``coin``, ``szi``, ``unrealizedPnl``, ``positionValue``). A
@@ -121,12 +123,15 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
     cash plus its size at today's mark less its fee (summed, the ladder PnL of desk/market_making.py); the
     rest, the position's own profit the fill happened to realize, stays with the position's strategy. The
     ladder's fees, volume and fills count under market making; the rows still add up to HL's realized PnL.
+
+    ``funding_by_wallet`` holds HL's funding events (``time`` and ``delta`` with ``coin`` and signed ``usdc``:
+    positive received). Funding goes to the strategy the position had when it was paid, never to market making.
     """
     rows: dict[str, dict] = {}
 
     def row(name: str) -> dict:
         return rows.setdefault(name, {"Strategy": name, "Open positions": 0, "Unrealized PnL": 0.0, "Realized PnL (30d)": 0.0,
-                                      "Fees (30d)": 0.0, "Volume (30d)": 0.0, "Fills (30d)": 0})
+                                      "Fees (30d)": 0.0, "Funding (30d)": 0.0, "Volume (30d)": 0.0, "Fills (30d)": 0})
 
     now_ms = time.time() * 1000
     marks: dict[tuple[str, str], float] = {}
@@ -160,9 +165,31 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
             target["Fees (30d)"] -= fee  # paid: a cost, shown negative
             target["Volume (30d)"] += price * size
             target["Fills (30d)"] += 1
+    for wallet, events in (funding_by_wallet or {}).items():
+        for event in events:
+            delta = event.get("delta") or {}
+            if delta.get("usdc") is None or event.get("time") is None:
+                continue
+            row(strategy_at(entries, wallet, str(delta.get("coin")), int(event["time"])))["Funding (30d)"] += float(delta["usdc"])
     order = {name: index for index, name in enumerate((*STRATEGIES, MARKET_MAKING, UNTAGGED))}
     frame = pd.DataFrame(sorted(rows.values(), key=lambda item: order.get(item["Strategy"], 99)), columns=COLUMNS)
     return frame
+
+
+_FUNDING_EVENTS: dict[str, list[dict]] = {}  # wallet -> funding events already downloaded this run
+
+
+def funding_events(wallet: str, since_ms: int) -> list[dict]:
+    """HL's funding events for a wallet from ``since_ms``, fetching only what is new since the last call."""
+    from desk.hl.account_analytics import _download_user_funding
+
+    events = [event for event in _FUNDING_EVENTS.get(wallet, []) if int(event["time"]) >= since_ms]
+    latest = max((int(event["time"]) for event in events), default=None)
+    fresh = _download_user_funding(wallet, since_ms if latest is None else latest + 1)
+    seen = {(int(event["time"]), (event.get("delta") or {}).get("coin")) for event in events}
+    events += [event for event in fresh if (int(event["time"]), (event.get("delta") or {}).get("coin")) not in seen]
+    _FUNDING_EVENTS[wallet] = events
+    return events
 
 
 def strategy_frame(days: int = 30) -> pd.DataFrame:
@@ -172,7 +199,7 @@ def strategy_frame(days: int = 30) -> pd.DataFrame:
 
     entries = load()
     since, now = int((time.time() - days * 86400) * 1000), int(time.time() * 1000)
-    fills_by_wallet, positions_by_wallet = {}, {}
+    fills_by_wallet, positions_by_wallet, funding_by_wallet = {}, {}, {}
     for account in accounts_for("hl"):
         fills, start = [], since
         while True:
@@ -184,7 +211,8 @@ def strategy_frame(days: int = 30) -> pd.DataFrame:
         fills_by_wallet[account.id] = list({fill["tid"]: fill for fill in fills}.values())
         state = post({"type": "clearinghouseState", "user": account.id}) or {}
         positions_by_wallet[account.id] = [item["position"] for item in state.get("assetPositions", [])]
-    return split_by_strategy(entries, fills_by_wallet, positions_by_wallet)
+        funding_by_wallet[account.id] = funding_events(account.id, since)
+    return split_by_strategy(entries, fills_by_wallet, positions_by_wallet, funding_by_wallet)
 
 
 def total_row(frame: pd.DataFrame) -> dict:
@@ -217,7 +245,7 @@ def show_strategies() -> None:
     count = lambda value: "" if value != value else f"{value:,.0f}"
     display_interactive_table(frame, bold_last=True, title="RESULTS BY STRATEGY (HL)",
                               formatters={"Unrealized PnL": money, "Realized PnL (30d)": money, "Fees (30d)": money,
-                                          "Volume (30d)": money, "Open positions": count, "Fills (30d)": count},
+                                          "Funding (30d)": money, "Volume (30d)": money, "Open positions": count, "Fills (30d)": count},
                               key_columns={"Realized PnL (30d)": "abs"})
-    print("Realized PnL is net of fees. A position's unrealized PnL counts under its own strategy; the ladders' "
+    print("Realized PnL is net of fees; funding (received positive, paid negative) is separate and goes to the strategy that held the position when it was paid. A position's unrealized PnL counts under its own strategy; the ladders' "
           "fills count under market making. Fills before a position was journalled are untagged.")

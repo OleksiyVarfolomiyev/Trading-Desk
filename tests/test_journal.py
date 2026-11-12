@@ -33,6 +33,19 @@ class JournalTests(unittest.TestCase):
         journal.record_entry(WALLET, "ICP", "long", "hedge", path=self.path)
         self.assertEqual([item["strategy"] for item in journal.load(self.path)], ["directional", "hedge"])
 
+    def test_funding_goes_to_the_strategy_holding_the_position(self):
+        opened = "2026-11-01T00:00:00"
+        entries = [{"wallet": "07f2", "coin": "VVV", "side": "SHORT", "strategy": "hedge", "opened": opened, "closed": None},
+                   {"wallet": "07f2", "coin": "ICP", "side": "SHORT", "strategy": "directional", "opened": opened, "closed": None}]
+        at = (time.time() - 3600) * 1000
+        funding = {"07f2": [{"time": at, "delta": {"coin": "VVV", "usdc": "1.5"}},
+                            {"time": at, "delta": {"coin": "ICP", "usdc": "-0.4"}},
+                            {"time": at, "delta": {"coin": "ICP", "usdc": "-0.1"}}]}
+        frame = journal.split_by_strategy(entries, {}, {}, funding).set_index("Strategy")
+        self.assertAlmostEqual(frame.loc["hedge", "Funding (30d)"], 1.5)
+        self.assertAlmostEqual(frame.loc["directional", "Funding (30d)"], -0.5)
+        self.assertAlmostEqual(journal.total_row(frame.reset_index())["Funding (30d)"], 1.0)
+
     def test_results_split_by_strategy(self):
         opened = "2026-11-01T00:00:00"
         entries = [{"wallet": "07f2", "coin": "VVV", "side": "SHORT", "strategy": "hedge", "opened": opened, "closed": None},

@@ -55,7 +55,7 @@ def _percent(value):
 
 
 # Columns coloured by sign (green up, red down) and the Side column (LONG green, SHORT red).
-SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "uPnL (%)", "24h change (%)", "Funding (8h)", "% of position"}
+SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "uPnL (%)", "24h change (%)", "Funding (APR)", "% of position"}
 
 
 def _signed_style(row_index, column, value, row):
@@ -84,14 +84,14 @@ def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], 
     at = frame.columns.get_loc("uPnL") + 1
     frame.insert(at, "uPnL (%)", upnl_pct)
     frame.insert(at + 1, "24h change (%)", day)
-    # What the position earns (positive) or pays (negative) in funding per 8 hours; blank off HL.
-    frame.insert(at + 2, "Funding (8h)", [(funding or {}).get((account, symbol), float("nan"))
+    # What the position earns (positive) or pays (negative) in funding, annualised; blank off HL.
+    frame.insert(at + 2, "Funding (APR)", [(funding or {}).get((account, symbol), float("nan"))
                                          for account, symbol in zip(frame["Account"], frame["Symbol"])])
     return frame
 
 
 def funding_total(values, rates) -> float:
-    """The book's funding per 8 hours at current rates, over the gross value of the positions that have one."""
+    """The book's annualised funding at current rates, over the gross value of the positions that have one."""
     values = pd.Series(values, dtype=float).reset_index(drop=True).abs()
     rates = pd.Series(rates, dtype=float).reset_index(drop=True)
     known = values.notna() & rates.notna()
@@ -479,7 +479,7 @@ class DeskOverview:
                      "Value": group["Value"].sum(), "uPnL": group["uPnL"].sum(),
                      "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
                      "24h change (%)": day_change_total(group["Value"], group["24h change (%)"]),
-                     "Funding (8h)": funding_total(group["Value"], group["Funding (8h)"]),
+                     "Funding (APR)": funding_total(group["Value"], group["Funding (APR)"]),
                      "Weight": group["Weight"].sum(), "Exposure / desk value": group["Exposure / desk value"].sum()}
             group = pd.concat([group, pd.DataFrame([total])], ignore_index=True)
             group = group[emphasis.key_columns_first(list(group.columns), {"Weight"}, SIGNED_COLUMNS | {"Side"},
@@ -487,7 +487,7 @@ class DeskOverview:
             display_interactive_table(
                 group, formatters={"Quantity": number, "Avg price": usd_price, "Mark": usd_price,
                                    "Value": _money, "uPnL": _money, "uPnL (%)": _signed_percent,
-                                   "24h change (%)": _signed_percent, "Funding (8h)": _signed_percent, "Weight": _percent,
+                                   "24h change (%)": _signed_percent, "Funding (APR)": _signed_percent, "Weight": _percent,
                                    "Exposure / desk value": _percent},
                 cell_style=_signed_style, bold_last=True, title=f"OPEN POSITIONS: {klass.upper()}",
                 key_columns={"Weight": "max"},
