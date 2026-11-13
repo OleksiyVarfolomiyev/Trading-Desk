@@ -1053,6 +1053,9 @@ ALERT_HEARTBEAT_SECONDS = 900    # and at least this often to the web relay
 API_KEY_WARN_DAYS = 30           # warn this long before an HL API wallet expires
 API_KEY_CHECK_SECONDS = 6 * 3600
 FUNDING_CHECK_SECONDS = 600      # adverse-funding check (desk/funding_watch.py); funding history is cached hourly
+ALT_RALLY_CHECK_SECONDS = 300    # alt rally watch (desk/alt_rally.py): one request, HL's 24-hour moves
+ALT_RALLY_FILE = Path(__file__).resolve().parents[1] / "data" / "alt_rally_watches.json"  # when watches fired
+STOCK_DIP_FILE = Path(__file__).resolve().parents[1] / "data" / "stock_dip_watches.json"
 
 
 class Alerts:
@@ -1202,6 +1205,73 @@ class Alerts:
         for key in stale:  # closed positions
             self.clear(key)
 
+    def watch_alt_rally(self, daemon: "Daemon") -> None:
+        """Alt rally watch (desk/alt_rally.py): the alt basket's 24-hour move, every ALT_RALLY_CHECK_SECONDS. A watch
+        at +5%; a cut alert at +8%, or at a second watch on a later day. When watches fired is kept in
+        ALT_RALLY_FILE so a restart does not forget yesterday's."""
+        from desk import alt_rally
+
+        now = time.time()
+        if now - getattr(self, "alt_rally_checked_at", 0.0) < ALT_RALLY_CHECK_SECONDS:
+            return
+        self.alt_rally_checked_at = now
+        with daemon.state.lock:
+            states = [dict(by_dex) for by_dex in daemon.state.states.values()]
+        main = [by_dex.get("", {}) for by_dex in states]
+        equity = sum(float((state.get("marginSummary") or {}).get("accountValue") or 0) for state in main)
+
+        def remembered(path: Path, fired: bool) -> list[float]:
+            """When this watch fired before; with ``fired``, now is added (one per six-hour stretch)."""
+            try:
+                watches = [float(item) for item in json.loads(path.read_text())]
+            except (OSError, ValueError, TypeError):
+                watches = []
+            if fired and (not watches or now - max(watches) > 6 * 3600):
+                try:
+                    path.write_text(json.dumps([item for item in watches if now - item < 3 * 86400] + [now]))
+                except OSError:
+                    pass
+            return watches
+
+        # Alts: the 40 most traded main-DEX alts, against the short-alt book.
+        meta, contexts = post_info({"type": "metaAndAssetCtxs"})
+        move, rising, count = alt_rally.basket_move(meta, contexts)
+        name = alt_rally.level(move, remembered(ALT_RALLY_FILE, False), now)
+        if name == "none":
+            self.clear("alt_rally")
+        else:
+            by_coin = {asset["name"]: context for asset, context in zip(meta.get("universe", []), contexts)}
+            positions = [item.get("position", {}) for state in main for item in state.get("assetPositions", [])]
+            self.set("alt_rally", *alt_rally.alert(name, move, rising, count, alt_rally.book_move(positions, by_coin, equity)))
+            remembered(ALT_RALLY_FILE, True)
+
+        # Stocks: HL's S&P 500 perp, against the stock longs on HL's xyz DEX.
+        meta, contexts = post_info({"type": "metaAndAssetCtxs", "dex": alt_rally.STOCK_DEX})
+        move = alt_rally.index_move(meta, contexts)
+        name = alt_rally.level(move, remembered(STOCK_DIP_FILE, False), now,
+                               alt_rally.STOCK_WATCH_MOVE, alt_rally.STOCK_CUT_MOVE)
+        if name == "none":
+            self.clear("stock_dip")
+        else:
+            by_coin = {asset["name"]: context for asset, context in zip(meta.get("universe", []), contexts)}
+            positions = [item.get("position", {}) for by_dex in states
+                         for item in by_dex.get(alt_rally.STOCK_DEX, {}).get("assetPositions", [])]
+            hl_change = alt_rally.book_move(positions, by_coin, 1.0)  # USD (over an equity of 1)
+            # IB's stocks, as the Mac last sent them to the relay: priced by HL's perps where HL lists the stock.
+            ib_equity, ib_change = 0.0, 0.0
+            try:
+                from desk.web_sync import relay_get
+
+                ib = relay_get("/ib") or {}
+                ib_equity = float((ib.get("account") or {}).get("equity") or 0)
+                ib_change = alt_rally.ib_change(ib.get("positions") or [], by_coin)
+            except Exception as exc:  # the alert still goes out, sized on HL alone
+                log(f"stock dip: IB not read from the relay ({type(exc).__name__}: {exc})")
+            trading = equity + ib_equity
+            share = (hl_change + ib_change) / trading if trading else float("nan")
+            self.set("stock_dip", *alt_rally.stock_alert(name, move, share))
+            remembered(STOCK_DIP_FILE, True)
+
     def watch(self, daemon: "Daemon") -> None:
         """The daemon's own health: stale account data, dead websockets, guards that cannot check."""
         try:
@@ -1212,6 +1282,10 @@ class Alerts:
             self.watch_funding(daemon)
         except Exception as exc:  # the funding check is extra too
             log(f"funding check failed ({type(exc).__name__}: {exc})")
+        try:
+            self.watch_alt_rally(daemon)
+        except Exception as exc:  # so is the alt rally watch
+            log(f"alt rally check failed ({type(exc).__name__}: {exc})")
         now = time.time()
         for wallet in daemon.state.wallets:
             age = now - daemon.state.state_time.get(wallet, 0.0)

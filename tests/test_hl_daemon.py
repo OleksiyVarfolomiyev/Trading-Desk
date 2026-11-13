@@ -847,6 +847,29 @@ class FundingAlertTests(unittest.TestCase):
         self.assertEqual(alerts.items, {})
 
 
+class AltRallyAlertTests(unittest.TestCase):
+    """The daemon raises the alt rally watch from HL's 24-hour moves and remembers when it fired."""
+
+    def test_a_five_percent_basket_move_raises_the_watch_with_the_book_hit(self):
+        import tempfile
+
+        alerts = hl_daemon.Alerts(path=None)
+        meta = {"universe": [{"name": "SOL"}, {"name": "DOGE"}]}
+        contexts = [{"markPx": "106", "prevDayPx": "100", "dayNtlVlm": "1e8"}, {"markPx": "104", "prevDayPx": "100", "dayNtlVlm": "1e8"}]
+        position = {"coin": "SOL", "szi": "-10"}
+        state = SimpleNamespace(lock=threading.RLock(), states={WALLET: {"": {
+            "assetPositions": [{"position": position}], "marginSummary": {"accountValue": "1000"}}}})
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(hl_daemon, "ALT_RALLY_FILE", Path(folder) / "watches.json"), \
+                patch.object(hl_daemon, "post_info", return_value=(meta, contexts)):
+            alerts.watch_alt_rally(SimpleNamespace(state=state))
+            saved = (Path(folder) / "watches.json").read_text()
+        item = alerts.items["alt_rally"]
+        self.assertEqual(item["title"], "Alt rally")
+        self.assertIn("alts 5% in 24h (2 of 2 up); the book -6% on it", item["text"])   # -10 SOL x $6 on $1,000
+        self.assertEqual(len(__import__("json").loads(saved)), 1)
+
+
 class MakerReductionTests(unittest.TestCase):
     """Position reductions rest as post-only makers first and close at market only what is left."""
 
