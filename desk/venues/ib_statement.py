@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from desk.numbers import usd as _usd
 
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/"
 # IB listing exchange -> Yahoo Finance ticker suffix (US exchanges need none).
@@ -204,8 +205,8 @@ def main(argv: list[str] | None = None) -> int:
         both = frame.merge(saved, on="date", suffixes=("_rebuilt", "_ib"))
         if len(both):
             gap = (both["nav_rebuilt"] - both["nav_ib"]).abs()
-            print(f"Against IB's own daily NAV on {len(both)} overlapping days: mean gap ${gap.mean():,.2f}, "
-                  f"largest ${gap.max():,.2f} (IB ${both['nav_ib'].mean():,.0f} on average).")
+            print(f"Against IB's own daily NAV on {len(both)} overlapping days: mean gap {_usd(gap.mean())}, "
+                  f"largest {_usd(gap.max())} (IB {_usd(both['nav_ib'].mean())} on average).")
     for note in notes:
         print("note:", note)
     return 0

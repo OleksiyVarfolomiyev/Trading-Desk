@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from desk.numbers import usd as _usd
 
 STATE_FILE_NAME = "hl_highlights_state.json"
 MIN_MOVE_USD = 1.0
@@ -18,7 +19,9 @@ RESIZE_TOLERANCE_PCT = 0.5
 
 
 def _usd(value: float) -> str:
-    return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
+    from desk.numbers import usd
+
+    return usd(value)
 
 
 def _position_key(row: dict[str, Any]) -> str:
@@ -182,7 +185,7 @@ def build_highlights(
 
     def now_row(update: str, detail: str) -> dict[str, str]:
         return {"Window": "Now", "Update": update, "Detail": detail}
-    risk_detail = f"${risk_used:,.2f} used vs ${risk_cap:,.2f} cap"
+    risk_detail = f"{_usd(risk_used)} used vs {_usd(risk_cap)} cap"
     if risk_used > risk_cap:
         attention.insert(0, now_row("Aggregate risk over cap", f"{risk_detail} ({_usd(risk_cap - risk_used)} room)"))
     else:
@@ -194,7 +197,7 @@ def build_highlights(
     if margin_capacity > 0 and margin_remaining / margin_capacity * 100 < LOW_MARGIN_PCT:
         attention.append(now_row(
             "Available margin low",
-            f"${margin_remaining:,.2f} left of ${margin_capacity:,.2f} above the reserve",
+            f"{_usd(margin_remaining)} left of {_usd(margin_capacity)} above the reserve",
         ))
     near_liquidation = sorted(
         (float(row["Liq %"]), row["Coin"]) for row in positions

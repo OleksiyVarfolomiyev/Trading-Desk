@@ -171,6 +171,7 @@ tr.total td.key { background: rgba(59, 130, 246, 0.12); }
 .pos { color: var(--good-text); }
 .neg { color: var(--bad-text); }
 .empty-table { color: var(--muted); font-size: 13px; }
+.table-note { color: var(--muted); font-size: 12px; margin: 0 0 6px; }
 
 .notes summary { cursor: pointer; font-weight: 600; }
 .notes ul { margin: 8px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13px; }

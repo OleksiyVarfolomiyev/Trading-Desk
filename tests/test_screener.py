@@ -16,16 +16,16 @@ class ScreenerTests(unittest.TestCase):
         self.assertEqual(weights, screener.FALLBACK)
         self.assertIn("desk record", basis)
 
-    def test_short_candidates_are_the_lowest_scores_with_size_and_stress(self):
+    def test_short_candidates_are_the_lowest_scores_without_execution_columns(self):
         signals = pd.DataFrame({"rel7": [0.3, -0.2, 0.0, -0.4], "rel30": [0.1, -0.1, 0.0, -0.3],
                                 "from_high60": [-0.1] * 4, "atr_pct": [0.05] * 4}, index=["A", "B", "C", "D"])
         live = pd.DataFrame({"funding_hour": [0.00001] * 4, "volume24h": [5e6] * 4}, index=["A", "B", "C", "D"])
         rows = screener.short_candidates(signals, live, ["A", "B", "C", "D"], {"rel7": 1.0}, "validated: 7d", 10_000.0, [], {"B"}, top=2,
                                          funding_history=lambda coin: [])
         self.assertEqual(list(rows["Coin"]), ["D", "B"])                   # weakest first
-        self.assertAlmostEqual(rows.iloc[0]["Size at budget"], 0.04 * 10_000 / 0.15)   # $400 risk at a 15% stop
         self.assertIn("already held", rows.iloc[1]["Notes"])
-        self.assertGreater(rows.iloc[0]["Alt-rally stress after"], 0)
+        for execution in ("Stop (3 ATR)", "Size at budget", "Max by margin"):   # the executor's and the daemon's, not research
+            self.assertNotIn(execution, rows.columns)
 
     def test_market_making_candidates_prefer_chop_and_liquidity(self):
         signals = pd.DataFrame({"efficiency": [0.9, 0.1, 0.2], "move30": [0.5, 0.01, -0.02], "range_pct": [0.05, 0.04, 0.03]},
@@ -53,19 +53,14 @@ class ScreenerTests(unittest.TestCase):
         rows = screener.short_candidates(signals, live, ["CROWD", "CLEAN"], {"rel30": 1.0}, "b", 10_000.0, [], set(),
                                          funding_history=history.get).set_index("Coin")
         self.assertEqual(list(rows.index), ["CROWD", "CLEAN"])                             # ranking unchanged by the flag
-        self.assertAlmostEqual(rows.loc["CROWD", "Shorts paid (7d)"], 0.8)
         self.assertAlmostEqual(rows.loc["CROWD", "Funding 7d (APR)"], (-0.00005 * 0.8 + 0.0000125 * 0.2) * 8760)   # the short pays
-        self.assertIn("crowded short: shorts paid 80% of hours", rows.loc["CROWD", "Notes"])
+        self.assertEqual(rows.loc["CROWD", "Crowding"], "crowded")
         self.assertAlmostEqual(rows.loc["CLEAN", "Funding 7d (APR)"], 0.0000125 * 8760)    # HL's base rate: longs pay, the short earns ~11%
-        self.assertNotIn("crowded", rows.loc["CLEAN", "Notes"])
+        self.assertEqual(rows.loc["CLEAN", "Crowding"], "")
         self.assertAlmostEqual(rows.loc["CROWD", "OI / volume"], 2.0)
 
     def test_no_funding_history_leaves_the_columns_blank(self):
         self.assertTrue(all(value != value for value in screener.crowding([])))
-
-    def test_margin_caps_per_wallet(self):
-        self.assertEqual(screener.margin_caps({"07f2": 200.0, "c248": -10.0}, 10), "07f2 $800, c248 $0")   # 4x cap, nothing below zero
-        self.assertEqual(screener.margin_caps(None, 4), "")
 
     def test_ladder_candidates_flag_range_edges_and_show_own_edge(self):
         signals = pd.DataFrame({"efficiency": [0.1, 0.15], "move30": [0.0, 0.01], "range_pct": [0.04, 0.04],
@@ -79,3 +74,11 @@ class ScreenerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NumbersTests(unittest.TestCase):
+    def test_dollars_round_for_reading(self):
+        from desk.numbers import usd
+
+        self.assertEqual([usd(v) for v in (0.42, -3.456, 548.9, 1234.5, 12345, 2528475.6, 999950, float("nan"))],
+                         ["$0.42", "-$3.46", "$549", "$1.23K", "$12.3K", "$2.53M", "$1M", "n/a"])

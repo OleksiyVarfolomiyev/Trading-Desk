@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 from IPython.display import HTML, display
+from desk.numbers import clock
 
 Row = tuple[str, str]
 
@@ -35,15 +36,15 @@ NEUTRAL = "#5f6368"
 
 
 def money(value: float) -> str:
-    if value is None or not math.isfinite(value):
-        return "n/a"
-    return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
+    from desk.numbers import usd
+
+    return usd(value)
 
 
 def signed_money(value: float) -> str:
-    if value is None or not math.isfinite(value):
-        return "n/a"
-    return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
+    from desk.numbers import usd
+
+    return usd(value)
 
 
 def percent(value: float, signed: bool = False, digits: int = 1) -> str:
@@ -140,7 +141,7 @@ def render(well: list[Row], attention: list[Row], since: SinceLastRun | None = N
              _rows_html("WHAT STANDS OUT", well, GOOD), _rows_html("NEEDS ATTENTION", attention, BAD)]
     if since is not None:
         heading = f"font-weight:600;margin:10px 0 4px;color:{NEUTRAL}"
-        last = (f"last run {since.last_run.tz_convert('UTC'):%Y-%m-%d %H:%M} UTC"
+        last = (f"last run {clock(since.last_run)}"
                 if since.last_run is not None else "")
         if since.last_run is not None and since.changes:
             # The heading is the table's own caption, as in every desk table.

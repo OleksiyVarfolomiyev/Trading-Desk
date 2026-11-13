@@ -30,6 +30,7 @@ from desk.accounts import Account
 from desk.privacy import account_file
 from desk.venues import onchain
 from desk.venues.onchain import CHAINS, NATIVE, PUBLIC_RPC, STAKING_REWARDS, USER_AGENT, WELL_KNOWN_TOKENS
+from desk.numbers import usd as _usd
 
 LLAMA_CHART_URL = "https://coins.llama.fi/chart/"
 LLAMA_PAGE_DAYS = 500  # DefiLlama serves at most 500 points per request
@@ -452,6 +453,6 @@ if __name__ == "__main__":
         if account.venue != "hl" or not account.onchain:
             continue
         path, value, notes = save_backfill(account, Path(args.data_dir), start)
-        print(f"{account.name}: {len(value)} days to {value.index[-1]:%Y-%m-%d}, last ${value.iloc[-1]:,.2f} -> {path}")
+        print(f"{account.name}: {len(value)} days to {value.index[-1]:%Y-%m-%d}, last {_usd(value.iloc[-1])} -> {path}")
         for note in notes:
             print(f"  {note}")

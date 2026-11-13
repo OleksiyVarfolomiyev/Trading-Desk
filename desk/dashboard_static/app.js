@@ -14,14 +14,16 @@ const wholeUsdFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0
 
 function isNum(value) { return typeof value === "number" && isFinite(value); }
 
+// Dollars rounded for reading, as desk/numbers.py: $0.42, $548, $2.11K, $12.3K, $2.53M, $1.2B.
 function usd(value) {
   if (!isNum(value)) return "";
-  return (value < 0 ? "-$" : "$") + usdFormat.format(Math.abs(value));
+  const sign = value < 0 ? "-$" : "$", size = Math.abs(value), rounded = Number(size.toPrecision(3));
+  for (const [scale, unit] of [[1e9, "B"], [1e6, "M"], [1e3, "K"]]) {
+    if (rounded >= scale) return sign + Number((rounded / scale).toPrecision(3)) + unit;
+  }
+  return sign + (size >= 10 ? Math.round(size).toLocaleString("en-US") : size.toFixed(2));
 }
-function signedUsd(value) {
-  if (!isNum(value)) return "";
-  return (value < 0 ? "-$" : "$") + usdFormat.format(Math.abs(value));
-}
+const signedUsd = usd;
 // Whole dollars with thousands separators: $12,345 (no "+" on positive values).
 function wholeUsd(value, signed = false) {
   if (!isNum(value)) return "n/a";
@@ -99,19 +101,44 @@ function ago(iso, now) {
   if (seconds < 86400) return Math.round(seconds / 3600) + " h ago";
   return Math.round(seconds / 86400) + " d ago";
 }
+// The desk's clock (Eastern time, no zone name), as desk/numbers.py ``clock``: "10 am", "10:35 am".
 function clock(iso) {
-  return iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+  if (!iso) return "";
+  const at = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric",
+    minute: "2-digit", hour12: true }).formatToParts(new Date(iso)).map((p) => [p.type, p.value]));
+  return `${at.hour}${at.minute === "00" ? "" : ":" + at.minute} ${String(at.dayPeriod).toLowerCase()}`;
 }
 function day(iso) { return iso ? String(iso).slice(0, 10) : ""; }
+// A start date for reading, as desk/numbers.py ``since``: "May'25" once older than 60 days, else "Nov 3".
+function sinceLabel(when) {
+  const t = typeof when === "number" ? when : Date.parse(when);
+  if (!isFinite(t)) return "";
+  const d = new Date(t), month = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  return Date.now() - t > 60 * 86400000 ? `${month}'${String(d.getUTCFullYear()).slice(2)}` : `${month} ${d.getUTCDate()}`;
+}
 
 // ---------------------------------------------------------------- tables
 function renderTable(id, spec) {
+  const original = spec;
   const host = document.getElementById("t-" + id);
   if (!host) return;
   host.replaceChildren();
   if (!spec || !spec.columns || !spec.columns.length) {
     host.append(el("p", { class: "empty-table", text: "Nothing to show." }));
     return;
+  }
+  // A text column with the same value in every row is said once, above the table; an empty one is left out.
+  const shared = [];
+  if (spec.rows.length > 1) {
+    spec = Object.assign({}, spec, { columns: spec.columns.filter((column, i) => {
+      const format = FORMATS[column.fmt] || FORMATS.text;
+      if (i === 0 || format.num) return true;
+      const texts = new Set(spec.rows.map((row) => format.text(row[column.key])));
+      const [only] = texts;
+      if (texts.size !== 1 || (spec.total && ![only, ""].includes(format.text(spec.total[column.key])))) return true;
+      if (only) shared.push(`${column.key}: ${only}`);
+      return false;
+    }) });
   }
   const state = sortState[id];
   let rows = spec.rows.slice();
@@ -133,7 +160,7 @@ function renderTable(id, spec) {
       const current = sortState[id];
       const dir = current && current.key === column.key ? -current.dir : (format.num ? -1 : 1);
       sortState[id] = { key: column.key, dir };
-      renderTable(id, spec);
+      renderTable(id, original);
     };
     th.addEventListener("click", toggle);
     th.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
@@ -170,12 +197,13 @@ function renderTable(id, spec) {
   if (spec.total) {
     parts.push(el("tfoot", {}, el("tr", { class: "total" }, spec.columns.map((column) => cell(spec.total, column)))));
   }
+  if (shared.length) host.append(el("p", { class: "table-note", text: shared.join(" · ") }));
   host.append(el("table", {}, parts));
 }
 
 // ---------------------------------------------------------------- tiles
-function tile(label, value, sub, extra) {
-  return el("div", { class: "tile" }, [
+function tile(label, value, sub, extra) {  // extra.title: the definition, on hover only
+  return el("div", { class: "tile", title: (extra && extra.title) || "" }, [
     el("div", { class: "label", text: label }),
     el("div", { class: "value " + (extra && extra.valueClass ? extra.valueClass : ""), text: value }),
     extra && extra.line ? el("div", { class: "line " + (extra.line.cls || ""), text: extra.line.text,
@@ -205,18 +233,18 @@ function renderTiles(k) {
     // Dollars and the money-weighted return, next to the time-weighted return: a loss on a small
     // balance and a gain on a large one net out here, but not in the time-weighted figure.
     tile("Net PnL since start", wholeUsd(mw.pnl),
-      [isNum(mw.return) ? `Money-weighted ${pct(mw.return, 1, true)}` : "",
-       isNum(k.unrealized) ? `unrealized ${wholeUsd(k.unrealized)}` : ""].filter(Boolean).join(" · "),
-      { valueClass: signClass(mw.pnl) }),
+      [isNum(mw.return) ? `MW ${pct(mw.return, 1, true)}` : "",
+       isNum(k.unrealized) ? `uPnL ${wholeUsd(k.unrealized)}` : ""].filter(Boolean).join(" · "),
+      { valueClass: signClass(mw.pnl), title: "HL + IB, net of deposits and withdrawals. MW: money-weighted return." }),
     tile("Return 30D", pct(r["30D"], 1, true),
       `7D ${pct(r["7D"], 1, true) || "n/a"} · 90D ${pct(r["90D"], 1, true) || "n/a"}`,
       { valueClass: signClass(r["30D"]) }),
-    tile("Return since start", pct(r.since_start, 1, true), `Time-weighted, since ${day(k.since)}`,
-      { valueClass: signClass(r.since_start) }),
-    tile("Drawdown now", pct(k.drawdown, 1), k.drawdown < 0 ? `Below the peak of ${day(k.peak_date)}` : "At the peak",
+    tile("Return since start", pct(r.since_start, 1, true), `since ${sinceLabel(k.since)}`,
+      { valueClass: signClass(r.since_start), title: "Time-weighted, wallets included." }),
+    tile("Drawdown now", pct(k.drawdown, 1), k.drawdown < 0 ? `peak ${sinceLabel(k.peak_date)}` : "at peak",
       { valueClass: k.drawdown <= -0.10 ? "neg" : "" }),
     tile("Gross leverage", isNum(k.gross_leverage) ? k.gross_leverage.toFixed(2) + "×" : "n/a",
-      isNum(k.net_leverage) ? `Net ${k.net_leverage.toFixed(2)}× trading equity` : ""),
+      isNum(k.net_leverage) ? `net ${k.net_leverage.toFixed(2)}×` : "", { title: "Of trading equity." }),
   ];
   document.getElementById("tiles").replaceChildren(...tiles);
 }

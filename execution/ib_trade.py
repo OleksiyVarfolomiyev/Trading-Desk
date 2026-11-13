@@ -50,7 +50,7 @@ ENTRY_TIMEOUT_SECONDS = 60
 ENTRY_CROSS_TICKS = 2
 MAX_ENTRY_SLIPPAGE_PCT = 0.005
 MIN_ORDER_VALUE_USD = 10.0
-# Orders may work in IB's extended sessions (US stocks: 04:00-09:30 and 16:00-20:00 ET).
+# Orders may work in IB's extended sessions (US stocks: 4-9:30 am and 4-8 pm).
 # Stops then become stop-limits, the IB order type that can trigger outside regular hours,
 # with the limit this many ATRs beyond the stop so a fast move can still fill.
 STOP_LIMIT_ATR_FRACTION = 0.5
@@ -83,7 +83,7 @@ max_total_risk_pct = desk_risk.MAX_TOTAL_RISK_PCT
 # An explicit limit_price must lie within this share of the last trade (pre-market and
 # after-hours included): it guards against a typo, not against the market.
 LIMIT_PRICE_MAX_GAP_PCT = 0.03
-# --overnight: US stocks go to IB's overnight venue (Sunday-Thursday 20:00 to 03:50 ET). Nothing
+# --overnight: US stocks go to IB's overnight venue (Sunday-Thursday 8 pm to 3:50 am). Nothing
 # prices it for free, so every entry needs an explicit limit_price and no exits are attached.
 overnight = False
 OVERNIGHT_EXCHANGE = "OVERNIGHT"
@@ -202,7 +202,9 @@ def last_trade(contract, quote) -> tuple[float, str]:
             from desk.venues import yahoo
 
             price, stamp, _, _ = yahoo.extended_price(contract.symbol, days=5)
-            return price, f"Yahoo last trade {stamp.tz_convert('America/New_York'):%a %H:%M} ET"
+            from desk.numbers import clock
+
+            return price, f"Yahoo last trade {clock(stamp)}"
         except ValueError:
             pass
     return quote.reference, "IB delayed or prior price"
@@ -758,7 +760,7 @@ def submit_at_limit(ib, plan: IBPlan, account: str) -> str:
     if (last - plan.stop_price) * direction <= 0:
         return f"{plan.symbol}: skipped, the last trade {last:,.6g} ({source}) is already through the stop."
     if overnight and not overnight_open():
-        return f"{plan.symbol}: skipped, IB's overnight session is closed (Sunday-Thursday 20:00 to 03:50 ET)."
+        return f"{plan.symbol}: skipped, IB's overnight session is closed (Sunday-Thursday 8 pm to 3:50 am)."
     action = "BUY" if direction > 0 else "SELL"
     if not attach_exits:
         return submit_entry_only(ib, plan, action, plan.entry_limit, account)
@@ -1315,7 +1317,7 @@ def print_kill_switch_plan(ib, account: str) -> None:
                 f"{KILL_CLOSE_SLIPPAGES[-1]:.0%}; session {target.session}; "
                 f"{len(target.exits)} exit order(s) cancelled just before")
         if target.session == "closed":
-            line += "; no session is open, so the close waits for the next one (04:00 ET for US stocks)"
+            line += "; no session is open, so the close waits for the next one (4 am for US stocks)"
         print(line)
         if target.fractional:
             print(f"    {target.fractional:g} fractional share(s) cannot be sold through IB's API; close them in TWS")
@@ -1466,7 +1468,7 @@ def main(argv: list[str] | None = None) -> int:
                         "after-hours, with stops as stop-limits).")
     parser.add_argument("--overnight", action="store_true",
                         help="With --signals and --no-exits: send US stock entries to IB's overnight venue "
-                        "(Sunday-Thursday 20:00 to 03:50 ET). Every row needs a limit_price; the order is sent at "
+                        "(Sunday-Thursday 8 pm to 3:50 am). Every row needs a limit_price; the order is sent at "
                         "exactly that price and cancelled if not filled within the timeout.")
     parser.add_argument("--live", action="store_true", help="Allow live orders after typing the confirmation phrases.")
     args = parser.parse_args(argv)
@@ -1585,7 +1587,7 @@ def main(argv: list[str] | None = None) -> int:
                     parser.error("--overnight: every row needs a limit_price and LONG or SHORT (not REDUCE): "
                                  + ", ".join(bad))
                 if not overnight_open():
-                    print("Note: IB's overnight session is closed now (Sunday-Thursday 20:00 to 03:50 ET); "
+                    print("Note: IB's overnight session is closed now (Sunday-Thursday 8 pm to 3:50 am); "
                           "a live run will not send.")
             external = other_venue_book("ib", accounts)
             if external.unreachable and args.live and not args.ignore_unreachable:

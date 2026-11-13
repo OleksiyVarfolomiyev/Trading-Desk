@@ -8,6 +8,7 @@ and every legend row clear each other.
 from __future__ import annotations
 
 import re
+from desk.numbers import usd as _usd
 
 LINE_PX = 22                # height of one title or legend line
 CHAR_PX = 10.0              # width of one title character (17px font), rounded up so titles never overflow
@@ -102,7 +103,7 @@ def _end_text(value: float, axis, chart_title: str = "") -> str:
     """The end value in its axis's own units: $1,234.56, 12.34%, or 104.3 on an index (start = 100)."""
     title = ((axis.title.text or "") if axis and axis.title else "") + " " + (chart_title or "")
     if axis is not None and ((axis.tickformat or "").startswith("$") or axis.tickprefix == "$"):
-        return f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
+        return f"{_usd(-abs(value))}" if value < 0 else f"{_usd(value)}"
     if axis is not None and (axis.tickformat or "").endswith("%"):
         return f"{value * 100:.2f}%"  # a d3 "%" format scales: 0.14 is shown as 14%
     if axis is not None and axis.ticksuffix == "%":

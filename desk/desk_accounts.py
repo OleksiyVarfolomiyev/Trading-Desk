@@ -30,6 +30,7 @@ from desk.notebook_highlights import show as show_highlights
 from desk.overview import DeskOverview
 from desk import emphasis
 from desk.charts import show as show_chart
+from desk.numbers import since, usd as _usd
 
 ROOT_DATA = Path(__file__).resolve().parents[1] / "data"
 RESEARCH_PRICES = Path(__file__).resolve().parents[1] / "research" / "data" / "daily_prices_usd.csv"
@@ -439,7 +440,7 @@ class DeskAccounts:
                 row[f"Return {label}"] = float(index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
             row[f"PnL {INCEPTION}"] = float(frame["pnl"].iloc[-1] - frame["pnl"].iloc[0])
             row[f"Return {INCEPTION}"] = float(index.iloc[-1] / index.iloc[0] - 1) if len(index) else np.nan
-            row["Since"] = f"{index.index[0]:%Y-%m-%d}" if len(index) else ""  # the return since inception starts here
+            row["Since"] = since(index.index[0]) if len(index) else ""  # the return since inception starts here
             rows.append(row)
         return pd.DataFrame(rows)
 
@@ -481,7 +482,7 @@ class DeskAccounts:
                 row[f"Return {label}"] = float(level.iloc[-1] / before.iloc[-1] - 1)
             row[f"PnL {INCEPTION}"] = float(pnl.iloc[-1])
             row[f"Return {INCEPTION}"] = float(level.iloc[-1] - 1)
-            row["Since"] = f"{level.index[0] - pd.Timedelta(days=1):%Y-%m-%d}"  # the first day's return starts at the day before's close
+            row["Since"] = since(level.index[0] - pd.Timedelta(days=1))  # the first day's return starts at the day before's close
             rows.append(row)
         return pd.DataFrame(rows)
 
@@ -493,8 +494,8 @@ class DeskAccounts:
         wallets = self.wallet_pnl(wallets_history) if wallets_history else pd.DataFrame(columns=trading.columns)
         returns = self.desk_returns()
 
-        def combined(name, parts, index_returns, since):
-            row = {"Account": name, "Value": parts["Value"].sum(), "Since": since}
+        def combined(name, parts, index_returns, start):
+            row = {"Account": name, "Value": parts["Value"].sum(), "Since": start}
             for label in PERIODS:
                 row[f"Return {label}"] = index_returns.get(label, np.nan)
                 row[f"PnL {label}"] = parts[f"PnL {label}"].sum(min_count=1)
@@ -502,14 +503,14 @@ class DeskAccounts:
 
         # The headline return, as the page's first tile: since the first date every account has history.
         rows = [combined("Desk (HL + IB)", trading, {**returns, INCEPTION: returns["since start"]},
-                         f"{self.common_start:%Y-%m-%d}")]
+                         since(self.common_start))]
         if len(wallets):
             index = time_weighted_index(list(self.histories.values()) + list(wallets_history.values()))
             index.index = pd.to_datetime(index.index, utc=True)
             every = self.desk_returns(index)
             every[INCEPTION] = every.pop("since start")
             rows.append(combined("Desk incl. wallets", pd.concat([trading, wallets]), every,
-                                 f"{index.index[0]:%Y-%m-%d}" if len(index) else ""))
+                                 since(index.index[0]) if len(index) else ""))
         table = pd.concat([trading, wallets, pd.DataFrame(rows)], ignore_index=True)
         return table[["Account", "Value"] + [f"{kind} {label}" for label in PERIODS for kind in ("PnL", "Return")] + ["Since"]]
 
@@ -531,15 +532,15 @@ class DeskAccounts:
             return
         table = self.performance_frame()
         columns = list(table.columns)
-        money = lambda value: "n/a" if not np.isfinite(value) else f"${value:,.2f}"
+        money = lambda value: "n/a" if not np.isfinite(value) else f"{_usd(value)}"
         percent = lambda value: "n/a" if not np.isfinite(value) else f"{value:.2%}"
         display_interactive_table(table[columns], bold_last=True, title="DESK PERFORMANCE (NET OF DEPOSITS)",
                                   key_columns={"Return 30D": "abs"},
                                   formatters={column: (percent if column.startswith("Return") else money)
                                               for column in columns[1:] if column != "Since"})
-        since = float(self.index.iloc[-1] / self.index.iloc[0] - 1)
-        print(f"Desk time-weighted return since {self.common_start:%Y-%m-%d} (first date every account has history): "
-              f"{since:.2%}. PnL is each account's value change less deposits and withdrawals; transfers between "
+        total = float(self.index.iloc[-1] / self.index.iloc[0] - 1)
+        print(f"Desk time-weighted return since {since(self.common_start)} (first date every account has history): "
+              f"{total:.2%}. PnL is each account's value change less deposits and withdrawals; transfers between "
               "desk accounts cancel in the combined return. Wallet tokens on other chains are not included.")
 
     def desk_returns(self, index: pd.Series | None = None) -> dict[str, float]:
@@ -614,7 +615,7 @@ class DeskAccounts:
                                            else ([], [], {}, {}))
         headline = self.headline_index()  # the whole desk, wallets included (the performance table's last row)
         returns = self.desk_returns(headline)
-        text = (f"{percent(returns['since start'], signed=True)} since {headline.index[0]:%Y-%m-%d}; "
+        text = (f"{percent(returns['since start'], signed=True)} since {since(headline.index[0])}; "
                 + ", ".join(f"{label} {percent(returns[label], signed=True)}" for label in WINDOWS) + ".")
         (well if returns.get("30D", 0) >= 0 else attention).insert(0, ("Desk return", text))
         table = self.account_pnl()
@@ -715,7 +716,7 @@ class DeskAccounts:
             path = (1 + returns).cumprod()
             long_enough = len(returns) >= live_risk.MIN_RATIO_DAYS
             row = {"Basis": label, "Periods": len(returns),
-                   "From": f"{returns.index.min():%Y-%m-%d}", "To": f"{returns.index.max():%Y-%m-%d}",
+                   "From": since(returns.index.min()), "To": since(returns.index.max()),
                    "Return (total)": float(path.iloc[-1] - 1),
                    "Volatility (/yr)": float(returns.std() * math.sqrt(periods)),
                    "Sharpe": (float(returns.mean() / returns.std() * math.sqrt(periods))
@@ -751,7 +752,7 @@ class DeskAccounts:
             print("Not enough shared history for risk statistics yet.")
             return
         formats = {"Return (total)": "{:.1%}", "Volatility (/yr)": "{:.1%}", "Sharpe": "{:.2f}", "Max drawdown": "{:.1%}",
-                   "VaR 95%": "${:,.2f}", "VaR 99%": "${:,.2f}", "Beta BTC": "{:.2f}", "Beta SPY": "{:.2f}",
+                   "VaR 95%": _usd, "VaR 99%": _usd, "Beta BTC": "{:.2f}", "Beta SPY": "{:.2f}",
                    "Alpha vs BTC (/yr)": "{:.1%}", "Alpha vs SPY (/yr)": "{:.1%}", "Periods": "{:.0f}"}
         formats["Coverage"] = "{:.0%}"
         basis = table.set_index("Basis")
@@ -796,6 +797,6 @@ class DeskAccounts:
                 if len(prices):
                     comparison.add_trace(go.Scatter(x=prices.index, y=100 * (prices / prices.iloc[0] - 1), name=name,
                                                     line={"color": color}))
-        comparison.update_layout(title=f"Desk return vs BTC and SPY (%, time-weighted, since {index.index[0]:%Y-%m-%d})",
+        comparison.update_layout(title=f"Desk return vs BTC and SPY (%, time-weighted, since {since(index.index[0])})",
                                  template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%", **LEGEND_ON_TOP)
         show_chart(comparison)

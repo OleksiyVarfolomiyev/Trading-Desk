@@ -17,6 +17,7 @@ import os
 
 from desk.accounts import Account, accounts_for, load_accounts
 from desk.venues.base import VenueAccount, VenuePosition
+from desk.numbers import usd as _usd
 
 # Sizing rules shared by every venue's executor.
 RESERVE_PCT = 0.20
@@ -283,12 +284,12 @@ def print_book(book: DeskBook, title: str = "Other desk accounts") -> None:
         return
     print(f"{title} (included in equity and the aggregate risk cap):")
     for entry in book.entries:
-        print(f"  {entry.label}: equity ${entry.equity_usd:,.2f}, open risk ${entry.risk_usd:,.2f} "
+        print(f"  {entry.label}: equity {_usd(entry.equity_usd)}, open risk {_usd(entry.risk_usd)} "
               f"across {entry.positions} position{'s' if entry.positions != 1 else ''}")
         for note in entry.notes:
             print(f"    note: {note}")
         for symbol, risk, basis in entry.position_risks:
             if "no price history" in basis:
-                print(f"    {symbol}: ${risk:,.2f} ({basis})")
+                print(f"    {symbol}: {_usd(risk)} ({basis})")
     for problem in book.unreachable:
         print(f"  UNREACHABLE {problem}")

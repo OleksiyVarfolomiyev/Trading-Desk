@@ -19,7 +19,7 @@ class AlertRowTests(unittest.TestCase):
         rows = alerts.rows(state, now=1100.0)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][0], "Ladder out of band: rebalance (...c248 BTC)")
-        self.assertIn("since 2026-11-11 17:00 ET", rows[0][1])  # the daemon stamps UTC; the desk reads Eastern
+        self.assertIn("(since Nov 11, 5 pm)", rows[0][1])  # the daemon stamps UTC; the desk reads Eastern, no zone name
 
     def test_a_silent_daemon_is_flagged(self):
         rows = alerts.rows({"heartbeat": 0.0, "alerts": []}, now=20 * 60.0)
@@ -70,8 +70,13 @@ class EasternTimeTests(unittest.TestCase):
     def test_ladder_start_is_shown_in_eastern_time(self):
         from desk.market_making import eastern
 
-        self.assertEqual(eastern("2026-11-11 22:24"), "2026-11-11 17:24 ET")   # standard time
-        self.assertEqual(eastern("2026-07-01 22:24"), "2026-07-01 18:24 ET")   # daylight time
+        from desk.numbers import clock
+
+        now = "2026-11-13 12:00"
+        self.assertEqual(clock("2026-11-11 22:24", now), "Nov 11, 5:24 pm")   # standard time
+        self.assertEqual(clock("2026-07-01 22:00", now), "Jul 1, 6 pm")       # daylight time; whole hours without :00
+        self.assertEqual(clock("2026-11-13 15:00", now), "10 am")             # today: the time alone
+        self.assertEqual(clock("2025-05-21 14:05", now), "May 21 '25, 10:05 am")
         self.assertEqual(eastern(""), "")
 
 

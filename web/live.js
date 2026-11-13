@@ -89,8 +89,23 @@
   const fin = (value) => Number.isFinite(value);
   const iso = (ms) => new Date(ms).toISOString();
   const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
-  const money = (v) => (fin(v) ? (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "n/a");
-  const signedMoney = (v) => (fin(v) ? (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "n/a");
+  // A start date for reading, as desk/numbers.py ``since``: "May'25" once older than 60 days, else "Nov 3".
+  function sinceLabel(when) {
+    const t = typeof when === "number" ? when : Date.parse(when);
+    if (!isFinite(t)) return "";
+    const d = new Date(t), month = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+    return Date.now() - t > 60 * 86400000 ? `${month}'${String(d.getUTCFullYear()).slice(2)}` : `${month} ${d.getUTCDate()}`;
+  }
+  // Dollars rounded for reading, as desk/numbers.py: $0.42, $548, $2.11K, $12.3K, $2.53M.
+  const money = (v) => {
+    if (!fin(v)) return "n/a";
+    const sign = v < 0 ? "-$" : "$", size = Math.abs(v), rounded = Number(size.toPrecision(3));
+    for (const [scale, unit] of [[1e9, "B"], [1e6, "M"], [1e3, "K"]]) {
+      if (rounded >= scale) return sign + Number((rounded / scale).toPrecision(3)) + unit;
+    }
+    return sign + (size >= 10 ? Math.round(size).toLocaleString("en-US") : size.toFixed(2));
+  };
+  const signedMoney = money;
   const percent = (v, signed, digits = 1) => (fin(v) ? (v * 100).toFixed(digits) + "%" : "n/a");
   function quantile(values, q) {
     const sorted = values.filter(fin).slice().sort((a, b) => a - b);
@@ -374,10 +389,17 @@
     if (assetClass === "tradfi perp" || String(symbol).includes(":")) return STRESS_COMMODITIES.has(base) ? "other" : "equity";
     return "other";
   };
-  // The desk's clock is Eastern time: stamps (a Date, ms or ISO text) are shown as "2026-11-11 17:24 ET".
+  // The desk's clock (Eastern time, shown without a zone name), as desk/numbers.py ``clock``: "10 am", "10:35 am"
+  // today, "Nov 12, 9 am" this year, "May 21 '25, 10:05 am" before.
   const eastern = (stamp, utcText) => {
     const date = utcText ? new Date(String(stamp).slice(0, 19) + "Z") : new Date(stamp);
-    return Number.isNaN(date.getTime()) ? "?" : date.toLocaleString("sv-SE", { timeZone: "America/New_York" }).slice(0, 16) + " ET";
+    if (Number.isNaN(date.getTime())) return "?";
+    const parts = (d) => Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "2-digit",
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).formatToParts(d).map((p) => [p.type, p.value]));
+    const at = parts(date), now = parts(new Date());
+    const time = `${at.hour}${at.minute === "00" ? "" : ":" + at.minute} ${at.dayPeriod.toLowerCase()}`;
+    if (at.year === now.year && at.month === now.month && at.day === now.day) return time;
+    return `${at.month} ${at.day}${at.year === now.year ? "" : " '" + at.year}, ${time}`;
   };
 
   function ibAccount(data) {
@@ -741,7 +763,7 @@
       const own = (historyOf[a.id] || []).length ? twrIndex([historyOf[a.id]]) : [];
       const r = windowReturns(own, now);
       return { "Account": a.label, "Return 24h": dayReturn([a.label]), "Return 7D": r["7D"], "Return 30D": r["30D"], "Return 90D": r["90D"], "Return 1Y": r["1Y"],
-        "Return since inception": r.since_start, "Since": own.length ? dayKey(own[0].t) : "" };
+        "Return since inception": r.since_start, "Since": own.length ? sinceLabel(own[0].t) : "" };
     });
     const performanceCount = performanceRows.length;  // the trading accounts: what "best account" ranks
     // Wallet tokens outside HL: the daily price move of what was held (the Mac computes it; deposits earn nothing).
@@ -760,13 +782,13 @@
         row[`Return ${label}`] = prior.length ? level / prior[prior.length - 1].v - 1 : NaN;
       }
       row["Return since inception"] = level - 1;
-      row["Since"] = dayKey(points[0].t - DAY_MS);  // the first day's return starts at the day before's close
+      row["Since"] = sinceLabel(points[0].t - DAY_MS);  // the first day's return starts at the day before's close
       return row;
     });
     walletPerformanceRows.forEach((row) => { row["Return 24h"] = dayReturn([row.Account]); });
     performanceRows.push(...walletPerformanceRows);
     performanceRows.push({ "Account": "Desk (HL + IB)", "Return 24h": dayReturn(traders.map((a) => a.label)), "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"],
-      "Return 1Y": returns["1Y"], "Return since inception": returns.since_start, "Since": dayKey(start) });
+      "Return 1Y": returns["1Y"], "Return since inception": returns.since_start, "Since": sinceLabel(start) });
     // The headline return (highlights and tiles) is the whole desk's, wallets included: the table's bold last
     // row. Without wallet history it falls back to the trading accounts (HL + IB).
     let headline = { returns, start, drawdown, peak };
@@ -779,7 +801,7 @@
         headline = { returns: all, start: everything[0].t, drawdown: everything[everything.length - 1].v / top.v - 1, peak: top, series: everything };
       }
       performanceRows.push({ "Account": "Desk incl. wallets", "Return 24h": dayReturn(accounts.map((a) => a.label)), "Return 7D": all["7D"], "Return 30D": all["30D"], "Return 90D": all["90D"],
-        "Return 1Y": all["1Y"], "Return since inception": all.since_start, "Since": everything.length ? dayKey(everything[0].t) : "" });
+        "Return 1Y": all["1Y"], "Return since inception": all.since_start, "Since": everything.length ? sinceLabel(everything[0].t) : "" });
     }
 
     // -- wallet holdings outside HL
@@ -869,7 +891,7 @@
     const well = [], attention = [];
     let fundingNow = [];  // positions paying adverse funding at the current rate, for the one "Funding" row
     const headlineReturns = headline.returns;
-    const returnText = `${percent(headlineReturns.since_start, true)} since ${dayKey(headline.start)}; ` +
+    const returnText = `${percent(headlineReturns.since_start, true)} since ${sinceLabel(headline.start)}; ` +
       Object.keys(WINDOWS).map((label) => `${label} ${percent(headlineReturns[label], true)}`).join(", ") + ".";
     ((headlineReturns["30D"] || 0) >= 0 ? well : attention).unshift(["Desk return", returnText]);
     if (tradePositions.length) {
@@ -1063,8 +1085,8 @@
       })(),
       candidates: (() => {  // desk/screener.py
         const rows = (research && research.screener && research.screener.shorts) || [];
-        return rows.length ? table(rows, ["Coin", "Score", "Basis", "30d vs BTC", "7d vs BTC", "From 60d high", "Funding 7d (APR)", "Shorts paid (7d)", "OI / volume", "24h volume", "Stop (3 ATR)", "Size at budget", "Max by margin", "Alt-rally stress after", "Notes"],
-          { "Score": "num2", "30d vs BTC": "spct", "7d vs BTC": "spct", "From 60d high": "spct", "Funding 7d (APR)": "spct", "Shorts paid (7d)": "pct", "OI / volume": "num2", "24h volume": "usd", "Stop (3 ATR)": "pct", "Size at budget": "usd", "Alt-rally stress after": "pct" },
+        return rows.length ? table(rows, ["Coin", "Score", "Basis", "30d vs BTC", "7d vs BTC", "From 60d high", "Funding 7d (APR)", "Crowding", "OI / volume", "24h volume", "Notes"],
+          { "Score": "num2", "30d vs BTC": "spct", "7d vs BTC": "spct", "From 60d high": "spct", "Funding 7d (APR)": "spct", "OI / volume": "num2", "24h volume": "usd" },
           { key: { "Score": "min" } }) : { columns: [], rows: [], total: null };
       })(),
       mm_candidates: (() => {
@@ -1179,7 +1201,7 @@
     book.forEach((r) => { level *= 1 + r; top = Math.max(top, level); worst = Math.min(worst, level / top - 1); });
     const btc = returnsOf(BTC), sp = returnsOf(SP500);
     return {
-      "Basis": "Current holdings (ex-ante)", "Periods": days.length, "From": dayKey(days[0]), "To": dayKey(days[days.length - 1]),
+      "Basis": "Current holdings (ex-ante)", "Periods": days.length, "From": sinceLabel(days[0]), "To": sinceLabel(days[days.length - 1]),
       "Coverage": covered / total, "Volatility (/yr)": std(book) * Math.sqrt(365),
       "VaR 95%": -quantile(pnl, 0.05), "VaR 99%": -quantile(pnl, 0.01), "Max drawdown": worst,
       "Beta BTC": btc ? beta(book, btc) : NaN, "Beta S&P 500": sp ? beta(book, sp) : NaN,

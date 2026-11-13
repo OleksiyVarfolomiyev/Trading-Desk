@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from desk.hl.trade_analytics import post_info
+from desk.numbers import usd as _usd
 
 TOP_N = 20
 TRADFI_CATEGORIES = {"stocks", "stock", "indices", "commodities", "fx", "preipo", "rates"}
@@ -172,7 +173,7 @@ def market_highlights(universe: pd.DataFrame, view: str) -> tuple[list, list]:
         well += part_well
         attention += part_attention
     if view == "trending":
-        well.append(("Trending pool", f"{len(universe):,} markets above ${TRENDING_MIN_VOLUME / 1e6:,.0f}M 24h volume."))
+        well.append(("Trending pool", f"{len(universe):,} markets above {_usd(TRENDING_MIN_VOLUME / 1e6)}M 24h volume."))
     return well, attention
 
 
@@ -216,7 +217,7 @@ def _kind_highlights(universe: pd.DataFrame, suffix: str) -> tuple[list, list]:
     if len(volume) and volume[VOLUME].sum() > 0:
         leaders = volume.nlargest(3, VOLUME)
         share = leaders[VOLUME].sum() / volume[VOLUME].sum()
-        well.append((f"Most traded{suffix}", ", ".join(f"{row['Ticker']} ${row[VOLUME] / 1e6:,.0f}M" for _, row in leaders.iterrows())
+        well.append((f"Most traded{suffix}", ", ".join(f"{row['Ticker']} {_usd(row[VOLUME] / 1e6)}M" for _, row in leaders.iterrows())
                      + f" ({share:.0%} of {scope} 24h volume)."))
     return well, attention
 
@@ -245,8 +246,8 @@ def show_market_research(view: str) -> None:
             formatters={
                 CHANGE: lambda v: f"{v:.2f}%" if pd.notna(v) else "n/a",
                 FUNDING: lambda v: f"{v:.4f}%" if pd.notna(v) else "n/a",
-                VOLUME: lambda v: f"${v:,.0f}" if pd.notna(v) else "n/a",
-                OPEN_INTEREST: lambda v: f"${v:,.0f}" if pd.notna(v) else "n/a",
+                VOLUME: lambda v: f"{_usd(v)}" if pd.notna(v) else "n/a",
+                OPEN_INTEREST: lambda v: f"{_usd(v)}" if pd.notna(v) else "n/a",
             },
             key_columns=key,
         )
@@ -261,7 +262,7 @@ def show_market_research(view: str) -> None:
         print("Crypto and stocks are ranked separately: " + ", ".join(f"{kind} {len(group):,}" for kind, group in groups) + ".")
     if view == "trending":
         print(f"Trending lists the biggest loser and three biggest gainers with over "
-              f"${TRENDING_MIN_VOLUME:,.0f} 24h volume, per kind. The ranked tables below use that same pool.")
+              f"{_usd(TRENDING_MIN_VOLUME)} 24h volume, per kind. The ranked tables below use that same pool.")
         for kind, group in groups:
             show(f"HL TRENDING{' - ' + kind.upper() if kind else ''}", trending_markets(group), {CHANGE: "abs"})
     for kind, group in groups:

@@ -31,6 +31,7 @@ import requests
 
 from desk.accounts import Account
 from desk.venues.base import VenueAccount, VenuePosition
+from desk.numbers import usd as _usd
 
 VENUE = "onchain"
 ETHERSCAN_URL = "https://api.etherscan.io/v2/api"
@@ -734,7 +735,7 @@ def wallet_snapshot(account: Account, chains: list[str] | None = None) -> tuple[
             continue
         value = holding.amount * price
         if value > MAX_PLAUSIBLE_HOLDING_USD:
-            notes.append(f"{holding.symbol} on {holding.chain} ignored: ${value:,.0f} is implausible (likely spam)")
+            notes.append(f"{holding.symbol} on {holding.chain} ignored: {_usd(value)} is implausible (likely spam)")
             continue
         if value < DUST_USD and not holding.token.startswith("rewards:"):  # rewards always show
             continue

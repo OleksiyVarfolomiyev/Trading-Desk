@@ -35,38 +35,32 @@
 
     <section class="grid two">
       <div class="card">
-        <h2>Desk value by account</h2>
-        <p class="caption">USD, daily; wallet tokens on other chains have no history and are not included.</p>
+        <h2 title="USD, daily; wallet tokens on other chains have no history and are not included.">Desk value by account</h2>
         <div class="chart" id="chart-value"></div>
       </div>
       <div class="card">
-        <h2>Desk return vs BTC and SPY</h2>
-        <p class="caption">% since the desk's start, time-weighted (net of deposits and withdrawals), wallets included; the desk line ends at the Return since start tile.</p>
+        <h2 title="% since the desk's start, time-weighted (net of deposits and withdrawals), wallets included; the desk line ends at the Return since start tile.">Desk return vs BTC and SPY</h2>
         <div class="chart" id="chart-twr"></div>
       </div>
     </section>
 
     <section class="card">
-      <h2>Performance</h2>
-      <p class="caption">Time-weighted returns, net of deposits and withdrawals.</p>
+      <h2 title="Time-weighted returns, net of deposits and withdrawals.">Performance</h2>
       <div class="table-wrap" id="t-performance"></div>
     </section>
 
     <section class="card">
-      <h2>Performance by strategy</h2>
-      <p class="sub">HL positions and the last 30 days' fills, by the journal's tag: directional, conviction, hedge, and the ladders' market making. The market-making row gets only the ladders' own result against holding (as in the table above); the profit a ladder realizes by trimming a position stays with that position's strategy. Fills from before the journal began are untagged.</p>
+      <h2 title="HL positions and the last 30 days' fills, by the journal's tag: directional, conviction, hedge, and the ladders' market making. The market-making row gets only the ladders' own result against holding (as in the table above); the profit a ladder realizes by trimming a position stays with that position's strategy. Fills from before the journal began are untagged.">Performance by strategy</h2>
       <div class="table-wrap" id="t-strategies"></div>
     </section>
 
     <section class="card">
-      <h2>Accounts</h2>
-      <p class="caption">Each account's share of the desk; the other columns are a share of that account's own equity.</p>
+      <h2 title="Each account's share of the desk; the other columns are a share of that account's own equity.">Accounts</h2>
       <div class="table-wrap" id="t-accounts"></div>
     </section>
 
     <section class="card">
-      <h2>Risk metrics</h2>
-      <p class="caption">Current holdings: today's positions moved by the last 90 days' prices (the live risk). Current regime: realized daily returns since the book took its present shape; Sharpe and alpha appear after 40 days. Nothing is pooled across regimes. VaR is a one-day bootstrap loss on today's value. Updated hourly.</p>
+      <h2 title="Current holdings: today's positions moved by the last 90 days' prices (the live risk). Current regime: realized daily returns since the book took its present shape; Sharpe and alpha appear after 40 days. Nothing is pooled across regimes. VaR is a one-day bootstrap loss on today's value. Updated hourly.">Risk metrics</h2>
       <div class="table-wrap" id="t-risk"></div>
     </section>
 
@@ -76,8 +70,7 @@
         <div class="table-wrap" id="t-exposure"></div>
       </div>
       <div class="card">
-        <h2>Open risk vs the desk cap</h2>
-        <p class="caption">Each position's 1.25 × ATR(14) stop distance plus costs; HL adds a 5-day funding reserve.</p>
+        <h2 title="Each position's 1.25 × ATR(14) stop distance plus costs; HL adds a 5-day funding reserve.">Open risk vs the desk cap</h2>
         <div class="table-wrap" id="t-open_risk"></div>
       </div>
     </section>
@@ -94,14 +87,12 @@
     </section>
 
     <section class="card">
-      <h2>Open positions: crypto</h2>
-      <p class="caption">Value is signed (shorts negative). Weight is the share of gross exposure across both tables (together they sum to 100%); exposure / desk value sums to gross leverage. Funding (APR) is what the position earns (green) or pays (red) per year at the current rate.</p>
+      <h2 title="Value is signed (shorts negative). Weight is the share of gross exposure across both tables (together they sum to 100%); exposure / desk value sums to gross leverage. Funding (APR) is what the position earns (green) or pays (red) per year at the current rate.">Open positions: crypto</h2>
       <div class="table-wrap" id="t-positions"></div>
     </section>
 
     <section class="card">
-      <h2>Open positions: stocks and tradfi</h2>
-      <p class="caption">IB holdings and Hyperliquid equity, index and commodity perps. Wallet tokens are in the wallet holdings table; weights here are shares of the trading positions.</p>
+      <h2 title="IB holdings and Hyperliquid equity, index and commodity perps. Wallet tokens are in the wallet holdings table; weights here are shares of the trading positions.">Open positions: stocks and tradfi</h2>
       <div class="table-wrap" id="t-positions_stocks"></div>
     </section>
 
@@ -111,20 +102,17 @@
     </section>
 
     <section class="card">
-      <h2>Short candidates (screener)</h2>
-      <p class="sub">The 40 most liquid HL perps ranked by the signals the research harness validated (or the desk's own record until one is). Size at budget is what the 5% risk budget buys at the 3 × ATR stop; nothing trades until you run it.</p>
+      <h2 title="The 40 most liquid HL perps ranked by the signals the research harness validated (or the desk's own record until one is). Size at budget is what the 5% risk budget buys at the 3 × ATR stop; nothing trades until you run it.">Short candidates (screener)</h2>
       <div class="table-wrap" id="t-candidates"></div>
     </section>
 
     <section class="card">
-      <h2>Market making (ladders)</h2>
-      <p class="sub">The ladders' own trading (c248, and VVV in 07f2). Ladder PnL is their result against simply holding the position you opened: spread captured (round trips) plus inventory drift (what the unmatched buys or sells made as the price moved), less fees, plus funding on the ladder's own inventory (the position above or below its base). Markouts: the move 1 and 15 minutes after each fill, for (+) or against (−) it, in bps over the last 3 days; negative means the price runs through the quotes. Status says when the trims pause because the price trends the position's way. Position vs base: the band is in ladder.json (±25%). Quotes rest on HL's book; Queued are held in memory until the price nears them.</p>
+      <h2 title="The ladders' own trading (c248, and VVV in 07f2). Ladder PnL is their result against simply holding the position you opened: spread captured (round trips) plus inventory drift (what the unmatched buys or sells made as the price moved), less fees, plus funding on the ladder's own inventory (the position above or below its base). Markouts: the move 1 and 15 minutes after each fill, for (+) or against (−) it, in bps over the last 3 days; negative means the price runs through the quotes. Status says when the trims pause because the price trends the position's way. Position vs base: the band is in ladder.json (±25%). Quotes rest on HL's book; Queued are held in memory until the price nears them.">Market making (ladders)</h2>
       <div class="table-wrap" id="t-market_making"></div>
     </section>
 
     <section class="card">
-      <h2>Market-making candidates</h2>
-      <p class="sub">Liquid coins that have gone nowhere over 30 days (low efficiency: net move against the sum of daily moves), so ladder quotes on both sides keep filling.</p>
+      <h2 title="Liquid coins that have gone nowhere over 30 days (low efficiency: net move against the sum of daily moves), so ladder quotes on both sides keep filling.">Market-making candidates</h2>
       <div class="table-wrap" id="t-mm_candidates"></div>
     </section>
 

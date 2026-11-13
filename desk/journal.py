@@ -24,6 +24,7 @@ import pandas as pd
 from desk import market_making
 
 import os
+from desk.numbers import usd as _usd
 
 JOURNAL_FILE = Path(__file__).resolve().parents[1] / "data" / "trade_journal.json"
 
@@ -234,7 +235,7 @@ def show_strategies() -> None:
         print("No HL positions or fills in the last 30 days.")
         return
     frame = pd.concat([frame, pd.DataFrame([total_row(frame)])], ignore_index=True)
-    money = lambda value: "" if value != value else (f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")
+    money = lambda value: "" if value != value else (f"{_usd(-abs(value))}" if value < 0 else f"{_usd(value)}")
     count = lambda value: "" if value != value else f"{value:,.0f}"
     display_interactive_table(frame, bold_last=True, title="PERFORMANCE BY STRATEGY (HL)",
                               formatters={"Unrealized PnL": money, "Realized PnL (30d)": money, "Fees (30d)": money,

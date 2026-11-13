@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 from desk.hl import signal_research as research
+from desk.numbers import usd as _usd
 
 ROOT = Path(__file__).resolve().parents[1]
 SCREENER_FILE = ROOT / "data" / "screener.json"
@@ -45,12 +46,11 @@ RISK_BUDGET_PCT = 0.80 * 0.05            # 5% of the 80% usable equity (desk/ris
 FALLBACK = {"rel30": 1.0}
 CROWDED_SHARE = 0.5                      # shorts paid in more than half the hours of the last 7 days: crowded
 FUNDING_DAYS = 7
+# Research columns only: the stop, the size and the margin are the executor's and the daemon's.
 CANDIDATE_COLUMNS = ["Coin", "Score", "Basis", "30d vs BTC", "7d vs BTC", "From 60d high", "Funding 7d (APR)",
-                     "Shorts paid (7d)", "OI / volume", "24h volume",
-                     "Stop (3 ATR)", "Size at budget", "Max by margin", "Alt-rally stress after", "Notes"]
+                     "Crowding", "OI / volume", "24h volume", "Notes"]
 CANDIDATE_FORMATS = {"Score": "num2", "30d vs BTC": "spct", "7d vs BTC": "spct", "From 60d high": "spct",
-                     "Funding 7d (APR)": "spct", "Shorts paid (7d)": "pct", "OI / volume": "num2", "24h volume": "usd", "Stop (3 ATR)": "pct", "Size at budget": "usd",
-                     "Alt-rally stress after": "pct"}
+                     "Funding 7d (APR)": "spct", "OI / volume": "num2", "24h volume": "usd"}
 MM_COLUMNS = ["Coin", "Efficiency (30d)", "30d move", "Range position (60d)", "Daily range", "24h volume", "Funding (APR)",
               "Own ladder edge per $1k", "Notes"]
 MM_FORMATS = {"Efficiency (30d)": "num2", "30d move": "spct", "Range position (60d)": "pct", "Daily range": "pct",
@@ -113,20 +113,21 @@ def scoring(results: dict | None) -> tuple[dict[str, float], str]:
     """Signal -> weight (its validated direction), and the basis to show; the desk's record if nothing validated."""
     validated = {name: item["direction"] for name, item in ((results or {}).get("signals") or {}).items() if item.get("validated")}
     if validated:
-        return validated, "validated: " + ", ".join(research.SIGNALS[name] for name in validated)
-    return dict(FALLBACK), "desk record only: no signal validated, and the market-wide test does not confirm this ranking"
+        return validated, "validated: " + ", ".join(research.SIGNALS[name] for name in validated)  # names the signals
+    return dict(FALLBACK), "desk record (no signal validated)"
 
 
 def zscores(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return (frame[columns] - frame[columns].mean()) / frame[columns].std(ddof=0).replace(0, np.nan)
 
 
-def margin_caps(free_margin: dict[str, float] | None, max_leverage: int) -> str:
-    """The most notional each wallet's free margin (above its 20% reserve) allows: ``07f2 $900, c248 $1,200``."""
-    if not free_margin:
-        return ""
-    leverage = min(MAX_LEVERAGE, max(1, int(max_leverage or 1)))
-    return ", ".join(f"{wallet} ${max(0.0, margin) * leverage:,.0f}" for wallet, margin in sorted(free_margin.items()))
+def _stress_note(note: str) -> str:
+    """stress.fit_entry's note in a few words, for an entry the size of the risk budget at the 3 x ATR stop."""
+    if "entry refused" in note:
+        return "refused: stress over limit"
+    if "entry cut to" in note:
+        return "cut to " + note.rsplit("entry cut to ", 1)[1] + ": stress"
+    return "stress warning"
 
 
 def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[str], weights: dict[str, float],
@@ -150,17 +151,16 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
         stop = 3.0 * row["atr_pct"]
         size = budget / stop if stop > 0 else float("nan")
         _, note = stress.fit_entry(exposures, desk_equity, "crypto perp", coin, -size) if desk_equity > 0 and size == size else (1.0, "")
-        after = stress.scenario_losses(list(exposures) + [("crypto perp", coin, -size)])["alt rally"] / desk_equity if desk_equity > 0 else float("nan")
         apr, paid = crowding(funding_history(coin))
-        crowded = [f"crowded short: shorts paid {paid:.0%} of hours, {apr:.0%} APR"] if paid == paid and paid > CROWDED_SHARE else []
-        notes = crowded + trade_rules.entry_notes(coin, "SHORT", size) + ([note] if note else []) + (["already held"] if coin in held else [])
+        notes = trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else []) \
+            + (["already held"] if coin in held else [])
         volume = live.loc[coin, "volume24h"]
         open_interest = live.loc[coin, "open_interest"] if "open_interest" in live.columns else float("nan")
         rows.append({"Coin": coin, "Score": row["score"], "Basis": basis, "30d vs BTC": row.get("rel30"), "7d vs BTC": row.get("rel7"),
-                     "From 60d high": row.get("from_high60"), "Funding 7d (APR)": apr, "Shorts paid (7d)": paid,
-                     "OI / volume": open_interest / volume if volume else float("nan"), "24h volume": volume, "Stop (3 ATR)": stop, "Size at budget": size,
-                     "Max by margin": margin_caps(free_margin, live.loc[coin, "max_leverage"] if "max_leverage" in live.columns else MAX_LEVERAGE),
-                     "Alt-rally stress after": after, "Notes": "; ".join(notes)})
+                     "From 60d high": row.get("from_high60"), "Funding 7d (APR)": apr,
+                     "Crowding": "crowded" if paid == paid and paid > CROWDED_SHARE else "",
+                     "OI / volume": open_interest / volume if volume else float("nan"), "24h volume": volume,
+                     "Notes": "; ".join(notes)})
     return pd.DataFrame(rows, columns=CANDIDATE_COLUMNS)
 
 
@@ -251,14 +251,16 @@ def load(path: Path = SCREENER_FILE) -> dict | None:
 
 def _formatters() -> dict:
     percent = lambda value: "" if value is None or value != value else f"{value:.1%}"
-    money = lambda value: "" if value is None or value != value else f"${value:,.0f}"
+    from desk.numbers import usd
+
+    money = lambda value: usd(value, missing="")
     number = lambda value: "" if value is None or value != value else f"{value:.2f}"
     return {"Score": number, "30d vs BTC": percent, "7d vs BTC": percent, "From 60d high": percent, "Funding 7d (APR)": percent,
-            "Shorts paid (7d)": lambda value: "" if value is None or value != value else f"{value:.0%}", "OI / volume": number,
+            "OI / volume": number,
             "Funding (APR)": percent,
-            "24h volume": money, "Stop (3 ATR)": percent, "Size at budget": money, "Alt-rally stress after": percent,
+            "24h volume": money,
             "Efficiency (30d)": number, "30d move": percent, "Range position (60d)": percent, "Daily range": percent,
-            "Own ladder edge per $1k": lambda value: "" if value is None or value != value else f"${value:,.2f}"}
+            "Own ladder edge per $1k": lambda value: "" if value is None or value != value else f"{_usd(value)}"}
 
 
 def show_candidates() -> None:
@@ -270,13 +272,14 @@ def show_candidates() -> None:
         print("No screener run yet: python -m desk.screener")
         return
     formats = _formatters()
-    display_interactive_table(pd.DataFrame(state["shorts"], columns=CANDIDATE_COLUMNS), title="SHORT CANDIDATES",
+    shorts = pd.DataFrame(state["shorts"], columns=CANDIDATE_COLUMNS)
+    if len(shorts) > 1 and shorts["Basis"].nunique() == 1:  # one basis for every row: said once below, as on the dashboard
+        shorts = shorts.drop(columns="Basis")
+    display_interactive_table(shorts, title="SHORT CANDIDATES",
                               formatters={key: formats[key] for key in CANDIDATE_COLUMNS if key in formats}, key_columns={"Score": "min"})
     print(f"As of {state['as_of'][:16].replace('T', ' ')} UTC, candles to {state['candles_to']}; {state['universe']} coins in the "
-          f"liquid universe. Score basis: {state['basis']}. Size at budget is what the 5% risk budget buys at the 3 x ATR stop; "
-          "Max by margin is the most each wallet's free margin allows (the executor takes the smaller). Funding 7d is the "
-          "short's side (about +11% APR is HL's balanced base rate); Shorts paid is the share of hours shorts paid, and over "
-          "half is flagged as a crowded short.")
+          f"liquid universe. Score basis: {state['basis']}. Funding 7d is the short's side (about +11% APR is HL's "
+          "balanced base rate); crowded: shorts paid in more than half of the last 7 days' hours.")
 
 
 def show_ladder_candidates() -> None:

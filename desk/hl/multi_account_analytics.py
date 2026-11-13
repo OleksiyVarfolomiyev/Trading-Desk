@@ -53,6 +53,7 @@ from desk.hl.account_analytics import (
 
 
 from desk.hl.trade_analytics import time_weighted_index
+from desk.numbers import usd as _usd
 
 
 def _combine_wallet_data(wallet_analytics):
@@ -199,7 +200,7 @@ class _MultiWalletDataMixin:
         self._positions_loaded=False
         fill_count=sum(len(a.data.realized_fills) for a in self.wallet_analytics.values())
         print(f'Loaded {len(self.wallet_addresses)} wallets; {fill_count:,} available fills; '
-              f'combined current account value ${self.data.current_account_value:,.2f}.')
+              f'combined current account value {_usd(self.data.current_account_value)}.')
         common=self.data.chart_df.loc[self.data.chart_df['source']=='portfolio_allTime','ts']
         if not common.empty:
             print(f'Combined historical account value uses shared daily coverage in '
@@ -278,13 +279,13 @@ class _MultiWalletRealizedMixin:
         breakdown,non_usd_tokens=perp_pnl_breakdown(perp_df,data.funding_history_df)
         net_index=breakdown.index[breakdown['Component']=='Net perp PnL'][0]
         display_interactive_table(breakdown,formatters={
-            'Amount':lambda v:f'${v:,.2f}',
+            'Amount':lambda v:f'{_usd(v)}',
             'Contribution (% of |net PnL|)':lambda v:f'{v:.2f}%',
         },cell_style=breakdown_style,bold_last=True,key_columns={'Amount':None},title='PERP PNL BREAKDOWN',
           blank_missing_cells={(net_index,'Contribution (% of |net PnL|)')})
         liquidations=liquidation_stats(perp_df,funding_history=data.funding_history_df)
         print(f"Liquidations: {liquidations['liquidations']} of {liquidations['closes']} closes "
-              f"({liquidations['close_pct']:.2f}%) | liquidation PnL: ${liquidations['pnl']:,.2f}.")
+              f"({liquidations['close_pct']:.2f}%) | liquidation PnL: {_usd(liquidations['pnl'])}.")
         if non_usd_tokens:
             print(f'Trading/fee dollar contributions unavailable for fee token(s): {non_usd_tokens}.')
 
@@ -314,9 +315,9 @@ class _MultiWalletVolumeMixin:
                 return 'color:#188038;' if value>0 else 'color:#c62828;' if value<0 else ''
             return ''
         display_interactive_table(summary,formatters={
-            'Volume':lambda v:f'${v:,.2f}','Realized PnL excl. funding (trading + fees)':lambda v:f'${v:,.2f}',
+            'Volume':lambda v:f'{_usd(v)}','Realized PnL excl. funding (trading + fees)':lambda v:f'{_usd(v)}',
             'Realized PnL / Volume (%)':lambda v:f'{v:.2f}%',
-            'PnL / $1k volume':lambda v:f'${v:,.2f}',
+            'PnL / $1k volume':lambda v:f'{_usd(v)}',
             'Daily Pearson r':lambda v:f'{v:.3f}','Daily Spearman r':lambda v:f'{v:.3f}',
         },cell_style=style,bold_last=True,title=title,blank_missing_cells=volume_total_blank_cells(summary),
           key_columns={'Realized PnL excl. funding (trading + fees)':'abs'})
@@ -343,7 +344,7 @@ class _MultiWalletAttributionMixin:
             print('Consolidated PnL attribution: no realized or open-position PnL to attribute.')
             return
         display_pnl_attribution_tables(tables,'CONSOLIDATED PNL ATTRIBUTION')
-        print(f'Net attributed PnL across wallets: ${net_pnl:,.2f}. '
+        print(f'Net attributed PnL across wallets: {_usd(net_pnl)}. '
               "The Spot table's Other row is HL's non-perp PnL less spot fill PnL, so the "
               "net matches HL's total to within small timing differences. "
               'Liquidation PnL is the part of Realized booked by forced closes.')

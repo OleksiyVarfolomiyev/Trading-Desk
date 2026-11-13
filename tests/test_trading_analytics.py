@@ -316,7 +316,7 @@ class RealizedPnlTests(unittest.TestCase):
         self.assertEqual(len(events), 2)
         self.assertEqual(list(events["Positions"]), [2, 1])
         self.assertAlmostEqual(events["Realized PnL"].iloc[0], -50.2)
-        self.assertIn("BTC (-$40.10)", events["Assets"].iloc[0])
+        self.assertIn("BTC (-$40)", events["Assets"].iloc[0])
         self.assertTrue(self.account.liquidation_events(self.fills()).empty)
 
     def test_attribution_shows_liquidations_per_asset(self):
@@ -1048,7 +1048,7 @@ class TradeAnalyticsTests(unittest.TestCase):
             now, None, [], fills, pd.DataFrame(), 0.0, -35.0, 100.0, 0.0, 10.0, 50.0, 100.0, [],
         )
         self.assertEqual(attention[0]["Update"], "Liquidated")
-        self.assertIn("BTC -$40.00", attention[0]["Detail"])
+        self.assertIn("BTC -$40", attention[0]["Detail"])
         self.assertNotIn("ETH", attention[0]["Detail"])
 
     def test_winner_and_loser_highlights_show_a_percent_next_to_each_dollar_value(self):
@@ -1061,9 +1061,9 @@ class TradeAnalyticsTests(unittest.TestCase):
         well, attention = build_highlights(now, baseline, positions, fills, pd.DataFrame(), 30.0, 15.0,
                                            1000.0, 0.0, 100.0, 50.0, 100.0, [])
         details = {row["Update"]: row["Detail"] for row in well + attention}
-        self.assertIn("ETH $20.00 (2.0%)", details["Closed at a profit"])
+        self.assertIn("ETH $20 (2.0%)", details["Closed at a profit"])
         self.assertIn("SOL -$5.00 (-2.0%)", details["Closed at a loss"])
-        self.assertIn("INJ (w) $30.00 (5.0%)", details["Biggest open-position gains"])
+        self.assertIn("INJ (w) $30 (5.0%)", details["Biggest open-position gains"])
 
     def test_top_and_bottom_lists_never_share_a_market(self):
         small = pd.DataFrame({"Ticker": list("ABCDE"), CHANGE: [5.0, 3.0, 1.0, -2.0, -4.0]})

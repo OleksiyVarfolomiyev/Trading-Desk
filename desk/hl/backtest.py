@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from desk.numbers import usd as _usd
 from desk.hl.trade_analytics import (
     DEFAULT_HORIZON_DAYS,
     adverse_funding_cost_per_unit,
@@ -316,8 +317,8 @@ def main(argv: list[str] | None = None) -> int:
         results = pd.DataFrame(all_trades)
         print(
             f"Trades: {len(results)} | Win rate: {(results['net_pnl'] > 0).mean():.1%} | "
-            f"Mean net PnL/trade: ${results['net_pnl'].mean():,.2f} | "
-            f"Total net PnL (independent trades): ${results['net_pnl'].sum():,.2f}"
+            f"Mean net PnL/trade: {_usd(results['net_pnl'].mean())} | "
+            f"Total net PnL (independent trades): {_usd(results['net_pnl'].sum())}"
         )
         print("Stops are assumed to fill first when stop and target touch in the same daily candle.")
         print("Funding PnL uses the entry price as the hourly notional-price proxy.")

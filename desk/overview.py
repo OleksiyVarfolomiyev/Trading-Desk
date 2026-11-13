@@ -29,6 +29,7 @@ from desk.venues import hl as hl_venue
 from desk.venues import ib as ib_venue
 from desk.venues import onchain
 from desk.venues.base import VenueAccount
+from desk.numbers import clock
 
 OVERVIEW_HIGHLIGHTS_STATE = "desk_overview_highlights_state.json"
 HIGHLIGHT_MOVERS = 3
@@ -47,7 +48,9 @@ IB_HISTORY_COLUMNS = ["ts", "equity_usd", "cash_usd", "margin_used_usd", "unreal
 
 
 def _money(value):
-    return "n/a" if value is None or (isinstance(value, float) and not math.isfinite(value)) else f"${value:,.2f}"
+    from desk.numbers import usd
+
+    return usd(value)
 
 
 def _percent(value):
@@ -141,7 +144,7 @@ def ib_fills_table(fills: pd.DataFrame) -> pd.DataFrame:
 
     times = pd.to_datetime(fills["time"], utc=True, format="mixed").dt.tz_convert(US_EASTERN)
     table = pd.DataFrame({
-        "Time (ET)": times.dt.strftime("%Y-%m-%d %H:%M"),
+        "Time": times.map(clock),
         "Account": fills["account"].map(lambda account: f"IB {short_id(account)}"),
         "Symbol": fills["symbol"], "Type": fills["sec_type"], "Side": fills["side"],
         "Quantity": fills["quantity"], "Price": fills["price"],
@@ -880,7 +883,7 @@ class DeskOverview:
             return
         sign = recent["direction"].map({"in": 1, "out": -1, "self": 0})
         table = pd.DataFrame({
-            "Time": recent["time"].dt.tz_convert("America/New_York").dt.strftime("%Y-%m-%d %H:%M"),
+            "Time": recent["time"].map(clock),
             "Wallet": recent["Wallet"], "Chain": recent["chain"], "Direction": recent["direction"],
             "Token": recent["symbol"], "Amount": recent["amount"], "Value": recent["value_usd"] * sign,
             "Counterparty": [label or f"...{str(party)[-4:]}"

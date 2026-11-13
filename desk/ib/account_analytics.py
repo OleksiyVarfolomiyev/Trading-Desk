@@ -28,6 +28,7 @@ from desk.overview import merge_ib_fills, save_ib_history
 from desk.risk import ATR_PERIOD, REWARD_RISK_RATIO, STOP_ATR_MULTIPLE, ib_position_risk
 from desk.venues import ib as ib_venue
 from desk.charts import show as show_chart
+from desk.numbers import DISPLAY_TIMEZONE, clock
 
 BENCHMARK = "SPY"
 TRADING_DAYS = 252
@@ -40,7 +41,9 @@ SUMMARY_TAGS = ("NetLiquidation", "TotalCashValue", "BuyingPower", "GrossPositio
 
 
 def _money(value):
-    return "n/a" if value is None or not np.isfinite(value) else f"${value:,.2f}"
+    from desk.numbers import usd
+
+    return usd(value)
 
 
 def _percent(value):
@@ -503,7 +506,7 @@ class IBAccountAnalytics:
             figure.add_trace(go.Scatter(x=bench.index, y=bench, name=BENCHMARK, line={"color": colors[1]}))
         title = "Current IB holdings over the past year (hypothetical: today's positions held throughout)"
         if live:
-            stamp = f"{live['time']:%Y-%m-%d %H:%M} ET"
+            stamp = clock(live['time'].tz_localize(DISPLAY_TIMEZONE) if live['time'].tzinfo is None else live['time'])
             for series, color, name in ((book, colors[0], "Current book"), (bench, colors[1], BENCHMARK)):
                 if series is not None and series.index[-1] == live["time"].tz_localize(None):
                     figure.add_trace(go.Scatter(

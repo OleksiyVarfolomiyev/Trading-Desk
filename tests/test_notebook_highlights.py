@@ -19,7 +19,7 @@ class HighlightsStateTests(unittest.TestCase):
         self.assertIsNone(first.last_run)
         second = HighlightsState(path).compare({"Desk value": (1100.0, "usd"), "Sharpe": (float("nan"), "num")},
                                                {"Positions": ["AAPL long", "IONQ short"]})
-        self.assertEqual(second.changes, [("Desk value", "$1,000.00", "$1,100.00", "$100.00")])
+        self.assertEqual(second.changes, [("Desk value", "$1K", "$1.1K", "$100")])
         self.assertIn("Positions added: IONQ short.", second.notes)
         self.assertIn("Positions removed: QNT short.", second.notes)
 

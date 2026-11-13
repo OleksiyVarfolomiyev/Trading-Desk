@@ -1,0 +1,81 @@
+"""Dollar amounts as the desk shows them: rounded for reading, the same in notebooks and on the dashboards
+(desk/dashboard_static/app.js ``usd`` follows the same rule).
+
+    $0.42   under $10: cents
+    $548    under $1,000: whole dollars
+    $2.11K  $12.3K  $123K
+    $2.53M  $16.7M
+    $1.2B
+"""
+
+from __future__ import annotations
+
+import math
+
+UNITS = ((1e9, "B"), (1e6, "M"), (1e3, "K"))
+
+
+def usd(value, signed: bool = False, missing: str = "n/a") -> str:
+    """``value`` in dollars, rounded to three significant figures from $1,000 up (``signed``: a "+" on gains)."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return missing
+    if not math.isfinite(value):
+        return missing
+    sign = "-" if value < 0 else ("+" if signed and value > 0 else "")
+    size = abs(value)
+    rounded = float(f"{size:.3g}")
+    for scale, unit in UNITS:
+        if rounded >= scale:
+            return f"{sign}${rounded / scale:.3g}{unit}"
+    if size >= 10:
+        return f"{sign}${size:,.0f}"
+    return f"{sign}${size:.2f}"
+
+
+STALE_DAYS = 60   # a date older than this reads as its month (May'25); a recent one keeps its day (Nov 3)
+
+
+def since(when, now=None) -> str:
+    """A start date for reading: "May'25" once it is more than STALE_DAYS old, else "Nov 3"; "" when unknown.
+    The dashboards (desk/dashboard_static/app.js and web/live.js ``sinceLabel``) follow the same rule."""
+    import pandas as pd
+
+    try:
+        stamp = pd.Timestamp(when)
+    except (TypeError, ValueError):
+        return ""
+    if pd.isna(stamp):
+        return ""
+    stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
+    now = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    now = now.tz_localize("UTC") if now.tzinfo is None else now
+    if now - stamp > pd.Timedelta(days=STALE_DAYS):
+        return f"{stamp:%b}'{stamp:%y}"
+    return f"{stamp:%b} {stamp.day}"
+
+
+DISPLAY_TIMEZONE = "America/New_York"   # the desk's clock; shown without a zone name
+
+
+def clock(when, now=None) -> str:
+    """A moment in the desk's time zone for reading: "10 am" or "10:35 am" today, "Nov 12, 10 am" this year,
+    "Nov 12 '25, 10 am" before; "" when unknown. A naive stamp is taken as UTC (the daemon's and the files')."""
+    import pandas as pd
+
+    try:
+        stamp = pd.Timestamp(when)
+    except (TypeError, ValueError):
+        return ""
+    if pd.isna(stamp):
+        return ""
+    stamp = (stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp).tz_convert(DISPLAY_TIMEZONE)
+    now = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    now = (now.tz_localize("UTC") if now.tzinfo is None else now).tz_convert(DISPLAY_TIMEZONE)
+    hour = stamp.hour % 12 or 12
+    time = f"{hour}{f':{stamp.minute:02d}' if stamp.minute else ''} {'am' if stamp.hour < 12 else 'pm'}"
+    if stamp.date() == now.date():
+        return time
+    day = f"{stamp:%b} {stamp.day}" + (f" '{stamp:%y}" if stamp.year != now.year else "")
+    return f"{day}, {time}"

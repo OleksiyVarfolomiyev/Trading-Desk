@@ -1094,8 +1094,8 @@ class OverviewSectionsTests(unittest.TestCase):
             overview.show_wallet_holdings()
             overview.show_unrealized_pnl()
         metrics = dict(zip(tables["DESK METRICS"]["Metric"], tables["DESK METRICS"]["Value"]))
-        self.assertEqual(metrics["Desk value (all accounts)"], "$3,112.00")
-        self.assertEqual(metrics["Wallet holdings outside HL"], "$2,112.00 (68% of desk)")
+        self.assertEqual(metrics["Desk value (all accounts)"], "$3.11K")
+        self.assertEqual(metrics["Wallet holdings outside HL"], "$2.11K (68% of desk)")
         self.assertEqual(metrics["Gross exposure"], "3.00x trading equity")  # 2,000 + 1,000 gross on 1,000 trading equity
         self.assertNotIn("$", metrics["Unrealized PnL"])
         holdings = tables["WALLET HOLDINGS OUTSIDE HL"]

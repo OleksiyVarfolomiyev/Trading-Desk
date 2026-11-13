@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
+from desk.numbers import since, usd as _usd
 
 LADDERS_FILE = Path.home() / ".trading-desk" / "ladders.json"
 LADDER_CLOID_PREFIX = "0x1add"
@@ -43,10 +44,10 @@ FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventor
 
 
 def eastern(utc_text: str) -> str:
-    """A UTC ``YYYY-MM-DD HH:MM`` stamp (as the daemon records it) in Eastern time, ``2026-11-11 17:24 ET``."""
-    if not utc_text:
-        return ""
-    return f"{pd.Timestamp(utc_text, tz='UTC').tz_convert(DISPLAY_TIMEZONE):%Y-%m-%d %H:%M} ET"
+    """A UTC stamp (as the daemon records it) on the desk's clock: ``10 am``, ``Nov 12, 5:24 pm``."""
+    from desk.numbers import clock
+
+    return clock(utc_text)
 
 
 def running_ladders(path: Path = LADDERS_FILE) -> list[dict]:
@@ -219,7 +220,7 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
             row = {"Account": wallets[wallet].name, "Coin": coin,
                    "Side": ("LONG" if base > 0 else "SHORT") if ladder else "",
                    "Status": ((status or {}).get((short_id(wallet), coin), "quoting")) if ladder else "stopped",
-                   "Since": eastern(ladder["started"]) if ladder else "", **measured, **markouts(own, closes),
+                   "Since": since(ladder["started"]) if ladder else "", **measured, **markouts(own, closes),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
                    "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan")),
                    "Queued": (queued or {}).get((short_id(wallet), coin), float("nan"))}
@@ -255,7 +256,7 @@ def show_market_making() -> None:
               "hl_daemon.py ladder --wallet c248 --coin X (the trading daemon runs the ladders).")
         return
     frame = pd.concat([frame, pd.DataFrame([total_row(frame)])], ignore_index=True)
-    money = lambda value: "" if value != value else (f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")
+    money = lambda value: "" if value != value else (f"{_usd(-abs(value))}" if value < 0 else f"{_usd(value)}")
     bps = lambda value: "" if value != value else f"{value:.1f}"
     display_interactive_table(
         frame, bold_last=True, title="MARKET MAKING (LADDERS)",

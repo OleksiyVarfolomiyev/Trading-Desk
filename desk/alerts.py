@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
+from desk.numbers import clock
 
 ALERTS_FILE = Path.home() / ".trading-desk" / "daemon_alerts.json"
 STALE_SECONDS = 15 * 60
@@ -34,12 +35,7 @@ def rows(state: dict | None, now: float | None = None) -> list[tuple[str, str]]:
         return [("Trading daemon not reporting",
                  f"No word from the trading daemon for {age / 60:.0f} minutes: guards, the margin guard and the ladders "
                  "are not running. Start it: .venv/bin/python execution/hl_daemon.py serve")]
-    def eastern(stamp: str) -> str:
-        try:
-            return f"{pd.Timestamp(stamp, tz='UTC').tz_convert('America/New_York'):%Y-%m-%d %H:%M} ET"
-        except (ValueError, TypeError):
-            return "?"
 
     title = lambda text: text[:1].upper() + text[1:]  # "funding adverse" reads "Funding adverse"
-    return [(title(item['title']), f"{item['text']} (since {eastern(item.get('since', ''))})")
+    return [(title(item['title']), f"{item['text']} (since {clock(item.get('since', '')) or '?'})")
             for item in state.get("alerts", []) if float(item.get("expires", 0) or 0) == 0 or float(item["expires"]) > now]
