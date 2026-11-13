@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var
-from desk.numbers import since
+from desk.numbers import since as _since
 
 EX_ANTE_DAYS = 90
 # Sharpe and alpha are not quoted from fewer days than this: a shorter stretch is an episode.
@@ -219,8 +219,8 @@ def ex_ante_row(
     covered = holdings[holdings["key"].isin(returns.columns)]
     gross = holdings["value"].abs().sum()
     row = {"Basis": "Current holdings (ex-ante)", "Periods": len(returns),
-           "From": since(returns.index.min()) if len(returns) else "",
-           "To": since(returns.index.max()) if len(returns) else "",
+           "From": _since(returns.index.min()) if len(returns) else "",
+           "To": _since(returns.index.max()) if len(returns) else "",
            "Coverage": covered["value"].abs().sum() / gross if gross else np.nan}
     if covered.empty or equity <= 0 or len(returns) < 20:
         return row

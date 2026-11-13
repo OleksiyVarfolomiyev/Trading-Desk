@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from desk.numbers import since, usd as _usd, pct as _pct
+from desk.numbers import since as _since, usd as _usd, pct as _pct
 
 LADDERS_FILE = Path.home() / ".trading-desk" / "ladders.json"
 LADDER_CLOID_PREFIX = "0x1add"
@@ -202,8 +202,8 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
             position = positions.get(coin, {})
             size = float(position.get("szi") or 0)
             mark = abs(float(position.get("positionValue") or 0) / size) if size else float("nan")
-            since = pd.Timestamp(ladder["started"], tz="UTC") if ladder else None
-            own = [fill for fill in fills if fill["coin"] == coin and (since is None or fill["time"] >= since.timestamp() * 1000)]
+            started = pd.Timestamp(ladder["started"], tz="UTC") if ladder else None
+            own = [fill for fill in fills if fill["coin"] == coin and (started is None or fill["time"] >= started.timestamp() * 1000)]
             if mark != mark and own:
                 mark = float(own[-1]["px"])
             base = float(ladder["base"]) if ladder else float("nan")
@@ -213,14 +213,14 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
                 closes = pd.Series(dtype=float)
             earned = sum(amount for _, amount in ladder_funding_parts(
                 own, [event for event in events if (event.get("delta") or {}).get("coin") == coin
-                      and (since is None or int(event["time"]) >= since.timestamp() * 1000)]))
+                      and (started is None or int(event["time"]) >= started.timestamp() * 1000)]))
             measured = metrics(own, mark)
             measured["Funding"] = earned
             measured["Ladder PnL"] += earned  # the funding on the ladder's inventory is part of its result
             row = {"Account": wallets[wallet].name, "Coin": coin,
                    "Side": ("LONG" if base > 0 else "SHORT") if ladder else "",
                    "Status": ((status or {}).get((short_id(wallet), coin), "quoting")) if ladder else "stopped",
-                   "Since": since(ladder["started"]) if ladder else "", **measured, **markouts(own, closes),
+                   "Since": _since(ladder["started"]) if ladder else "", **measured, **markouts(own, closes),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
                    "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan")),
                    "Queued": (queued or {}).get((short_id(wallet), coin), float("nan"))}
