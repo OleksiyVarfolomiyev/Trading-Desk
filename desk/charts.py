@@ -131,6 +131,33 @@ def _is_time(values) -> bool:
     return False
 
 
+END_LABEL_GAP_PX = 14
+
+
+def _spread(fig, labels: list[dict]) -> None:
+    """Push end labels closer than a line apart vertically (``yshift``), keeping their order, as the web dashboard
+    does. The axis range is estimated from the traces (the figure is not rendered yet), so the gap is approximate."""
+    import math
+
+    height = (fig.layout.height or 450) - 160   # roughly the plot area under the title, legend and margins
+    for ref in {label["yref"] for label in labels}:
+        values = [label["y"] for label in labels if label["yref"] == ref]
+        for trace in fig.data:
+            if (trace.yaxis or "y") == ref and trace.y is not None and not trace.stackgroup:
+                values += [float(v) for v in trace.y if v is not None and math.isfinite(float(v))]
+        low, high = min(values), max(values)
+        if high <= low:
+            continue
+        scale = height / ((high - low) * 1.1)
+        group = sorted((label for label in labels if label["yref"] == ref), key=lambda label: -label["y"])
+        place = None
+        for label in group:
+            at = (label["y"] - low) * scale
+            place = at if place is None or place - at >= END_LABEL_GAP_PX else place - END_LABEL_GAP_PX
+            if round(place - at):
+                label["yshift"] = round(place - at)
+
+
 def end_labels(fig):
     """Write each time-series line's last value at its right end, as on the web dashboard. Returns ``fig``.
 
@@ -174,6 +201,7 @@ def end_labels(fig):
                        "text": _end_text(y, axis, chart_title), "showarrow": False, "xanchor": "left", "xshift": 6,
                        "font": {"size": 11, **({"color": color} if color else {})}})
     labels = [label for label in labels if label]
+    _spread(fig, labels)
     for label in labels:
         fig.add_annotation(**label)
     if labels:

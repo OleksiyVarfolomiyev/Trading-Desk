@@ -38,3 +38,22 @@ class SustainedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConsolidateTests(unittest.TestCase):
+    DAEMON_BERA = ("Funding", "...07f2 BERA short -70.7% avg APR over 6 hrs (since 2026-11-13 10:00 ET)")
+    DAEMON_MELANIA = ("Funding", "...c248 MELANIA short -119.7% avg APR over 6 hrs (since 2026-11-13 09:00 ET)")
+
+    def test_daemon_alerts_and_the_current_rate_row_become_one_row(self):
+        rows = [("Margin", "m"), self.DAEMON_BERA, self.DAEMON_MELANIA, ("Concentration", "c"),
+                (funding_watch.TITLE, "BERA short (07f2) -57.0% APR, xyz:TSLA long (07f2) -40.0% APR.")]
+        self.assertEqual(funding_watch.consolidate(rows), [
+            ("Margin", "m"),
+            ("Funding", "MELANIA short (c248) -119.7%, BERA short (07f2) -70.7% avg APR over 6 hrs; TSLA long (07f2) -40.0% APR now."),
+            ("Concentration", "c")])
+
+    def test_current_rate_only_and_nothing_to_merge(self):
+        self.assertEqual(funding_watch.consolidate([(funding_watch.TITLE, "BERA short (HL 07f2) -57.0% APR.")]),
+                         [("Funding", "BERA short (07f2) -57.0% APR now.")])
+        rows = [("Concentration", "c"), ("Funding", "some other text")]
+        self.assertEqual(funding_watch.consolidate(rows), rows)   # an unknown shape is left alone

@@ -247,6 +247,9 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     from desk import alerts as daemon_alerts
 
     attention[:0] = daemon_alerts.rows(daemon_alerts.read())  # the trading daemon's problems first
+    from desk import funding_watch
+
+    attention = funding_watch.consolidate(attention)  # the daemon's and the current-rate funding rows as one
 
     accounts, account_total = account_shares(overview.accounts_frame())
     money = {column: "usd" for column in ("Equity", "Cash", "Margin used", "Available", "Gross", "Value", "Risk equity",
@@ -369,18 +372,20 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     # and their values are only recorded from run to run. Once two days exist, a separate line shows
     # the desk value including them, from the first recorded day only.
     with_wallets = _value_with_wallets(value_series, _wallet_value_series(desk, start))
-    index = _daily(desk.index)
+    # The return chart is the tiles' series (``headline``: wallets included when they have history), as % since
+    # its start, so the desk line ends at the "Return since start" tile; the benchmarks start the same day.
+    index = _daily(headline)
     index.index = index.index.normalize()
-    twr = [{"name": "Desk (net of deposits)",
+    twr = [{"name": "Desk incl. wallets" if headline is not desk.index else "Desk (HL + IB)",
             "x": [ts.strftime("%Y-%m-%d") for ts in index.index],
-            "y": (100 * index / index.iloc[0]).round(3).tolist()}]
+            "y": (100 * (index / headline.iloc[0] - 1)).round(2).tolist()}]
     for name in ("BTC", "SPY"):
         if name in desk.benchmarks:
             prices = desk.benchmarks[name].dropna()
             prices = prices[prices.index >= index.index[0]]
             if len(prices):
                 twr.append({"name": name, "x": [ts.strftime("%Y-%m-%d") for ts in prices.index],
-                            "y": (100 * prices / prices.iloc[0]).round(3).tolist()})
+                            "y": (100 * (prices / prices.iloc[0] - 1)).round(2).tolist()})
 
     notes = list(desk.notes)
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]

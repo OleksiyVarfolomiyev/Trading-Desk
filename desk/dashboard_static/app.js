@@ -273,6 +273,29 @@ function endLabels(series, format) {
   }));
 }
 
+// End labels closer than a line apart (a stacked total over its top layer, two lines ending near each other) are
+// pushed apart vertically, in rendered pixels, keeping their order; each stays as close to its line as it can.
+const END_LABEL_GAP_PX = 14;
+function spreadEndLabels(id) {
+  const gd = document.getElementById(id);
+  const axis = gd && gd._fullLayout && gd._fullLayout.yaxis;
+  if (!axis || !axis.range || !axis._length) return;
+  const [low, high] = axis.range.map(Number);
+  const scale = axis._length / (high - low || 1);
+  const annotations = (gd.layout.annotations || []).map((a) => Object.assign({}, a));
+  const ends = annotations.filter((a) => a.xshift === 6 && a.xanchor === "left" && typeof a.y === "number")
+    .map((a) => ({ a, at: (a.y - low) * scale })).sort((p, q) => q.at - p.at);
+  let changed = false;
+  ends.forEach((label, i) => {
+    label.place = i && ends[i - 1].place - label.at < END_LABEL_GAP_PX ? ends[i - 1].place - END_LABEL_GAP_PX : label.at;
+  });
+  ends.forEach((label) => {
+    const shift = Math.round(label.place - label.at);
+    if ((label.a.yshift || 0) !== shift) { label.a.yshift = shift; changed = true; }
+  });
+  if (changed) Plotly.relayout(gd, { annotations });
+}
+
 function renderCharts(charts) {
   if (typeof Plotly === "undefined" || !charts) return;
   const colors = [1, 2, 3, 4, 5].map((i) => token("--series-" + i));
@@ -315,18 +338,21 @@ function renderCharts(charts) {
   });
   valueLayout.annotations = (valueLayout.annotations || []).concat(valueEnds);
   valueLayout.margin = Object.assign({}, valueLayout.margin, { r: 88 });
-  Plotly.react("chart-value", value, valueLayout, CONFIG);
+  Plotly.react("chart-value", value, valueLayout, CONFIG).then(() => spreadEndLabels("chart-value"));
 
   const twr = (charts.twr || []).map((s, i) => ({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
     line: { width: 2, color: colors[i % colors.length], shape: "linear" },
-    hovertemplate: "%{fullData.name}: %{y:.1f}<extra></extra>",
+    hovertemplate: "%{fullData.name}: %{y:+.1f}%<extra></extra>",
   }));
-  const labels = endLabels(charts.twr || [], (v) => v.toFixed(1));
-  Plotly.react("chart-twr", twr, baseLayout({
+  // % since the start; the desk line ends at the "Return since start" tile.
+  const labels = endLabels(charts.twr || [], (v) => (v > 0 ? "+" : "") + v.toFixed(1) + "%");
+  const twrLayout = baseLayout({
     annotations: labels,
-    shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 100, y1: 100, line: { color: token("--axis"), width: 1 } }],
-  }), CONFIG);
+    shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }],
+  });
+  twrLayout.yaxis = Object.assign({}, twrLayout.yaxis, { ticksuffix: "%" });
+  Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => spreadEndLabels("chart-twr"));
 }
 
 // ---------------------------------------------------------------- page

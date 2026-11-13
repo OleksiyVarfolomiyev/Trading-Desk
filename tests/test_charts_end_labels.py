@@ -5,6 +5,7 @@ import unittest
 import pandas as pd
 import plotly.graph_objects as go
 
+from desk import charts
 from desk.charts import end_labels
 
 
@@ -76,3 +77,18 @@ class SplitLineLabelTests(unittest.TestCase):
         fig.update_layout(yaxis_tickformat="$,.1f")
         end_labels(fig)
         self.assertEqual([(note.text, note.font.color) for note in fig.layout.annotations], [("-$4.50", "red")])
+
+
+class SpreadTests(unittest.TestCase):
+    def test_labels_closer_than_a_line_are_pushed_apart_in_order(self):
+        import plotly.graph_objects as go
+
+        days = pd.date_range("2026-01-01", periods=30, freq="D")
+        fig = go.Figure([go.Scatter(x=days, y=[1000.0] * 30, name="IB", stackgroup="v"),
+                         go.Scatter(x=days, y=[5.0] * 30, name="HL", stackgroup="v"),
+                         go.Scatter(x=days, y=[0.0] * 29 + [3000.0], name="far")])
+        charts.end_labels(fig)
+        notes = {note.text: note for note in fig.layout.annotations}
+        ib, total = notes["1,000.00"], notes["5.00"]   # HL's own value, labelled at the stack top (1,005)
+        self.assertGreaterEqual((total.yshift or 0) - (ib.yshift or 0), charts.END_LABEL_GAP_PX - 1)   # the upper one stays above
+        self.assertFalse(notes["3,000.00"].yshift)                                                     # a lone label is not moved

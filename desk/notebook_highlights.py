@@ -133,6 +133,9 @@ def _rows_html(title: str, rows: list[Row], color: str) -> str:
 def render(well: list[Row], attention: list[Row], since: SinceLastRun | None = None,
            footnote: str = "") -> str:
     """One HTML block: what stands out, what needs attention, and what changed since the last run."""
+    from desk import funding_watch
+
+    attention = funding_watch.consolidate(list(attention))  # one "Funding" row, as on the dashboards
     parts = ["<div style='font-size:13px;line-height:1.45'>",
              _rows_html("WHAT STANDS OUT", well, GOOD), _rows_html("NEEDS ATTENTION", attention, BAD)]
     if since is not None:

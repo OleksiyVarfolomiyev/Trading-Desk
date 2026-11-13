@@ -782,16 +782,20 @@ class DeskAccounts:
                              hovermode="x unified", yaxis_tickprefix="$", legend=LEGEND_ON_TOP["legend"],
                              margin={**LEGEND_ON_TOP["margin"], "b": 90})
         show_chart(figure)
-        index = self.index.resample("1D").last().dropna()
+        # The headline series (wallets included when they have history), as % since its start: the line ends at the
+        # highlights' and the performance table's return since start; the benchmarks start the same day.
+        headline = self.headline_index()
+        index = headline.resample("1D").last().dropna()
         index.index = index.index.normalize()
-        comparison = go.Figure(go.Scatter(x=index.index, y=100 * index / index.iloc[0], name="Desk (net of deposits)"))
+        comparison = go.Figure(go.Scatter(x=index.index, y=100 * (index / headline.iloc[0] - 1),
+                                          name="Desk incl. wallets" if headline is not self.index else "Desk (HL + IB)"))
         for name, color in (("BTC", "#F7931A"), ("SPY", "#16a34a")):
             if name in self.benchmarks:
                 prices = self.benchmarks[name].dropna()
                 prices = prices[prices.index >= index.index[0]]
                 if len(prices):
-                    comparison.add_trace(go.Scatter(x=prices.index, y=100 * prices / prices.iloc[0], name=name,
+                    comparison.add_trace(go.Scatter(x=prices.index, y=100 * (prices / prices.iloc[0] - 1), name=name,
                                                     line={"color": color}))
-        comparison.update_layout(title=f"Desk time-weighted return vs BTC and SPY (start = 100, from {index.index[0]:%Y-%m-%d})",
-                                 template="plotly_dark", hovermode="x unified", **LEGEND_ON_TOP)
+        comparison.update_layout(title=f"Desk return vs BTC and SPY (%, time-weighted, since {index.index[0]:%Y-%m-%d})",
+                                 template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%", **LEGEND_ON_TOP)
         show_chart(comparison)

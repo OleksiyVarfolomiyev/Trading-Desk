@@ -24,7 +24,7 @@
   const MOVERS = 5, HIGHLIGHT_MOVERS = 3;
   const CONCENTRATION_PCT = 0.25, HIGH_LEVERAGE = 2.0, LOW_AVAILABLE_PCT = 0.10, NEAR_CAP_PCT = 0.80, DEEP_DRAWDOWN = -0.10;
   // desk/funding_watch.py: a position paying more than 0.1% of its value a day, and at least $0.25 a day.
-  const ADVERSE_FUNDING_APR = 0.365, ADVERSE_FUNDING_MIN_DAILY = 0.25;
+  const ADVERSE_FUNDING_APR = 0.365, ADVERSE_FUNDING_MIN_DAILY = 0.25, FUNDING_SUSTAINED_HOURS = 6;
   const CRYPTO_HIP3_DEXES = new Set(["hyna"]);
   const CRYPTO_HIP3_MARKETS = new Set(["cash:BTC", "cash:ETH", "flx:BTC", "flx:USDE", "flx:XMR", "io:PRL",
     "para:ANSEM", "para:BTCD", "para:HYPE2", "para:OTHERS", "para:TOTAL2"]);
@@ -776,7 +776,7 @@
       if (everything.length) {
         let top = everything[0];
         everything.forEach((p) => { if (p.v >= top.v) top = p; });
-        headline = { returns: all, start: everything[0].t, drawdown: everything[everything.length - 1].v / top.v - 1, peak: top };
+        headline = { returns: all, start: everything[0].t, drawdown: everything[everything.length - 1].v / top.v - 1, peak: top, series: everything };
       }
       performanceRows.push({ "Account": "Desk incl. wallets", "Return 24h": dayReturn(accounts.map((a) => a.label)), "Return 7D": all["7D"], "Return 30D": all["30D"], "Return 90D": all["90D"],
         "Return 1Y": all["1Y"], "Return since inception": all.since_start, "Since": everything.length ? dayKey(everything[0].t) : "" });
@@ -844,14 +844,18 @@
       if (x.length && x[x.length - 1] === today && fin(deskEquity)) y[y.length - 1] = Math.round(deskEquity * 100) / 100;
       return x.length > 1 ? { name: "Desk value incl. wallets outside HL", note: "", x, y } : null;
     };
-    const indexDays = dailyLast(index, "v");
-    const firstLevel = index.length ? index[0].v : 1;
-    const twr = [{ name: "Desk (net of deposits)", x: [...indexDays.keys()], y: [...indexDays.values()].map((v) => Math.round(1e5 * v / firstLevel) / 1e3) }];
-    const benchmarkDays = Math.ceil((now - start) / DAY_MS) + 2;
+    // The return chart is the tiles' series (``headline``: wallets included when they have history), as % since its
+    // start, so the desk line ends at the "Return since start" tile; the benchmarks start the same day.
+    const chartIndex = headline.series || index, chartStart = headline.start;
+    const indexDays = dailyLast(chartIndex, "v");
+    const firstLevel = chartIndex.length ? chartIndex[0].v : 1;
+    const twr = [{ name: headline.series ? "Desk incl. wallets" : "Desk (HL + IB)", x: [...indexDays.keys()],
+      y: [...indexDays.values()].map((v) => Math.round(1e4 * (v / firstLevel - 1)) / 1e2) }];
+    const benchmarkDays = Math.ceil((now - chartStart) / DAY_MS) + 2;
     const rebased = (name, rows) => {  // rows: [{t, c}] daily closes
-      const inRange = rows.filter((row) => row.t >= Math.floor(start / DAY_MS) * DAY_MS && row.c > 0);
+      const inRange = rows.filter((row) => row.t >= Math.floor(chartStart / DAY_MS) * DAY_MS && row.c > 0);
       if (!inRange.length) return null;
-      return { name, x: inRange.map((row) => dayKey(row.t)), y: inRange.map((row) => Math.round(1e5 * row.c / inRange[0].c) / 1e3) };
+      return { name, x: inRange.map((row) => dayKey(row.t)), y: inRange.map((row) => Math.round(1e4 * (row.c / inRange[0].c - 1)) / 1e2) };
     };
     // SPY's daily closes come from Yahoo Finance through the relay (a browser cannot call Yahoo), so
     // the line covers the whole chart; HL's S&P 500 perp, which starts at its listing, is the fallback.
@@ -863,6 +867,7 @@
 
     // -- highlights (desk/overview.py and desk/desk_accounts.py rules)
     const well = [], attention = [];
+    let fundingNow = [];  // positions paying adverse funding at the current rate, for the one "Funding" row
     const headlineReturns = headline.returns;
     const returnText = `${percent(headlineReturns.since_start, true)} since ${dayKey(headline.start)}; ` +
       Object.keys(WINDOWS).map((label) => `${label} ${percent(headlineReturns[label], true)}`).join(", ") + ".";
@@ -902,9 +907,9 @@
       const dailyCost = (r) => -r["Funding (APR)"] * Math.abs(r.Value) / 365;
       const payers = positionRows.filter((r) => fin(r["Funding (APR)"]) && r["Funding (APR)"] <= -ADVERSE_FUNDING_APR
         && dailyCost(r) >= ADVERSE_FUNDING_MIN_DAILY).sort((a, b) => dailyCost(b) - dailyCost(a));
-      if (payers.length) {
-        attention.push(["Adverse funding", payers.map((r) => `${r.Symbol} ${r.Side.toLowerCase()} (${r.Account}) ${percent(r["Funding (APR)"])} APR`).join(", ") + "."]);
-      }
+      fundingNow = payers.map((r) => ({ coin: String(r.Symbol).split(":").pop(), side: r.Side.toLowerCase(),
+        account: String(r.Account).slice(-4), apr: r["Funding (APR)"] }));
+      if (payers.length) attention.push(["Funding", ""]);  // filled in below with the daemon's sustained payers
     }
     if (tradingEquity) {
       const leverage = gross / tradingEquity;
@@ -968,6 +973,35 @@
         : (daemonAlerts.alerts || []).filter((a) => !a.expires || a.expires > Date.now() / 1000)
           .map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), `${a.text} (since ${eastern(a.since, true)})`]);
       rows.reverse().forEach((row) => attention.unshift(row));
+    }
+    // One "Funding" row (desk/funding_watch.py consolidate): the daemon's sustained payers, worst first, with their
+    // average, then the payers adverse only at the current rate; it stands where the first funding row stood.
+    {
+      const sustained = new Map();
+      let hours = FUNDING_SUSTAINED_HOURS, at = -1;
+      const kept = [];
+      attention.forEach(([title, text]) => {
+        const match = title === "Funding" && /^\.\.\.(\w+) (\S+) (long|short) (-?[\d.]+)% avg APR over (\d+) hrs/.exec(text);
+        if (match) {
+          const coin = match[2].split(":").pop(), account = match[1].slice(-4);
+          sustained.set(`${coin} ${account}`, { name: `${coin} ${match[3]} (${account})`, apr: Number(match[4]) / 100 });
+          hours = Number(match[5]);
+        } else if (!(title === "Funding" && text === "")) {
+          kept.push([title, text]);
+          return;
+        }
+        if (at < 0) at = kept.length;
+      });
+      if (at >= 0) {
+        const worstFirst = (items) => items.sort((a, b) => a.apr - b.apr).map((i) => `${i.name} ${percent(i.apr)}`).join(", ");
+        const onlyNow = fundingNow.filter((i) => !sustained.has(`${i.coin} ${i.account}`))
+          .map((i) => ({ name: `${i.coin} ${i.side} (${i.account})`, apr: i.apr }));
+        const parts = [];
+        if (sustained.size) parts.push(`${worstFirst([...sustained.values()])} avg APR over ${hours} hrs`);
+        if (onlyNow.length) parts.push(`${worstFirst(onlyNow)} APR now`);
+        kept.splice(at, 0, ["Funding", parts.join("; ") + "."]);
+        attention.splice(0, attention.length, ...kept);
+      }
     }
 
     const money2 = { "Equity": "usd", "Cash": "usd", "Margin used": "usd", "Available": "usd", "Gross": "usd", "Value": "usd",
