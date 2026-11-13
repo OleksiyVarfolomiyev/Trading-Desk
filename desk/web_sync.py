@@ -41,7 +41,7 @@ import requests
 from desk.accounts import accounts_for, ib_data_dir, load_accounts
 from desk.privacy import account_file, short_id
 
-RELAY_URL = os.environ.get("DESK_RELAY_URL", "https://desk-relay.grownism.workers.dev")
+RELAY_URL = os.environ.get("DESK_RELAY_URL", "https://5-223-72-14.sslip.io")  # the desk server (deploy/README.md)
 KEYCHAIN_SERVICE = "Desk relay ingest"
 KEYCHAIN_USER = "default"
 PUSH_EVERY_SECONDS = 600

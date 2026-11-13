@@ -782,3 +782,34 @@ class LadderCoinConfigTests(unittest.TestCase):
         self.assertEqual(to_place, [])                                                       # nothing rests at the centre
         to_place, _ = hl_daemon.arm_plan(grid, 100.6, 1.0, config, now=0.0)                  # the price rose to 0.4 from the sell
         self.assertEqual([q["price"] for q in to_place], [101.0])
+
+
+class ApiKeyAlertTests(unittest.TestCase):
+    """The dashboard warns before an HL API wallet expires, and if the daemon holds the main wallet's own key."""
+
+    SIGNER = "0x" + "c" * 36 + "ab59"
+
+    def check(self, signer: str, agents: list[dict]) -> dict:
+        alerts = hl_daemon.Alerts(path=None)
+        daemon = SimpleNamespace(paper=False, exchanges={WALLET: SimpleNamespace(wallet=SimpleNamespace(address=signer))})
+        with patch.object(hl_daemon, "post_info", return_value=agents):
+            alerts.watch_keys(daemon)
+        return alerts.items
+
+    def test_an_api_wallet_expiring_within_30_days_raises_an_alert(self):
+        soon = (time.time() + 10 * 86400) * 1000
+        items = self.check(self.SIGNER, [{"address": self.SIGNER, "name": "trading-api", "validUntil": soon}])
+        self.assertEqual(items[f"apikey:{WALLET}"]["title"], "API wallet expiring")
+        self.assertIn("--store-key", items[f"apikey:{WALLET}"]["text"])
+
+    def test_a_valid_api_wallet_raises_nothing(self):
+        later = (time.time() + 120 * 86400) * 1000
+        self.assertEqual(self.check(self.SIGNER, [{"address": self.SIGNER, "validUntil": later}]), {})
+
+    def test_the_main_wallets_own_key_raises_an_alert(self):
+        items = self.check(WALLET, [])
+        self.assertEqual(items[f"apikey:{WALLET}"]["title"], "main wallet key on the server")
+
+    def test_an_unlisted_api_wallet_raises_an_alert(self):
+        items = self.check(self.SIGNER, [])
+        self.assertEqual(items[f"apikey:{WALLET}"]["title"], "API wallet not approved")

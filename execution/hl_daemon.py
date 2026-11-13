@@ -1049,6 +1049,8 @@ ALERTS_FILE = daemon_link.RUN_DIR / "daemon_alerts.json"
 IB_WEB_EVERY_SECONDS = 600       # the daemon sends IB to the web relay this often
 ALERT_PUSH_SECONDS = 60          # at most this often after a change
 ALERT_HEARTBEAT_SECONDS = 900    # and at least this often to the web relay
+API_KEY_WARN_DAYS = 30           # warn this long before an HL API wallet expires
+API_KEY_CHECK_SECONDS = 6 * 3600
 
 
 class Alerts:
@@ -1131,8 +1133,45 @@ class Alerts:
             except Exception as exc:
                 log(f"alerts failed ({type(exc).__name__}: {exc})")
 
+    def watch_keys(self, daemon: "Daemon") -> None:
+        """Each wallet's signing key: warn API_KEY_WARN_DAYS before its API wallet expires on HL, and if the
+        daemon signs with the main wallet's own key (which, unlike an API wallet, can withdraw). Six-hourly."""
+        if daemon.paper or time.time() - getattr(self, "keys_checked_at", 0.0) < API_KEY_CHECK_SECONDS:
+            return
+        self.keys_checked_at = time.time()
+        for wallet, exchange in list(daemon.exchanges.items()):
+            signer = str(getattr(getattr(exchange, "wallet", None), "address", "") or "").lower()
+            key = f"apikey:{wallet}"
+            if not signer:
+                continue
+            if signer == wallet.lower():
+                self.set(key, "main wallet key on the server",
+                         f"...{wallet[-4:]} signs with the main wallet's own key, which can withdraw funds. Store the "
+                         "API wallet key instead (hl_trade.py --wallet ... --store-key).")
+                continue
+            agents = post_info({"type": "extraAgents", "user": wallet}) or []
+            mine = [agent for agent in agents if str(agent.get("address", "")).lower() == signer]
+            if not mine:
+                self.set(key, "API wallet not approved",
+                         f"...{wallet[-4:]}: HL does not list the API wallet the daemon signs with (...{signer[-4:]}); "
+                         "orders will be refused. Approve a new API wallet on HL and store its key.")
+                continue
+            days = (float(mine[0].get("validUntil") or 0) / 1000 - time.time()) / 86400
+            if days <= API_KEY_WARN_DAYS:
+                until = time.strftime("%Y-%m-%d", time.gmtime(float(mine[0]["validUntil"]) / 1000))
+                self.set(key, "API wallet expiring",
+                         f"...{wallet[-4:]}: the API wallet ...{signer[-4:]} expires {until} ({max(days, 0):.0f} days). "
+                         "Create a new one on HL (API page) and store its key on the server "
+                         f"(hl_trade.py --wallet {wallet[-4:]} --store-key), then restart the daemon.")
+            else:
+                self.clear(key)
+
     def watch(self, daemon: "Daemon") -> None:
         """The daemon's own health: stale account data, dead websockets, guards that cannot check."""
+        try:
+            self.watch_keys(daemon)
+        except Exception as exc:  # the key check is extra: the rest of the health check goes on
+            log(f"API key check failed ({type(exc).__name__}: {exc})")
         now = time.time()
         for wallet in daemon.state.wallets:
             age = now - daemon.state.state_time.get(wallet, 0.0)
