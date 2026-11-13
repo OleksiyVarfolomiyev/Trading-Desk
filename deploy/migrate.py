@@ -114,14 +114,15 @@ def state(host: str) -> None:
     if ssh(host, "systemctl is-active desk-daemon || true").strip() == "active":
         raise SystemExit("The daemon already runs on the server; nothing copied.")
     files = [str(RUN_DIR / name) for name in STATE_FILES if (RUN_DIR / name).exists()]
-    subprocess.run(["rsync", "-a", "--chmod=F600", *files, f"desk@{host}:{SERVER_RUN}/"], check=True)
+    subprocess.run(["rsync", "-a", *files, f"desk@{host}:{SERVER_RUN}/"], check=True)
     if (RUN_DIR / "paper").exists():
         subprocess.run(["rsync", "-a", str(RUN_DIR / "paper"), f"desk@{host}:{SERVER_RUN}/"], check=True)
     print(f"daemon state copied: {', '.join(Path(item).name for item in files)}")
     subprocess.run(["rsync", "-a", "--exclude", "api_cache/", str(REPO / "data") + "/", f"desk@{host}:{SERVER_REPO}/data/"],
                    check=True)
-    subprocess.run(["rsync", "-a", "--chmod=F600", str(REPO / "accounts.json"), f"desk@{host}:{SERVER_REPO}/accounts.json"],
-                   check=True)
+    subprocess.run(["rsync", "-a", str(REPO / "accounts.json"), f"desk@{host}:{SERVER_REPO}/accounts.json"], check=True)
+    # macOS's rsync has no --chmod: make the copied state readable by the desk user only.
+    ssh(host, f"chmod 600 {SERVER_RUN}/*.json {SERVER_REPO}/accounts.json; chmod -R go-rwx {SERVER_RUN} {SERVER_REPO}/data")
     print("data folder (journal, histories, research state) and accounts.json copied")
     print("Next: store the HL key on the server, then start the daemon there (deploy/README.md).")
 

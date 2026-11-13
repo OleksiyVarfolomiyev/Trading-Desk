@@ -52,10 +52,16 @@ ufw allow 443/tcp
 ufw --force enable
 
 # The desk's commands may restart the desk services without a root password.
-cat > /etc/sudoers.d/desk <<'EOF'
-desk ALL=(root) NOPASSWD: /usr/bin/systemctl start desk-*, /usr/bin/systemctl stop desk-*, /usr/bin/systemctl restart desk-*, /usr/bin/systemctl status desk-*
-EOF
-chmod 440 /etc/sudoers.d/desk
+# Each command spelled out: newer sudo refuses wildcards in arguments.
+{
+  for action in start stop restart status; do
+    for unit in desk-relay desk-daemon desk-daily desk-deploy; do
+      echo "desk ALL=(root) NOPASSWD: /usr/bin/systemctl $action $unit"
+    done
+  done
+} > /etc/sudoers.d/desk.tmp
+chmod 440 /etc/sudoers.d/desk.tmp
+visudo -cf /etc/sudoers.d/desk.tmp && mv /etc/sudoers.d/desk.tmp /etc/sudoers.d/desk
 
 # HTTPS on a free sslip.io name built from this server's IPv4 address, e.g. 5-161-1-2.sslip.io.
 IP=$(curl -fsS -4 https://ifconfig.me || hostname -I | awk '{print $1}')

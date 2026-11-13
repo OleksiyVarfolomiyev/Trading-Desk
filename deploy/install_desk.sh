@@ -10,7 +10,7 @@
 # once the state files and the HL key are in place. Run it again after a change in deploy/systemd.
 set -euo pipefail
 
-REPO_URL=git@github.com:OleksiyVarfolomiyev/Trading-Desk.git
+REPO_URL=${REPO_URL:-git@github.com:OleksiyVarfolomiyev/Trading-Desk.git}  # or https://github.com/... while the repository is public and no deploy key is added
 REPO=/home/desk/trading-desk
 
 sudo -u desk -H bash -euo pipefail <<EOF

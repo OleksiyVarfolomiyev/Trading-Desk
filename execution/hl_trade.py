@@ -3255,10 +3255,10 @@ def main(argv: list[str] | None = None) -> int:
         MAX_TOTAL_RISK_PCT = args.max_risk_pct / 100
         print(f"NOTE: aggregate risk cap for this run is {args.max_risk_pct:g}%, not the default {DEFAULT_MAX_TOTAL_RISK_PCT * 100:g}%.")
     try:
+        args.wallet = resolve_wallet(args.wallet)  # "07f2" -> the full address in accounts.json
         if args.store_key:
             store_key(args.wallet)
             return 0
-        args.wallet = resolve_wallet(args.wallet)
         if args.risk_wallets:
             args.risk_wallets = ",".join(resolve_wallet(item) for item in args.risk_wallets.split(",") if item.strip())
         _validate_address(args.wallet, "--wallet main-wallet address")
