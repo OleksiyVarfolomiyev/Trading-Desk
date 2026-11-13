@@ -74,10 +74,9 @@ def notices(exposures, equity: float) -> list[tuple[str, str]]:
         if item["status"] == "ok":
             continue
         shock = "alts +25% and BTC/ETH +10%" if item["scenario"] == "alt rally" else "equities -10%"
-        limit = "new entries that add to it are blocked" if item["status"] == "block" else "new entries are shrunk past 35%"
+        limit = "adding entries blocked" if item["status"] == "block" else f"entries shrunk past {BLOCK_PCT:.0%}"
         rows.append((f"Stress: {item['scenario']} ({item['status']})",
-                     f"If {shock} at once, with no stop helping, the desk loses ${item['loss']:,.0f}, "
-                     f"{item['share']:.0%} of desk equity (warn at {WARN_PCT:.0%}, block at {BLOCK_PCT:.0%}); {limit}."))
+                     f"{shock}: {-item['share']:.0%} of desk equity; {limit}."))
     return rows
 
 

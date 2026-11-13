@@ -18,7 +18,7 @@ class AttentionRowTests(unittest.TestCase):
             ("INTC long (HL 07f2)", -0.06, 246.0),           # under the threshold
         ])
         self.assertEqual(title, "Adverse funding")
-        self.assertTrue(text.startswith("XYZ long (HL 07f2) pays 100.0% APR, $5.48/day; MELANIA short (HL c248) pays 67.8% APR, $2.29/day."))
+        self.assertEqual(text, "XYZ long (HL 07f2) -100.0% APR, MELANIA short (HL c248) -67.8% APR.")
         self.assertNotIn("ICP", text)
         self.assertNotIn("INTC", text)
 

@@ -855,10 +855,9 @@
 
     // -- highlights (desk/overview.py and desk/desk_accounts.py rules)
     const well = [], attention = [];
-    well.push(["Desk value", `${money(deskEquity)}: trading accounts ${money(tradingEquity)}, wallet holdings ${money(walletValue)}; ${tradePositions.length} open positions.`]);
     const returnText = `${percent(returns.since_start, true)} since ${dayKey(start)}; ` +
       Object.keys(WINDOWS).map((label) => `${label} ${percent(returns[label], true)}`).join(", ") + ".";
-    ((returns["30D"] || 0) >= 0 ? well : attention).unshift(["Desk return (net of deposits)", returnText]);
+    ((returns["30D"] || 0) >= 0 ? well : attention).unshift(["Desk return", returnText]);
     const recent = performanceRows.slice(0, performanceCount).filter((r) => fin(r["Return 30D"]));
     if (recent.length > 1) {
       const best = recent.reduce((a, b) => (b["Return 30D"] > a["Return 30D"] ? b : a));
@@ -867,14 +866,14 @@
       if (worst["Return 30D"] < 0) attention.splice(1, 0, ["Worst account, 30D", `${worst.Account} ${percent(worst["Return 30D"], true)}.`]);
     }
     if (tradePositions.length) {
-      const splitOf = (group) => {  // "IB -$415 on $3,100 (-13.4%)"
+      const splitOf = (group) => {  // "IB -13.4%": uPnL over the group's position value
         const notional = sum(group.map((p) => Math.abs(value(p)))), pnl = sum(group.map((p) => p.unrealized));
-        return `${signedMoney(pnl)} on ${money(notional)} (${notional ? percent(pnl / notional, true) : "n/a"})`;
+        return notional ? percent(pnl / notional, true) : "n/a";
       };
       const ibGroup = tradePositions.filter((p) => p.venue === "ib"), restGroup = tradePositions.filter((p) => p.venue !== "ib");
-      const parts = [["IB", ibGroup], ["HL + wallets", restGroup]].filter(([, group]) => group.length).map(([name, group]) => `${name} ${splitOf(group)}`);
-      (unrealized >= 0 ? well : attention).push(["uPnL", `${signedMoney(unrealized)} on ${money(gross)} of positions (${gross ? percent(unrealized / gross, true) : "n/a"}): ${parts.join(", ")}. Wallet tokens have no cost basis, so HL carries all of that group's PnL.`]);
-      const mover = (p) => `${p.symbol} ${signedMoney(p.unrealized)}${fin(share(p)) ? ` (${percent(share(p), true)})` : ""}`;
+      const parts = [["IB", ibGroup], ["HL", restGroup]].filter(([, group]) => group.length).map(([name, group]) => `${name} ${splitOf(group)}`);
+      (unrealized >= 0 ? well : attention).push(["uPnL", `${gross ? percent(unrealized / gross, true) : "n/a"}: ${parts.join(", ")}.`]);
+      const mover = (p) => `${p.symbol} ${fin(share(p)) ? percent(share(p), true) : "n/a"}`;
       KINDS.forEach((kind) => {  // crypto and stocks ranked apart
         const group = ranked.filter((p) => marketKind(p) === kind);
         const winners = group.slice().reverse().filter((p) => p.unrealized > 0).slice(0, HIGHLIGHT_MOVERS);
@@ -885,43 +884,43 @@
       const largest = tradePositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
       const concentration = deskEquity ? Math.abs(value(largest)) / deskEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {
-        attention.push(["Concentration", `${largest.symbol} ${largest.quantity > 0 ? "long" : "short"} is ${percent(concentration, false, 0)} of desk value (${money(Math.abs(value(largest)))}, ${largest.account}).`]);
+        attention.push(["Concentration", `${largest.symbol} ${largest.quantity > 0 ? "long" : "short"} (${largest.account}) ${percent(concentration, false, 0)} of desk value.`]);
       }
       // Positions paying funding fast enough to matter (desk/funding_watch.py).
       const dailyCost = (r) => -r["Funding (APR)"] * Math.abs(r.Value) / 365;
       const payers = positionRows.filter((r) => fin(r["Funding (APR)"]) && r["Funding (APR)"] <= -ADVERSE_FUNDING_APR
         && dailyCost(r) >= ADVERSE_FUNDING_MIN_DAILY).sort((a, b) => dailyCost(b) - dailyCost(a));
       if (payers.length) {
-        attention.push(["Adverse funding", payers.map((r) => `${r.Symbol} ${r.Side.toLowerCase()} (${r.Account}) pays ${percent(-r["Funding (APR)"])} APR, $${dailyCost(r).toFixed(2)}/day`).join("; ")
-          + `. Flagged past ${percent(ADVERSE_FUNDING_APR)} APR (0.1% of the position a day); funding is hourly and can turn, so weigh it against the trade's expected move.`]);
+        attention.push(["Adverse funding", payers.map((r) => `${r.Symbol} ${r.Side.toLowerCase()} (${r.Account}) ${percent(r["Funding (APR)"])} APR`).join(", ") + "."]);
       }
     }
     if (tradingEquity) {
       const leverage = gross / tradingEquity;
-      (leverage > HIGH_LEVERAGE ? attention : well).push(["Leverage", `Gross ${leverage.toFixed(2)}x and net ${(net / tradingEquity).toFixed(2)}x trading equity.`]);
+      (leverage > HIGH_LEVERAGE ? attention : well).push(["Leverage", `Gross ${leverage.toFixed(2)}x, net ${(net / tradingEquity).toFixed(2)}x.`]);
       const available = sum(traders.map((a) => a.available));
       if (available / tradingEquity < LOW_AVAILABLE_PCT) {
-        attention.push(["Available margin low", `${money(available)} available, ${percent(available / tradingEquity, false, 0)} of trading equity.`]);
+        attention.push(["Available margin low", `${percent(available / tradingEquity, false, 0)} of trading equity.`]);
       }
     }
     // Each HL wallet keeps 20% of its equity free; past that the executor refuses new trades there.
     trading.forEach((a) => {
       if (!(a.equity > 0)) return;
       const used = a.margin_used / a.equity;
-      if (used > 0.80) attention.push(["Margin reserve breached", `${a.label} uses ${percent(used, false, 0)} of its equity as margin (the 20% reserve allows 80%); new trades there are refused.`]);
+      if (used > 0.80) attention.push(["Margin reserve breached", `${a.label} ${percent(used, false, 0)} of equity in margin (max 80%); new trades refused.`]);
     });
     if (book.length) {
-      const text = `${money(riskUsed)} of ${money(riskCap)} (${percent(riskUsed / riskCap, false, 0)} of the cap); next position budget ${money(riskEquity * (1 - RESERVE_PCT) * RISK_PCT_OF_USABLE)}.`;
+      const text = `${percent(riskUsed / riskCap, false, 0)} of the cap.`;
       if (riskUsed > riskCap) attention.unshift(["Open risk over cap", text]);
       else if (riskUsed > riskCap * NEAR_CAP_PCT) attention.push(["Open risk near cap", text]);
       else well.push(["Open risk within cap", text]);
     }
     (drawdown <= DEEP_DRAWDOWN ? attention : well).push(["Drawdown now",
-      drawdown < 0 ? `${percent(drawdown)} below the peak of ${dayKey(peak.t)}.` : "At its peak."]);
+      drawdown < 0 ? `${percent(drawdown)} from the ${dayKey(peak.t)} peak.` : "At its peak."]);
     if (riskRow && fin(riskRow["Volatility (/yr)"])) {
       const betas = [["BTC", riskRow["Beta BTC"]], ["S&P 500", riskRow["Beta S&P 500"]]]
-        .filter(([, b]) => fin(b)).map(([name, b]) => `; beta ${name} ${b.toFixed(2)}`).join("");
-      well.push(["Risk-adjusted", `Current book: volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr, 1-day VaR 95% ${signedMoney(-riskRow["VaR 95%"])}${betas}.`]);
+        .filter(([, b]) => fin(b)).map(([name, b]) => `, beta ${name} ${b.toFixed(2)}`).join("");
+      const var95 = deskEquity > 0 && fin(riskRow["VaR 95%"]) ? `, VaR 95% ${percent(riskRow["VaR 95%"] / deskEquity)}/day` : "";
+      well.push(["Risk", `Volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr${var95}${betas}.`]);
     }
     if (problems.length) attention.unshift(["Unreadable accounts", problems.join("; ") + " Totals leave them out."]);
     ((regime && regime.notices) || []).slice().reverse().forEach((row) => attention.unshift(row));  // desk/market_regime.py
@@ -931,28 +930,28 @@
       if (!(share >= STRESS_WARN)) return;
       const status = share >= STRESS_BLOCK ? "block" : "warn";
       const shock = name === "alt rally" ? "alts +25% and BTC/ETH +10%" : "equities -10%";
-      attention.unshift([`Stress: ${name} (${status})`, `If ${shock} at once, with no stop helping, the desk loses ${money(loss)}, ${percent(share, false, 0)} of desk equity (warn at 25%, block at 35%); ${status === "block" ? "new entries that add to it are blocked" : "new entries are shrunk past 35%"}.`]);
+      attention.unshift([`Stress: ${name} (${status})`, `${shock}: ${percent(-share, false, 0)} of desk equity; ${status === "block" ? "adding entries blocked" : "entries shrunk past 35%"}.`]);
     });
     // Data flow: every feed the page relies on, with how stale it may get before it is a problem.
     const minutesSince = (stamp) => (fin(stamp) ? (Date.now() - stamp) / 60000 : Infinity);
     const flow = [
-      ["trading daemon", daemonAlerts && Number(daemonAlerts.heartbeat) * 1000, 20, "guards, the margin guard, the ladders and IB updates stop with it"],
-      ["IB", ibData && Date.parse(ibData.as_of), 30, "sent by the trading daemon every 10 minutes (TWS must be logged in)"],
-      ["market regime", regime && Date.parse(regime.as_of), 8 * 60, "sent by the trading daemon hourly"],
-      ["wallet performance", walletPerf && Date.parse(walletPerf.as_of), 36 * 60, "extended by the daily job, sent hourly"],
-      ["relay history capture", syncRun && Date.parse(syncRun.at), 7 * 60, "the relay's own job, every 6 hours"],
+      ["trading daemon", daemonAlerts && Number(daemonAlerts.heartbeat) * 1000, 20, "guards and ladders stopped"],
+      ["IB", ibData && Date.parse(ibData.as_of), 30, "Mac push; TWS logged in?"],
+      ["market regime", regime && Date.parse(regime.as_of), 8 * 60, "hourly from the daemon"],
+      ["wallet performance", walletPerf && Date.parse(walletPerf.as_of), 36 * 60, "daily job"],
+      ["relay history capture", syncRun && Date.parse(syncRun.at), 7 * 60, "every 6 hours"],
     ];
     const staleFeeds = flow.filter(([, stamp, limit]) => minutesSince(stamp) > limit);
     if (staleFeeds.length) {
-      const describe = ([name, stamp, , note]) => `${name}: ${fin(stamp) ? `last ${eastern(stamp)}` : "never received"} (${note})`;
+      const describe = ([name, stamp, , note]) => `${name} ${fin(stamp) ? `last ${eastern(stamp)}` : "never received"} (${note})`;
       attention.unshift(["Data flow down", staleFeeds.map(describe).join("; ") + "."]);
     }
     ((research && research.overdue) || []).forEach((item) => attention.push([`Review: ${item.coin} held ${Math.round(item.days)} days`,
-      `...${item.wallet} ${item.coin} ${String(item.side).toLowerCase()} is a directional trade open ${Math.round(item.days)} days; in the desk's history trades held over 7 days lost money. Close it, or re-tag it conviction or hedge.`]));
+      `...${item.wallet} ${item.coin} ${String(item.side).toLowerCase()}: close, or re-tag conviction or hedge.`]));
     if (daemonAlerts) {  // the trading daemon's problems (desk/alerts.py), first
       const age = (Date.now() / 1000 - Number(daemonAlerts.heartbeat || 0)) / 60;
       const rows = age > 15
-        ? [["Desk alert: trading daemon not reporting", `No word from the trading daemon for ${age.toFixed(0)} minutes: guards, the margin guard and the ladders are not running.`]]
+        ? [["Desk alert: trading daemon not reporting", `Silent ${age.toFixed(0)} min: guards, margin guard and ladders stopped.`]]
         : (daemonAlerts.alerts || []).filter((a) => !a.expires || a.expires > Date.now() / 1000)
           .map((a) => [`Desk alert: ${a.title}`, `${a.text} (since ${eastern(a.since, true)})`]);
       rows.reverse().forEach((row) => attention.unshift(row));

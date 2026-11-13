@@ -606,19 +606,17 @@ class DeskAccounts:
         returns = self.desk_returns()
         text = (f"{percent(returns['since start'], signed=True)} since {self.common_start:%Y-%m-%d}; "
                 + ", ".join(f"{label} {percent(returns[label], signed=True)}" for label in WINDOWS) + ".")
-        (well if returns.get("30D", 0) >= 0 else attention).insert(0, ("Desk return (net of deposits)", text))
+        (well if returns.get("30D", 0) >= 0 else attention).insert(0, ("Desk return", text))
         table = self.account_pnl()
         recent = table.dropna(subset=["Return 30D"]) if "Return 30D" in table else table.iloc[0:0]
         if len(recent) > 1:
             best, worst = recent.loc[recent["Return 30D"].idxmax()], recent.loc[recent["Return 30D"].idxmin()]
-            well.insert(1, ("Best account, 30D", f"{best['Account']} {percent(best['Return 30D'], signed=True)} "
-                                                 f"({signed_money(best['PnL 30D'])})."))
+            well.insert(1, ("Best account, 30D", f"{best['Account']} {percent(best['Return 30D'], signed=True)}."))
             if worst["Return 30D"] < 0:
-                attention.insert(1, ("Worst account, 30D", f"{worst['Account']} {percent(worst['Return 30D'], signed=True)} "
-                                                           f"({signed_money(worst['PnL 30D'])})."))
+                attention.insert(1, ("Worst account, 30D", f"{worst['Account']} {percent(worst['Return 30D'], signed=True)}."))
         drawdown = float(self.index.iloc[-1] / self.index.cummax().iloc[-1] - 1)
         peak_day = self.index.idxmax()
-        text = f"{percent(drawdown)} below the peak of {peak_day:%Y-%m-%d}." if drawdown < 0 else "At its peak."
+        text = f"{percent(drawdown)} from the {peak_day:%Y-%m-%d} peak." if drawdown < 0 else "At its peak."
         (attention if drawdown <= DEEP_DRAWDOWN else well).append(("Drawdown now", text))
         sharpe = beta_spy = beta_btc = np.nan
         risk = getattr(self, "risk_table", None)
@@ -630,23 +628,20 @@ class DeskAccounts:
             if len(current):
                 row = current.iloc[0]
                 beta_btc, beta_spy = row.get("Beta BTC", np.nan), row.get("Beta SPY", np.nan)
-                betas = "".join(f"; beta {name} {value:.2f}" for name, value in (("BTC", beta_btc), ("SPY", beta_spy))
+                betas = "".join(f", beta {name} {value:.2f}" for name, value in (("BTC", beta_btc), ("SPY", beta_spy))
                                 if pd.notna(value))
                 if pd.notna(row.get("Volatility (/yr)", np.nan)):
-                    parts.append(f"Current book: volatility {row['Volatility (/yr)']:.0%}/yr, 1-day VaR 95% "
-                                 f"{signed_money(-row.get('VaR 95%', np.nan)) if pd.notna(row.get('VaR 95%', np.nan)) else 'n/a'}"
-                                 + betas)
+                    var95, equity = row.get("VaR 95%", np.nan), self.overview.desk_equity
+                    var_text = f", VaR 95% {var95 / equity:.1%}/day" if pd.notna(var95) and equity else ""
+                    parts.append(f"Volatility {row['Volatility (/yr)']:.0%}/yr{var_text}{betas}")
             if len(regime):
                 row = regime.iloc[0]
                 sharpe = row.get("Sharpe", np.nan)
                 if pd.notna(sharpe):
-                    parts.append(f"since {row['From']}: Sharpe {sharpe:.2f} over {int(row['Periods'])} days")
-                else:
-                    parts.append(f"current regime {int(row['Periods'])} days old, too short for a Sharpe "
-                                 f"(needs {MIN_RATIO_DAYS})")
+                    parts.append(f"Sharpe {sharpe:.2f} ({int(row['Periods'])} days)")
             if parts:
                 text = "; ".join(parts) + "."
-                (well if not pd.notna(sharpe) or sharpe > 0 else attention).append(("Risk-adjusted", text))
+                (well if not pd.notna(sharpe) or sharpe > 0 else attention).append(("Risk", text))
         for note in self.notes:
             if "not refreshed" in note or ": no value history" in note:
                 attention.append(("History", note))

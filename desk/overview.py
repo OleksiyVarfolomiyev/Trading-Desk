@@ -566,9 +566,11 @@ class DeskOverview:
             key_columns={"% of desk equity": "max"})
         if self.problems:
             print("WARNING: unreadable accounts are missing from this risk total.")
-        print(f"Aggregate cap: {_money(cap)} ({MAX_TOTAL_RISK_PCT:.0%} of desk equity {_money(equity)}); "
-              f"used {_money(used)}; room {_money(cap - used)}.")
-        print(f"Per-position risk budget for a new trade: {_money(per_position_budget(equity))}.")
+        print(f"Open risk: {used / equity:.1%} of risk equity, {used / cap:.0%} of the {MAX_TOTAL_RISK_PCT:.0%} cap; "
+              f"room {(cap - used) / equity:.1%}." if equity and cap else "Open risk: n/a (no risk equity).")
+        budget = per_position_budget(equity)
+        print(f"Per-position risk budget for a new trade: {_money(budget)}"
+              + (f" ({budget / equity:.1%} of risk equity)." if equity else "."))
         for entry in self.book:
             for symbol, risk, basis in entry.position_risks:
                 if "no price history" in basis:
@@ -687,31 +689,43 @@ class DeskOverview:
         net = sum(snapshot.net_usd for snapshot in trading)
         positions = [(snapshot.label, position) for snapshot in trading for position in snapshot.positions]
         largest = max(positions, key=lambda item: abs(item[1].notional_usd), default=None)
+        # Dollars where the amount itself matters (what the desk holds, what a trade may risk); the rest as
+        # shares of desk value or trading equity, which compare across time as the accounts grow or shrink.
+        desk = self.desk_equity
+        of_desk = lambda value: f"{_money(value)} ({value / desk:.0%} of desk)" if desk else _money(value)
+        of_trading = lambda value, digits=2: f"{value / trading_equity:.{digits}f}x trading equity" if trading_equity else "n/a"
+        wallet_value = sum(snapshot.equity_usd for snapshot in wallets)
+        cash = sum(snapshot.cash_usd for snapshot in trading if snapshot.venue == "ib")
+        unrealized = sum(snapshot.unrealized_usd for snapshot in trading)
+        long_value = sum(p.notional_usd for _, p in positions if p.quantity > 0)
+        short_value = sum(p.notional_usd for _, p in positions if p.quantity < 0)
         rows = [
-            ("Desk value (all accounts)", _money(self.desk_equity)),
-            ("Trading accounts (HL, IB)", _money(trading_equity)),
-            ("Wallet holdings outside HL", _money(sum(snapshot.equity_usd for snapshot in wallets))),
-            ("Cash", _money(sum(snapshot.cash_usd for snapshot in trading if snapshot.venue == "ib"))
-             + " IB cash; HL collateral is in the account values"),
-            ("Margin used", _money(sum(snapshot.margin_used_usd for snapshot in trading))),
-            ("Gross exposure", f"{_money(gross)} ({gross / trading_equity:.2f}x trading equity)" if trading_equity else _money(gross)),
-            ("Net exposure", f"{_money(net)} ({net / trading_equity:.2f}x trading equity)" if trading_equity else _money(net)),
-            ("Long / short", f"{_money(sum(p.notional_usd for _, p in positions if p.quantity > 0))} / "
-                             f"{_money(sum(p.notional_usd for _, p in positions if p.quantity < 0))}"),
-            ("Unrealized PnL", f"{_money(sum(snapshot.unrealized_usd for snapshot in trading))}"),
+            ("Desk value (all accounts)", _money(desk)),
+            ("Trading accounts (HL, IB)", of_desk(trading_equity)),
+            ("Wallet holdings outside HL", of_desk(wallet_value)),
+            ("Cash", of_desk(cash) + " IB cash; HL collateral is in the account values"),
+            ("Margin used", f"{sum(s.margin_used_usd for s in trading) / trading_equity:.0%} of trading equity"
+             if trading_equity else "n/a"),
+            ("Gross exposure", of_trading(gross)),
+            ("Net exposure", of_trading(net)),
+            ("Long / short", f"{long_value / trading_equity:.2f}x / {short_value / trading_equity:.2f}x trading equity"
+             if trading_equity else "n/a"),
+            ("Unrealized PnL", f"{unrealized / gross:.1%} of positions" if gross else "n/a"),
             ("Open positions", f"{len(positions)} across {len(trading)} trading accounts"),
         ]
         if largest:
             label, position = largest
-            rows.append(("Largest position", f"{position.symbol} {position.side.lower()} {_money(abs(position.notional_usd))} "
-                                             f"({abs(position.notional_usd) / self.desk_equity:.1%} of desk, {label})"))
+            rows.append(("Largest position", f"{position.symbol} {position.side.lower()} "
+                                             f"{abs(position.notional_usd) / desk:.1%} of desk ({label})" if desk else "n/a"))
         if self.book:
             equity = sum(entry.equity_usd for entry in self.book)
             used = sum(entry.risk_usd for entry in self.book)
             cap = equity * MAX_TOTAL_RISK_PCT
-            rows.append(("Open risk vs cap", f"{_money(used)} of {_money(cap)} ({used / cap:.0%} of the "
-                                             f"{MAX_TOTAL_RISK_PCT:.0%} cap); room {_money(cap - used)}"))
-            rows.append(("Next position budget", _money(per_position_budget(equity))))
+            budget = per_position_budget(equity)
+            rows.append(("Open risk vs cap", f"{used / cap:.0%} of the {MAX_TOTAL_RISK_PCT:.0%} cap "
+                                             f"({used / equity:.1%} of risk equity)" if cap else "n/a"))
+            rows.append(("Next position budget", f"{_money(budget)} ({budget / equity:.1%} of risk equity)"
+                                                 if equity else _money(budget)))
         if self.problems:
             rows.append(("Unreadable accounts", "; ".join(problem.split(":")[0] for problem in self.problems)))
         display_interactive_table(pd.DataFrame(rows, columns=["Metric", "Value"]), cell_style=lambda *args: "color:inherit",
@@ -732,27 +746,22 @@ class DeskOverview:
         net = sum(snapshot.net_usd for snapshot in trading)
         unrealized = sum(snapshot.unrealized_usd for snapshot in trading)
         positions = [(snapshot.label, position) for snapshot in trading for position in snapshot.positions]
-        well.append(("Desk value", f"{money(self.desk_equity)}: trading accounts {money(trading_equity)}, "
-                                   f"wallet holdings {money(wallet_value)}; {len(positions)} open positions."))
         if positions:
             ranked = sorted(positions, key=lambda item: item[1].unrealized_usd)
-            def split(group):  # "IB -$415 on $3,100 (-13.4%)"
+            def split(group):  # "IB -13.4%": uPnL over the group's position value
                 value = sum(abs(position.notional_usd) for _, position in group)
                 pnl = sum(position.unrealized_usd for _, position in group)
-                return f"{signed_money(pnl)} on {money(value)} ({percent(pnl / value, signed=True) if value else 'n/a'})"
+                return percent(pnl / value, signed=True) if value else "n/a"
 
             ib = [item for item in positions if item[0].startswith("IB")]
             rest = [item for item in positions if not item[0].startswith("IB")]
-            parts = [f"{name} {split(group)}" for name, group in (("IB", ib), ("HL + wallets", rest)) if group]
+            parts = [f"{name} {split(group)}" for name, group in (("IB", ib), ("HL", rest)) if group]
             (well if unrealized >= 0 else attention).append(
-                ("Unrealized PnL", f"{signed_money(unrealized)} on {money(gross)} of positions "
-                                   f"({percent(unrealized / gross, signed=True) if gross else 'n/a'}): "
-                                   + ", ".join(parts) + ". Wallet tokens have no cost basis, so HL carries all of that group's PnL."))
+                ("uPnL", f"{percent(unrealized / gross, signed=True) if gross else 'n/a'}: " + ", ".join(parts) + "."))
             def mover(position):
                 # The % is unrealized PnL over the position's entry value, as in the movers table.
                 share = _pnl_share(position)
-                return (f"{position.symbol} {signed_money(position.unrealized_usd)}"
-                        + (f" ({share:.1%})" if math.isfinite(share) else ""))
+                return f"{position.symbol} {share:.1%}" if math.isfinite(share) else f"{position.symbol} n/a"
             for kind in MARKET_KINDS:  # crypto and stocks ranked apart
                 group = [item for item in ranked if market_kind(item[1]) == kind]
                 winners = [item for item in group[::-1] if item[1].unrealized_usd > 0][:HIGHLIGHT_MOVERS]
@@ -764,8 +773,7 @@ class DeskOverview:
             label, largest = max(positions, key=lambda item: abs(item[1].notional_usd))
             share = abs(largest.notional_usd) / self.desk_equity if self.desk_equity else float("nan")
             if share > CONCENTRATION_PCT:
-                attention.append(("Concentration", f"{largest.symbol} {largest.side.lower()} is {share:.0%} of desk "
-                                                   f"value ({money(abs(largest.notional_usd))}, {label})."))
+                attention.append(("Concentration", f"{largest.symbol} {largest.side.lower()} ({label}) {share:.0%} of desk value."))
             # Positions paying funding fast enough to matter (desk/funding_watch.py).
             from desk import funding_watch
 
@@ -782,12 +790,11 @@ class DeskOverview:
                 attention.append(row)
         if trading_equity:
             leverage = gross / trading_equity
-            text = f"Gross {leverage:.2f}x and net {net / trading_equity:.2f}x trading equity."
+            text = f"Gross {leverage:.2f}x, net {net / trading_equity:.2f}x."
             (attention if leverage > HIGH_LEVERAGE else well).append(("Leverage", text))
             available = sum(snapshot.available_usd for snapshot in trading)
             if available / trading_equity < LOW_AVAILABLE_PCT:
-                attention.append(("Available margin low", f"{money(available)} available, "
-                                                          f"{available / trading_equity:.0%} of trading equity."))
+                attention.append(("Available margin low", f"{available / trading_equity:.0%} of trading equity."))
         # Scenario stress (desk/stress.py): what an alt rally or an equity sell-off would cost the whole desk.
         from desk import stress
 
@@ -801,9 +808,7 @@ class DeskOverview:
         due = journal.overdue(journal.load(), open_set)
         if due:
             names = ", ".join(f"{item['coin']} ({item['days']:.0f}d, ...{item['wallet']})" for item in due)
-            attention.append(("Review overdue directional trades",
-                              f"{len(due)} directional trade{'s' if len(due) != 1 else ''} held > 7 days ({names}); "
-                              "trades held longer lost money in the desk's history."))
+            attention.append(("Review: held > 7 days", f"{names}: close, or re-tag conviction or hedge."))
         # Each HL wallet keeps 20% of its equity free (the executor's reserve); past that it refuses new
         # trades. (Near an account-wide liquidation the trading daemon's margin guard reduces positions.)
         for snapshot in trading:
@@ -811,15 +816,14 @@ class DeskOverview:
                 continue
             used = snapshot.margin_used_usd / snapshot.equity_usd
             if used > 1 - MARGIN_RESERVE_PCT:
-                attention.append(("Margin reserve breached", f"{snapshot.label} uses {used:.0%} of its equity as "
-                                                              "margin (the 20% reserve allows 80%); new trades there are refused."))
+                attention.append(("Margin reserve breached", f"{snapshot.label} {used:.0%} of equity in margin (max 80%); "
+                                                              "new trades refused."))
         risk_used = risk_cap = float("nan")
         if self.book:
             equity = sum(entry.equity_usd for entry in self.book)
             risk_used = sum(entry.risk_usd for entry in self.book)
             risk_cap = equity * MAX_TOTAL_RISK_PCT
-            text = (f"{money(risk_used)} of {money(risk_cap)} ({risk_used / risk_cap:.0%} of the cap); "
-                    f"next position budget {money(per_position_budget(equity))}.")
+            text = f"{risk_used / risk_cap:.0%} of the cap."
             if risk_used > risk_cap:
                 attention.insert(0, ("Open risk over cap", text))
             elif risk_used > risk_cap * NEAR_CAP_PCT:

@@ -201,9 +201,7 @@ function renderTiles(k) {
   const r = k.returns || {};
   const mw = k.money_weighted || {};
   const tiles = [
-    tile("Desk value", wholeUsd(k.desk_value),
-      `Trading ${wholeUsd(k.trading_equity)} · wallets ${wholeUsd(k.wallet_value)}`,
-      { line: dayChangeLine(k.day_change) }),
+    tile("Desk value", wholeUsd(k.desk_value), "", { line: dayChangeLine(k.day_change) }),
     // Dollars and the money-weighted return, next to the time-weighted return: a loss on a small
     // balance and a gain on a large one net out here, but not in the time-weighted figure.
     tile("Net PnL since start", signedUsd(mw.pnl),

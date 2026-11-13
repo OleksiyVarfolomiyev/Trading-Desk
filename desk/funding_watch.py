@@ -36,9 +36,7 @@ def attention_row(items: list[tuple[str, float, float]]) -> tuple[str, str] | No
                      key=lambda item: -item[2])
     if not flagged:
         return None
-    parts = [f"{name} pays {-apr:.1%} APR, ${cost:,.2f}/day" for name, apr, cost in flagged]
-    return TITLE, ("; ".join(parts) + f". Flagged past {ADVERSE_APR:.1%} APR (0.1% of the position a day); "
-                   "funding is hourly and can turn, so weigh it against the trade's expected move.")
+    return TITLE, ", ".join(f"{name} {apr:.1%} APR" for name, apr, _ in flagged) + "."
 
 
 def sustained(rates: list[float], direction: int) -> float | None:

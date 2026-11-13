@@ -986,11 +986,14 @@ def print_account_metrics(metrics, new_api_rows, fill_count, rolling_24h, book_b
         missing = f"; no beta for {', '.join(book['missing'])}" if book['missing'] else ''
         return (f"{book['beta']:.2f} ({book['lookback_days']}d asset betas; "
                 f"{coverage:.0f}% of notional{missing})")
+    def of_account(value):  # PnL as a share of today's account value: it compares across time, dollars do not
+        return percent(value / account_value * 100) if pd.notna(value) and pd.notna(account_value) and account_value \
+            else 'n/a'
     def bootstrap_var_text(var):
         if pd.isna(var['bootstrap_usd']):
             return f"n/a (n={var['n']})"
-        return (f"{money(var['bootstrap_usd'])} ({percent(var['bootstrap_pct'])}; 90% range "
-                f"{money(var['bootstrap_low_usd'])}-{money(var['bootstrap_high_usd'])}; n={var['n']})")
+        return (f"{percent(var['bootstrap_pct'])} (90% range {of_account(var['bootstrap_low_usd'])} to "
+                f"{of_account(var['bootstrap_high_usd'])}; n={var['n']})")
     index = metrics.account_index
     drawdown_sample = (
         f'{len(index):,} history points ({index.index.min().date()} to {index.index.max().date()})'
@@ -998,28 +1001,26 @@ def print_account_metrics(metrics, new_api_rows, fill_count, rolling_24h, book_b
     )
     rows = [('Account value',
             f'${account_value:,.2f}' if pd.notna(account_value) else 'n/a'),
-        ('Account 24H', percent(rolling_24h.account_return_pct)), ('Realized 24H',
-            money(rolling_24h.realized)), ('Realized 24H (% of account value)', percent(realized_pct)),
-        ('Unrealized PnL', money(metrics.unrealized_pnl_total)),
+        ('Account 24H', percent(rolling_24h.account_return_pct)),
+        ('Realized 24H (% of account value)', percent(realized_pct)),
         ('Unrealized PnL (% of account value)', percent(unrealized_pct)),
-        ('Unrealized 24H change', money(rolling_24h.unrealized_change)), ('Average realized PnL / day',
-            money(metrics.realized_avg_day)), ('Average unrealized PnL change / day',
-            money(metrics.u_avg_day)), ('--- RISK ---', ''),
+        ('Unrealized 24H change (% of account value)', of_account(rolling_24h.unrealized_change)),
+        ('Average realized PnL / day (% of account value)', of_account(metrics.realized_avg_day)),
+        ('Average unrealized PnL change / day (% of account value)', of_account(metrics.u_avg_day)),
+        ('--- RISK ---', ''),
         ('Current book BTC beta', book_beta_text(book_beta)),
         ('BTC alpha / year', with_range('alpha', percent)),
         ('BTC beta', with_range('beta', number)), ('Annualized Sharpe', with_range('sharpe', number)),
-        ('Matched BTC observations', f'{metrics.btc_sample_n} completed days'), ('Average daily account PnL',
-            money(metrics.net_avg_day)), ('Daily return observations',
+        ('Matched BTC observations', f'{metrics.btc_sample_n} completed days'), ('Daily return observations',
             str(len(metrics.daily_return_pct))), ('Average daily account return',
             percent(metrics.avg_daily_return_pct)), ('Maximum daily gain',
             percent(metrics.max_daily_gain_pct)), ('Maximum daily loss',
             percent(metrics.max_daily_loss_pct)), ('Account maximum drawdown',
             percent(metrics.account_dd_pct)),
         ('Account drawdown sample', drawdown_sample),
-        ('PnL maximum drawdown', money(metrics.pnl_dd_usd)), ('24H historical VaR 95%',
-            f"{money(metrics.var_95['usd'])} ({percent(metrics.var_95['pct'])}; n={metrics.var_95['n']})"),
-        ('24H historical VaR 99%',
-            f"{money(metrics.var_99['usd'])} ({percent(metrics.var_99['pct'])}; n={metrics.var_99['n']})"),
+        ('PnL maximum drawdown (% of account value)', of_account(metrics.pnl_dd_usd)),
+        ('24H historical VaR 95%', f"{percent(metrics.var_95['pct'])} (n={metrics.var_95['n']})"),
+        ('24H historical VaR 99%', f"{percent(metrics.var_99['pct'])} (n={metrics.var_99['n']})"),
         ('24H bootstrap VaR 95%', bootstrap_var_text(metrics.var_95)),
         ('24H bootstrap VaR 99%', bootstrap_var_text(metrics.var_99)),
         ('Historical volatility',
@@ -1637,8 +1638,9 @@ def display_positions(rows,show_wallet=False):
                                       title=f'OPEN POSITIONS: {group.upper()}, {view}',
                                       # Risk view: nearest liquidation and PnL; sizing view: biggest share.
                                       key_columns={'Liq %':'min','uPnL':'abs','Position / Account (%)':'max'})
-    print(f"All positions: notional ${frame['Pos'].abs().sum():,.0f} | "
-          f"margin ${frame['Margin'].sum():,.0f} | uPnL {usd(frame['uPnL'].sum())}.")
+    notional, margin_total = frame['Pos'].abs().sum(), frame['Margin'].sum()
+    print(f"All positions: notional ${notional:,.0f} | margin ${margin_total:,.0f} | uPnL "
+          + (f"{frame['uPnL'].sum() / notional:.2%} of notional." if notional else f"{usd(frame['uPnL'].sum())}."))
     print('Net/total Funding (1h) and APR are net cash flow on covered notional at current '
           'rates: positive means received. Asset rows show the market rate: positive means '
           'longs pay shorts.')
@@ -1935,29 +1937,26 @@ class _OpenPositionsMixin:
         )
         summary=pd.DataFrame([
             *([('Wallets',f'{len(self.wallet_addresses):,}')] if len(self.wallet_addresses)>1 else []),
-            ('Position value',f'${position_value:,.0f}'),
-            ('uPnL',f'${data.unrealized_pnl_total:,.2f}'),
+            ('Position value',f'${position_value:,.0f}'+(f' ({position_equity_pct:,.0f}% of account value)'
+                                                          if pd.notna(position_equity_pct) else '')),
+            ('uPnL',f'{data.unrealized_pnl_total/position_value*100:,.2f}% of position value' if position_value else 'n/a'),
             ('ROE',f'{data.unrealized_pnl_total/margin*100:,.2f}%' if margin else 'n/a'),
-            ('Margin',f'${margin:,.0f}'),
-            ('Margin % bal',f'{margin/data.balance_total*100:,.2f}%' if data.balance_total else 'n/a'),
+            ('Margin',f'{margin/data.balance_total*100:,.2f}% of balance' if data.balance_total else 'n/a'),
             (f'Available margin ({100-self.margin_reserve_pct:g}% of collateral)',
              f'${available_margin:,.2f}' if pd.notna(available_margin) else 'n/a'),
             (f'Available margin used ({self.margin_reserve_pct:g}% reserve)',
              f'{available_margin_used_pct:,.2f}%' if pd.notna(available_margin_used_pct) else 'n/a'),
             ('Available margin remaining',
-             f'${remaining_available_margin:,.2f}' if pd.notna(remaining_available_margin) else 'n/a'),
-            ('Available margin remaining (%)',
-             f'{remaining_available_margin_pct:,.2f}%'
-             if pd.notna(remaining_available_margin_pct) else 'n/a'),
-            (f'Aggregate risk cap ({self.aggregate_risk_pct:g}% of collateral)',f'${aggregate_risk_cap:,.2f}'),
-            ('Aggregate risk used',f'${open_risk:,.2f}'),
-            ('Aggregate risk room',f'${aggregate_risk_cap-open_risk:,.2f}'),
-            ('Position / Equity (%)',f'{position_equity_pct:,.2f}%'
-             if pd.notna(position_equity_pct) else 'n/a'),
+             f'${remaining_available_margin:,.2f} ({remaining_available_margin_pct:,.1f}%)'
+             if pd.notna(remaining_available_margin) and pd.notna(remaining_available_margin_pct) else 'n/a'),
+            (f'Aggregate risk used (cap {self.aggregate_risk_pct:g}% of collateral)',
+             f'{open_risk/aggregate_risk_cap*100:,.0f}% of the cap' if aggregate_risk_cap else 'n/a'),
+            ('Aggregate risk room',f'${aggregate_risk_cap-open_risk:,.2f} '
+             f'({(aggregate_risk_cap-open_risk)/self.collateral_equity*100:,.1f}% of collateral)'
+             if self.collateral_equity else f'${aggregate_risk_cap-open_risk:,.2f}'),
             ('Leverage (Pos / Margin)',f'{position_value/margin:,.2f}x' if margin else 'n/a'),
-            ('Funding (open positions, since open)',f'${funding:,.2f}'),
-            ('Funding / Equity (%)',f'{funding_equity_pct:,.3f}%' if pd.notna(funding_equity_pct) else 'n/a'),
-            ('Funding / Position (%)',f'{funding_position_pct:,.3f}%' if pd.notna(funding_position_pct) else 'n/a'),
+            ('Funding (open positions, since open)',
+             f'{funding_position_pct:,.3f}% of position value' if pd.notna(funding_position_pct) else 'n/a'),
             ('Margin collateral',f'${self.collateral_equity:,.2f}'),
             ('Account value',f'${data.current_account_value:,.2f}'),
         ],columns=['Metric','Value'])
@@ -1969,13 +1968,11 @@ class _OpenPositionsMixin:
                                 f'Available margin ({100-self.margin_reserve_pct:g}% of collateral)',
                                 'Position / Equity (%)'}:
                 return 'color:#188038;font-weight:600;'
-            if row['Metric'] in {'Available margin remaining',
-                                'Available margin remaining (%)','Aggregate risk room'}:
+            if row['Metric'] in {'Available margin remaining','Aggregate risk room'}:
                 if isinstance(value,str) and (value.startswith('-') or '$-' in value):
                     return 'color:#c62828;font-weight:600;'
                 return 'color:#188038;font-weight:600;' if value!='n/a' else ''
-            if row['Metric'] not in {'uPnL','ROE','Funding (open positions, since open)',
-                                    'Funding / Equity (%)','Funding / Position (%)'}:
+            if row['Metric'] not in {'uPnL','ROE','Funding (open positions, since open)'}:
                 return ''
             if isinstance(value,str) and (value.startswith('-') or '$-' in value):
                 return 'color:#c62828;font-weight:600;'
