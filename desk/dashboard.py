@@ -178,7 +178,7 @@ def _value_with_wallets(value_series: list[dict], wallets: dict | None, min_days
     stacked = pd.concat(accounts, axis=1).ffill().fillna(0.0).sum(axis=1) if accounts else pd.Series(dtype=float)
     wallet = pd.Series(wallets["y"], index=pd.to_datetime(wallets["x"]))
     total = (stacked.reindex(wallet.index, method="ffill").fillna(0.0) + wallet).round(2)
-    return {"name": "Desk value incl. wallets outside HL", "note": wallets.get("note", ""),
+    return {"name": "Desk incl. wallets", "note": wallets.get("note", ""),
             "x": [ts.strftime("%Y-%m-%d") for ts in total.index], "y": total.tolist()}
 
 

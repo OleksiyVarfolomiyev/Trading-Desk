@@ -797,6 +797,6 @@ class DeskAccounts:
                 if len(prices):
                     comparison.add_trace(go.Scatter(x=prices.index, y=100 * (prices / prices.iloc[0] - 1), name=name,
                                                     line={"color": color}))
-        comparison.update_layout(title=f"Desk return vs BTC and SPY (%, time-weighted, since {_since(index.index[0])})",
+        comparison.update_layout(title=f"Desk vs benchmarks (%, time-weighted, since {_since(index.index[0])})",
                                  template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%", **LEGEND_ON_TOP)
         show_chart(comparison)

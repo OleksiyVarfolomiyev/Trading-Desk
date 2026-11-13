@@ -878,7 +878,7 @@
       const x = [...walletDays.keys()].filter((d) => d >= valueSeries.reduce((a, s) => (s.x[0] < a ? s.x[0] : a), today)).sort();
       const y = x.map((d) => Math.round((stackedOn(d) + walletDays.get(d)) * 100) / 100);
       if (x.length && x[x.length - 1] === today && fin(deskEquity)) y[y.length - 1] = Math.round(deskEquity * 100) / 100;
-      return x.length > 1 ? { name: "Desk value incl. wallets outside HL", note: "", x, y } : null;
+      return x.length > 1 ? { name: "Desk incl. wallets", note: "", x, y } : null;
     };
     // The return chart is the tiles' series (``headline``: wallets included when they have history), as % since its
     // start, so the desk line ends at the "TW return" tile; the benchmarks start the same day.
