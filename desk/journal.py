@@ -32,7 +32,8 @@ JOURNAL_FILE = Path(__file__).resolve().parents[1] / "data" / "trade_journal.jso
 def journal_path() -> Path:
     """The journal file: ``DESK_JOURNAL_FILE`` if set (tests point it at a scratch file), else the desk's."""
     return Path(os.environ.get("DESK_JOURNAL_FILE") or JOURNAL_FILE)
-STRATEGIES = ("directional", "conviction", "hedge")
+# fade: a reversal of a one-day overshoot or undershoot (short after a big up day, long after a big down day).
+STRATEGIES = ("directional", "conviction", "hedge", "fade")
 MARKET_MAKING = "market making"
 UNTAGGED = "untagged"  # fills from before the journal began
 LADDER_CLOID_PREFIX = "0x1add"
@@ -219,8 +220,12 @@ def strategy_frame(days: int = 30) -> pd.DataFrame:
                 break
             start = max(fill["time"] for fill in batch) + 1
         fills_by_wallet[account.id] = list({fill["tid"]: fill for fill in fills}.values())
-        state = post({"type": "clearinghouseState", "user": account.id}) or {}
-        positions_by_wallet[account.id] = [item["position"] for item in state.get("assetPositions", [])]
+        # Positions on the main DEX and on every HIP-3 DEX the wallet traded (xyz:AMD lives on "xyz").
+        dexes = [""] + sorted({str(fill["coin"]).split(":")[0] for fill in fills if ":" in str(fill["coin"])} | {"xyz"})
+        positions_by_wallet[account.id] = []
+        for dex in dexes:
+            state = post({"type": "clearinghouseState", "user": account.id, **({"dex": dex} if dex else {})}) or {}
+            positions_by_wallet[account.id] += [item["position"] for item in state.get("assetPositions", [])]
         funding_by_wallet[account.id] = market_making.funding_events(account.id, since)
     return split_by_strategy(entries, fills_by_wallet, positions_by_wallet, funding_by_wallet)
 

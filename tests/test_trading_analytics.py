@@ -1950,6 +1950,18 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertEqual(actions[0].margin_usd, 100)
         self.assertEqual(actions[1].margin_usd, -25)
         self.assertEqual(actions[2].side, "SHORT")
+        self.assertEqual({action.strategy for action in actions}, {"directional"})   # the default tag
+
+    def test_position_action_csv_carries_the_journal_strategy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "actions.csv"
+            path.write_text("action,coin,side,dex,margin_usd,strategy\nopen_margin,INIT,SHORT,,100,fade\n"
+                            "open_margin,xyz:AMD,LONG,,80,Conviction\n", encoding="utf-8")
+            actions = read_position_actions(path)
+            self.assertEqual([action.strategy for action in actions], ["fade", "conviction"])
+            path.write_text("action,coin,side,dex,margin_usd,strategy\nopen_margin,INIT,SHORT,,100,hunch\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                read_position_actions(path)
 
     def test_close_action_on_flat_market_is_blocked_without_side_error(self):
         market = Market("BTC", "", 100, 100, 3, 10)

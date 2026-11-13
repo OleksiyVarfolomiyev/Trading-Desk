@@ -244,6 +244,7 @@ class PositionAction:
     dex: str
     side: str
     margin_usd: float | None = None
+    strategy: str = "directional"  # the journal's tag for a position this action opens or adds to
 
 
 @dataclass(frozen=True)
@@ -1062,7 +1063,7 @@ def read_position_actions(path: Path) -> list[PositionAction]:
         reader = csv.DictReader(file)
         if reader.fieldnames is None or not {"action", "coin"}.issubset(reader.fieldnames):
             raise ValueError(
-                "Action CSV must include action and coin columns; side, dex, and margin_usd are optional."
+                "Action CSV must include action and coin columns; side, dex, margin_usd and strategy are optional."
             )
         for row_number, row in enumerate(reader, start=2):
             action = (row.get("action") or "").strip().lower()
@@ -1098,6 +1099,11 @@ def read_position_actions(path: Path) -> list[PositionAction]:
                 raise ValueError(f"Action CSV row {row_number} requires non-zero signed margin_usd for adjust_margin.")
             if action not in {"open_margin", "adjust_margin"} and margin_usd is not None:
                 raise ValueError(f"Action CSV row {row_number} may only set margin_usd for margin actions.")
+            strategy = (row.get("strategy") or "").strip().lower() or "directional"
+            from desk.journal import STRATEGIES
+
+            if strategy not in STRATEGIES:
+                raise ValueError(f"Action CSV row {row_number} has strategy {strategy!r}; choose one of {', '.join(STRATEGIES)}.")
             actions.append(
                 PositionAction(
                     action=action,
@@ -1105,6 +1111,7 @@ def read_position_actions(path: Path) -> list[PositionAction]:
                     dex=dex,
                     side=side,
                     margin_usd=margin_usd,
+                    strategy=strategy,
                 )
             )
     if not actions:
@@ -2713,6 +2720,12 @@ def run_position_reconciliation(
                             f"{leverage_result!r}"
                         )
                 _place_entry(exchange, wallet, plan.entry_plan, markets[coin])
+                try:  # the journal tags the position with its strategy; it never blocks a trade
+                    from desk import journal
+
+                    journal.record_entry(wallet, coin, plan.side, plan.action.strategy)
+                except Exception as exc:
+                    print(f"{coin}: the journal entry was not saved ({type(exc).__name__}: {exc}).")
             elif plan.quantity_delta < 0 and urgent:
                 result = exchange.market_close(coin, abs(plan.quantity_delta))
                 if not isinstance(result, dict) or result.get("status") != "ok":
