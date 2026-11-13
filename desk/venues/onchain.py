@@ -74,6 +74,13 @@ PRICED_AS = {
 STAKING_REWARDS = {
     ("base", "0x321b7ff75154472b18edb199033ff4d116f340ff"): ("0x31d7a262", "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf"),
 }
+# Tokens in an unstaking cooldown: (chain, staking contract) -> (view selector taking the wallet, token). The sVVV is
+# burned when the cooldown starts, so without this the VVV would vanish from the desk until it is claimed.
+# 0x16934fc4 is stakes(address) on Venice's StakingV2 -> (rewardDebt, cooldownEnd, cooldownAmount).
+STAKING_COOLDOWNS = {
+    ("base", "0x321b7ff75154472b18edb199033ff4d116f340ff"): ("0x16934fc4", "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf"),
+}
+COOLDOWN_ENDS: dict[tuple[str, str], float] = {}  # (chain, "cooldown:<token>") -> when it unlocks (unix seconds)
 # Readable names for staking receipts in position tables.
 STAKED_LABELS = {("base", "0x321b7ff75154472b18edb199033ff4d116f340ff"): "VVV staked on Venice"}
 USER_AGENT = "trading-desk/1.0 (read-only portfolio report)"
@@ -269,7 +276,7 @@ def _etherscan(chain: Chain, key: str, **params) -> list | str:
 def price_key(chain: Chain, token: str) -> str:
     if token == NATIVE:
         return chain.native_price_key
-    token = token.lower().removeprefix("rewards:")
+    token = token.lower().removeprefix("rewards:").removeprefix("cooldown:")
     token = PRICED_AS.get((chain.name, token), token)
     return f"{chain.llama}:{token}"
 
@@ -427,6 +434,18 @@ def _rpc_batch(url: str, calls: list[dict]) -> dict[int, str]:
     raise RuntimeError(f"public RPC refused {len(pending)} call(s) after retries (rate limited)")
 
 
+def _unstaking_label(holding: Holding) -> str:
+    """"unstaking, liquid Nov 20" (or "unstaking, claimable now" once the cooldown is over)."""
+    from desk.numbers import since
+
+    ends = COOLDOWN_ENDS.get((holding.chain, holding.token))
+    if not ends:
+        return "unstaking"
+    if ends <= time.time():
+        return "unstaking, claimable now"
+    return f"unstaking, liquid {since(pd.Timestamp(ends, unit='s', tz='UTC'))}"
+
+
 def staking_reward_holdings(chain: Chain, wallet: str) -> list[Holding]:
     """Unclaimed staking rewards, read from each staking contract on this chain."""
     contracts = [(contract, selector, token) for (name, contract), (selector, token) in STAKING_REWARDS.items()
@@ -444,6 +463,30 @@ def staking_reward_holdings(chain: Chain, wallet: str) -> list[Holding]:
         amount = int(raw, 16) / 1e18 if raw and raw != "0x" else 0.0
         if amount:
             holdings.append(Holding(chain.name, f"rewards:{token}", "VVV", amount))
+    holdings.extend(cooldown_holdings(chain, wallet))
+    return holdings
+
+
+def cooldown_holdings(chain: Chain, wallet: str) -> list[Holding]:
+    """Tokens unstaking (in a staking contract's cooldown): still the wallet's, valued as the token."""
+    contracts = [(contract, selector, token) for (name, contract), (selector, token) in STAKING_COOLDOWNS.items()
+                 if name == chain.name]
+    if not contracts or chain.name not in PUBLIC_RPC:
+        return []
+    padded = wallet.lower()[2:].rjust(64, "0")
+    calls = [{"jsonrpc": "2.0", "id": index, "method": "eth_call",
+              "params": [{"to": contract, "data": selector + padded}, "latest"]}
+             for index, (contract, selector, _) in enumerate(contracts)]
+    results = _rpc_batch(PUBLIC_RPC[chain.name], calls)
+    holdings = []
+    for index, (_, _, token) in enumerate(contracts):
+        words = (results.get(index) or "0x")[2:]
+        if len(words) < 192:
+            continue
+        ends, amount = int(words[64:128], 16), int(words[128:192], 16) / 1e18
+        if amount:
+            holdings.append(Holding(chain.name, f"cooldown:{token}", "VVV", amount))
+            COOLDOWN_ENDS[(chain.name, f"cooldown:{token}")] = ends
     return holdings
 
 
@@ -737,14 +780,16 @@ def wallet_snapshot(account: Account, chains: list[str] | None = None) -> tuple[
         if value > MAX_PLAUSIBLE_HOLDING_USD:
             notes.append(f"{holding.symbol} on {holding.chain} ignored: {_usd(value)} is implausible (likely spam)")
             continue
-        if value < DUST_USD and not holding.token.startswith("rewards:"):  # rewards always show
+        if value < DUST_USD and not holding.token.startswith(("rewards:", "cooldown:")):  # rewards always show
             continue
         positions.append(VenuePosition(
             venue=VENUE, account=wallet, asset_class="crypto spot",
             symbol=(f"{holding.symbol} ({STAKED_LABELS[(holding.chain, holding.token)]}, {holding.chain})"
                     if (holding.chain, holding.token) in STAKED_LABELS
                     else f"{holding.symbol} (unclaimed staking rewards, {holding.chain})"
-                    if holding.token.startswith("rewards:") else f"{holding.symbol} ({holding.chain})"),
+                    if holding.token.startswith("rewards:")
+                    else f"{holding.symbol} ({_unstaking_label(holding)}, {holding.chain})"
+                    if holding.token.startswith("cooldown:") else f"{holding.symbol} ({holding.chain})"),
             quantity=holding.amount, avg_price=float("nan"), mark_price=price,
             unrealized_usd=float("nan"), ref=f"{holding.chain}:{holding.token}",
         ))

@@ -729,7 +729,7 @@ class PublicRpcTests(unittest.TestCase):
         with patch.object(onchain, "_rpc_batch", return_value={0: hex(4 * 10 ** 16)}) as rpc:
             rewards = onchain.staking_reward_holdings(onchain.CHAINS["base"], "0x" + "a" * 40)
         self.assertEqual(rewards, [onchain.Holding("base", f"rewards:{vvv}", "VVV", 0.04)])
-        self.assertTrue(rpc.call_args[0][1][0]["params"][0]["data"].startswith("0x31d7a262"))
+        self.assertTrue(rpc.call_args_list[0][0][1][0]["params"][0]["data"].startswith("0x31d7a262"))   # then the cooldown call
         self.assertEqual(onchain.staking_reward_holdings(onchain.CHAINS["ethereum"], "0x" + "a" * 40), [])
         with patch.object(onchain, "alchemy_key", return_value=""), \
                 patch.object(onchain, "blockscout_key", return_value=""), \
