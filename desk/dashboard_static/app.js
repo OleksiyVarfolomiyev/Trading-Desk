@@ -204,9 +204,9 @@ function renderTiles(k) {
     tile("Desk value", wholeUsd(k.desk_value), "", { line: dayChangeLine(k.day_change) }),
     // Dollars and the money-weighted return, next to the time-weighted return: a loss on a small
     // balance and a gain on a large one net out here, but not in the time-weighted figure.
-    tile("Net PnL since start", signedUsd(mw.pnl),
+    tile("Net PnL since start", wholeUsd(mw.pnl),
       [isNum(mw.return) ? `Money-weighted ${pct(mw.return, 1, true)}` : "",
-       isNum(k.unrealized) ? `unrealized ${signedUsd(k.unrealized)}` : ""].filter(Boolean).join(" · "),
+       isNum(k.unrealized) ? `unrealized ${wholeUsd(k.unrealized)}` : ""].filter(Boolean).join(" · "),
       { valueClass: signClass(mw.pnl) }),
     tile("Return 30D", pct(r["30D"], 1, true),
       `7D ${pct(r["7D"], 1, true) || "n/a"} · 90D ${pct(r["90D"], 1, true) || "n/a"}`,

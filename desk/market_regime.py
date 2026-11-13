@@ -21,6 +21,11 @@ Level: "notice" when two signals hold today; "high" when three hold on at least 
 last five days (alts) or two of the last three sessions (equities), so one wild day is not a
 regime. The trading daemon trims the exposed positions only on "high" (execution/hl_daemon.py).
 
+Evidence: of the past days with at least as many signals on as today, the share after which the regime
+followed through (alts beat BTC over the next ALT_HORIZON days; SPY fell over the next EQUITY_HORIZON
+sessions), next to the same share over every day (the base rate) and the number of days it rests on.
+Neighbouring days overlap, so a few dozen days are a few episodes: read a small count as weak evidence.
+
     python -m desk.market_regime              # today's reading
     python -m desk.market_regime --history    # the days each level held over the past year
 """
@@ -41,6 +46,8 @@ ALT_COUNT = 30
 HISTORY_DAYS = 500
 EXCLUDED = {"BTC", "ETH", "USDC", "USDT", "USDE", "DAI", "PAXG", "XAUT"}  # the benchmark, majors, stables, gold
 LEVELS = ("none", "notice", "high")
+ALT_HORIZON = 14          # days: did alts beat BTC after the signals
+EQUITY_HORIZON = 20       # sessions: did SPY fall after the signals
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +111,8 @@ def alt_signals(alts: pd.DataFrame, btc: pd.Series) -> pd.DataFrame:
     beating = alt7.gt(btc7, axis=0).where(alt7.notna())
     breadth = beating.sum(axis=1) / alt7.notna().sum(axis=1).replace(0, np.nan)
     sma20 = ratio.rolling(20).mean()
-    frame = pd.DataFrame({"rel7": rel7, "rel30": rel30, "breadth7": breadth, "rel7_rank": _trailing_rank(rel7)})
+    frame = pd.DataFrame({"rel7": rel7, "rel30": rel30, "breadth7": breadth, "rel7_rank": _trailing_rank(rel7),
+                          "followed": (ratio.shift(-ALT_HORIZON) / ratio - 1 > 0).where(ratio.shift(-ALT_HORIZON).notna())})
     frame["A1"] = (frame["rel7_rank"] >= 0.90) & (frame["rel7"] >= 0.05)
     frame["A2"] = frame["breadth7"] >= 0.70
     frame["A3"] = frame["rel30"] >= 0.10
@@ -120,7 +128,8 @@ def equity_signals(spy: pd.Series, vix: pd.Series) -> pd.DataFrame:
     sma20, sma50 = spy.rolling(20).mean(), spy.rolling(50).mean()
     vol10 = spy.pct_change(fill_method=None).rolling(10).std() * np.sqrt(252)
     frame = pd.DataFrame({"drawdown60": drawdown, "vix": vix, "vix5": vix.pct_change(5, fill_method=None),
-                          "vol10": vol10, "vol10_rank": _trailing_rank(vol10, 252)})
+                          "vol10": vol10, "vol10_rank": _trailing_rank(vol10, 252),
+                          "followed": (spy.shift(-EQUITY_HORIZON) / spy - 1 < 0).where(spy.shift(-EQUITY_HORIZON).notna())})
     frame["E1"] = frame["drawdown60"] <= -0.05
     frame["E2"] = (spy < sma50) & (sma20 < sma50)
     frame["E3"] = (frame["vix"] >= 25) | (frame["vix5"] >= 0.40)
@@ -133,6 +142,17 @@ def levels(signals: pd.DataFrame, names: list[str], confirm: int, window: int) -
     count = signals[names].fillna(False).astype(int).sum(axis=1)
     strong = (count >= 3).astype(int).rolling(window, min_periods=1).sum() >= confirm
     return pd.Series(np.where(strong & (count >= 3), "high", np.where(count >= 2, "notice", "none")), index=signals.index)
+
+
+def evidence(signals: pd.DataFrame, names: list[str]) -> dict:
+    """How often the regime followed through after past days with at least today's count of signals on:
+    {"hit": share, "base": share over every known day, "days": how many past days}."""
+    count = signals[names].fillna(False).astype(int).sum(axis=1)
+    known = signals["followed"].notna()
+    alike = known & (count >= count.iloc[-1])
+    followed = signals["followed"].astype(float)
+    return {"hit": float(followed[alike].mean()) if alike.any() else float("nan"),
+            "base": float(followed[known].mean()) if known.any() else float("nan"), "days": int(alike.sum())}
 
 
 # ---------------------------------------------------------------------------
@@ -158,15 +178,18 @@ def evaluate() -> dict:
     equity = equity_signals(yahoo_series("SPY"), yahoo_series("^VIX")).dropna(subset=["drawdown60"])
     equity_level = levels(equity, ["E1", "E2", "E3", "E4"], confirm=2, window=3)
 
-    def part(frame, level, names, describe):
+    def part(frame, level, names, describe, measures):
         row = frame.iloc[-1]
         return {"level": str(level.iloc[-1]), "as_of": frame.index[-1].strftime("%Y-%m-%d"),
                 "signals": {name: bool(row[name]) for name in names}, "detail": describe(row),
-                "days_high_last_30": int((level.iloc[-30:] == "high").sum())}
+                "measures": {name: (None if pd.isna(row[name]) else float(row[name])) for name in measures},
+                "evidence": evidence(frame, names), "days_high_last_30": int((level.iloc[-30:] == "high").sum())}
 
     return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "alts": len(alts.columns),
-            "alt_season": part(alt, alt_level, ["A1", "A2", "A3", "A4"], _describe_alts),
-            "equity_selloff": part(equity, equity_level, ["E1", "E2", "E3", "E4"], _describe_equities)}
+            "alt_season": part(alt, alt_level, ["A1", "A2", "A3", "A4"], _describe_alts,
+                               ["rel7", "rel7_rank", "breadth7", "rel30"]),
+            "equity_selloff": part(equity, equity_level, ["E1", "E2", "E3", "E4"], _describe_equities,
+                                   ["drawdown60", "vix", "vix5", "vol10", "vol10_rank"])}
 
 
 def current(max_age: float = STATE_MAX_AGE_SECONDS, path: Path = STATE_FILE) -> dict:
@@ -183,23 +206,45 @@ def current(max_age: float = STATE_MAX_AGE_SECONDS, path: Path = STATE_FILE) -> 
     return state
 
 
+# Each signal as a few words with its number, for the highlights (only the signals that are on are shown).
+SIGNAL_TEXT = {
+    "A1": lambda m: f"alts {m['rel7']:+.1%} vs BTC 7d",
+    "A2": lambda m: f"breadth {m['breadth7']:.0%}",
+    "A3": lambda m: f"alts {m['rel30']:+.1%} vs BTC 30d",
+    "A4": lambda m: "alt/BTC above rising 20d avg",
+    "E1": lambda m: f"SPY {m['drawdown60']:.1%} from 60d high",
+    "E2": lambda m: "SPY below falling 50d avg",
+    "E3": lambda m: f"VIX {m['vix']:.1f} ({m['vix5']:+.0%} 5d)",
+    "E4": lambda m: f"10d vol {m['vol10']:.0%} (top {1 - m['vol10_rank']:.0%})",
+}
+
+
+def _signal(name: str, measures: dict) -> str:
+    try:
+        return SIGNAL_TEXT[name](measures)
+    except (KeyError, TypeError, ValueError):  # a reading saved before the measures were: the signal's name
+        return name
+
+
 def notices(state: dict | None) -> list[tuple[str, str]]:
-    """Highlight rows for the dashboards: (title, text) for each regime at "notice" or "high"."""
-    rows = []
+    """One "Regime" highlights row for the regimes at "notice" or "high": the level, the signals on (with their
+    numbers), and the evidence (how often the regime followed after days like today, against the base rate)."""
     if not state:
-        return rows
-    for key, name, meaning in (("alt_season", "Alt season", "the alt shorts are exposed"),
-                               ("equity_selloff", "Equity sell-off", "the TradFi longs are exposed")):
+        return []
+    parts = []
+    for key, name in (("alt_season", "Alt season"), ("equity_selloff", "Equity sell-off")):
         part = state.get(key) or {}
         level = part.get("level", "none")
         if level == "none":
             continue
-        held = sum(bool(value) for value in part.get("signals", {}).values())
-        verdict = ("high confidence: the trading daemon's regime guard trims the exposed HL positions when it is on"
-                   if level == "high" else "watching; no trimming yet")
-        rows.append((f"Regime change: {name.lower()} ({level})",
-                     f"{held} of 4 signals: {part.get('detail', '')}. {meaning.capitalize()}; {verdict}."))
-    return rows
+        signals = part.get("signals", {})
+        on = [_signal(code, part.get("measures") or {}) for code, value in signals.items() if value]
+        text = f"{name} {level} {len(on)}/{len(signals) or 4}: {', '.join(on)}"
+        proof = part.get("evidence") or {}
+        if proof.get("days") and proof.get("hit") == proof.get("hit"):
+            text += f"; evidence {proof['hit']:.0%} vs {proof['base']:.0%} base ({proof['days']} days)"
+        parts.append(text)
+    return [("Regime", "; ".join(parts) + ".")] if parts else []
 
 
 def main(argv: list[str] | None = None) -> int:

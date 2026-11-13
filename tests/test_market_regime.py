@@ -45,15 +45,23 @@ class EquityTests(unittest.TestCase):
                         ["E1", "E2", "E3", "E4"], 2, 3)
         self.assertEqual(calm.iloc[-1], "none")
 
-    def test_notices_say_what_and_whether_trimming(self):
+    def test_one_regime_row_with_the_signals_on_and_the_evidence(self):
         state = {"alt_season": {"level": "high", "signals": {"A1": True, "A2": True, "A3": True, "A4": False},
-                                "detail": "alts +12%"},
-                 "equity_selloff": {"level": "none", "signals": {}, "detail": ""}}
-        rows = m.notices(state)
-        self.assertEqual(len(rows), 1)
-        self.assertIn("alt season (high)", rows[0][0])
-        self.assertIn("3 of 4", rows[0][1])
+                                "measures": {"rel7": 0.12, "rel7_rank": 0.97, "breadth7": 0.8, "rel30": 0.15},
+                                "evidence": {"hit": 0.72, "base": 0.48, "days": 31}},
+                 "equity_selloff": {"level": "notice", "signals": {"E1": False, "E2": True, "E3": False, "E4": True},
+                                    "measures": {"vol10": 0.29, "vol10_rank": 0.95}}}
+        self.assertEqual(m.notices(state), [("Regime", "Alt season high 3/4: alts +12.0% vs BTC 7d, breadth 80%, alts +15.0% "
+                                                       "vs BTC 30d; evidence 72% vs 48% base (31 days); Equity sell-off "
+                                                       "notice 2/4: SPY below falling 50d avg, 10d vol 29% (top 5%).")])
+        calm = {"alt_season": {"level": "none"}, "equity_selloff": {"level": "none"}}
+        self.assertEqual(m.notices(calm), [])
 
+    def test_evidence_counts_days_with_as_many_signals_and_what_followed(self):
+        frame = pd.DataFrame({"A1": [True, True, False, False, True], "A2": [True, False, False, True, True],
+                              "followed": [1.0, 0.0, 0.0, 1.0, float("nan")]})
+        proof = m.evidence(frame, ["A1", "A2"])   # today: 2 on; one past day had 2, and it followed
+        self.assertEqual(proof, {"hit": 1.0, "base": 0.5, "days": 1})
 
 if __name__ == "__main__":
     unittest.main()
