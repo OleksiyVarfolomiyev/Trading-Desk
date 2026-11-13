@@ -13,6 +13,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import os
+
 from desk.accounts import Account, accounts_for, load_accounts
 from desk.venues.base import VenueAccount, VenuePosition
 
@@ -101,6 +103,8 @@ class DeskBook:
     unreachable: list[str] = field(default_factory=list)
     # IB's (entry, snapshot) as read, for a caller that also reports them (the daemon sends IB to the web relay).
     ib_reads: list = field(default_factory=list)
+    # True when IB came from the relay (the desk server has no TWS): nothing to send back to it.
+    ib_from_relay: bool = False
 
     @property
     def equity_usd(self) -> float:
@@ -142,6 +146,54 @@ def ib_book_entry(account: Account, ib=None) -> tuple[BookEntry, VenueAccount]:
         margin_used_usd=snapshot.margin_used_usd, positions=len(snapshot.positions),
         notes=snapshot.notes, position_risks=tuple(position_risks),
     ), snapshot
+
+
+IB_RELAY_STALE_HOURS = 24  # an older IB reading from the Mac counts the account as unreachable
+
+
+def ib_source() -> str:
+    """``tws`` (read IB through TWS on this machine) or ``relay`` (the desk server: the Mac's last IB push)."""
+    return os.environ.get("DESK_IB_SOURCE", "tws").strip().lower()
+
+
+def ib_entry_from_relay(account: Account, payload: dict | None = None) -> tuple[BookEntry, VenueAccount]:
+    """IB as the Mac last sent it to the relay (desk/web_sync.py ``ib_payload``), for a machine without TWS.
+
+    Equity, open risk and the positions are what the Mac read through TWS, at most ten minutes old
+    while it runs. A reading older than ``IB_RELAY_STALE_HOURS`` raises, so the account is reported
+    unreachable and the caller decides whether to trade on.
+    """
+    import pandas as pd
+
+    if payload is None:
+        from desk import web_sync
+
+        payload = web_sync.relay_get("/ib")
+    risk = payload.get("risk") or {}
+    if not risk:
+        raise ValueError("the relay's IB reading has no risk figures")
+    as_of = pd.Timestamp(payload["as_of"])
+    as_of = as_of.tz_localize("UTC") if as_of.tzinfo is None else as_of
+    age_hours = (pd.Timestamp.now(tz="UTC") - as_of).total_seconds() / 3600
+    if age_hours > IB_RELAY_STALE_HOURS:
+        raise ValueError(f"the Mac last sent IB {age_hours:.0f} hours ago")
+    number = lambda value: float(value) if value is not None else float("nan")
+    positions = tuple(VenuePosition(
+        venue="ib", account=account.id, symbol=item["symbol"], asset_class=item.get("asset_class") or "equity",
+        quantity=float(item["quantity"]), avg_price=number(item.get("avg_price")), mark_price=number(item.get("mark_price")),
+        multiplier=float(item.get("multiplier") or 1), unrealized_usd=number(item.get("unrealized")),
+    ) for item in payload.get("positions") or [])
+    balances = payload.get("account") or {}
+    note = f"IB as the Mac sent it {age_hours * 60:.0f} minutes ago (no TWS here)"
+    snapshot = VenueAccount(
+        venue="ib", account=account.id, label=payload.get("label") or account.name,
+        equity_usd=number(balances.get("equity")), cash_usd=number(balances.get("cash")),
+        margin_used_usd=number(balances.get("margin_used")), available_usd=number(balances.get("available")),
+        unrealized_usd=number(balances.get("unrealized")), positions=positions, as_of=as_of, notes=(note,),
+    )
+    return BookEntry(venue="ib", label=snapshot.label, equity_usd=float(risk["equity"]), risk_usd=float(risk["risk"]),
+                     margin_used_usd=snapshot.margin_used_usd, positions=int(risk.get("positions") or len(positions)),
+                     notes=(note,)), snapshot
 
 
 def _hl_executor():
@@ -205,7 +257,11 @@ def other_venue_book(venue: str, accounts: list[Account] | None = None,
             if venue == "ib" and account.id.lower() in counted:
                 continue
             try:
-                entry, snapshot = ib_book_entry(account)
+                if ib_source() == "relay":
+                    entry, snapshot = ib_entry_from_relay(account)
+                    book.ib_from_relay = True
+                else:
+                    entry, snapshot = ib_book_entry(account)
                 book.entries.append(entry)
                 book.ib_reads.append((entry, snapshot))
             except Exception as exc:

@@ -1,0 +1,9 @@
+[Unit]
+Description=Desk deploy: pull main, rebuild the page, restart the relay (the daemon restarts only by hand)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=desk
+WorkingDirectory=/home/desk/trading-desk
+ExecStart=/bin/bash deploy/pull.sh

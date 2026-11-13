@@ -50,6 +50,10 @@ JOB_LABEL = "com.trading-desk.daily-sync"
 JOB_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{JOB_LABEL}.plist"
 JOB_LOG = Path.home() / ".trading-desk" / "daily_sync.log"
 JOB_TIMES = [(8, 0), (23, 30)]  # local time; IB's Flex NAV for a day is ready the next morning
+# With the trading daemon on the desk server, the Mac only reads IB through TWS and sends it.
+IB_JOB_LABEL = "com.trading-desk.ib-push"
+IB_JOB_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{IB_JOB_LABEL}.plist"
+IB_JOB_LOG = Path.home() / ".trading-desk" / "ib_push.log"
 
 
 def ingest_token() -> str:
@@ -65,6 +69,15 @@ def store_new_token() -> str:
     token = secrets.token_urlsafe(32)
     keyring.set_password(KEYCHAIN_SERVICE, KEYCHAIN_USER, token)
     return token
+
+
+def relay_get(path: str) -> dict:
+    """GET from the relay with the ingest token (the desk server's relay asks for a login or the token)."""
+    token = ingest_token()
+    response = requests.get(RELAY_URL.rstrip("/") + path, timeout=30,
+                            headers={"Authorization": f"Bearer {token}"} if token else {})
+    response.raise_for_status()
+    return response.json()
 
 
 def _post(path: str, body: dict) -> dict:
@@ -174,11 +187,12 @@ def push_ib(snapshot, book_entry=None, moves: dict | None = None) -> dict:
 
 def push_nav_only(account_id: str) -> dict | None:
     """With TWS closed: replace the NAV in the relay's last IB payload, keeping its positions and time."""
-    response = requests.get(RELAY_URL.rstrip("/") + "/ib", timeout=30)
-    if response.status_code == 404:
-        return None
-    response.raise_for_status()
-    payload = response.json()
+    try:
+        payload = relay_get("/ib")
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            return None
+        raise
     nav = ib_nav(account_id)
     payload["nav"] = [[row.date, float(row.nav), float(row.flows)] for row in nav.itertuples()]
     payload["nav_as_of"] = pd.Timestamp.now(tz="UTC").isoformat()
@@ -276,18 +290,28 @@ def job_plist() -> dict:
     }
 
 
-def install_job() -> None:
+def ib_job_plist() -> dict:
+    """Every ten minutes: read IB through TWS and send it to the relay (nothing is sent while TWS is closed)."""
+    plist = job_plist()
+    plist.pop("StartCalendarInterval")
+    plist.update({"Label": IB_JOB_LABEL, "ProgramArguments": [sys.executable, "-m", "desk.web_sync", "--push-ib"],
+                  "StartInterval": PUSH_EVERY_SECONDS, "StandardOutPath": str(IB_JOB_LOG),
+                  "StandardErrorPath": str(IB_JOB_LOG)})
+    return plist
+
+
+def install_job(label: str = JOB_LABEL, path: Path = JOB_PLIST, plist: dict | None = None) -> None:
     JOB_LOG.parent.mkdir(parents=True, exist_ok=True)
-    JOB_PLIST.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     domain = f"gui/{os.getuid()}"
-    subprocess.run(["launchctl", "bootout", f"{domain}/{JOB_LABEL}"], capture_output=True)
-    JOB_PLIST.write_bytes(plistlib.dumps(job_plist()))
-    subprocess.run(["launchctl", "bootstrap", domain, str(JOB_PLIST)], check=True)
+    subprocess.run(["launchctl", "bootout", f"{domain}/{label}"], capture_output=True)
+    path.write_bytes(plistlib.dumps(plist or job_plist()))
+    subprocess.run(["launchctl", "bootstrap", domain, str(path)], check=True)
 
 
-def uninstall_job() -> None:
-    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{JOB_LABEL}"], capture_output=True)
-    JOB_PLIST.unlink(missing_ok=True)
+def uninstall_job(label: str = JOB_LABEL, path: Path = JOB_PLIST) -> None:
+    subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"], capture_output=True)
+    path.unlink(missing_ok=True)
 
 
 def seed_history(data_dir: Path | str = "data") -> dict[str, int]:
@@ -317,7 +341,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--daily", action="store_true", help="save HL and IB history locally and send IB (the daily job)")
     parser.add_argument("--install-daily", action="store_true", help="run --daily at 08:00 and 23:30 through launchd")
     parser.add_argument("--uninstall-daily", action="store_true", help="stop and remove the daily job")
+    parser.add_argument("--install-ib-push", action="store_true",
+                        help="run --push-ib every 10 minutes through launchd (once the trading daemon runs on the desk server)")
+    parser.add_argument("--uninstall-ib-push", action="store_true", help="stop and remove the IB push job")
+    parser.add_argument("--set-token", action="store_true",
+                        help="store the relay token read from standard input (the desk server takes the Mac's token)")
     args = parser.parse_args(argv)
+    if args.set_token:
+        import keyring
+
+        token = sys.stdin.read().strip()
+        if not token:
+            parser.error("--set-token reads the token from standard input; nothing was given.")
+        keyring.set_password(KEYCHAIN_SERVICE, KEYCHAIN_USER, token)
+        print("Relay token stored.")
+        return 0
     if args.store_token:
         if sys.stdout.isatty():
             parser.error("--store-token prints the secret token; pipe it into pbcopy instead.")
@@ -331,6 +369,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.uninstall_daily:
         uninstall_job()
         print("Daily job removed.")
+    if args.install_ib_push:
+        install_job(IB_JOB_LABEL, IB_JOB_PLIST, ib_job_plist())
+        print(f"IB push installed: every {PUSH_EVERY_SECONDS // 60} minutes, log in {IB_JOB_LOG}")
+    if args.uninstall_ib_push:
+        uninstall_job(IB_JOB_LABEL, IB_JOB_PLIST)
+        print("IB push removed.")
     if args.daily:
         print(pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"), "daily sync")
         for line in daily_sync():
@@ -346,7 +390,8 @@ def main(argv: list[str] | None = None) -> int:
             entry, snapshot = read_ib(account)
             answer = push_ib(snapshot, entry, position_changes([snapshot]))
             print(f"Sent {snapshot.label} ({len(snapshot.positions)} positions, NAV history included): {answer}")
-    if not any((args.seed_history, args.push_ib, args.push_wallets, args.daily, args.install_daily, args.uninstall_daily)):
+    if not any((args.seed_history, args.push_ib, args.push_wallets, args.daily, args.install_daily, args.uninstall_daily,
+                args.install_ib_push, args.uninstall_ib_push)):
         parser.print_help()
     return 0
 

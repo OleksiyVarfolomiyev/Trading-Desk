@@ -1,0 +1,18 @@
+[Unit]
+Description=Desk HL trading daemon (guards, ladders, held take-profits, alerts, research)
+After=network-online.target desk-relay.service
+Wants=network-online.target
+
+[Service]
+User=desk
+WorkingDirectory=/home/desk/trading-desk
+EnvironmentFile=/home/desk/trading-desk/deploy/desk.env
+ExecStart=/home/desk/trading-desk/.venv/bin/python execution/hl_daemon.py serve
+# SIGTERM saves the guards and ladders; they resume on the next start. Exchange stops stay on HL.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

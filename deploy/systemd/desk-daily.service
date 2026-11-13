@@ -1,0 +1,10 @@
+[Unit]
+Description=Desk daily sync: HL history and the wallets' performance (desk/web_sync.py --daily)
+After=network-online.target desk-relay.service
+
+[Service]
+Type=oneshot
+User=desk
+WorkingDirectory=/home/desk/trading-desk
+EnvironmentFile=/home/desk/trading-desk/deploy/desk.env
+ExecStart=/home/desk/trading-desk/.venv/bin/python -m desk.web_sync --daily

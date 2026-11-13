@@ -1,0 +1,9 @@
+[Unit]
+Description=Check GitHub for a new desk version every two minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target

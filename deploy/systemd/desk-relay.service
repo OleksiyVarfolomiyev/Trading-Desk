@@ -1,0 +1,14 @@
+[Unit]
+Description=Desk relay and web dashboard (web/server.mjs running web/worker.js)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=desk
+WorkingDirectory=/home/desk/trading-desk
+ExecStart=/usr/bin/node web/server.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+{
+ "private": true,
+ "type": "module",
+ "description": "The desk relay: web/worker.js, run by web/server.mjs on the desk server (Node 20+)."
+}

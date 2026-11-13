@@ -357,7 +357,8 @@ class HLState:
 
     def send_ib(self, book) -> None:
         """Send IB, as just read for the risk checks, to the web relay every ten minutes (desk/web_sync.py)."""
-        if not book.ib_reads or time.time() - getattr(self, "ib_sent_at", 0.0) < IB_WEB_EVERY_SECONDS:
+        if not book.ib_reads or getattr(book, "ib_from_relay", False) \
+                or time.time() - getattr(self, "ib_sent_at", 0.0) < IB_WEB_EVERY_SECONDS:  # the server: IB came from the relay
             return
         self.ib_sent_at = time.time()
         try:
