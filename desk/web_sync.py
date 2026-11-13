@@ -17,7 +17,7 @@ next wakes): it saves the HL history and the IB Flex NAV to the local data files
 the relay. With TWS closed it still sends the new daily NAV; the positions keep their last time.
 The relay saves HL's daily history on its own schedule (web/worker.js), Mac or not.
 
-    python -m desk.web_sync --store-token | pbcopy    # make a token: Keychain + clipboard (paste into Cloudflare)
+    python -m desk.web_sync --store-token | pbcopy    # make a token: Keychain + clipboard (the relay's ingest_token)
     python -m desk.web_sync --seed-history            # once: send the saved daily HL history
     python -m desk.web_sync --push-ib                 # send IB now
     python -m desk.web_sync --daily                   # what the daily job runs

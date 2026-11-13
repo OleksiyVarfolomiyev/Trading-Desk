@@ -10,7 +10,7 @@
 (function () {
   "use strict";
 
-  // The relay is served with this page (one Cloudflare Worker), so its paths are relative. A page
+  // The relay is served with this page (web/server.mjs on the desk server), so its paths are relative. A page
   // hosted elsewhere sets window.DESK_CONFIG = {relay: "https://..."} before this script.
   const CFG = Object.assign({ relay: "", wallets: [], refreshSeconds: 60 }, window.DESK_CONFIG || {});
   const HL_INFO = "https://api.hyperliquid.xyz/info";

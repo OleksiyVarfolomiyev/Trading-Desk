@@ -1,12 +1,13 @@
-"""Copy the desk Worker's WALLETS secret to the clipboard without showing it.
+"""Copy the relay's WALLETS map to the clipboard without showing it.
 
-The Worker (web/worker.js) is the only place outside accounts.json that holds the full wallet
-addresses: its WALLETS secret maps each wallet's last four characters to its address. Paste it
-into Cloudflare (Worker > Settings > Variables and Secrets > Add > Secret, name WALLETS):
+The relay (web/worker.js) is the only place outside accounts.json that holds the full wallet
+addresses: its WALLETS map gives each wallet's last four characters and its address. On the desk
+server it is the "wallets" entry of ~/.trading-desk/relay.json (deploy/migrate.py --prepare
+writes it).
 
     /Users/admin/anaconda3/envs/py314/bin/python web/build.py --wallets-secret | pbcopy
 
-The dashboard itself is assembled by web/build_site.sh, which Cloudflare runs on every deploy.
+The dashboard itself is assembled by web/build_site.sh, which the server runs on every pull.
 """
 
 from __future__ import annotations

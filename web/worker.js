@@ -1,8 +1,8 @@
 // Desk relay: answers the public desk page's account questions without revealing wallet addresses.
 //
-// Deploy as a Cloudflare Worker (free plan) and add one secret in the Worker's
-// Settings > Variables and Secrets:
-//   WALLETS  {"07f2": "0x7532...07f2", "c248": "0xf3fb...c248"}   (short id -> full address)
+// Run on the desk server by web/server.mjs, which supplies what a Cloudflare Worker would get
+// (this file still keeps the Worker interface: env, KV-style storage, a scheduled handler):
+//   WALLETS  {"07f2": "0x...07f2", "c248": "0x...c248"}   (short id -> full address, from relay.json)
 //
 // Endpoints (GET only; answers are cached for CACHE_SECONDS):
 //   /wallets             the wallets' short ids (their last four characters)
@@ -14,7 +14,7 @@
 //   /ib                  the IB account as the desk's Mac last sent it (KV): balances, positions, risk,
 //                        daily NAV; written with POST /ingest/ib and the INGEST_TOKEN secret
 //
-// Storage: a KV namespace bound as DESK (wrangler.jsonc). Without it, history and IB are skipped.
+// Storage: env.DESK (JSON files in ~/.trading-desk/relay, via web/server.mjs). Without it, history and IB are skipped.
 //   /hl/<id>/account     positions and margin on every HL DEX, spot balances, account mode, fee rates
 //   /hl/<id>/portfolio   HL's value and PnL history (day, week, month, all time)
 //   /wallet/<id>         token balances outside HL: Base and Ethereum (free public nodes, Blockscout)
@@ -395,7 +395,7 @@ async function ingest(request, env, kind, id, wallets) {
   return reply({ error: "unknown ingest" }, 404);
 }
 
-// The Cron Trigger (wrangler.jsonc): save every wallet's daily points whether or not anyone opens
+// The 6-hourly capture (a timer in web/server.mjs): save every wallet's daily points whether or not anyone opens
 // the page. One run keeps every day of HL's month window, so a missed run loses nothing.
 async function dailyCapture(env) {
   let wallets = {};

@@ -39,8 +39,8 @@ Mac too.
    4. On the Mac: point the Mac's pushes at the server, install the IB push:
       `python -m desk.web_sync --install-ib-push` (with the new relay address as the default in
       `desk/web_sync.py`).
-9. **Retire Cloudflare** once the server has run cleanly for a few days: delete the `desk-relay`
-   Worker and its KV namespace, and `wrangler.jsonc`.
+9. **Retire Cloudflare**: done 2026-11-13 (the `desk-relay` Worker, its KV namespace and
+   `wrangler.jsonc` are gone; `deploy/migrate.py --prepare` can no longer copy from it).
 
 ## Every day
 

@@ -32,15 +32,6 @@ class WebSiteTests(unittest.TestCase):
             self.assertIn("plotly-4.1.1.min.js", page)
             self.assertIn('src="live.js"', page)
 
-    def test_wrangler_deploys_the_worker_and_serves_the_site(self):
-        text = "\n".join(line for line in (ROOT / "wrangler.jsonc").read_text().splitlines()
-                         if not line.lstrip().startswith("//"))
-        config = json.loads(text)
-        self.assertEqual(config["main"], "web/worker.js")
-        self.assertEqual(config["assets"]["directory"], "./web/site")
-        self.assertIn("web/build_site.sh", config["build"]["command"])
-        self.assertEqual([space["binding"] for space in config["kv_namespaces"]], ["DESK"])
-
 
 class WalletsSecretTests(unittest.TestCase):
     def test_the_secret_maps_short_ids_to_full_addresses(self):
