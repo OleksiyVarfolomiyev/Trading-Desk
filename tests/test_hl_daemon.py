@@ -813,3 +813,85 @@ class ApiKeyAlertTests(unittest.TestCase):
     def test_an_unlisted_api_wallet_raises_an_alert(self):
         items = self.check(self.SIGNER, [])
         self.assertEqual(items[f"apikey:{WALLET}"]["title"], "API wallet not approved")
+
+
+class FundingAlertTests(unittest.TestCase):
+    """The daemon flags a position whose funding has run against it for six hourly payments in a row."""
+
+    def check(self, size: float, rates: list[float], value: float = 1500.0, alerts=None):
+        alerts = alerts or hl_daemon.Alerts(path=None)
+        alerts.funding_checked_at = 0.0
+        position = {"coin": "MELANIA", "szi": str(size), "positionValue": str(value)}
+        state = SimpleNamespace(lock=threading.RLock(), states={WALLET: {"": {"assetPositions": [{"position": position}] if size else []}}})
+        history = pd.DataFrame({"fundingRate": rates})
+        with patch.object(ht, "fetch_funding_history", return_value=history):
+            alerts.watch_funding(SimpleNamespace(state=state))
+        return alerts
+
+    def test_a_short_paying_for_six_hours_raises_an_alert(self):
+        alerts = self.check(-1000, [-0.0001] * 8)  # longs receive: the short pays 87.6% APR
+        item = alerts.items[f"funding:{WALLET}:MELANIA"]
+        self.assertEqual(item["title"], "funding adverse for hours")
+        self.assertIn("87.6% APR", item["text"])
+
+    def test_one_earning_hour_in_the_six_clears_it(self):
+        alerts = self.check(-1000, [-0.0001] * 5 + [0.00001] + [-0.0001] * 2)
+        self.assertEqual(alerts.items, {})
+
+    def test_a_position_earning_funding_raises_nothing(self):
+        self.assertEqual(self.check(1000, [-0.0001] * 8).items, {})
+
+    def test_a_closed_position_drops_its_alert(self):
+        alerts = self.check(-1000, [-0.0001] * 8)
+        self.check(0, [-0.0001] * 8, alerts=alerts)
+        self.assertEqual(alerts.items, {})
+
+
+class MakerReductionTests(unittest.TestCase):
+    """Position reductions rest as post-only makers first and close at market only what is left."""
+
+    def run_reduction(self, positions: list[float], order_status: dict, state: str = "open", timeout: float = 0.05):
+        exchange = MagicMock()
+        exchange.order.return_value = {"status": "ok", "response": {"data": {"statuses": [order_status]}}}
+        exchange.market_close.return_value = {"status": "ok"}
+        reads = iter(positions)
+        last = [positions[0]]
+
+        def position(*_):
+            last[0] = next(reads, last[0])
+            return last[0]
+
+        with patch.object(ht, "_current_position_quantity", side_effect=position), \
+                patch.object(ht, "post_only_price", return_value=100.0), \
+                patch.object(ht, "_read_fill", return_value=(state, 0.0)), \
+                patch.object(ht.time, "sleep"):
+            result = ht._place_reduction(exchange, WALLET, "TRX", "", "SHORT", 10.0, SimpleNamespace(size_decimals=2),
+                                         timeout=timeout, interval=0.0)
+        return exchange, result
+
+    def test_a_maker_fill_closes_without_a_market_order(self):
+        exchange, (maker, taker) = self.run_reduction([-10.0, 0.0], {"filled": {"totalSz": "10", "avgPx": "100"}})
+        args, kwargs = exchange.order.call_args
+        self.assertEqual(args[:4], ("TRX", True, 10.0, 100.0))           # buys back the short
+        self.assertEqual(args[4], {"limit": {"tif": "Alo"}})
+        self.assertTrue(kwargs["reduce_only"])
+        exchange.market_close.assert_not_called()
+        self.assertEqual((maker, taker), (10.0, 0.0))
+
+    def test_whatever_the_maker_order_leaves_closes_at_market(self):
+        exchange, (maker, taker) = self.run_reduction([-10.0, -4.0], {"resting": {"oid": 7}}, timeout=0.0)
+        exchange.market_close.assert_called_once_with("TRX", 4.0)
+        self.assertEqual((maker, taker), (6.0, 4.0))
+
+    def test_a_partial_reduction_stops_at_its_target(self):
+        exchange = MagicMock()
+        exchange.order.return_value = {"status": "ok", "response": {"data": {"statuses": [{"resting": {"oid": 1}}]}}}
+        exchange.market_close.return_value = {"status": "ok"}
+        with patch.object(ht, "_current_position_quantity", side_effect=[-10.0, -7.0, -7.0]), \
+                patch.object(ht, "post_only_price", return_value=100.0), \
+                patch.object(ht, "_read_fill", return_value=("canceled", 0.0)), \
+                patch.object(ht.time, "sleep"):
+            maker, taker = ht._place_reduction(exchange, WALLET, "TRX", "", "SHORT", 4.0, SimpleNamespace(size_decimals=2),
+                                               timeout=0.0, interval=0.0)
+        exchange.market_close.assert_called_once_with("TRX", 1.0)         # 10 -> 6, of which 3 filled as maker
+        self.assertEqual((maker, taker), (3.0, 1.0))

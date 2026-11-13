@@ -23,6 +23,8 @@
   const WINDOWS = { "7D": 7, "30D": 30, "90D": 90, "1Y": 365 };
   const MOVERS = 5, HIGHLIGHT_MOVERS = 3;
   const CONCENTRATION_PCT = 0.25, HIGH_LEVERAGE = 2.0, LOW_AVAILABLE_PCT = 0.10, NEAR_CAP_PCT = 0.80, DEEP_DRAWDOWN = -0.10;
+  // desk/funding_watch.py: a position paying more than 0.1% of its value a day, and at least $0.25 a day.
+  const ADVERSE_FUNDING_APR = 0.365, ADVERSE_FUNDING_MIN_DAILY = 0.25;
   const CRYPTO_HIP3_DEXES = new Set(["hyna"]);
   const CRYPTO_HIP3_MARKETS = new Set(["cash:BTC", "cash:ETH", "flx:BTC", "flx:USDE", "flx:XMR", "io:PRL",
     "para:ANSEM", "para:BTCD", "para:HYPE2", "para:OTHERS", "para:TOTAL2"]);
@@ -884,6 +886,14 @@
       const concentration = deskEquity ? Math.abs(value(largest)) / deskEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {
         attention.push(["Concentration", `${largest.symbol} ${largest.quantity > 0 ? "long" : "short"} is ${percent(concentration, false, 0)} of desk value (${money(Math.abs(value(largest)))}, ${largest.account}).`]);
+      }
+      // Positions paying funding fast enough to matter (desk/funding_watch.py).
+      const dailyCost = (r) => -r["Funding (APR)"] * Math.abs(r.Value) / 365;
+      const payers = positionRows.filter((r) => fin(r["Funding (APR)"]) && r["Funding (APR)"] <= -ADVERSE_FUNDING_APR
+        && dailyCost(r) >= ADVERSE_FUNDING_MIN_DAILY).sort((a, b) => dailyCost(b) - dailyCost(a));
+      if (payers.length) {
+        attention.push(["Adverse funding", payers.map((r) => `${r.Symbol} ${r.Side.toLowerCase()} (${r.Account}) pays ${percent(-r["Funding (APR)"])} APR, $${dailyCost(r).toFixed(2)}/day`).join("; ")
+          + `. Flagged past ${percent(ADVERSE_FUNDING_APR)} APR (0.1% of the position a day); funding is hourly and can turn, so weigh it against the trade's expected move.`]);
       }
     }
     if (tradingEquity) {

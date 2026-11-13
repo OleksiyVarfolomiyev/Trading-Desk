@@ -1051,6 +1051,7 @@ ALERT_PUSH_SECONDS = 60          # at most this often after a change
 ALERT_HEARTBEAT_SECONDS = 900    # and at least this often to the web relay
 API_KEY_WARN_DAYS = 30           # warn this long before an HL API wallet expires
 API_KEY_CHECK_SECONDS = 6 * 3600
+FUNDING_CHECK_SECONDS = 600      # adverse-funding check (desk/funding_watch.py); funding history is cached hourly
 
 
 class Alerts:
@@ -1166,12 +1167,51 @@ class Alerts:
             else:
                 self.clear(key)
 
+    def watch_funding(self, daemon: "Daemon") -> None:
+        """Every open HL position whose funding has run against it for SUSTAINED_HOURS hourly payments in a row,
+        past 0.1% of its value a day (desk/funding_watch.py). Checked every FUNDING_CHECK_SECONDS; funding
+        history is cached per hour."""
+        from desk import funding_watch
+
+        if time.time() - getattr(self, "funding_checked_at", 0.0) < FUNDING_CHECK_SECONDS:
+            return
+        self.funding_checked_at = time.time()
+        with daemon.state.lock:
+            held = [(wallet, dex, item.get("position", {})) for wallet, states in daemon.state.states.items()
+                    for dex, state in states.items() for item in state.get("assetPositions", [])]
+        live = set()
+        for wallet, dex, position in held:
+            size, coin = float(position.get("szi") or 0), str(position.get("coin") or "")
+            value = abs(float(position.get("positionValue") or 0))
+            if not size or not coin:
+                continue
+            key = f"funding:{wallet}:{coin}"
+            live.add(key)
+            history = ht.fetch_funding_history(coin.split(":")[-1], dex)
+            direction = 1 if size > 0 else -1
+            apr = funding_watch.sustained([float(rate) for rate in history["fundingRate"]], direction)
+            if apr is not None and funding_watch.daily_cost(apr, value) >= funding_watch.MIN_DAILY_USD:
+                self.set(key, "funding adverse for hours",
+                         f"...{wallet[-4:]} {coin} {'long' if size > 0 else 'short'} has paid funding for the last "
+                         f"{funding_watch.SUSTAINED_HOURS} hours, {-apr:.1%} APR on average "
+                         f"(${funding_watch.daily_cost(apr, value):,.2f}/day on ${value:,.0f}).")
+            else:
+                self.clear(key)
+        with self.lock:
+            stale = [key for key in self.items if key.startswith("funding:") and key not in live]
+        for key in stale:  # closed positions
+            self.clear(key)
+
     def watch(self, daemon: "Daemon") -> None:
         """The daemon's own health: stale account data, dead websockets, guards that cannot check."""
         try:
             self.watch_keys(daemon)
         except Exception as exc:  # the key check is extra: the rest of the health check goes on
             log(f"API key check failed ({type(exc).__name__}: {exc})")
+        try:
+            self.watch_funding(daemon)
+        except Exception as exc:  # the funding check is extra too
+            log(f"funding check failed ({type(exc).__name__}: {exc})")
         now = time.time()
         for wallet in daemon.state.wallets:
             age = now - daemon.state.state_time.get(wallet, 0.0)
@@ -2207,8 +2247,11 @@ class Daemon:
             [wallet] + [self.wallet(item) for item in (request.get("risk_wallets") or self.state.wallets)]))
         live, urgent, fast = bool(request.get("live")), bool(request.get("urgent")), bool(request.get("fast"))
         slippage = float(request.get("slippage") or ht.URGENT_SLIPPAGE * 100) / 100
-        if (urgent or fast) and not request.get("signals"):
-            print("--urgent and --fast apply to --signals entries.")
+        if fast and not request.get("signals"):
+            print("--fast applies to --signals entries.")
+            return 2
+        if urgent and not (request.get("signals") or request.get("actions")):
+            print("--urgent applies to --signals entries and --actions reductions.")
             return 2
         if urgent and fast:
             print("Choose --urgent or --fast, not both.")
@@ -2228,7 +2271,9 @@ class Daemon:
                       f"{ht.DEFAULT_MAX_TOTAL_RISK_PCT * 100:g}%.")
             if self.paper:
                 print("[paper] Live data, simulated exchange: nothing is sent to HL.")
-            if urgent:
+            if urgent and request.get("actions"):
+                print("Urgent: reductions close at market at once (taker fee) instead of resting as post-only makers.")
+            elif urgent:
                 print(f"Urgent entry: immediate-or-cancel at most {slippage * 100:g}% from the mid (taker fee).")
             kind, plans, markets, snapshot = self._plan(request, wallet, risk_wallets)
             print(f"(planned in {time.time() - began:.2f}s from live data)")
@@ -2284,7 +2329,8 @@ class Daemon:
                     return 2
                 return 0
             try:
-                ht.run_position_reconciliation(wallet, None, self.state.dexes, plans, markets, exchange=exchange)
+                ht.run_position_reconciliation(wallet, None, self.state.dexes, plans, markets, exchange=exchange,
+                                               urgent=urgent)
             finally:
                 print(f"Position actions done {time.time() - confirmed:.2f}s after confirmation.")
                 self._refresh_guards(wallet, plans)
@@ -2549,7 +2595,8 @@ def main(argv: list[str] | None = None) -> int:
     trade.add_argument("--signals", type=Path, help="CSV with coin,side,dex columns")
     trade.add_argument("--actions", type=Path, help="CSV with action,coin,side,dex,margin_usd columns")
     trade.add_argument("--urgent", action="store_true",
-                       help="enter at once: immediate-or-cancel at most --slippage from the mid (taker fee)")
+                       help="enter at once: immediate-or-cancel at most --slippage from the mid (taker fee); with "
+                       "--actions, reduce/close at market at once instead of resting post-only for up to 60s")
     trade.add_argument("--fast", action="store_true",
                        help="post-only limit re-priced every 2s until fully filled (stops if the price runs away)")
     trade.add_argument("--strategy", choices=("directional", "hedge"), default="directional",

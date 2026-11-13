@@ -211,7 +211,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     ``day_change`` is the desk's 24-hour change net of deposits (``desk.day_change``), fetched by
     the refresh loop; without it the tile shows no change. ``moves`` is each position's 24-hour
     price change ({(account, symbol): fraction}, ``desk.day_change.position_changes``); ``funding`` is each
-    HL perp's funding per 8 hours from the holder's side (``desk.day_change.position_funding``).
+    HL perp's funding APR from the holder's side (``desk.day_change.position_funding``).
     """
     overview = desk.overview
     trading, wallets = overview._trading(), overview._wallets()
@@ -240,7 +240,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         "peak_date": desk.index.idxmax(),
     }
 
-    well, attention, _, _ = desk.highlight_rows()
+    well, attention, _, _ = desk.highlight_rows(funding if funding is not None else {})
     from desk import alerts as daemon_alerts
 
     attention[:0] = daemon_alerts.rows(daemon_alerts.read())  # the trading daemon's problems first

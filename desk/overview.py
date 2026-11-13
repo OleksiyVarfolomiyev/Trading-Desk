@@ -718,8 +718,12 @@ class DeskOverview:
                                   title="DESK METRICS",
                                   key_rows={"Desk value (all accounts)", "Unrealized PnL", "Open risk vs cap"})
 
-    def highlight_rows(self) -> tuple[list, list, dict, dict]:
-        """What stands out and what needs attention now, plus the key numbers compared run to run."""
+    def highlight_rows(self, funding: dict[tuple[str, str], float] | None = None) -> tuple[list, list, dict, dict]:
+        """What stands out and what needs attention now, plus the key numbers compared run to run.
+
+        ``funding`` is each HL perp's holder-side funding APR keyed (account label, symbol)
+        (``desk.day_change.position_funding``); it is read from HL when not given.
+        """
         well, attention = [], []
         trading, wallets = self._trading(), self._wallets()
         trading_equity = sum(snapshot.equity_usd for snapshot in trading)
@@ -762,6 +766,20 @@ class DeskOverview:
             if share > CONCENTRATION_PCT:
                 attention.append(("Concentration", f"{largest.symbol} {largest.side.lower()} is {share:.0%} of desk "
                                                    f"value ({money(abs(largest.notional_usd))}, {label})."))
+            # Positions paying funding fast enough to matter (desk/funding_watch.py).
+            from desk import funding_watch
+
+            if funding is None:
+                try:
+                    from desk.day_change import position_funding
+
+                    funding = position_funding(self.snapshots)
+                except Exception:  # no funding row then; the rest of the highlights stand
+                    funding = {}
+            row = funding_watch.attention_row([(f"{p.symbol} {p.side.lower()} ({label})", funding[label, p.symbol],
+                                                p.notional_usd) for label, p in positions if (label, p.symbol) in funding])
+            if row:
+                attention.append(row)
         if trading_equity:
             leverage = gross / trading_equity
             text = f"Gross {leverage:.2f}x and net {net / trading_equity:.2f}x trading equity."

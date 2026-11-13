@@ -78,6 +78,8 @@ PARALLEL_READS = 12
 URGENT_SLIPPAGE = 0.005
 # Fast chase: the post-only entry is checked and re-priced this often, until it fills.
 FAST_CHASE_SECONDS = 2
+# Position reductions (--actions) rest as post-only makers this long, then close the rest at market.
+REDUCE_CHASE_SECONDS = 60
 # ... and the chase stops if the price runs this share of the stop distance away from the plan.
 FAST_CHASE_MAX_DRIFT = 0.4
 
@@ -2595,6 +2597,71 @@ def run_protection_ladder_replacement(
         )
 
 
+def _place_reduction(
+    exchange: Any, wallet: str, coin: str, dex: str, side: str, quantity: float, market: Market,
+    timeout: float = REDUCE_CHASE_SECONDS, interval: float = FAST_CHASE_SECONDS,
+) -> tuple[float, float]:
+    """Reduce a ``side`` position by ``quantity``: reduce-only post-only limits (maker fee) re-priced every
+    ``interval`` seconds for up to ``timeout``, then whatever is left as a reduce-only market close (taker),
+    so the reduction always completes. Returns (size filled as maker, size closed at market).
+
+    Every order is reduce-only and the remainder is read from the position itself, so a resting order the
+    cancel could not confirm can never push the position past flat or the target.
+    """
+    is_buy = side_to_direction(side) < 0          # a short is reduced by buying
+    order_side = "LONG" if is_buy else "SHORT"
+    start = abs(_current_position_quantity(wallet, dex, coin))
+    target = round(max(0.0, start - quantity), market.size_decimals)
+
+    def remaining() -> float:
+        return round(abs(_current_position_quantity(wallet, dex, coin)) - target, market.size_decimals)
+
+    deadline = time.monotonic() + timeout
+    left = round(start - target, market.size_decimals)
+    while left > 0 and time.monotonic() < deadline and not kill_switch_engaged():
+        try:
+            price = post_only_price(coin, dex, order_side, market.size_decimals)
+            status = _status_rows(exchange.order(coin, is_buy, left, price, {"limit": {"tif": "Alo"}},
+                                                 reduce_only=True))[0]
+        except Exception as exc:  # the market close below finishes the job
+            print(f"{coin}: maker reduction failed ({exc}); closing the rest at market.")
+            break
+        oid = _oid_from_status(status)
+        if oid is None:
+            if "post only" in str(status.get("error", "")).lower():
+                time.sleep(ENTRY_RETRY_SECONDS)
+                left = remaining()
+                continue
+            print(f"{coin}: maker reduction rejected ({status.get('error', status)}); closing the rest at market.")
+            break
+        if "filled" not in status:
+            while time.monotonic() < deadline:
+                time.sleep(interval)
+                state, _ = _read_fill(wallet, oid, market.size_decimals)
+                if state not in {"", "open"}:
+                    break
+                try:
+                    if post_only_price(coin, dex, order_side, market.size_decimals) != price:
+                        break
+                except (ValueError, requests.RequestException):
+                    pass
+            try:
+                exchange.cancel(coin, oid)
+            except Exception:  # filled or gone; the position read below decides
+                pass
+        left = remaining()
+    left = remaining()
+    maker = round(start - target - max(left, 0.0), market.size_decimals)
+    if left > 0:
+        result = exchange.market_close(coin, left)
+        if not isinstance(result, dict) or result.get("status") != "ok":
+            raise RuntimeError(f"reduce-only market adjustment was not confirmed: {result!r}")
+        print(f"{coin}: {maker:g} reduced as maker; the remaining {left:g} closed at market.")
+    else:
+        print(f"{coin}: reduced {maker:g} as maker (post-only).")
+    return maker, max(left, 0.0)
+
+
 def run_position_reconciliation(
     wallet: str,
     private_key: str | None,
@@ -2602,10 +2669,12 @@ def run_position_reconciliation(
     plans: list[ReconcilePlan],
     markets: dict[str, Market],
     exchange: Any = None,
+    urgent: bool = False,
 ) -> None:
     """Apply approved position-size changes, then restore reduce-only protections.
 
-    A caller holding a ready exchange client (the trading daemon) passes it as ``exchange``.
+    A caller holding a ready exchange client (the trading daemon) passes it as ``exchange``. Reductions and
+    closes rest as post-only makers first (``_place_reduction``); ``urgent`` closes at market at once.
     """
     if exchange is None:
         exchange = build_exchange(wallet, private_key, trade_dexes(plans))
@@ -2643,10 +2712,12 @@ def run_position_reconciliation(
                             f"{leverage_result!r}"
                         )
                 _place_entry(exchange, wallet, plan.entry_plan, markets[coin])
-            elif plan.quantity_delta < 0:
+            elif plan.quantity_delta < 0 and urgent:
                 result = exchange.market_close(coin, abs(plan.quantity_delta))
                 if not isinstance(result, dict) or result.get("status") != "ok":
                     raise RuntimeError(f"reduce-only market adjustment was not confirmed: {result!r}")
+            elif plan.quantity_delta < 0:
+                _place_reduction(exchange, wallet, coin, dex, plan.side, abs(plan.quantity_delta), markets[coin])
 
             actual_signed, actual_entry = _current_position_details(wallet, dex, coin)
             actual_quantity = abs(actual_signed)
@@ -3205,7 +3276,8 @@ def main(argv: list[str] | None = None) -> int:
         "--urgent",
         action="store_true",
         help="With --signals: enter at once with an immediate-or-cancel limit at most --slippage from the mid "
-        "(taker fee) instead of chasing with post-only limits for up to five minutes.",
+        "(taker fee) instead of chasing with post-only limits for up to five minutes. With --actions: "
+        "reduce or close at market at once instead of resting as a post-only maker for up to 60s.",
     )
     parser.add_argument(
         "--fast",
@@ -3244,8 +3316,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 0 < args.slippage <= 5:
         parser.error("--slippage must be above 0 and at most 5 (percent).")
-    if (args.urgent or args.fast) and args.signals is None:
-        parser.error("--urgent and --fast apply to --signals entries.")
+    if args.fast and args.signals is None:
+        parser.error("--fast applies to --signals entries.")
+    if args.urgent and args.signals is None and args.actions is None:
+        parser.error("--urgent applies to --signals entries and --actions reductions.")
     if args.urgent and args.fast:
         parser.error("choose --urgent or --fast, not both.")
     if args.max_risk_pct is not None:
@@ -3418,6 +3492,7 @@ def main(argv: list[str] | None = None) -> int:
                 dexes,
                 fresh_plans,
                 fresh_markets,
+                urgent=args.urgent,
             )
             return 0
 

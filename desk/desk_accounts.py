@@ -598,9 +598,11 @@ class DeskAccounts:
                         footnote="Returns are time-weighted and net of deposits and withdrawals. Betas here are "
                                  "simple weekly estimates; the risk metrics section has bootstrap ranges.")
 
-    def highlight_rows(self) -> tuple[list, list, dict, dict]:
-        """What stands out and needs attention (performance, risk and current state), and the key numbers."""
-        well, attention, metrics, items = self.overview.highlight_rows() if self.overview.snapshots else ([], [], {}, {})
+    def highlight_rows(self, funding: dict[tuple[str, str], float] | None = None) -> tuple[list, list, dict, dict]:
+        """What stands out and needs attention (performance, risk and current state), and the key numbers.
+        ``funding``: each HL perp's holder-side funding APR (``Overview.highlight_rows``)."""
+        well, attention, metrics, items = (self.overview.highlight_rows(funding) if self.overview.snapshots
+                                           else ([], [], {}, {}))
         returns = self.desk_returns()
         text = (f"{percent(returns['since start'], signed=True)} since {self.common_start:%Y-%m-%d}; "
                 + ", ".join(f"{label} {percent(returns[label], signed=True)}" for label in WINDOWS) + ".")
