@@ -312,10 +312,14 @@
         if (!(price > 0)) { unpriced += 1; continue; }
         const value = holding.amount * price;
         if (value > MAX_PLAUSIBLE_HOLDING_USD) continue;
-        if (value < DUST_USD && !holding.rewards) continue;
+        if (value < DUST_USD && !holding.rewards && !holding.cooldown) continue;
         const own = `${holding.chain}:${holding.token}`;
+        // Unstaking (Venice's cooldown, desk/venues/onchain.py): still the wallet's, valued as the token.
+        const unstaking = holding.cooldown ? (holding.unlocks && holding.unlocks > Date.now()
+          ? `unstaking, liquid ${eastern(holding.unlocks)}` : "unstaking, claimable now") : "";
         const symbol = STAKED_LABELS[own] ? `${holding.symbol} (${STAKED_LABELS[own]}, ${holding.chain})`
           : holding.rewards ? `${holding.symbol} (unclaimed staking rewards, ${holding.chain})`
+          : unstaking ? `${holding.symbol} (${unstaking}, ${holding.chain})`
           : `${holding.symbol} (${holding.chain})`;
         positions.push({ venue: "onchain", account: label, symbol, asset_class: "crypto spot", quantity: holding.amount,
           avg_price: NaN, mark_price: price, unrealized: NaN, key, change24h: changes[key], rewards: !!holding.rewards });
@@ -913,7 +917,7 @@
       const total = gross ? unrealized / gross : NaN;
       [[well, (r) => r >= 0], [attention, (r) => r < 0]].forEach(([list, side]) => {
         const parts = venues.filter(([, r]) => side(r)).map(([name, r]) => `${name} ${percent(r, true)}`);
-        if (fin(total) && side(total)) parts.unshift(`desk ${percent(total, true)}`);
+        if (fin(total) && side(total)) parts.unshift(`all positions ${percent(total, true)}`);  // not the desk value: open positions only
         if (parts.length) list.push(["uPnL", parts.join(", ") + "."]);
       });
       const mover = (p) => `${p.symbol} ${fin(share(p)) ? percent(share(p), true) : "n/a"}`;

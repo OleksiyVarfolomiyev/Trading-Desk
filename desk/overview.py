@@ -775,7 +775,7 @@ class DeskOverview:
             for rows, side in ((well, lambda r: r >= 0), (attention, lambda r: r < 0)):
                 parts = [f"{name} {percent(r, signed=True)}" for name, r in venues if side(r)]
                 if math.isfinite(total) and side(total):
-                    parts.insert(0, f"desk {percent(total, signed=True)}")
+                    parts.insert(0, f"all positions {percent(total, signed=True)}")  # open positions, not desk value
                 if parts:
                     rows.append(("uPnL", ", ".join(parts) + "."))
             def mover(position):

@@ -74,6 +74,12 @@ const ETH_TOKENS = {
 const STAKING = {
   "0x321b7ff75154472b18edb199033ff4d116f340ff": ["0x31d7a262", "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf", "VVV"],
 };
+// Tokens unstaking (in a cooldown): staking contract -> [view selector taking the wallet, token, symbol]. Venice
+// burns the sVVV when the cooldown starts, so without this the VVV vanishes until it is claimed. 0x16934fc4 is
+// stakes(address) -> (rewardDebt, cooldownEnd, cooldownAmount), as desk/venues/onchain.py STAKING_COOLDOWNS.
+const COOLDOWNS = {
+  "0x321b7ff75154472b18edb199033ff4d116f340ff": ["0x16934fc4", "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf", "VVV"],
+};
 const NATIVE = "0x0000000000000000000000000000000000000000";
 
 let dexCache = { at: 0, dexes: null };
@@ -146,14 +152,15 @@ function aggregate3(calls) {  // calldata for aggregate3((address target, bool a
   return "0x82ad56cb" + word(0x20) + word(items.length) + offsets.join("") + items.join("");
 }
 
-function decodeAggregate3(result) {  // each call's uint256 answer, or null where it failed
+// Each call's uint256 answer (its ``word``-th return value, the first by default), or null where it failed.
+function decodeAggregate3(result, calls = []) {
   const raw = result.slice(2);
   const at = (byte) => BigInt("0x" + raw.slice(byte * 2, byte * 2 + 64));
   const base = Number(at(0)), count = Number(at(base)), start = base + 32, values = [];
   for (let k = 0; k < count; k++) {
     const item = start + Number(at(start + 32 * k));
-    const dataAt = item + Number(at(item + 32)), length = Number(at(dataAt));
-    values.push(at(item) !== 0n && length >= 32 ? at(dataAt + 32) : null);
+    const dataAt = item + Number(at(item + 32)), length = Number(at(dataAt)), word = (calls[k] && calls[k].word) || 0;
+    values.push(at(item) !== 0n && length >= 32 * (word + 1) ? at(dataAt + 32 + 32 * word) : null);
   }
   return values;
 }
@@ -168,7 +175,7 @@ async function multicall(urls, calls) {
       if (!reply || typeof reply.result !== "string" || reply.result.length < 130) {
         throw new Error(reply && reply.error ? String(reply.error.message || reply.error) : "no result");
       }
-      const values = decodeAggregate3(reply.result);
+      const values = decodeAggregate3(reply.result, calls);
       if (values.length !== calls.length) throw new Error("answer has the wrong length");
       return values;
     } catch (error) {
@@ -190,7 +197,7 @@ async function tokenHoldings(chain, urls, address, tokens, extra = []) {
   const list = Object.keys(tokens);
   const calls = [{ target: MULTICALL, data: "4d2301cc" + padded }]
     .concat(list.map((token) => ({ target: token, data: "70a08231" + padded })))
-    .concat(extra.map(({ target, selector }) => ({ target, data: selector.replace(/^0x/, "") + padded })));
+    .concat(extra.map(({ target, selector, word }) => ({ target, data: selector.replace(/^0x/, "") + padded, word })));
   const values = await multicall(urls, calls);
   const holdings = [];
   const native = toUnits(values[0], 18);
@@ -201,15 +208,25 @@ async function tokenHoldings(chain, urls, address, tokens, extra = []) {
     if (amount) holdings.push({ chain, token, symbol, amount });
   });
   extra.forEach((item, index) => {
-    const amount = toUnits(values[1 + list.length + index], 18);
-    if (amount) holdings.push({ chain, token: item.token, symbol: item.symbol, amount, rewards: true });
+    const value = values[1 + list.length + index];
+    if (item.kind === "cooldown-end") return;  // read with the amount just before it
+    const amount = toUnits(value, 18);
+    if (!amount) return;
+    if (item.kind === "cooldown") {
+      const ends = values[1 + list.length + index + 1];
+      holdings.push({ chain, token: item.token, symbol: item.symbol, amount, cooldown: true,
+        unlocks: ends ? Number(ends) * 1000 : null });
+    } else holdings.push({ chain, token: item.token, symbol: item.symbol, amount, rewards: true });
   });
   return holdings;
 }
 
 function baseHoldings(address) {
   const staking = Object.entries(STAKING).map(([target, [selector, token, symbol]]) => ({ target, selector, token, symbol }));
-  return tokenHoldings("base", BASE_RPCS, address, BASE_TOKENS, staking);
+  const cooldowns = Object.entries(COOLDOWNS).flatMap(([target, [selector, token, symbol]]) => [
+    { target, selector, token, symbol, word: 2, kind: "cooldown" },      // cooldownAmount
+    { target, selector, token, symbol, word: 1, kind: "cooldown-end" }]); // cooldownEnd
+  return tokenHoldings("base", BASE_RPCS, address, BASE_TOKENS, staking.concat(cooldowns));
 }
 
 async function ethereumHoldings(address) {

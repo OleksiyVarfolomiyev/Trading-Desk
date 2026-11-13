@@ -435,15 +435,15 @@ def _rpc_batch(url: str, calls: list[dict]) -> dict[int, str]:
 
 
 def _unstaking_label(holding: Holding) -> str:
-    """"unstaking, liquid Nov 20" (or "unstaking, claimable now" once the cooldown is over)."""
-    from desk.numbers import since
+    """"unstaking, liquid Nov 19, 11:28 pm" on the desk's clock (or "unstaking, claimable now" once it is over)."""
+    from desk.numbers import clock
 
     ends = COOLDOWN_ENDS.get((holding.chain, holding.token))
     if not ends:
         return "unstaking"
     if ends <= time.time():
         return "unstaking, claimable now"
-    return f"unstaking, liquid {since(pd.Timestamp(ends, unit='s', tz='UTC'))}"
+    return f"unstaking, liquid {clock(pd.Timestamp(ends, unit='s', tz='UTC'))}"
 
 
 def staking_reward_holdings(chain: Chain, wallet: str) -> list[Holding]:
