@@ -97,6 +97,8 @@ h1 { font-size: 18px; font-weight: 600; margin: 0; }
 
 /* Full window width: no centred max-width column, just a narrow gutter. */
 main { margin: 0; padding: 12px 12px 48px; display: flex; flex-direction: column; gap: 16px; }
+/* No banner: the slot takes no room, so the tiles sit one gutter below the top band. */
+#banners:empty { display: none; }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
