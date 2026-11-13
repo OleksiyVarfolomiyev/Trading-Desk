@@ -182,6 +182,16 @@ def _value_with_wallets(value_series: list[dict], wallets: dict | None, min_days
             "x": [ts.strftime("%Y-%m-%d") for ts in total.index], "y": total.tolist()}
 
 
+def _without_dust_wallets(performance: pd.DataFrame, desk_value: float) -> pd.DataFrame:
+    """The performance rows without wallets worth less than WALLET_MIN_SHARE of the desk (the totals keep them)."""
+    from desk.overview import WALLET_MIN_SHARE
+
+    if not desk_value or "Value" not in performance:
+        return performance
+    dust = performance["Account"].astype(str).str.endswith("wallet") & (performance["Value"] / desk_value < WALLET_MIN_SHARE)
+    return performance[~dust].reset_index(drop=True)
+
+
 def with_day_returns(performance: pd.DataFrame, day_change: DayChange | None) -> pd.DataFrame:
     """The performance table with a 24h return first: each account's 24-hour change (net of flows, the
     desk-value tile's own figures) over its value a day ago. The two desk rows sum their accounts; an
@@ -250,6 +260,9 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     from desk import funding_watch
 
     attention = funding_watch.consolidate(attention)  # the daemon's and the current-rate funding rows as one
+    # The desk return is in the tiles and the performance table's bold row: no highlight on the dashboard.
+    well = [row for row in well if row[0] != "Desk return"]
+    attention = [row for row in attention if row[0] != "Desk return"]
 
     accounts, account_total = account_shares(overview.accounts_frame())
     money = {column: "usd" for column in ("Equity", "Cash", "Margin used", "Available", "Gross", "Value", "Risk equity",
@@ -261,7 +274,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
                                      "Positions": "int", "% of desk": "pct"}, account_total,
                           key={"% of desk": "max"}),
         # Returns only: the dollar PnL is in the accounts' value chart and the desk value tile.
-        "performance": table(with_day_returns(desk.performance_frame(), day_change)[
+        "performance": table(_without_dust_wallets(with_day_returns(desk.performance_frame(), day_change), overview.desk_equity)[
                                  ["Account", "Return 24h"] + [f"Return {label}" for label in PERIODS] + ["Since"]],
                              {f"Return {label}": "spct" for label in ["24h", *PERIODS]}, total_last=True,
                              key={"Return 30D": "abs"}),

@@ -44,14 +44,15 @@
       </div>
     </section>
 
-    <section class="card">
-      <h2 title="Time-weighted returns, net of deposits and withdrawals.">Performance</h2>
-      <div class="table-wrap" id="t-performance"></div>
-    </section>
-
-    <section class="card">
-      <h2 title="HL positions and the last 30 days' fills, by the journal's tag: directional, conviction, hedge, and the ladders' market making. The market-making row gets only the ladders' own result against holding (as in the table above); the profit a ladder realizes by trimming a position stays with that position's strategy. Fills from before the journal began are untagged.">Performance by strategy</h2>
-      <div class="table-wrap" id="t-strategies"></div>
+    <section class="grid two">
+      <div class="card">
+        <h2 title="Time-weighted returns, net of deposits and withdrawals.">Performance</h2>
+        <div class="table-wrap" id="t-performance"></div>
+      </div>
+      <div class="card">
+        <h2 title="HL PnL by the journal's tag, as a share of desk value: realized over 30 days (net of fees, with funding) and unrealized now. Market making counts only the ladders' own result; fills from before the journal are untagged.">Performance by strategy</h2>
+        <div class="table-wrap" id="t-strategies"></div>
+      </div>
     </section>
 
     <section class="card">
@@ -72,17 +73,6 @@
       <div class="card">
         <h2 title="Each position's 1.25 × ATR(14) stop distance plus costs; HL adds a 5-day funding reserve.">Open risk vs the desk cap</h2>
         <div class="table-wrap" id="t-open_risk"></div>
-      </div>
-    </section>
-
-    <section class="grid two">
-      <div class="card">
-        <h2>Largest winners and losers: crypto</h2>
-        <div class="table-wrap" id="t-movers"></div>
-      </div>
-      <div class="card">
-        <h2>Largest winners and losers: stocks</h2>
-        <div class="table-wrap" id="t-movers_stocks"></div>
       </div>
     </section>
 
@@ -116,10 +106,6 @@
       <div class="table-wrap" id="t-mm_candidates"></div>
     </section>
 
-    <details class="card notes">
-      <summary>Data notes</summary>
-      <ul id="notes"></ul>
-    </details>
   </div>
 </main>
 <script src="/app.js"></script>

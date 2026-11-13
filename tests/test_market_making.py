@@ -56,3 +56,25 @@ class LadderMetricsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LadderFrameTests(unittest.TestCase):
+    def test_a_running_ladder_builds_its_row(self):
+        # 2026-11-13 the row failed to build (a local variable hid the date helper): the whole table went missing.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        wallet = "0x" + "ab" * 20
+        ladder = {"wallet": wallet, "coin": "BTC", "base": -0.02, "started": "2026-11-12 10:00"}
+        fill = {"coin": "BTC", "side": "B", "px": "69000", "sz": "0.001", "fee": "0.01", "time": 1_763_000_000_000}
+        state = {"assetPositions": [{"position": {"coin": "BTC", "szi": "-0.021", "positionValue": "1449"}}]}
+        with patch.object(market_making, "running_ladders", return_value=[ladder]), \
+                patch("desk.accounts.load_accounts", return_value=[SimpleNamespace(id=wallet, venue="hl", name="HL abab")]), \
+                patch("desk.hl.account_analytics.post", return_value=state), \
+                patch.object(market_making, "ladder_fill_rows", return_value=[fill]), \
+                patch.object(market_making, "funding_events", return_value=[]), \
+                patch.object(market_making, "minute_closes", return_value=pd.Series(dtype=float)):
+            frame = market_making.market_making_frame()
+        self.assertEqual(list(frame["Coin"]), ["BTC"])
+        self.assertTrue(frame.iloc[0]["Since"])          # "Nov 12" (or "Nov'26" once old)
+        self.assertEqual(frame.iloc[0]["Status"], "quoting")

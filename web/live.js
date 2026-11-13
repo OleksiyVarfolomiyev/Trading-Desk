@@ -793,7 +793,9 @@
       return row;
     });
     walletPerformanceRows.forEach((row) => { row["Return 24h"] = dayReturn([row.Account]); });
-    performanceRows.push(...walletPerformanceRows);
+    // A wallet worth less than WALLET_MIN_SHARE of the desk is dust: no row (the bold total still includes it).
+    const walletLastValue = (name) => { const s = walletSeries.find((w) => w.name === name); return s ? num(s.points[s.points.length - 1].value) : NaN; };
+    performanceRows.push(...walletPerformanceRows.filter((row) => walletLastValue(row.Account) / deskEquity >= WALLET_MIN_SHARE));
     performanceRows.push({ "Account": "Desk (HL + IB)", "Return 24h": dayReturn(traders.map((a) => a.label)), "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"],
       "Return 1Y": returns["1Y"], "Return since inception": returns.since_start, "Since": sinceLabel(start) });
     // The headline return (highlights and tiles) is the whole desk's, wallets included: the table's bold last
@@ -898,10 +900,7 @@
     // -- highlights (desk/overview.py and desk/desk_accounts.py rules)
     const well = [], attention = [];
     let fundingNow = [];  // positions paying adverse funding at the current rate, for the one "Funding" row
-    const headlineReturns = headline.returns;
-    const returnText = `${percent(headlineReturns.since_start, true)} since ${sinceLabel(headline.start)}; ` +
-      Object.keys(WINDOWS).map((label) => `${label} ${percent(headlineReturns[label], true)}`).join(", ") + ".";
-    ((headlineReturns["30D"] || 0) >= 0 ? well : attention).unshift(["Desk return", returnText]);
+    // The desk return is in the TW return and Return 30D tiles and the performance table's bold row: no highlight.
     if (tradePositions.length) {
       // uPnL by venue, each over its own position value: gains under what stands out, losses under needs
       // attention; the desk total joins the side its sign falls on.

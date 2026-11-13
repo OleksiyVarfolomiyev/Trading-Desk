@@ -1,10 +1,8 @@
 "use strict";
 
 const POLL_MS = 5000;
-const TABLES = ["performance", "accounts", "risk", "positions", "positions_stocks", "exposure", "open_risk", "movers", "movers_stocks", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
-const sortState = {            // table id -> {key, dir}; click a header to change it
-  mm_candidates: { key: "Efficiency 30d", dir: 1 },   // the most mean-reverting coins first
-};
+const TABLES = ["performance", "accounts", "risk", "positions", "positions_stocks", "exposure", "open_risk", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
+const sortState = {};          // table id -> {key, dir}; click a header to change it (the builders' order is the ranking)
 let lastRendered = null;        // last_ok of the data currently drawn
 let latest = null;              // latest /api/state document
 
@@ -67,6 +65,9 @@ const FORMATS = {
   rpct: { text: (v) => pct(v, 1), num: true, tone: "neg" },
   pct: { text: (v) => pct(v, 1), num: true },
   spct: { text: (v) => pct(v, 2, true), num: true, signed: true },
+  // Leverage as a multiple of equity: 1.88×; signed for net (coloured, a short book negative).
+  lev: { text: (v) => (isNum(v) ? v.toFixed(2) + "×" : ""), num: true },
+  slev: { text: (v) => (isNum(v) ? v.toFixed(2) + "×" : ""), num: true, signed: true },
   num: { text: number, num: true },
   // Prices in USD at full precision (small coins need more than two decimals).
   price: { text: (v) => (isNum(v) ? "$" + number(v) : ""), num: true },
@@ -124,6 +125,81 @@ function sinceLabel(when) {
 }
 
 // ---------------------------------------------------------------- tables
+// ---------------------------------------------------------------- what the reader sees
+// The builders (desk/dashboard.py, web/live.js) send complete tables; each view picks the columns a reader acts on,
+// names them for the reader and formats them: [source column, shown name, format]. ``derive`` adds computed
+// fields to a row first, ``keep`` drops rows, ``hover`` gives a row its tooltip.
+const RISK_CAP = 0.33;  // desk/risk.py MAX_TOTAL_RISK_PCT
+const ASSET_NAMES = { "crypto perp": "Crypto", "crypto spot": "Wallet tokens", "tradfi perp": "Stocks & commodities (HL)",
+  "equity": "Stocks (IB)", "stock": "Stocks (IB)", "etf": "ETFs (IB)" };
+const marketName = (symbol) => String(symbol || "").replace(/^[a-z0-9]+:/, "");  // "xyz:AMD" -> "AMD"
+const POSITION_VIEW = {
+  derive: (r) => ({ Symbol: marketName(r.Symbol) }),
+  columns: [["Account"], ["Symbol"], ["Side"], ["Value"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"],
+    ["Funding (APR)"], ["Weight"]],
+};
+const VIEWS = {
+  performance: { columns: [["Account"], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
+    ["Return 90D", "90d"], ["Return 1Y", "1y"], ["Return since inception", "Since start"], ["Since", "Start"]] },
+  accounts: {
+    keep: (r) => !/wallet$/i.test(String(r.Account || "")),  // margin and leverage mean nothing for a wallet
+    columns: [["Account"], ["% of desk"], ["Margin used / equity", "Margin used", "pct"], ["Gross / equity", "Gross", "lev"],
+      ["Net / equity", "Net", "slev"], ["uPnL / equity", "uPnL", "spct"]],
+  },
+  exposure: {
+    derive: (r) => {
+      const equity = isNum(r.Net) && isNum(r["Net / equity"]) && r["Net / equity"] ? r.Net / r["Net / equity"] : NaN;
+      return { "Asset class": ASSET_NAMES[r["Asset class"]] || r["Asset class"],
+        _long: equity ? r.Long / equity : NaN, _short: equity ? r.Short / equity : NaN };
+    },
+    columns: [["Asset class"], ["Net / equity", "Net", "slev"], ["Gross / equity", "Gross", "lev"], ["_long", "Long", "pct"],
+      ["_short", "Short", "pct"]],
+  },
+  positions: POSITION_VIEW,
+  positions_stocks: POSITION_VIEW,
+  open_risk: {
+    derive: (r) => ({ _cap: isNum(r["% of desk equity"]) ? r["% of desk equity"] / RISK_CAP : NaN }),
+    columns: [["Account"], ["% of desk equity", "Open risk", "rpct"], ["_cap", "Of the 33% cap", "rpct"]],
+  },
+  risk: {
+    derive: (r, context) => ({
+      _book: /^current holdings/i.test(String(r.Basis)) ? "Now" : /^current regime/i.test(String(r.Basis)) ? "This regime" : r.Basis,
+      _var: isNum(r["VaR 95%"]) && context.deskValue ? r["VaR 95%"] / context.deskValue : NaN,
+    }),
+    hover: (r) => [r.Basis, isNum(r.Periods) ? `${r.Periods} days, ${r.From || ""} to ${r.To || ""}` : "",
+      isNum(r.Coverage) ? `coverage ${pct(r.Coverage)}` : "", isNum(r["VaR 99%"]) ? `VaR 99% ${usd(r["VaR 99%"])}` : "",
+      r["Beta BTC 90% range"] ? `beta BTC range ${r["Beta BTC 90% range"]}` : "", r["Not priced"] ? `not priced: ${r["Not priced"]}` : "",
+      r.Note || ""].filter(Boolean).join("\n"),
+    columns: [["_book", "Book"], ["Volatility (/yr)", "Volatility /yr", "pct"], ["_var", "VaR 95% /day", "rpct"],
+      ["Max drawdown", "Max drawdown", "spct"], ["Beta BTC", "Beta BTC", "num2"], ["Sharpe", "Sharpe", "num2"]],
+  },
+  candidates: { columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
+    ["OI / volume"], ["Volume 24h"], ["Notes"]] },
+  mm_candidates: { columns: [["Coin"], ["Daily range 30d"], ["Longs pay 7d (APR)"], ["Own ladder edge per $1k"], ["Volume 24h"], ["Notes"]] },
+  market_making: { derive: (r) => ({ Coin: marketName(r.Coin) }),
+    columns: [["Account"], ["Coin"], ["Side"], ["Status"], ["Since"], ["Ladder PnL"], ["Position vs base"], ["Fills"]] },
+};
+
+function applyView(id, spec, context) {
+  const view = VIEWS[id];
+  if (!view || !spec || !spec.columns || !spec.columns.length) return spec;
+  const source = Object.fromEntries(spec.columns.map((column) => [column.key, column]));
+  const shape = (row) => {
+    if (!row) return row;
+    const full = Object.assign({}, row, view.derive ? view.derive(row, context) : {});
+    const out = {};
+    view.columns.forEach(([from, name]) => { out[name || from] = full[from]; });
+    if (view.hover) out.__hover = view.hover(row);
+    return out;
+  };
+  const columns = view.columns.filter(([from]) => from in source || from.startsWith("_"))  // derived fields start with _
+    .map(([from, name, fmt]) => ({ key: name || from, fmt: fmt || (source[from] || {}).fmt, emphasis: (source[from] || {}).emphasis }));
+  const rows = spec.rows.filter((row) => !view.keep || view.keep(row)).map(shape);
+  let total = spec.total ? shape(spec.total) : null;
+  if (total && columns.length && !total[columns[0].key]) total[columns[0].key] = "Total";
+  return Object.assign({}, spec, { columns, rows, total });
+}
+
 // A displayed zero amount ($0.00, -$0.00, 0%, 0.00) is an empty cell; a whole-number 0 (a count) stays.
 const ZERO_TEXT = /^-?(\$0(\.0+)?|0(\.0+)?%|0\.0+)$/;
 function renderTable(id, spec) {
@@ -202,7 +278,8 @@ function renderTable(id, spec) {
     const text = format.text(value);
     return el("td", { class: classes, text: ZERO_TEXT.test(text) ? "" : text });
   };
-  const body = el("tbody", {}, rows.map((row, index) => el("tr", {}, spec.columns.map((column) => cell(row, column, index)))));
+  const body = el("tbody", {}, rows.map((row, index) => el("tr", row.__hover ? { title: row.__hover } : {},
+    spec.columns.map((column) => cell(row, column, index)))));
   const parts = [el("thead", {}, head), body];
   if (spec.total) {
     parts.push(el("tfoot", {}, el("tr", { class: "total" }, spec.columns.map((column) => cell(spec.total, column)))));
@@ -428,9 +505,11 @@ function render(doc) {
   renderTiles(data.kpis || {});
   renderHighlights("hl-well", data.highlights && data.highlights.well);
   renderHighlights("hl-attention", data.highlights && data.highlights.attention);
-  for (const id of TABLES) renderTable(id, data.tables && data.tables[id]);
+  const context = { deskValue: (data.kpis || {}).desk_value };
+  for (const id of TABLES) renderTable(id, applyView(id, data.tables && data.tables[id], context));
   renderCharts(data.charts);
-  document.getElementById("notes").replaceChildren(...(data.notes || []).map((note) => el("li", { text: note })));
+  const notes = document.getElementById("notes");  // developer notes: not on the page (the band shows real problems)
+  if (notes) notes.replaceChildren(...(data.notes || []).map((note) => el("li", { text: note })));
 }
 
 // The web copy (web/live.js) builds the same document in the browser and sets DESK_SOURCE.

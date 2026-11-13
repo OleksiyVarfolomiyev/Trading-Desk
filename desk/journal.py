@@ -34,7 +34,7 @@ def journal_path() -> Path:
     return Path(os.environ.get("DESK_JOURNAL_FILE") or JOURNAL_FILE)
 STRATEGIES = ("directional", "conviction", "hedge")
 MARKET_MAKING = "market making"
-UNTAGGED = "untagged (before the journal)"
+UNTAGGED = "untagged"  # fills from before the journal began
 LADDER_CLOID_PREFIX = "0x1add"
 REVIEW_AFTER_DAYS = 7  # directional trades held longer lost money in the desk's history (desk/trade_rules.py)
 COLUMNS = ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL 30d", "Fees 30d", "Funding 30d", "Volume 30d",
