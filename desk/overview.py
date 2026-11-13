@@ -748,16 +748,23 @@ class DeskOverview:
         positions = [(snapshot.label, position) for snapshot in trading for position in snapshot.positions]
         if positions:
             ranked = sorted(positions, key=lambda item: item[1].unrealized_usd)
-            def split(group):  # "IB -13.4%": uPnL over the group's position value
+            def ratio(group):  # uPnL over the group's position value
                 value = sum(abs(position.notional_usd) for _, position in group)
-                pnl = sum(position.unrealized_usd for _, position in group)
-                return percent(pnl / value, signed=True) if value else "n/a"
+                return sum(position.unrealized_usd for _, position in group) / value if value else float("nan")
 
+            # uPnL by venue: gains under what stands out, losses under needs attention; the desk total joins
+            # the side its sign falls on.
             ib = [item for item in positions if item[0].startswith("IB")]
             rest = [item for item in positions if not item[0].startswith("IB")]
-            parts = [f"{name} {split(group)}" for name, group in (("IB", ib), ("HL", rest)) if group]
-            (well if unrealized >= 0 else attention).append(
-                ("uPnL", f"{percent(unrealized / gross, signed=True) if gross else 'n/a'}: " + ", ".join(parts) + "."))
+            venues = [(name, ratio(group)) for name, group in (("IB", ib), ("HL", rest)) if group]
+            venues = [(name, r) for name, r in venues if math.isfinite(r)]
+            total = unrealized / gross if gross else float("nan")
+            for rows, side in ((well, lambda r: r >= 0), (attention, lambda r: r < 0)):
+                parts = [f"{name} {percent(r, signed=True)}" for name, r in venues if side(r)]
+                if math.isfinite(total) and side(total):
+                    parts.insert(0, f"desk {percent(total, signed=True)}")
+                if parts:
+                    rows.append(("uPnL", ", ".join(parts) + "."))
             def mover(position):
                 # The % is unrealized PnL over the position's entry value, as in the movers table.
                 share = _pnl_share(position)
@@ -795,8 +802,6 @@ class DeskOverview:
                 attention.append(row)
         if trading_equity:
             leverage = gross / trading_equity
-            text = f"Gross {leverage:.2f}x, net {net / trading_equity:.2f}x."
-            (attention if leverage > HIGH_LEVERAGE else well).append(("Leverage", text))
             available = sum(snapshot.available_usd for snapshot in trading)
             if available / trading_equity < LOW_AVAILABLE_PCT:
                 attention.append(("Available margin low", f"{available / trading_equity:.0%} of trading equity."))
@@ -828,13 +833,14 @@ class DeskOverview:
             equity = sum(entry.equity_usd for entry in self.book)
             risk_used = sum(entry.risk_usd for entry in self.book)
             risk_cap = equity * MAX_TOTAL_RISK_PCT
-            text = f"{risk_used / risk_cap:.0%} of the cap."
+            # The Risk row (desk_accounts adds the book's volatility, VaR and betas to it).
+            text = f"Open risk {risk_used / risk_cap:.0%} of the cap."
             if risk_used > risk_cap:
-                attention.insert(0, ("Open risk over cap", text))
+                attention.insert(0, ("Risk: over cap", text))
             elif risk_used > risk_cap * NEAR_CAP_PCT:
-                attention.append(("Open risk near cap", text))
+                attention.append(("Risk: near cap", text))
             else:
-                well.append(("Open risk within cap", text))
+                well.append(("Risk", text))
         if self.problems:
             attention.insert(0, ("Unreadable accounts", "; ".join(self.problems) + " Totals leave them out."))
         metrics = {"Desk value": (self.desk_equity, "usd"), "Trading accounts": (trading_equity, "usd"),

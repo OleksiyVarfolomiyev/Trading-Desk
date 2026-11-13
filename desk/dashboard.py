@@ -220,8 +220,11 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     net = sum(snapshot.net_usd for snapshot in trading)
     unrealized = sum(snapshot.unrealized_usd for snapshot in trading)
     positions = overview.positions_frame(trading_only=True)  # wallet tokens have their own table
-    returns = desk.desk_returns()
-    peak = desk.index.cummax()
+    # The tiles show the whole desk, wallets included (the performance table's bold last row); the
+    # money-weighted PnL stays HL + IB, since the wallets have no deposit record.
+    headline = desk.headline_index()
+    returns = desk.desk_returns(headline)
+    peak = headline.cummax()
     kpis = {
         "desk_value": overview.desk_equity,
         "day_change": day_change.as_dict() if day_change is not None else None,
@@ -235,9 +238,9 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         "positions": int(sum(len(snapshot.positions) for snapshot in trading)),
         "returns": {"since_start": returns.get("since start"), **{label: returns.get(label) for label in WINDOWS}},
         "money_weighted": desk.money_weighted(),
-        "since": desk.common_start,
-        "drawdown": float(desk.index.iloc[-1] / peak.iloc[-1] - 1),
-        "peak_date": desk.index.idxmax(),
+        "since": headline.index[0],
+        "drawdown": float(headline.iloc[-1] / peak.iloc[-1] - 1),
+        "peak_date": headline.idxmax(),
     }
 
     well, attention, _, _ = desk.highlight_rows(funding if funding is not None else {})

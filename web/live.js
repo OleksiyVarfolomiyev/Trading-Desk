@@ -767,9 +767,17 @@
     performanceRows.push(...walletPerformanceRows);
     performanceRows.push({ "Account": "Desk (HL + IB)", "Return 24h": dayReturn(traders.map((a) => a.label)), "Return 7D": returns["7D"], "Return 30D": returns["30D"], "Return 90D": returns["90D"],
       "Return 1Y": returns["1Y"], "Return since inception": returns.since_start, "Since": dayKey(start) });
+    // The headline return (highlights and tiles) is the whole desk's, wallets included: the table's bold last
+    // row. Without wallet history it falls back to the trading accounts (HL + IB).
+    let headline = { returns, start, drawdown, peak };
     if (walletSeries.length) {
       const everything = twrIndex(histories.concat(walletSeries.map(({ points }) => points)));
       const all = windowReturns(everything, now);
+      if (everything.length) {
+        let top = everything[0];
+        everything.forEach((p) => { if (p.v >= top.v) top = p; });
+        headline = { returns: all, start: everything[0].t, drawdown: everything[everything.length - 1].v / top.v - 1, peak: top };
+      }
       performanceRows.push({ "Account": "Desk incl. wallets", "Return 24h": dayReturn(accounts.map((a) => a.label)), "Return 7D": all["7D"], "Return 30D": all["30D"], "Return 90D": all["90D"],
         "Return 1Y": all["1Y"], "Return since inception": all.since_start, "Since": everything.length ? dayKey(everything[0].t) : "" });
     }
@@ -855,22 +863,25 @@
 
     // -- highlights (desk/overview.py and desk/desk_accounts.py rules)
     const well = [], attention = [];
-    const returnText = `${percent(returns.since_start, true)} since ${dayKey(start)}; ` +
-      Object.keys(WINDOWS).map((label) => `${label} ${percent(returns[label], true)}`).join(", ") + ".";
-    ((returns["30D"] || 0) >= 0 ? well : attention).unshift(["Desk return", returnText]);
-    const recent = performanceRows.slice(0, performanceCount).filter((r) => fin(r["Return 30D"]));
-    if (recent.length > 1) {
-      const best = recent.reduce((a, b) => (b["Return 30D"] > a["Return 30D"] ? b : a));
-      well.splice(1, 0, ["Best account, 30D", `${best.Account} ${percent(best["Return 30D"], true)}.`]);
-    }
+    const headlineReturns = headline.returns;
+    const returnText = `${percent(headlineReturns.since_start, true)} since ${dayKey(headline.start)}; ` +
+      Object.keys(WINDOWS).map((label) => `${label} ${percent(headlineReturns[label], true)}`).join(", ") + ".";
+    ((headlineReturns["30D"] || 0) >= 0 ? well : attention).unshift(["Desk return", returnText]);
     if (tradePositions.length) {
-      const splitOf = (group) => {  // "IB -13.4%": uPnL over the group's position value
-        const notional = sum(group.map((p) => Math.abs(value(p)))), pnl = sum(group.map((p) => p.unrealized));
-        return notional ? percent(pnl / notional, true) : "n/a";
+      // uPnL by venue, each over its own position value: gains under what stands out, losses under needs
+      // attention; the desk total joins the side its sign falls on.
+      const ratio = (group) => {
+        const notional = sum(group.map((p) => Math.abs(value(p))));
+        return notional ? sum(group.map((p) => p.unrealized)) / notional : NaN;
       };
-      const ibGroup = tradePositions.filter((p) => p.venue === "ib"), restGroup = tradePositions.filter((p) => p.venue !== "ib");
-      const parts = [["IB", ibGroup], ["HL", restGroup]].filter(([, group]) => group.length).map(([name, group]) => `${name} ${splitOf(group)}`);
-      (unrealized >= 0 ? well : attention).push(["uPnL", `${gross ? percent(unrealized / gross, true) : "n/a"}: ${parts.join(", ")}.`]);
+      const venues = [["IB", tradePositions.filter((p) => p.venue === "ib")], ["HL", tradePositions.filter((p) => p.venue !== "ib")]]
+        .filter(([, group]) => group.length).map(([name, group]) => [name, ratio(group)]).filter(([, r]) => fin(r));
+      const total = gross ? unrealized / gross : NaN;
+      [[well, (r) => r >= 0], [attention, (r) => r < 0]].forEach(([list, side]) => {
+        const parts = venues.filter(([, r]) => side(r)).map(([name, r]) => `${name} ${percent(r, true)}`);
+        if (fin(total) && side(total)) parts.unshift(`desk ${percent(total, true)}`);
+        if (parts.length) list.push(["uPnL", parts.join(", ") + "."]);
+      });
       const mover = (p) => `${p.symbol} ${fin(share(p)) ? percent(share(p), true) : "n/a"}`;
       const winnerParts = [], loserParts = [];
       KINDS.forEach((kind) => {  // crypto and stocks ranked apart, shown in one row per side
@@ -897,7 +908,6 @@
     }
     if (tradingEquity) {
       const leverage = gross / tradingEquity;
-      (leverage > HIGH_LEVERAGE ? attention : well).push(["Leverage", `Gross ${leverage.toFixed(2)}x, net ${(net / tradingEquity).toFixed(2)}x.`]);
       const available = sum(traders.map((a) => a.available));
       if (available / tradingEquity < LOW_AVAILABLE_PCT) {
         attention.push(["Available margin low", `${percent(available / tradingEquity, false, 0)} of trading equity.`]);
@@ -909,17 +919,21 @@
       const used = a.margin_used / a.equity;
       if (used > 0.80) attention.push(["Margin reserve breached", `${a.label} ${percent(used, false, 0)} of equity in margin (max 80%); new trades refused.`]);
     });
-    if (book.length) {
-      const text = `${percent(riskUsed / riskCap, false, 0)} of the cap.`;
-      if (riskUsed > riskCap) attention.unshift(["Open risk over cap", text]);
-      else if (riskUsed > riskCap * NEAR_CAP_PCT) attention.push(["Open risk near cap", text]);
-      else well.push(["Open risk within cap", text]);
-    }
+    // One Risk row: open risk against the cap, then the book's volatility, VaR and betas. It needs attention
+    // once open risk nears the cap.
+    const riskParts = [];
+    if (book.length) riskParts.push(`open risk ${percent(riskUsed / riskCap, false, 0)} of the cap`);
     if (riskRow && fin(riskRow["Volatility (/yr)"])) {
-      const betas = [["BTC", riskRow["Beta BTC"]], ["S&P 500", riskRow["Beta S&P 500"]]]
-        .filter(([, b]) => fin(b)).map(([name, b]) => `, beta ${name} ${b.toFixed(2)}`).join("");
-      const var95 = deskEquity > 0 && fin(riskRow["VaR 95%"]) ? `, VaR 95% ${percent(riskRow["VaR 95%"] / deskEquity)}/day` : "";
-      well.push(["Risk", `Volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr${var95}${betas}.`]);
+      riskParts.push(`volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr`);
+      if (deskEquity > 0 && fin(riskRow["VaR 95%"])) riskParts.push(`VaR 95% ${percent(riskRow["VaR 95%"] / deskEquity)}/day`);
+      [["BTC", riskRow["Beta BTC"]], ["S&P 500", riskRow["Beta S&P 500"]]].filter(([, b]) => fin(b))
+        .forEach(([name, b]) => riskParts.push(`beta ${name} ${b.toFixed(2)}`));
+    }
+    if (riskParts.length) {
+      const text = riskParts.join(", ").replace(/^./, (c) => c.toUpperCase()) + ".";
+      if (book.length && riskUsed > riskCap) attention.unshift(["Risk: over cap", text]);
+      else if (book.length && riskUsed > riskCap * NEAR_CAP_PCT) attention.push(["Risk: near cap", text]);
+      else well.push(["Risk", text]);
     }
     if (problems.length) attention.unshift(["Unreadable accounts", problems.join("; ") + " Totals leave them out."]);
     ((regime && regime.notices) || []).slice().reverse().forEach((row) => attention.unshift(row));  // desk/market_regime.py
@@ -1054,8 +1068,12 @@
         trading_equity: tradingEquity, wallet_value: walletValue, unrealized, unrealized_share: gross ? unrealized / gross : NaN,
         gross, net, gross_leverage: tradingEquity ? gross / tradingEquity : NaN, net_leverage: tradingEquity ? net / tradingEquity : NaN,
         positions: tradePositions.length,
-        returns: { since_start: returns.since_start, "7D": returns["7D"], "30D": returns["30D"], "90D": returns["90D"] },
-        money_weighted: moneyWeighted(histories, start), since: iso(start), drawdown, peak_date: iso(peak.t),
+        // The whole desk, wallets included (``headline``); the money-weighted PnL stays HL + IB, since the
+        // wallets have no deposit record.
+        returns: { since_start: headline.returns.since_start, "7D": headline.returns["7D"], "30D": headline.returns["30D"],
+          "90D": headline.returns["90D"] },
+        money_weighted: moneyWeighted(histories, start), since: iso(headline.start), drawdown: headline.drawdown,
+        peak_date: iso(headline.peak.t),
       },
       highlights: { well, attention },
       tables,

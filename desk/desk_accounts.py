@@ -506,11 +506,8 @@ class DeskAccounts:
         if len(wallets):
             index = time_weighted_index(list(self.histories.values()) + list(wallets_history.values()))
             index.index = pd.to_datetime(index.index, utc=True)
-            now = pd.Timestamp.now(tz="UTC")
-            every = {INCEPTION: float(index.iloc[-1] / index.iloc[0] - 1) if len(index) else np.nan}
-            for label, days in WINDOWS.items():
-                prior = through(index, now - pd.Timedelta(days=days))
-                every[label] = float(index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
+            every = self.desk_returns(index)
+            every[INCEPTION] = every.pop("since start")
             rows.append(combined("Desk incl. wallets", pd.concat([trading, wallets]), every,
                                  f"{index.index[0]:%Y-%m-%d}" if len(index) else ""))
         table = pd.concat([trading, wallets, pd.DataFrame(rows)], ignore_index=True)
@@ -545,14 +542,26 @@ class DeskAccounts:
               f"{since:.2%}. PnL is each account's value change less deposits and withdrawals; transfers between "
               "desk accounts cancel in the combined return. Wallet tokens on other chains are not included.")
 
-    def desk_returns(self) -> dict[str, float]:
-        """Desk time-weighted return over each window and since the shared start."""
+    def desk_returns(self, index: pd.Series | None = None) -> dict[str, float]:
+        """Time-weighted return over each window and since the start, of the trading accounts' index (HL + IB)
+        or of ``index``."""
+        index = self.index if index is None else index
         now = pd.Timestamp.now(tz="UTC")
-        returns = {"since start": float(self.index.iloc[-1] / self.index.iloc[0] - 1)}
+        returns = {"since start": float(index.iloc[-1] / index.iloc[0] - 1) if len(index) else np.nan}
         for label, days in WINDOWS.items():
-            prior = through(self.index, now - pd.Timedelta(days=days))
-            returns[label] = float(self.index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
+            prior = through(index, now - pd.Timedelta(days=days))
+            returns[label] = float(index.iloc[-1] / prior.iloc[-1] - 1) if len(prior) else np.nan
         return returns
+
+    def headline_index(self) -> pd.Series:
+        """The whole desk's time-weighted index, wallet tokens included: the performance table's bold last row,
+        and the return the highlights and tiles show. Without wallet history, the trading accounts' index."""
+        wallets = self.wallet_histories()
+        if not wallets:
+            return self.index
+        index = time_weighted_index(list(self.histories.values()) + list(wallets.values()))
+        index.index = pd.to_datetime(index.index, utc=True)
+        return index if len(index) else self.index
 
     def money_weighted(self) -> dict[str, float]:
         """Dollar PnL and the money-weighted (Modified Dietz) return since the desk start.
@@ -603,15 +612,13 @@ class DeskAccounts:
         ``funding``: each HL perp's holder-side funding APR (``Overview.highlight_rows``)."""
         well, attention, metrics, items = (self.overview.highlight_rows(funding) if self.overview.snapshots
                                            else ([], [], {}, {}))
-        returns = self.desk_returns()
-        text = (f"{percent(returns['since start'], signed=True)} since {self.common_start:%Y-%m-%d}; "
+        headline = self.headline_index()  # the whole desk, wallets included (the performance table's last row)
+        returns = self.desk_returns(headline)
+        text = (f"{percent(returns['since start'], signed=True)} since {headline.index[0]:%Y-%m-%d}; "
                 + ", ".join(f"{label} {percent(returns[label], signed=True)}" for label in WINDOWS) + ".")
         (well if returns.get("30D", 0) >= 0 else attention).insert(0, ("Desk return", text))
         table = self.account_pnl()
         recent = table.dropna(subset=["Return 30D"]) if "Return 30D" in table else table.iloc[0:0]
-        if len(recent) > 1:
-            best = recent.loc[recent["Return 30D"].idxmax()]
-            well.insert(1, ("Best account, 30D", f"{best['Account']} {percent(best['Return 30D'], signed=True)}."))
         # Drawdown is in the dashboard's tiles; it stays a tracked metric here, not a highlight row.
         drawdown = float(self.index.iloc[-1] / self.index.cummax().iloc[-1] - 1)
         sharpe = beta_spy = beta_btc = np.nan
@@ -629,14 +636,24 @@ class DeskAccounts:
                 if pd.notna(row.get("Volatility (/yr)", np.nan)):
                     var95, equity = row.get("VaR 95%", np.nan), self.overview.desk_equity
                     var_text = f", VaR 95% {var95 / equity:.1%}/day" if pd.notna(var95) and equity else ""
-                    parts.append(f"Volatility {row['Volatility (/yr)']:.0%}/yr{var_text}{betas}")
+                    parts.append(f"volatility {row['Volatility (/yr)']:.0%}/yr{var_text}{betas}")
             if len(regime):
                 row = regime.iloc[0]
                 sharpe = row.get("Sharpe", np.nan)
                 if pd.notna(sharpe):
                     parts.append(f"Sharpe {sharpe:.2f} ({int(row['Periods'])} days)")
-            if parts:
-                text = "; ".join(parts) + "."
+            # One Risk row: the open-risk part from the overview first, then the book's measures. It stays
+            # where the open risk put it (near or over the cap needs attention), or needs attention on a
+            # negative Sharpe.
+            found = [(rows, item) for rows in (well, attention) for item in rows if item[0].startswith("Risk")]
+            if found:
+                rows, item = found[0]
+                rows.remove(item)
+                title, text = item[0], item[1].rstrip(".") + (", " + "; ".join(parts) if parts else "") + "."
+                (rows if rows is attention or not pd.notna(sharpe) or sharpe > 0 else attention).append((title, text))
+            elif parts:
+                text = "; ".join(parts)
+                text = text[:1].upper() + text[1:] + "."
                 (well if not pd.notna(sharpe) or sharpe > 0 else attention).append(("Risk", text))
         for note in self.notes:
             if "not refreshed" in note or ": no value history" in note:
