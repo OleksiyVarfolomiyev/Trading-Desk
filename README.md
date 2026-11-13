@@ -33,9 +33,18 @@ desk/                    venue-neutral core
   ib/                    IB account analytics
 execution/               one executor per venue, plus the shared KILL_SWITCH file
 research/                portfolio research notebooks and modules
-tests/                   unit tests (python -m unittest discover -s tests)
+tests/                   unit tests (python tests/run_affected.py; --all for the whole suite)
 data/                    saved history and caches
 ```
+
+## Tests
+
+`python tests/run_affected.py` runs only the test modules your uncommitted changes can affect, in
+parallel. Each run records which repository files every test module actually executes
+(`tests/.test_map.json`, kept locally), and the next run selects from that: a change to the trading
+daemon runs the daemon tests, a dashboard style change runs the web build test, a README change runs
+nothing. `--list` shows the selection and why, `--base HEAD~3` compares against a commit, and `--all`
+runs everything and rebuilds the map. Use the py314 environment.
 
 ## Accounts
 

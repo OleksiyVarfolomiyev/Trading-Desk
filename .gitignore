@@ -17,3 +17,4 @@ web/site/
 # transaction hashes). The desk reads and writes these files locally; they are never published.
 data/
 research/data/hl_book_exposure_weekly.csv
+tests/.test_map.json
