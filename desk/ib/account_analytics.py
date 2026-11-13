@@ -28,7 +28,7 @@ from desk.overview import merge_ib_fills, save_ib_history
 from desk.risk import ATR_PERIOD, REWARD_RISK_RATIO, STOP_ATR_MULTIPLE, ib_position_risk
 from desk.venues import ib as ib_venue
 from desk.charts import show as show_chart
-from desk.numbers import DISPLAY_TIMEZONE, clock
+from desk.numbers import DISPLAY_TIMEZONE, clock, pct as _pct
 
 BENCHMARK = "SPY"
 TRADING_DAYS = 252
@@ -47,7 +47,9 @@ def _money(value):
 
 
 def _percent(value):
-    return "n/a" if value is None or not np.isfinite(value) else f"{value:.2%}"
+    from desk.numbers import pct
+
+    return pct(value)
 
 
 def _number(value):
@@ -69,7 +71,7 @@ def _pnl_style(row_index, column, value, row):
 
 def _mover(row) -> str:
     share = row["uPnL (%)"]
-    return f"{row['Symbol']} {signed_money(row['uPnL'])}" + (f" ({share:.1%})" if np.isfinite(share) else "")
+    return f"{row['Symbol']} {signed_money(row['uPnL'])}" + (f" ({_pct(share)})" if np.isfinite(share) else "")
 
 
 def _returns(bars: pd.DataFrame) -> pd.Series:
@@ -333,7 +335,7 @@ class IBAccountAnalytics:
         today = self.pnl.get("dailyPnL", np.nan)
         text = f"Account value {_money(equity)}, {len(self.positions)} open positions"
         if np.isfinite(today):
-            text += f"; today {signed_money(today)} ({today / (equity - today):.2%})" if equity - today else ""
+            text += f"; today {signed_money(today)} ({_pct(today / (equity - today))})" if equity - today else ""
         (well if not np.isfinite(today) or today >= 0 else attention).append(("Account", text + "."))
         positions = self.positions
         if not positions.empty:
@@ -353,13 +355,13 @@ class IBAccountAnalytics:
             if len(moves):
                 moves = moves.reindex(moves["24h change (%)"].abs().sort_values(ascending=False).index).head(HIGHLIGHT_MOVERS)
                 well.append(("Biggest moves since last close", ", ".join(
-                    f"{row['Symbol']} {row['24h change (%)']:.1%}" for _, row in moves.iterrows()) + "."))
+                    f"{row['Symbol']} {_pct(row['24h change (%)'])}" for _, row in moves.iterrows()) + "."))
             top = positions.loc[positions["% of account"].idxmax()]
             if top["% of account"] > CONCENTRATION_PCT:
                 attention.append(("Concentration", f"{top['Symbol']} {top['Side'].lower()} is "
                                                    f"{top['% of account']:.0%} of the account."))
             risk = float(positions["Risk to stop"].sum())
-            text = f"{_money(risk)} to ATR stops ({risk / equity:.1%} of the account)." if equity else _money(risk)
+            text = f"{_money(risk)} to ATR stops ({_pct(risk / equity)} of the account)." if equity else _money(risk)
             (attention if equity and risk / equity > ACCOUNT_RISK_PCT else well).append(("Open risk", text))
             unpriced = positions.loc[positions["Risk basis"].str.contains("no price history", na=False), "Symbol"]
             if len(unpriced):
@@ -412,7 +414,7 @@ class IBAccountAnalytics:
         def var_text(result):
             if result is None:
                 return "n/a (needs 20 days)"
-            return (f"{_money(result['var'] * equity)} ({result['var']:.2%}; 90% range "
+            return (f"{_money(result['var'] * equity)} ({_pct(result['var'])}; 90% range "
                     f"{_money(result['low'] * equity)}-{_money(result['high'] * equity)})")
 
         rows = [
@@ -428,11 +430,11 @@ class IBAccountAnalytics:
             ("Today's PnL", _money(self.pnl.get("dailyPnL", np.nan))),
             ("Realized PnL today", _money(self.pnl.get("realizedPnL", np.nan))),
             ("--- RISK (current book) ---", ""),
-            ("Open risk to ATR stops", f"{_money(risk_total)} ({risk_total / equity:.2%} of account)" if equity else "n/a"),
+            ("Open risk to ATR stops", f"{_money(risk_total)} ({_pct(risk_total / equity)} of account)" if equity else "n/a"),
             (f"Beta to {BENCHMARK}", ranged("beta", lambda value: f"{value:.2f}")),
-            (f"Alpha vs {BENCHMARK} / year", ranged("alpha", lambda value: f"{value:.2f}%")),
+            (f"Alpha vs {BENCHMARK} / year", ranged("alpha", lambda value: f"{_pct(value, scaled=True)}")),
             ("Annualized Sharpe", ranged("sharpe", lambda value: f"{value:.2f}")),
-            ("Volatility", f"{self.book.std():.2%}/day; {self.book.std() * math.sqrt(TRADING_DAYS):.2%}/year"
+            ("Volatility", f"{_pct(self.book.std())}/day; {_pct(self.book.std() * math.sqrt(TRADING_DAYS))}/year"
              if len(self.book) > 1 else "n/a"),
             ("1-day bootstrap VaR 95%", var_text(var95)),
             ("1-day bootstrap VaR 99%", var_text(var99)),
@@ -474,7 +476,7 @@ class IBAccountAnalytics:
                                                      "Stop", "Target")}
         formatters.update({column: _money for column in ("Value", "uPnL", "Risk to stop")})
         formatters["% of account"] = _percent
-        formatters.update({column: (lambda value: "n/a" if not np.isfinite(value) else f"{value:.2%}")
+        formatters.update({column: (lambda value: "n/a" if not np.isfinite(value) else f"{_pct(value)}")
                            for column in ("uPnL (%)", "24h change (%)")})
         formatters[f"Beta {BETA_LOOKBACK_DAYS}d"] = lambda value: "n/a" if not np.isfinite(value) else f"{value:.2f}"
         display_interactive_table(frame, formatters=formatters, cell_style=_pnl_style, bold_last=True,

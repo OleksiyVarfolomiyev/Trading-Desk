@@ -37,10 +37,26 @@ MARKET_MAKING = "market making"
 UNTAGGED = "untagged (before the journal)"
 LADDER_CLOID_PREFIX = "0x1add"
 REVIEW_AFTER_DAYS = 7  # directional trades held longer lost money in the desk's history (desk/trade_rules.py)
-COLUMNS = ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL (30d)", "Fees (30d)", "Funding (30d)", "Volume (30d)",
-           "Fills (30d)"]
-FORMATS = {"Open positions": "int", "Unrealized PnL": "susd", "Realized PnL (30d)": "susd", "Fees (30d)": "susd",
-           "Funding (30d)": "susd", "Volume (30d)": "usd", "Fills (30d)": "int"}
+COLUMNS = ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL 30d", "Fees 30d", "Funding 30d", "Volume 30d",
+           "Fills 30d"]
+# What the front end shows: each strategy's result as a share of desk value, as the Performance table shows returns.
+# Realized 30d is net of fees and includes funding; activity (positions, volume, fills) stays in the data.
+VIEW_COLUMNS = ["Strategy", "Realized 30d", "Unrealized", "Total"]
+VIEW_FORMATS = {"Realized 30d": "spct", "Unrealized": "spct", "Total": "spct"}
+
+
+def performance_view(frame: pd.DataFrame, desk_value: float) -> pd.DataFrame:
+    """``frame`` (COLUMNS rows, a total row included or not) as VIEW_COLUMNS: each strategy's PnL over desk value."""
+    if frame.empty or not desk_value:
+        return pd.DataFrame(columns=VIEW_COLUMNS)
+    realized = (frame["Realized PnL 30d"] + frame["Funding 30d"]) / desk_value
+    unrealized = frame["Unrealized PnL"] / desk_value
+    return pd.DataFrame({"Strategy": frame["Strategy"], "Realized 30d": realized, "Unrealized": unrealized,
+                         "Total": realized + unrealized})[VIEW_COLUMNS]
+
+
+FORMATS = {"Open positions": "int", "Unrealized PnL": "susd", "Realized PnL 30d": "susd", "Fees 30d": "susd",
+           "Funding 30d": "susd", "Volume 30d": "usd", "Fills 30d": "int"}
 
 
 def load(path: Path | None = None) -> list[dict]:
@@ -133,8 +149,8 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
     rows: dict[str, dict] = {}
 
     def row(name: str) -> dict:
-        return rows.setdefault(name, {"Strategy": name, "Open positions": 0, "Unrealized PnL": 0.0, "Realized PnL (30d)": 0.0,
-                                      "Fees (30d)": 0.0, "Funding (30d)": 0.0, "Volume (30d)": 0.0, "Fills (30d)": 0})
+        return rows.setdefault(name, {"Strategy": name, "Open positions": 0, "Unrealized PnL": 0.0, "Realized PnL 30d": 0.0,
+                                      "Fees 30d": 0.0, "Funding 30d": 0.0, "Volume 30d": 0.0, "Fills 30d": 0})
 
     now_ms = time.time() * 1000
     marks: dict[tuple[str, str], float] = {}
@@ -161,13 +177,13 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
             if strategy == MARKET_MAKING:
                 side = 1.0 if fill["side"] == "B" else -1.0
                 own = side * size * (marks[(wallet, fill["coin"])] - price) - fee  # the fill against holding
-                row(strategy_at(entries, wallet, fill["coin"], fill["time"]))["Realized PnL (30d)"] += realized - own
+                row(strategy_at(entries, wallet, fill["coin"], fill["time"]))["Realized PnL 30d"] += realized - own
                 realized = own
             target = row(strategy)
-            target["Realized PnL (30d)"] += realized
-            target["Fees (30d)"] -= fee  # paid: a cost, shown negative
-            target["Volume (30d)"] += price * size
-            target["Fills (30d)"] += 1
+            target["Realized PnL 30d"] += realized
+            target["Fees 30d"] -= fee  # paid: a cost, shown negative
+            target["Volume 30d"] += price * size
+            target["Fills 30d"] += 1
     for wallet, events in (funding_by_wallet or {}).items():
         by_coin: dict[str, list[dict]] = {}
         for event in events:
@@ -179,8 +195,8 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
             for event, ladder_part in market_making.ladder_funding_parts(ladder_fills, coin_events):
                 when = int(event["time"])
                 if ladder_part:
-                    row(MARKET_MAKING)["Funding (30d)"] += ladder_part  # the ladder's inventory...
-                row(strategy_at(entries, wallet, coin, when))["Funding (30d)"] += float(event["delta"]["usdc"]) - ladder_part  # ...the rest
+                    row(MARKET_MAKING)["Funding 30d"] += ladder_part  # the ladder's inventory...
+                row(strategy_at(entries, wallet, coin, when))["Funding 30d"] += float(event["delta"]["usdc"]) - ladder_part  # ...the rest
     order = {name: index for index, name in enumerate((*STRATEGIES, MARKET_MAKING, UNTAGGED))}
     frame = pd.DataFrame(sorted(rows.values(), key=lambda item: order.get(item["Strategy"], 99)), columns=COLUMNS)
     return frame
@@ -226,20 +242,18 @@ def overdue(entries: list[dict], open_positions: set[tuple[str, str]], now: floa
     return rows
 
 
-def show_strategies() -> None:
-    """The strategies table for the notebooks."""
+def show_strategies(desk_value: float) -> None:
+    """The strategies table for the notebooks: each strategy's PnL as a share of desk value."""
     from desk.hl.account_analytics import display_interactive_table
+    from desk.numbers import pct
 
     frame = strategy_frame()
     if frame.empty:
-        print("No HL positions or fills in the last 30 days.")
         return
     frame = pd.concat([frame, pd.DataFrame([total_row(frame)])], ignore_index=True)
-    money = lambda value: "" if value != value else (f"{_usd(-abs(value))}" if value < 0 else f"{_usd(value)}")
-    count = lambda value: "" if value != value else f"{value:,.0f}"
-    display_interactive_table(frame, bold_last=True, title="PERFORMANCE BY STRATEGY (HL)",
-                              formatters={"Unrealized PnL": money, "Realized PnL (30d)": money, "Fees (30d)": money,
-                                          "Funding (30d)": money, "Volume (30d)": money, "Open positions": count, "Fills (30d)": count},
-                              key_columns={"Realized PnL (30d)": "abs"})
+    view = performance_view(frame, desk_value)
+    signed = lambda value: pct(value, missing="")
+    display_interactive_table(view, bold_last=True, title="PERFORMANCE BY STRATEGY (HL, % OF DESK VALUE)",
+                              formatters={column: signed for column in VIEW_COLUMNS[1:]}, key_columns={"Total": "abs"})
     print("Realized PnL is net of fees; funding (received positive, paid negative) is separate and goes to the strategy that held the position when it was paid. A position's unrealized PnL counts under its own strategy; the ladders' "
           "fills count under market making. Fills before a position was journalled are untagged.")

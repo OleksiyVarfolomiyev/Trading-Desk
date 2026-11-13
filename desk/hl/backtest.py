@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from desk.numbers import usd as _usd
+from desk.numbers import usd as _usd, pct as _pct
 from desk.hl.trade_analytics import (
     DEFAULT_HORIZON_DAYS,
     adverse_funding_cost_per_unit,
@@ -247,7 +247,7 @@ def backtest_highlights(trades: pd.DataFrame, skipped: list[dict] | None = None,
     wins = (trades["net_pnl"] > 0).mean()
     gains, losses = trades.loc[trades["net_pnl"] > 0, "net_pnl"].sum(), -trades.loc[trades["net_pnl"] < 0, "net_pnl"].sum()
     factor = gains / losses if losses > 0 else float("inf")
-    text = (f"{len(trades)} trades, net {total:,.2f} ({total / starting_equity:.1%} of {starting_equity:,.0f} "
+    text = (f"{len(trades)} trades, net {total:,.2f} ({_pct(total / starting_equity)} of {starting_equity:,.0f} "
             f"starting equity), win rate {wins:.0%}, profit factor {factor:.2f}.")
     (well if total > 0 else attention).append(("Overall", text))
     by_signal = trades.groupby(["coin", "side"])["net_pnl"].agg(["sum", "count", lambda v: (v > 0).mean()])
@@ -316,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("No backtest trades could be built; see skipped-entry diagnostics.")
         results = pd.DataFrame(all_trades)
         print(
-            f"Trades: {len(results)} | Win rate: {(results['net_pnl'] > 0).mean():.1%} | "
+            f"Trades: {len(results)} | Win rate: {_pct((results['net_pnl'] > 0).mean())} | "
             f"Mean net PnL/trade: {_usd(results['net_pnl'].mean())} | "
             f"Total net PnL (independent trades): {_usd(results['net_pnl'].sum())}"
         )

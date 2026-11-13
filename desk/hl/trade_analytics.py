@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import requests
+from desk.numbers import pct as _pct
 
 INFO_URL = "https://api.hyperliquid.xyz/info"
 MAX_RATE_LIMIT_RETRIES = 4
@@ -1096,7 +1097,7 @@ def trade_highlights(market: str, side: str, mark_price: float, oracle_price: fl
     """What stands out for one proposed position: stop width, expected PnL, funding and data depth."""
     well, attention = [], []
     stop_pct = stop_distance / mark_price if mark_price else np.nan
-    well.append(("Stop", f"{market} {side.lower()}: stop {stop_distance:,.6g} away ({stop_pct:.2%} of mark), "
+    well.append(("Stop", f"{market} {side.lower()}: stop {stop_distance:,.6g} away ({_pct(stop_pct)} of mark), "
                          f"ATR {atr:,.6g}; risk per unit including the funding reserve "
                          f"{stop_distance + funding_reserve_per_unit:,.6g}."))
     text = (f"{expected.net_pnl:,.2f} over {horizon_days}d for {quantity:g} units "
@@ -1112,7 +1113,7 @@ def trade_highlights(market: str, side: str, mark_price: float, oracle_price: fl
                                              "of the stop distance, which shrinks the position the risk budget allows."))
     gap = mark_price / oracle_price - 1 if oracle_price else np.nan
     if np.isfinite(gap) and abs(gap) > 0.005:
-        attention.append(("Mark vs oracle", f"Mark is {gap:.2%} from the oracle price."))
+        attention.append(("Mark vs oracle", f"Mark is {_pct(gap)} from the oracle price."))
     if expected.forward_observations < 60:
         attention.append(("Short history", f"Only {expected.forward_observations} forward-return observations; "
                                            "treat the expected PnL as rough."))

@@ -8,6 +8,8 @@ from pathlib import Path
 
 os.environ.setdefault("DESK_JOURNAL_FILE", os.path.join(tempfile.mkdtemp(prefix="desk-journal-"), "trade_journal.json"))
 
+import pandas as pd  # noqa: E402
+
 from desk import journal, trade_rules  # noqa: E402
 
 WALLET = "0x" + "ab" * 18 + "07f2"
@@ -42,9 +44,9 @@ class JournalTests(unittest.TestCase):
                             {"time": at, "delta": {"coin": "ICP", "usdc": "-0.4"}},
                             {"time": at, "delta": {"coin": "ICP", "usdc": "-0.1"}}]}
         frame = journal.split_by_strategy(entries, {}, {}, funding).set_index("Strategy")
-        self.assertAlmostEqual(frame.loc["hedge", "Funding (30d)"], 1.5)
-        self.assertAlmostEqual(frame.loc["directional", "Funding (30d)"], -0.5)
-        self.assertAlmostEqual(journal.total_row(frame.reset_index())["Funding (30d)"], 1.0)
+        self.assertAlmostEqual(frame.loc["hedge", "Funding 30d"], 1.5)
+        self.assertAlmostEqual(frame.loc["directional", "Funding 30d"], -0.5)
+        self.assertAlmostEqual(journal.total_row(frame.reset_index())["Funding 30d"], 1.0)
 
     def test_the_ladders_inventory_funding_moves_to_market_making_and_the_total_is_unchanged(self):
         opened = "2026-11-01T00:00:00"
@@ -54,9 +56,9 @@ class JournalTests(unittest.TestCase):
                        "cloid": "0x1add" + "0" * 28}
         funding = {"07f2": [{"time": at, "delta": {"coin": "VVV", "szi": "-12", "usdc": "1.2"}}]}
         frame = journal.split_by_strategy(entries, {"07f2": [ladder_sell]}, {}, funding).set_index("Strategy")
-        self.assertAlmostEqual(frame.loc["market making", "Funding (30d)"], 0.2)   # 2 of the 12 short
-        self.assertAlmostEqual(frame.loc["hedge", "Funding (30d)"], 1.0)
-        self.assertAlmostEqual(frame["Funding (30d)"].sum(), 1.2)
+        self.assertAlmostEqual(frame.loc["market making", "Funding 30d"], 0.2)   # 2 of the 12 short
+        self.assertAlmostEqual(frame.loc["hedge", "Funding 30d"], 1.0)
+        self.assertAlmostEqual(frame["Funding 30d"].sum(), 1.2)
 
     def test_results_split_by_strategy(self):
         opened = "2026-11-01T00:00:00"
@@ -72,16 +74,16 @@ class JournalTests(unittest.TestCase):
         positions = {WALLET: [{"coin": "VVV", "szi": "-100", "unrealizedPnl": "12", "positionValue": "1900"},
                               {"coin": "ICP", "szi": "-50", "unrealizedPnl": "-7", "positionValue": "120"}]}
         frame = journal.split_by_strategy(entries, fills, positions).set_index("Strategy")
-        self.assertEqual(frame.loc["directional", "Realized PnL (30d)"], 19.0)
+        self.assertEqual(frame.loc["directional", "Realized PnL 30d"], 19.0)
         self.assertEqual(frame.loc["directional", "Unrealized PnL"], -7.0)
         self.assertEqual(frame.loc["hedge", "Unrealized PnL"], 12.0)             # the position is the hedge's...
         # ...the ladder only gets the fill against holding: bought 2 at 20, worth 19 now, less the fee
-        self.assertAlmostEqual(frame.loc["market making", "Realized PnL (30d)"], -2.1)
-        self.assertAlmostEqual(frame.loc["hedge", "Realized PnL (30d)"], 5.0)    # the short's profit stays with the hedge
-        self.assertAlmostEqual(frame.loc["market making", "Fees (30d)"], -0.1)  # paid: negative
-        self.assertAlmostEqual(frame["Realized PnL (30d)"].sum(), 19.0 + 2.9 - 5.2)  # still HL's realized total
-        self.assertAlmostEqual(frame.loc[journal.UNTAGGED, "Realized PnL (30d)"], -5.2)
-        self.assertEqual(int(frame["Fills (30d)"].sum()), 3)                      # spot is left out
+        self.assertAlmostEqual(frame.loc["market making", "Realized PnL 30d"], -2.1)
+        self.assertAlmostEqual(frame.loc["hedge", "Realized PnL 30d"], 5.0)    # the short's profit stays with the hedge
+        self.assertAlmostEqual(frame.loc["market making", "Fees 30d"], -0.1)  # paid: negative
+        self.assertAlmostEqual(frame["Realized PnL 30d"].sum(), 19.0 + 2.9 - 5.2)  # still HL's realized total
+        self.assertAlmostEqual(frame.loc[journal.UNTAGGED, "Realized PnL 30d"], -5.2)
+        self.assertEqual(int(frame["Fills 30d"].sum()), 3)                      # spot is left out
 
     def test_only_directional_trades_come_up_for_review(self):
         old = "2026-01-01T00:00:00"
@@ -99,8 +101,21 @@ class TradeRuleTests(unittest.TestCase):
         self.assertEqual(len(trade_rules.entry_notes("BTC", "LONG", 2_000.0, "hedge")), 0)   # a hedge is a different decision
         notes = trade_rules.entry_notes("ICP", "SHORT", 2_000.0, "conviction")
         self.assertEqual(len(notes), 1)
-        self.assertIn("above $1,500", notes[0])
+        self.assertTrue(notes[0].startswith("large size"))                # the signal first, then why
+        self.assertIn("above $1.5K", notes[0])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PerformanceViewTests(unittest.TestCase):
+    def test_strategies_show_pnl_as_a_share_of_desk_value_only(self):
+        frame = pd.DataFrame([{"Strategy": "hedge", "Open positions": 1, "Unrealized PnL": -20.0, "Realized PnL 30d": 50.0,
+                               "Fees 30d": -2.0, "Funding 30d": 10.0, "Volume 30d": 5000.0, "Fills 30d": 4}])
+        view = journal.performance_view(frame, 2000.0).iloc[0]
+        self.assertEqual(list(view.index), journal.VIEW_COLUMNS)              # no positions, volume or fills
+        self.assertAlmostEqual(view["Realized 30d"], 0.03)                     # (50 + 10 funding) / 2,000; fees already in
+        self.assertAlmostEqual(view["Unrealized"], -0.01)
+        self.assertAlmostEqual(view["Total"], 0.02)
+        self.assertTrue(journal.performance_view(frame, 0.0).empty)

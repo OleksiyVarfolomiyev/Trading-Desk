@@ -24,6 +24,7 @@
   const MOVERS = 5, HIGHLIGHT_MOVERS = 3;
   const CONCENTRATION_PCT = 0.25, HIGH_LEVERAGE = 2.0, LOW_AVAILABLE_PCT = 0.10, NEAR_CAP_PCT = 0.80, DEEP_DRAWDOWN = -0.10;
   // desk/funding_watch.py: a position paying more than 0.1% of its value a day, and at least $0.25 a day.
+  const WALLET_MIN_SHARE = 0.05;  // wallet tokens shown from this share of the desk up (desk/overview.py)
   const ADVERSE_FUNDING_APR = 0.365, ADVERSE_FUNDING_MIN_DAILY = 0.25, FUNDING_SUSTAINED_HOURS = 6;
   const CRYPTO_HIP3_DEXES = new Set(["hyna"]);
   const CRYPTO_HIP3_MARKETS = new Set(["cash:BTC", "cash:ETH", "flx:BTC", "flx:USDE", "flx:XMR", "io:PRL",
@@ -106,7 +107,13 @@
     return sign + (size >= 10 ? Math.round(size).toLocaleString("en-US") : size.toFixed(2));
   };
   const signedMoney = money;
-  const percent = (v, signed, digits = 1) => (fin(v) ? (v * 100).toFixed(digits) + "%" : "n/a");
+  const readablePct = (value) => {  // as desk/numbers.py pct: 100%, 57%, 5.3%, 0.42%; trailing zeros dropped
+    const number = value * 100, size = Math.abs(number);
+    let text = size.toFixed(size >= 9.95 ? 0 : size >= 0.995 ? 1 : 2);
+    if (text.includes(".")) text = text.replace(/0+$/, "").replace(/\.$/, "");
+    return text === "0" ? "0%" : (number < 0 ? "-" : "") + text + "%";
+  };
+  const percent = (v, signed, digits = 1) => (fin(v) ? readablePct(v) : "n/a");
   function quantile(values, q) {
     const sorted = values.filter(fin).slice().sort((a, b) => a - b);
     if (!sorted.length) return NaN;
@@ -811,7 +818,8 @@
       const chain = inner.split(", ").pop(), note = inner.includes(", ") ? inner.split(", ").slice(0, -1).join(", ") : "";
       return { "Wallet": a.label.replace(/\s+wallet$/, ""), "Chain": chain, "Symbol": token, "Value": value(p),
         "% of desk": value(p) / deskEquity, "Amount": p.quantity, "Price": p.mark_price, "Note": note };
-    })).sort((a, b) => b.Value - a.Value);
+    })).filter((r) => r["% of desk"] >= WALLET_MIN_SHARE)  // smaller holdings are dust for decisions (desk/overview.py)
+      .sort((a, b) => b.Value - a.Value);
 
     // -- ex-ante risk: today's holdings moved by each of the last 90 days' prices
     const riskRow = exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value, ibs, ibCloses: (ibData && ibData.closes) || {} });
@@ -867,7 +875,7 @@
       return x.length > 1 ? { name: "Desk value incl. wallets outside HL", note: "", x, y } : null;
     };
     // The return chart is the tiles' series (``headline``: wallets included when they have history), as % since its
-    // start, so the desk line ends at the "Return since start" tile; the benchmarks start the same day.
+    // start, so the desk line ends at the "TW return" tile; the benchmarks start the same day.
     const chartIndex = headline.series || index, chartStart = headline.start;
     const indexDays = dailyLast(chartIndex, "v");
     const firstLevel = chartIndex.length ? chartIndex[0].v : 1;
@@ -1079,21 +1087,27 @@
       strategies: (() => {  // desk/journal.py, as the daemon last sent it (the last row is the total)
         const rows = (research && research.strategies) || [];
         if (rows.length < 2) return { columns: [], rows: [], total: null };
-        return table(rows.slice(0, -1), ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL (30d)", "Fees (30d)", "Funding (30d)", "Volume (30d)", "Fills (30d)"],
-          { "Open positions": "int", "Unrealized PnL": "susd", "Realized PnL (30d)": "susd", "Fees (30d)": "susd", "Funding (30d)": "susd", "Volume (30d)": "usd", "Fills (30d)": "int" },
-          { total: rows[rows.length - 1] });
+        // Each strategy's PnL as a share of desk value (desk/journal.py performance_view): Realized 30d is net of fees
+        // and includes funding; activity (positions, volume, fills) stays in the data.
+        const view = (r) => {
+          const realized = (num(r["Realized PnL 30d"]) + num(r["Funding 30d"])) / deskEquity, unrealized = num(r["Unrealized PnL"]) / deskEquity;
+          return { "Strategy": r.Strategy, "Realized 30d": realized, "Unrealized": unrealized, "Total": realized + unrealized };
+        };
+        return table(rows.slice(0, -1).map(view), ["Strategy", "Realized 30d", "Unrealized", "Total"],
+          { "Realized 30d": "spct", "Unrealized": "spct", "Total": "spct" },
+          { total: view(rows[rows.length - 1]), key: { "Total": "abs" } });
       })(),
       candidates: (() => {  // desk/screener.py
         const rows = (research && research.screener && research.screener.shorts) || [];
-        return rows.length ? table(rows, ["Coin", "Score", "Basis", "30d vs BTC", "7d vs BTC", "From 60d high", "Funding 7d (APR)", "Crowding", "OI / volume", "24h volume", "Notes"],
-          { "Score": "num2", "30d vs BTC": "spct", "7d vs BTC": "spct", "From 60d high": "spct", "Funding 7d (APR)": "spct", "OI / volume": "num2", "24h volume": "usd" },
+        return rows.length ? table(rows, ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "From high 60d", "Funding 7d (APR)", "OI / volume", "Volume 24h", "Notes"],
+          { "Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "From high 60d": "spct", "Funding 7d (APR)": "spct", "OI / volume": "num2", "Volume 24h": "usd" },
           { key: { "Score": "min" } }) : { columns: [], rows: [], total: null };
       })(),
       mm_candidates: (() => {
         const rows = (research && research.screener && research.screener.market_making) || [];
-        return rows.length ? table(rows, ["Coin", "Efficiency (30d)", "30d move", "Range position (60d)", "Daily range", "24h volume", "Funding (APR)", "Own ladder edge per $1k", "Notes"],
-          { "Efficiency (30d)": "num2", "30d move": "spct", "Range position (60d)": "pct", "Daily range": "pct", "24h volume": "usd", "Funding (APR)": "spct", "Own ladder edge per $1k": "susd" },
-          { key: { "Efficiency (30d)": "min" } }) : { columns: [], rows: [], total: null };
+        return rows.length ? table(rows, ["Coin", "Efficiency 30d", "Move 30d", "Range position 60d", "Daily range 30d", "Volume 24h", "Longs pay 7d (APR)", "Own ladder edge per $1k", "Notes"],
+          { "Efficiency 30d": "num2", "Move 30d": "spct", "Range position 60d": "pct", "Daily range 30d": "pct", "Volume 24h": "usd", "Longs pay 7d (APR)": "spct", "Own ladder edge per $1k": "susd" },
+          { key: { "Efficiency 30d": "min" } }) : { columns: [], rows: [], total: null };
       })(),
       wallets: table(walletRows, ["Wallet", "Chain", "Symbol", "Value", "% of desk", "Amount", "Price", "Note"],
         { "Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct" },

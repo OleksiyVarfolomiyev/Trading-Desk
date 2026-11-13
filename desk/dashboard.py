@@ -319,12 +319,14 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         research_path = ROOT_DATA / "research_state.json"
         research = _json.loads(research_path.read_text()) if research_path.exists() else {}
         strategies = pd.DataFrame(research.get("strategies", []), columns=journal.COLUMNS)
-        tables["strategies"] = table(strategies, journal.FORMATS, total_last=True) if len(strategies) > 1 else table(strategies, {})
+        view = journal.performance_view(strategies, overview.desk_equity) if len(strategies) > 1 else pd.DataFrame()
+        tables["strategies"] = (table(view, journal.VIEW_FORMATS, total_last=True, key={"Total": "abs"}) if len(view)
+                                else table(view, {}))
         screen = research.get("screener") or screener.load() or {}
         shorts = pd.DataFrame(screen.get("shorts", []), columns=screener.CANDIDATE_COLUMNS)
         tables["candidates"] = table(shorts, screener.CANDIDATE_FORMATS, key={"Score": "min"}) if len(shorts) else table(shorts, {})
         mm = pd.DataFrame(screen.get("market_making", []), columns=screener.MM_COLUMNS)
-        tables["mm_candidates"] = table(mm, screener.MM_FORMATS, key={"Efficiency (30d)": "min"}) if len(mm) else table(mm, {})
+        tables["mm_candidates"] = table(mm, screener.MM_FORMATS, key={"Efficiency 30d": "min"}) if len(mm) else table(mm, {})
     except Exception as exc:
         desk.notes.append(f"Research tables unavailable ({type(exc).__name__}: {exc}).")
     if overview.book:
@@ -332,6 +334,10 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
                                                             "% of desk equity": "rpct"}, total_last=True,
                                     key={"% of desk equity": "max"})
     holdings = overview.wallet_holdings_frame()
+    if len(holdings):  # from WALLET_MIN_SHARE of the desk up: smaller holdings are dust for decisions
+        from desk.overview import WALLET_MIN_SHARE
+
+        holdings = holdings[holdings["% of desk"] >= WALLET_MIN_SHARE]
     if len(holdings):
         # "HL 07f2 wallet" -> "HL 07f2": the table is already the wallets table. Notes go last.
         holdings = holdings.assign(Wallet=holdings["Wallet"].str.replace(r"\s+wallet$", "", regex=True))
@@ -373,7 +379,7 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     # the desk value including them, from the first recorded day only.
     with_wallets = _value_with_wallets(value_series, _wallet_value_series(desk, start))
     # The return chart is the tiles' series (``headline``: wallets included when they have history), as % since
-    # its start, so the desk line ends at the "Return since start" tile; the benchmarks start the same day.
+    # its start, so the desk line ends at the "TW return" tile; the benchmarks start the same day.
     index = _daily(headline)
     index.index = index.index.normalize()
     twr = [{"name": "Desk incl. wallets" if headline is not desk.index else "Desk (HL + IB)",

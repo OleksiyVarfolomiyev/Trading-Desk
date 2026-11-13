@@ -48,9 +48,9 @@ def signed_money(value: float) -> str:
 
 
 def percent(value: float, signed: bool = False, digits: int = 1) -> str:
-    if value is None or not math.isfinite(value):
-        return "n/a"
-    return f"{value:.{digits}%}"  # positive values carry no "+" sign anywhere on the desk
+    from desk.numbers import pct
+
+    return pct(value)  # positive values carry no "+" sign anywhere on the desk; digits by size (desk/numbers.py)
 
 
 FORMATS = {

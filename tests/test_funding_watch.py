@@ -18,7 +18,7 @@ class AttentionRowTests(unittest.TestCase):
             ("INTC long (HL 07f2)", -0.06, 246.0),           # under the threshold
         ])
         self.assertEqual(title, "Adverse funding")
-        self.assertEqual(text, "XYZ long (HL 07f2) -100.0% APR, MELANIA short (HL c248) -67.8% APR.")
+        self.assertEqual(text, "XYZ long (HL 07f2) -100% APR, MELANIA short (HL c248) -68% APR.")
         self.assertNotIn("ICP", text)
         self.assertNotIn("INTC", text)
 
@@ -49,11 +49,11 @@ class ConsolidateTests(unittest.TestCase):
                 (funding_watch.TITLE, "BERA short (07f2) -57.0% APR, xyz:TSLA long (07f2) -40.0% APR.")]
         self.assertEqual(funding_watch.consolidate(rows), [
             ("Margin", "m"),
-            ("Funding", "MELANIA short (c248) -119.7%, BERA short (07f2) -70.7% avg APR over 6 hrs; TSLA long (07f2) -40.0% APR now."),
+            ("Funding", "MELANIA short (c248) -120%, BERA short (07f2) -71% avg APR over 6 hrs; TSLA long (07f2) -40% APR now."),
             ("Concentration", "c")])
 
     def test_current_rate_only_and_nothing_to_merge(self):
         self.assertEqual(funding_watch.consolidate([(funding_watch.TITLE, "BERA short (HL 07f2) -57.0% APR.")]),
-                         [("Funding", "BERA short (07f2) -57.0% APR now.")])
+                         [("Funding", "BERA short (07f2) -57% APR now.")])
         rows = [("Concentration", "c"), ("Funding", "some other text")]
         self.assertEqual(funding_watch.consolidate(rows), rows)   # an unknown shape is left alone

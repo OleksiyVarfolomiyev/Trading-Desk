@@ -3,7 +3,7 @@
 const POLL_MS = 5000;
 const TABLES = ["performance", "accounts", "risk", "positions", "positions_stocks", "exposure", "open_risk", "movers", "movers_stocks", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
 const sortState = {            // table id -> {key, dir}; click a header to change it
-  mm_candidates: { key: "Efficiency (30d)", dir: 1 },   // the most mean-reverting coins first
+  mm_candidates: { key: "Efficiency 30d", dir: 1 },   // the most mean-reverting coins first
 };
 let lastRendered = null;        // last_ok of the data currently drawn
 let latest = null;              // latest /api/state document
@@ -31,10 +31,16 @@ function wholeUsd(value, signed = false) {
   const sign = rounded < 0 ? "-$" : "$";
   return sign + wholeUsdFormat.format(Math.abs(rounded));
 }
+// Shares and returns for reading (``digits`` is ignored; the size sets them), as desk/numbers.py ``pct``; positive
+// values carry no "+" sign.
+const readablePct = (value) => {  // as desk/numbers.py pct: 100%, 57%, 5.3%, 0.42%; trailing zeros dropped
+  const number = value * 100, size = Math.abs(number);
+  let text = size.toFixed(size >= 9.95 ? 0 : size >= 0.995 ? 1 : 2);
+  if (text.includes(".")) text = text.replace(/0+$/, "").replace(/\.$/, "");
+  return text === "0" ? "0%" : (number < 0 ? "-" : "") + text + "%";
+};
 function pct(value, digits = 1, signed = false) {
-  if (!isNum(value)) return "";
-  const text = (value * 100).toFixed(digits) + "%";
-  return text;  // positive values carry no "+" sign
+  return isNum(value) ? readablePct(value) : "";
 }
 function number(value) {
   if (!isNum(value)) return "";
@@ -118,21 +124,27 @@ function sinceLabel(when) {
 }
 
 // ---------------------------------------------------------------- tables
+// A displayed zero amount ($0.00, -$0.00, 0%, 0.00) is an empty cell; a whole-number 0 (a count) stays.
+const ZERO_TEXT = /^-?(\$0(\.0+)?|0(\.0+)?%|0\.0+)$/;
 function renderTable(id, spec) {
   const original = spec;
   const host = document.getElementById("t-" + id);
   if (!host) return;
   host.replaceChildren();
-  if (!spec || !spec.columns || !spec.columns.length) {
-    host.append(el("p", { class: "empty-table", text: "Nothing to show." }));
-    return;
-  }
+  // An empty table has nothing to act on: its card is hidden until it has rows.
+  const card = host.closest(".card");
+  const empty = !spec || !spec.columns || !spec.columns.length || !(spec.rows || []).length;
+  if (card) card.hidden = empty;
+  if (empty) return;
   // A text column with the same value in every row is said once, above the table; an empty one is left out.
   const shared = [];
   if (spec.rows.length > 1) {
     spec = Object.assign({}, spec, { columns: spec.columns.filter((column, i) => {
       const format = FORMATS[column.fmt] || FORMATS.text;
-      if (i === 0 || format.num) return true;
+      if (i === 0) return true;
+      if (format.num) {  // a number column empty or zero in every row says nothing: left out
+        return spec.rows.some((row) => isNum(row[column.key]) && !ZERO_TEXT.test(format.text(row[column.key])));
+      }
       const texts = new Set(spec.rows.map((row) => format.text(row[column.key])));
       const [only] = texts;
       if (texts.size !== 1 || (spec.total && ![only, ""].includes(format.text(spec.total[column.key])))) return true;
@@ -179,8 +191,6 @@ function renderTable(id, spec) {
     });
     standout[column.key] = best;
   });
-  // A displayed zero amount ($0.00, -$0.00, 0.0%, 0.00) is an empty cell; a whole-number 0 (a count) stays.
-  const ZERO_TEXT = /^-?(\$0(\.0+)?|0(\.0+)?%|0\.0+)$/;
   const cell = (row, column, index) => {
     const format = FORMATS[column.fmt] || FORMATS.text;
     const value = row[column.key];
@@ -215,13 +225,13 @@ function tile(label, value, sub, extra) {  // extra.title: the definition, on ho
 // "24h $123 (1.2%)", net of deposits, withdrawals and transfers; per-account parts on hover.
 function dayChangeLine(day) {
   if (!day || !isNum(day.change)) return { text: "24h change n/a", cls: "muted" };
-  const share = isNum(day.pct) ? ` (${pct(day.pct, 1, true)})` : "";
-  const parts = Object.entries(day.parts || {}).map(([name, value]) => `${name}: ${wholeUsd(value, true)}`);
+  // The 24h change as a %; the dollars, per account, are on hover.
+  const parts = Object.entries(day.parts || {}).map(([name, value]) => `${name}: ${usd(value)}`);
   const missing = (day.missing || []).length ? [`Not included: ${day.missing.join(", ")}`] : [];
   return {
-    text: `24h ${wholeUsd(day.change, true)}${share} net of deposits${missing.length ? " *" : ""}`,
+    text: `24h ${isNum(day.pct) ? (day.pct > 0 ? "+" : "") + pct(day.pct) : usd(day.change)}${missing.length ? " *" : ""}`,
     cls: signClass(day.change),
-    title: ["Change over the last 24 hours, net of deposits, withdrawals and transfers.", ...parts, ...missing].join("\n"),
+    title: [`24h ${usd(day.change)}, net of deposits, withdrawals and transfers.`, ...parts, ...missing].join("\n"),
   };
 }
 
@@ -230,17 +240,16 @@ function renderTiles(k) {
   const mw = k.money_weighted || {};
   const tiles = [
     tile("Desk value", wholeUsd(k.desk_value), "", { line: dayChangeLine(k.day_change) }),
-    // Dollars and the money-weighted return, next to the time-weighted return: a loss on a small
-    // balance and a gain on a large one net out here, but not in the time-weighted figure.
-    tile("Net PnL since start", wholeUsd(mw.pnl),
-      [isNum(mw.return) ? `MW ${pct(mw.return, 1, true)}` : "",
-       isNum(k.unrealized) ? `uPnL ${wholeUsd(k.unrealized)}` : ""].filter(Boolean).join(" · "),
-      { valueClass: signClass(mw.pnl), title: "HL + IB, net of deposits and withdrawals. MW: money-weighted return." }),
+    // The two returns since start, with the dollars under them: money-weighted (what the money made, a loss on a
+    // small balance and a gain on a large one net out) and time-weighted (the strategy, deposits aside).
+    tile("MW return", pct(mw.return, 1, true) || "n/a",
+      [isNum(mw.pnl) ? `PnL ${usd(mw.pnl)}` : "", isNum(k.unrealized) ? `uPnL ${usd(k.unrealized)}` : ""].filter(Boolean).join(" · "),
+      { valueClass: signClass(mw.return), title: "Money-weighted return since start, HL + IB; PnL net of deposits and withdrawals." }),
+    tile("TW return", pct(r.since_start, 1, true), `since ${sinceLabel(k.since)}`,
+      { valueClass: signClass(r.since_start), title: "Time-weighted return since start, wallets included." }),
     tile("Return 30D", pct(r["30D"], 1, true),
       `7D ${pct(r["7D"], 1, true) || "n/a"} · 90D ${pct(r["90D"], 1, true) || "n/a"}`,
       { valueClass: signClass(r["30D"]) }),
-    tile("Return since start", pct(r.since_start, 1, true), `since ${sinceLabel(k.since)}`,
-      { valueClass: signClass(r.since_start), title: "Time-weighted, wallets included." }),
     tile("Drawdown now", pct(k.drawdown, 1), k.drawdown < 0 ? `peak ${sinceLabel(k.peak_date)}` : "at peak",
       { valueClass: k.drawdown <= -0.10 ? "neg" : "" }),
     tile("Gross leverage", isNum(k.gross_leverage) ? k.gross_leverage.toFixed(2) + "×" : "n/a",
@@ -373,8 +382,8 @@ function renderCharts(charts) {
     line: { width: 2, color: colors[i % colors.length], shape: "linear" },
     hovertemplate: "%{fullData.name}: %{y:+.1f}%<extra></extra>",
   }));
-  // % since the start; the desk line ends at the "Return since start" tile.
-  const labels = endLabels(charts.twr || [], (v) => (v > 0 ? "+" : "") + v.toFixed(1) + "%");
+  // % since the start; the desk line ends at the "TW return" tile.
+  const labels = endLabels(charts.twr || [], (v) => (v > 0 ? "+" : "") + readablePct(v / 100));
   const twrLayout = baseLayout({
     annotations: labels,
     shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }],

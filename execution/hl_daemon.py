@@ -54,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from desk.hl import daemon_link  # noqa: E402
+from desk.numbers import pct as _pct
 
 # The trading code (pandas, the executor) loads only in the server: the client commands then
 # start in a fraction of a second.
@@ -1192,7 +1193,7 @@ class Alerts:
             apr = funding_watch.sustained([float(rate) for rate in history["fundingRate"]], direction)
             if apr is not None and funding_watch.daily_cost(apr, value) >= funding_watch.MIN_DAILY_USD:
                 self.set(key, "funding",
-                         f"...{wallet[-4:]} {coin} {'long' if size > 0 else 'short'} {apr:.1%} avg APR "
+                         f"...{wallet[-4:]} {coin} {'long' if size > 0 else 'short'} {_pct(apr)} avg APR "
                          f"over {funding_watch.SUSTAINED_HOURS} hrs")
             else:
                 self.clear(key)

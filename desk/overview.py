@@ -29,7 +29,7 @@ from desk.venues import hl as hl_venue
 from desk.venues import ib as ib_venue
 from desk.venues import onchain
 from desk.venues.base import VenueAccount
-from desk.numbers import clock
+from desk.numbers import clock, pct as _pct
 
 OVERVIEW_HIGHLIGHTS_STATE = "desk_overview_highlights_state.json"
 HIGHLIGHT_MOVERS = 3
@@ -47,6 +47,11 @@ NEAR_CAP_PCT = 0.80        # open risk above this share of the cap is flagged
 IB_HISTORY_COLUMNS = ["ts", "equity_usd", "cash_usd", "margin_used_usd", "unrealized_usd", "gross_usd", "net_usd"]
 
 
+# Wallet tokens outside HL are shown from this share of the desk up; smaller ones are dust for decisions (they still
+# count in desk value). The dashboards use the same cut (desk/dashboard.py, web/live.js).
+WALLET_MIN_SHARE = 0.05
+
+
 def _money(value):
     from desk.numbers import usd
 
@@ -54,7 +59,9 @@ def _money(value):
 
 
 def _percent(value):
-    return "n/a" if value is None or not math.isfinite(value) else f"{value:.2%}"
+    from desk.numbers import pct
+
+    return pct(value)
 
 
 # Columns coloured by sign (green up, red down) and the Side column (LONG green, SHORT red).
@@ -71,7 +78,9 @@ def _signed_style(row_index, column, value, row):
 
 
 def _signed_percent(value):
-    return "" if value is None or not math.isfinite(value) else f"{value:.2%}"
+    from desk.numbers import pct
+
+    return pct(value, missing="")
 
 
 def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], float] | None,
@@ -434,7 +443,7 @@ class DeskOverview:
         """HL realized and unrealized PnL, fees and volume split by strategy (desk/journal.py)."""
         from desk.journal import show_strategies
 
-        show_strategies()
+        show_strategies(self.desk_equity)
 
     def show_candidates(self):
         """Short candidates from the screener (desk/screener.py), as last ranked."""
@@ -569,11 +578,11 @@ class DeskOverview:
             key_columns={"% of desk equity": "max"})
         if self.problems:
             print("WARNING: unreadable accounts are missing from this risk total.")
-        print(f"Open risk: {used / equity:.1%} of risk equity, {used / cap:.0%} of the {MAX_TOTAL_RISK_PCT:.0%} cap; "
-              f"room {(cap - used) / equity:.1%}." if equity and cap else "Open risk: n/a (no risk equity).")
+        print(f"Open risk: {_pct(used / equity)} of risk equity, {used / cap:.0%} of the {MAX_TOTAL_RISK_PCT:.0%} cap; "
+              f"room {_pct((cap - used) / equity)}." if equity and cap else "Open risk: n/a (no risk equity).")
         budget = per_position_budget(equity)
         print(f"Per-position risk budget for a new trade: {_money(budget)}"
-              + (f" ({budget / equity:.1%} of risk equity)." if equity else "."))
+              + (f" ({_pct(budget / equity)} of risk equity)." if equity else "."))
         for entry in self.book:
             for symbol, risk, basis in entry.position_risks:
                 if "no price history" in basis:
@@ -590,12 +599,13 @@ class DeskOverview:
         return [snapshot for snapshot in self.snapshots if snapshot.venue != "onchain"]
 
     def show_wallet_holdings(self, min_usd: float = 1.0):
-        """Each HL wallet's own tokens on other chains: chain, amount, price and value."""
+        """Each HL wallet's own tokens on other chains worth at least WALLET_MIN_SHARE of the desk (smaller ones are dust
+        for decisions; they still count in desk value): chain, amount, price and value."""
         if not self._require():
             return
         frame = self.wallet_holdings_frame(min_usd)
+        frame = frame[frame["% of desk"] >= WALLET_MIN_SHARE] if len(frame) else frame
         if frame.empty:
-            print("No wallet holdings outside HL.")
             return
         total = {"Wallet": "Total", "Chain": "", "Token": "", "Note": "", "Amount": float("nan"), "Price": float("nan"),
                  "Value": frame["Value"].sum(), "% of desk": frame["% of desk"].sum()}
@@ -713,21 +723,21 @@ class DeskOverview:
             ("Net exposure", of_trading(net)),
             ("Long / short", f"{long_value / trading_equity:.2f}x / {short_value / trading_equity:.2f}x trading equity"
              if trading_equity else "n/a"),
-            ("Unrealized PnL", f"{unrealized / gross:.1%} of positions" if gross else "n/a"),
+            ("Unrealized PnL", f"{_pct(unrealized / gross)} of positions" if gross else "n/a"),
             ("Open positions", f"{len(positions)} across {len(trading)} trading accounts"),
         ]
         if largest:
             label, position = largest
             rows.append(("Largest position", f"{position.symbol} {position.side.lower()} "
-                                             f"{abs(position.notional_usd) / desk:.1%} of desk ({label})" if desk else "n/a"))
+                                             f"{_pct(abs(position.notional_usd) / desk)} of desk ({label})" if desk else "n/a"))
         if self.book:
             equity = sum(entry.equity_usd for entry in self.book)
             used = sum(entry.risk_usd for entry in self.book)
             cap = equity * MAX_TOTAL_RISK_PCT
             budget = per_position_budget(equity)
             rows.append(("Open risk vs cap", f"{used / cap:.0%} of the {MAX_TOTAL_RISK_PCT:.0%} cap "
-                                             f"({used / equity:.1%} of risk equity)" if cap else "n/a"))
-            rows.append(("Next position budget", f"{_money(budget)} ({budget / equity:.1%} of risk equity)"
+                                             f"({_pct(used / equity)} of risk equity)" if cap else "n/a"))
+            rows.append(("Next position budget", f"{_money(budget)} ({_pct(budget / equity)} of risk equity)"
                                                  if equity else _money(budget)))
         if self.problems:
             rows.append(("Unreadable accounts", "; ".join(problem.split(":")[0] for problem in self.problems)))
@@ -771,7 +781,7 @@ class DeskOverview:
             def mover(position):
                 # The % is unrealized PnL over the position's entry value, as in the movers table.
                 share = _pnl_share(position)
-                return f"{position.symbol} {share:.1%}" if math.isfinite(share) else f"{position.symbol} n/a"
+                return f"{position.symbol} {_pct(share)}" if math.isfinite(share) else f"{position.symbol} n/a"
             winner_parts, loser_parts = [], []
             for kind in MARKET_KINDS:  # crypto and stocks ranked apart, shown in one row per side
                 group = [item for item in ranked if market_kind(item[1]) == kind]

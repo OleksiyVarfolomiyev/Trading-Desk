@@ -35,6 +35,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from desk.numbers import pct as _pct
 
 ROOT = Path(__file__).resolve().parents[2]
 PANEL_FILE = ROOT / "data" / "api_cache" / "signal_panel.csv.gz"   # plain CSV: both Python environments read it
@@ -357,7 +358,7 @@ def show_signal_research() -> None:
         print("No signal research yet: run python -m desk.hl.signal_research")
         return
     frame = results_frame(state)
-    percent = lambda value: "" if value != value else f"{value:.2%}"
+    percent = lambda value: "" if value != value else f"{_pct(value)}"
     number = lambda value: "" if value != value else f"{value:.1f}"
     display_interactive_table(frame, title="SIGNAL RESEARCH: NEXT-WEEK RETURNS, AFTER COSTS AND STOPS",
                               formatters={"Long-short (/wk)": percent, "Short the low third (/wk)": percent,

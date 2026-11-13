@@ -53,7 +53,7 @@ from desk.hl.account_analytics import (
 
 
 from desk.hl.trade_analytics import time_weighted_index
-from desk.numbers import usd as _usd
+from desk.numbers import usd as _usd, pct as _pct
 
 
 def _combine_wallet_data(wallet_analytics):
@@ -280,12 +280,12 @@ class _MultiWalletRealizedMixin:
         net_index=breakdown.index[breakdown['Component']=='Net perp PnL'][0]
         display_interactive_table(breakdown,formatters={
             'Amount':lambda v:f'{_usd(v)}',
-            'Contribution (% of |net PnL|)':lambda v:f'{v:.2f}%',
+            'Contribution (% of |net PnL|)':lambda v:f'{_pct(v, scaled=True)}',
         },cell_style=breakdown_style,bold_last=True,key_columns={'Amount':None},title='PERP PNL BREAKDOWN',
           blank_missing_cells={(net_index,'Contribution (% of |net PnL|)')})
         liquidations=liquidation_stats(perp_df,funding_history=data.funding_history_df)
         print(f"Liquidations: {liquidations['liquidations']} of {liquidations['closes']} closes "
-              f"({liquidations['close_pct']:.2f}%) | liquidation PnL: {_usd(liquidations['pnl'])}.")
+              f"({_pct(liquidations['close_pct'], scaled=True)}) | liquidation PnL: {_usd(liquidations['pnl'])}.")
         if non_usd_tokens:
             print(f'Trading/fee dollar contributions unavailable for fee token(s): {non_usd_tokens}.')
 
@@ -316,7 +316,7 @@ class _MultiWalletVolumeMixin:
             return ''
         display_interactive_table(summary,formatters={
             'Volume':lambda v:f'{_usd(v)}','Realized PnL excl. funding (trading + fees)':lambda v:f'{_usd(v)}',
-            'Realized PnL / Volume (%)':lambda v:f'{v:.2f}%',
+            'Realized PnL / Volume (%)':lambda v:f'{_pct(v, scaled=True)}',
             'PnL / $1k volume':lambda v:f'{_usd(v)}',
             'Daily Pearson r':lambda v:f'{v:.3f}','Daily Spearman r':lambda v:f'{v:.3f}',
         },cell_style=style,bold_last=True,title=title,blank_missing_cells=volume_total_blank_cells(summary),

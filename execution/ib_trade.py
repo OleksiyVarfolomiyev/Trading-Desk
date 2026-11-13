@@ -41,6 +41,7 @@ from desk.risk import (  # noqa: E402
 )
 from desk.venues import ib as ib_venue  # noqa: E402
 from desk.venues.ib import ContractSpec  # noqa: E402
+from desk.numbers import pct as _pct
 
 # Shared with the HL executor: one kill switch halts new entries on every venue.
 KILL_SWITCH_FILE = Path(__file__).resolve().parent / "KILL_SWITCH"
@@ -216,7 +217,7 @@ def check_limit_price(limit: float, last: float) -> str:
         return "no last trade to check limit_price against"
     gap = limit / last - 1
     if abs(gap) > LIMIT_PRICE_MAX_GAP_PCT:
-        return (f"limit_price {limit:,.6g} is {gap:.1%} from the last trade {last:,.6g} "
+        return (f"limit_price {limit:,.6g} is {_pct(gap)} from the last trade {last:,.6g} "
                 f"(more than {LIMIT_PRICE_MAX_GAP_PCT:.0%}; check for a typo)")
     return ""
 
@@ -603,7 +604,7 @@ def print_plans(plans: list[IBPlan], summary: dict) -> None:
     print_book(summary["external"])
     print(f"Desk equity (all venues): ${summary['desk_equity']:,.2f}")
     print(f"Estimated desk open risk: ${summary['current_risk']:,.2f} "
-          f"({summary['current_risk'] / summary['desk_equity']:.2%} of desk equity; IB ${summary['ib_risk']:,.2f})")
+          f"({_pct(summary['current_risk'] / summary['desk_equity'])} of desk equity; IB ${summary['ib_risk']:,.2f})")
     for symbol, risk, basis in summary["position_risks"]:
         if "no price history" in basis:
             print(f"  IB {symbol}: ${risk:,.2f} ({basis})")
@@ -1021,9 +1022,9 @@ def print_protection_plans(plans: list[ProtectionPlan], with_targets: bool) -> N
                     f"{size:g} @ {stop_text(stop)}" + (f" / target {target:,.4g}" if with_targets else "")
                     for size, stop, target in plan.ladder))
             else:
-                parts.append(f"{stop_text(plan.stop_price)} {(plan.stop_price / plan.mark - 1):.1%}")
+                parts.append(f"{stop_text(plan.stop_price)} {_pct((plan.stop_price / plan.mark - 1))}")
                 if with_targets:
-                    parts.append(f"target {plan.target_price:,.4g} ({(plan.target_price / plan.mark - 1):.1%})")
+                    parts.append(f"target {plan.target_price:,.4g} ({_pct((plan.target_price / plan.mark - 1))})")
             parts.append(f"risk to stop ${plan.risk_usd:,.2f}")
             covered = f"already covered: stop {plan.existing_stop_quantity:g}, target {plan.existing_target_quantity:g}"
             adds = f"add stop {plan.stop_quantity_to_add:g}" + (

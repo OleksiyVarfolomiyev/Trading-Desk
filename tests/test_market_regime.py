@@ -51,7 +51,7 @@ class EquityTests(unittest.TestCase):
                                 "evidence": {"hit": 0.72, "base": 0.48, "days": 31}},
                  "equity_selloff": {"level": "notice", "signals": {"E1": False, "E2": True, "E3": False, "E4": True},
                                     "measures": {"vol10": 0.29, "vol10_rank": 0.95}}}
-        self.assertEqual(m.notices(state), [("Regime", "Alt season high 3/4: alts +12.0% vs BTC 7d, breadth 80%, alts +15.0% "
+        self.assertEqual(m.notices(state), [("Regime", "Alt season high 3/4: alts +12% vs BTC 7d, breadth 80%, alts +15% "
                                                        "vs BTC 30d; evidence 72% vs 48% base (31 days); Equity sell-off "
                                                        "notice 2/4: SPY below falling 50d avg, 10d vol 29% (top 5%).")])
         calm = {"alt_season": {"level": "none"}, "equity_selloff": {"level": "none"}}

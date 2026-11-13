@@ -31,7 +31,8 @@ class ScreenerTests(unittest.TestCase):
         signals = pd.DataFrame({"efficiency": [0.9, 0.1, 0.2], "move30": [0.5, 0.01, -0.02], "range_pct": [0.05, 0.04, 0.03]},
                                index=["TREND", "CHOP", "QUIET"])
         live = pd.DataFrame({"funding_hour": [0.0] * 3, "volume24h": [5e6, 5e6, 1e6]}, index=["TREND", "CHOP", "QUIET"])
-        rows = screener.market_making_candidates(signals, live, ["TREND", "CHOP", "QUIET"], {"CHOP"}, top=2)
+        rows = screener.market_making_candidates(signals, live, ["TREND", "CHOP", "QUIET"], {"CHOP"}, top=2,
+                                                 funding_history=lambda coin: [])
         self.assertEqual(rows.iloc[0]["Coin"], "CHOP")
         self.assertEqual(rows.iloc[0]["Notes"], "ladder running")
         self.assertNotIn("TREND", list(rows["Coin"]))
@@ -54,19 +55,32 @@ class ScreenerTests(unittest.TestCase):
                                          funding_history=history.get).set_index("Coin")
         self.assertEqual(list(rows.index), ["CROWD", "CLEAN"])                             # ranking unchanged by the flag
         self.assertAlmostEqual(rows.loc["CROWD", "Funding 7d (APR)"], (-0.00005 * 0.8 + 0.0000125 * 0.2) * 8760)   # the short pays
-        self.assertEqual(rows.loc["CROWD", "Crowding"], "crowded")
+        self.assertIn("crowded", rows.loc["CROWD", "Notes"])
         self.assertAlmostEqual(rows.loc["CLEAN", "Funding 7d (APR)"], 0.0000125 * 8760)    # HL's base rate: longs pay, the short earns ~11%
-        self.assertEqual(rows.loc["CLEAN", "Crowding"], "")
+        self.assertNotIn("crowded", rows.loc["CLEAN", "Notes"])
         self.assertAlmostEqual(rows.loc["CROWD", "OI / volume"], 2.0)
 
     def test_no_funding_history_leaves_the_columns_blank(self):
         self.assertTrue(all(value != value for value in screener.crowding([])))
 
+    def test_ladder_candidates_show_the_week_of_funding_and_a_crowded_side(self):
+        signals = pd.DataFrame({"efficiency": [0.1, 0.12, 0.14], "move30": [0.0] * 3, "range_pct": [0.04] * 3},
+                               index=["SHORTS", "LONGS", "CALM"])
+        live = pd.DataFrame({"funding_hour": [0.0] * 3, "volume24h": [5e6] * 3}, index=["SHORTS", "LONGS", "CALM"])
+        history = {"SHORTS": [-0.00005] * 100, "LONGS": [0.0001] * 100, "CALM": [0.0000125] * 100}
+        rows = screener.market_making_candidates(signals, live, ["SHORTS", "LONGS", "CALM"], set(),
+                                                 funding_history=history.get).set_index("Coin")
+        self.assertAlmostEqual(rows.loc["CALM", "Longs pay 7d (APR)"], 0.0000125 * 8760)   # HL's base rate
+        self.assertIn("crowded short", rows.loc["SHORTS", "Notes"])
+        self.assertIn("crowded long", rows.loc["LONGS", "Notes"])                       # 87.6% APR paid by longs
+        self.assertEqual(rows.loc["CALM", "Notes"], "")
+
     def test_ladder_candidates_flag_range_edges_and_show_own_edge(self):
         signals = pd.DataFrame({"efficiency": [0.1, 0.15], "move30": [0.0, 0.01], "range_pct": [0.04, 0.04],
                                 "range_position": [0.5, 0.95]}, index=["MID", "TOP"])
         live = pd.DataFrame({"funding_hour": [0.0, 0.0], "volume24h": [5e6, 5e6]}, index=["MID", "TOP"])
-        rows = screener.market_making_candidates(signals, live, ["MID", "TOP"], set(), edges={"MID": 0.42}).set_index("Coin")
+        rows = screener.market_making_candidates(signals, live, ["MID", "TOP"], set(), edges={"MID": 0.42},
+                                                 funding_history=lambda coin: []).set_index("Coin")
         self.assertIn("breakout risk", rows.loc["TOP", "Notes"])
         self.assertEqual(rows.loc["MID", "Own ladder edge per $1k"], 0.42)
         self.assertTrue(pd.isna(rows.loc["TOP", "Own ladder edge per $1k"]))   # no made-up edge where no ladder has traded

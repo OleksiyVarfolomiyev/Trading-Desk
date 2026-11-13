@@ -79,3 +79,25 @@ def clock(when, now=None) -> str:
         return time
     day = f"{stamp:%b} {stamp.day}" + (f" '{stamp:%y}" if stamp.year != now.year else "")
     return f"{day}, {time}"
+
+
+def pct(value, signed: bool = False, missing: str = "n/a", scaled: bool = False) -> str:
+    """A share or return for reading: whole percents from 10% up (100%, 57%), one decimal from 1% (5.3%), two
+    below (0.42%), trailing zeros dropped (5%, not 5.0%). ``value`` is a fraction (0.05), or already in percent
+    with ``scaled``; ``signed`` puts a "+" on gains. The dashboards' ``pct`` and ``percent`` follow the same rule."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return missing
+    if not math.isfinite(value):
+        return missing
+    number = value if scaled else value * 100
+    size = abs(number)
+    digits = 0 if size >= 9.95 else 1 if size >= 0.995 else 2
+    text = f"{size:.{digits}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    if text == "0":
+        return "0%"
+    sign = "-" if number < 0 else ("+" if signed else "")
+    return f"{sign}{text}%"

@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from desk.numbers import usd as _usd
+from desk.numbers import usd as _usd, pct as _readable_pct
 
 STATE_FILE_NAME = "hl_highlights_state.json"
 MIN_MOVE_USD = 1.0
@@ -29,7 +29,7 @@ def _position_key(row: dict[str, Any]) -> str:
 
 
 def _pct(share: float) -> str:
-    return f" ({share:.1%})" if pd.notna(share) and np.isfinite(share) else ""
+    return f" ({_readable_pct(share)})" if pd.notna(share) and np.isfinite(share) else ""
 
 
 def _kind(ticker: str) -> str:
@@ -118,7 +118,7 @@ def _window_rows(
         (well if amount > 0 else attention).append({"Window": window, "Update": update, "Detail": detail})
     if pd.notna(pnl) and pnl != 0:
         base = equity - pnl
-        share = f" ({pnl / base * 100:.2f}%)" if base > 0 else ""
+        share = f" ({_readable_pct(pnl / base * 100, scaled=True)})" if base > 0 else ""
         add("PnL including open positions", pnl, f"{_usd(pnl)}{share}")
     if not fills.empty:
         # Opening fills only carry a fee, so gross PnL identifies actual closes.
@@ -206,6 +206,6 @@ def build_highlights(
     if near_liquidation:
         attention.append(now_row(
             f"Within {LOW_LIQUIDATION_PCT:g}% of liquidation",
-            ", ".join(f"{coin} {distance:.1f}%" for distance, coin in near_liquidation),
+            ", ".join(f"{coin} {_readable_pct(distance, scaled=True)}" for distance, coin in near_liquidation),
         ))
     return well, attention

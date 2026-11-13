@@ -98,10 +98,10 @@ def fit_entry(exposures, equity: float, asset_class: str, symbol: str, notional:
             allowed = max(0.0, room / extra)
             if allowed < fraction:
                 fraction = allowed
-                note = (f"{name} stress: the desk would lose {(base[name] + extra) / equity:.0%} of equity "
-                        f"(limit {BLOCK_PCT:.0%}); " + ("entry refused" if allowed == 0 else f"entry cut to {allowed:.0%}"))
+                note = (("entry refused" if allowed == 0 else f"entry cut to {allowed:.0%}")
+                        + f": {name} stress would cost {(base[name] + extra) / equity:.0%} of equity (limit {BLOCK_PCT:.0%})")
         elif not note and (base[name] + extra) / equity >= WARN_PCT:
-            note = f"{name} stress: the desk would lose {(base[name] + extra) / equity:.0%} of equity (warning at {WARN_PCT:.0%})"
+            note = f"stress warning: {name} would cost {(base[name] + extra) / equity:.0%} of equity (warning at {WARN_PCT:.0%})"
     return fraction, note
 
 

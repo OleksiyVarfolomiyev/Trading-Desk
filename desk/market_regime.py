@@ -38,6 +38,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from desk.numbers import pct as _pct
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_FILE = ROOT / "data" / "market_regime.json"
@@ -160,12 +161,12 @@ def evidence(signals: pd.DataFrame, names: list[str]) -> dict:
 # ---------------------------------------------------------------------------
 
 def _describe_alts(row: pd.Series) -> str:
-    return (f"alts {row['rel7']:.1%} vs BTC over 7 days (top {1 - row['rel7_rank']:.0%} of the year), "
-            f"{row['breadth7']:.0%} of alts beat BTC, {row['rel30']:.1%} over 30 days")
+    return (f"alts {_pct(row['rel7'])} vs BTC over 7 days (top {1 - row['rel7_rank']:.0%} of the year), "
+            f"{row['breadth7']:.0%} of alts beat BTC, {_pct(row['rel30'])} over 30 days")
 
 
 def _describe_equities(row: pd.Series) -> str:
-    return (f"SPY {row['drawdown60']:.1%} from its 60-day high, VIX {row['vix']:.1f} ({row['vix5']:.0%} in 5 sessions), "
+    return (f"SPY {_pct(row['drawdown60'])} from its 60-day high, VIX {row['vix']:.1f} ({row['vix5']:.0%} in 5 sessions), "
             f"10-day volatility {row['vol10']:.0%}")
 
 
@@ -208,11 +209,11 @@ def current(max_age: float = STATE_MAX_AGE_SECONDS, path: Path = STATE_FILE) -> 
 
 # Each signal as a few words with its number, for the highlights (only the signals that are on are shown).
 SIGNAL_TEXT = {
-    "A1": lambda m: f"alts {m['rel7']:+.1%} vs BTC 7d",
+    "A1": lambda m: f"alts {_pct(m['rel7'], signed=True)} vs BTC 7d",
     "A2": lambda m: f"breadth {m['breadth7']:.0%}",
-    "A3": lambda m: f"alts {m['rel30']:+.1%} vs BTC 30d",
+    "A3": lambda m: f"alts {_pct(m['rel30'], signed=True)} vs BTC 30d",
     "A4": lambda m: "alt/BTC above rising 20d avg",
-    "E1": lambda m: f"SPY {m['drawdown60']:.1%} from 60d high",
+    "E1": lambda m: f"SPY {_pct(m['drawdown60'])} from 60d high",
     "E2": lambda m: "SPY below falling 50d avg",
     "E3": lambda m: f"VIX {m['vix']:.1f} ({m['vix5']:+.0%} 5d)",
     "E4": lambda m: f"10d vol {m['vol10']:.0%} (top {1 - m['vol10_rank']:.0%})",

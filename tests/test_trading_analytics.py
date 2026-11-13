@@ -434,7 +434,7 @@ class RealizedPnlTests(unittest.TestCase):
     def test_account_history_gap_warns_only_above_threshold(self):
         warning = self.account.account_history_gap_warning
         self.assertIsNone(warning(1_015.0, 1_000.0))
-        self.assertIn("3.0%", warning(1_030.0, 1_000.0))
+        self.assertIn("3%", warning(1_030.0, 1_000.0))
         self.assertIsNone(warning(float("nan"), 1_000.0))
 
     def test_rolling_24h_excludes_deposits_and_older_activity(self):
@@ -1061,9 +1061,9 @@ class TradeAnalyticsTests(unittest.TestCase):
         well, attention = build_highlights(now, baseline, positions, fills, pd.DataFrame(), 30.0, 15.0,
                                            1000.0, 0.0, 100.0, 50.0, 100.0, [])
         details = {row["Update"]: row["Detail"] for row in well + attention}
-        self.assertIn("ETH $20 (2.0%)", details["Closed at a profit"])
-        self.assertIn("SOL -$5.00 (-2.0%)", details["Closed at a loss"])
-        self.assertIn("INJ (w) $30 (5.0%)", details["Biggest open-position gains"])
+        self.assertIn("ETH $20 (2%)", details["Closed at a profit"])
+        self.assertIn("SOL -$5.00 (-2%)", details["Closed at a loss"])
+        self.assertIn("INJ (w) $30 (5%)", details["Biggest open-position gains"])
 
     def test_top_and_bottom_lists_never_share_a_market(self):
         small = pd.DataFrame({"Ticker": list("ABCDE"), CHANGE: [5.0, 3.0, 1.0, -2.0, -4.0]})

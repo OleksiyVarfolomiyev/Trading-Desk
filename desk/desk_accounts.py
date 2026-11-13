@@ -30,7 +30,7 @@ from desk.notebook_highlights import show as show_highlights
 from desk.overview import DeskOverview
 from desk import emphasis
 from desk.charts import show as show_chart
-from desk.numbers import since, usd as _usd
+from desk.numbers import since, usd as _usd, pct as _pct
 
 ROOT_DATA = Path(__file__).resolve().parents[1] / "data"
 RESEARCH_PRICES = Path(__file__).resolve().parents[1] / "research" / "data" / "daily_prices_usd.csv"
@@ -518,7 +518,7 @@ class DeskAccounts:
         """HL performance by strategy: directional, conviction, hedge and the ladders' market making (desk/journal.py)."""
         from desk.journal import show_strategies
 
-        show_strategies()
+        show_strategies(self.overview.desk_equity)
 
     def show_market_making(self):
         """The market-making ladders' fills, volume, spread captured and PnL (desk/market_making.py)."""
@@ -533,14 +533,14 @@ class DeskAccounts:
         table = self.performance_frame()
         columns = list(table.columns)
         money = lambda value: "n/a" if not np.isfinite(value) else f"{_usd(value)}"
-        percent = lambda value: "n/a" if not np.isfinite(value) else f"{value:.2%}"
+        percent = lambda value: "n/a" if not np.isfinite(value) else f"{_pct(value)}"
         display_interactive_table(table[columns], bold_last=True, title="DESK PERFORMANCE (NET OF DEPOSITS)",
                                   key_columns={"Return 30D": "abs"},
                                   formatters={column: (percent if column.startswith("Return") else money)
                                               for column in columns[1:] if column != "Since"})
         total = float(self.index.iloc[-1] / self.index.iloc[0] - 1)
         print(f"Desk time-weighted return since {since(self.common_start)} (first date every account has history): "
-              f"{total:.2%}. PnL is each account's value change less deposits and withdrawals; transfers between "
+              f"{_pct(total)}. PnL is each account's value change less deposits and withdrawals; transfers between "
               "desk accounts cancel in the combined return. Wallet tokens on other chains are not included.")
 
     def desk_returns(self, index: pd.Series | None = None) -> dict[str, float]:
@@ -636,7 +636,7 @@ class DeskAccounts:
                                 if pd.notna(value))
                 if pd.notna(row.get("Volatility (/yr)", np.nan)):
                     var95, equity = row.get("VaR 95%", np.nan), self.overview.desk_equity
-                    var_text = f", VaR 95% {var95 / equity:.1%}/day" if pd.notna(var95) and equity else ""
+                    var_text = f", VaR 95% {_pct(var95 / equity)}/day" if pd.notna(var95) and equity else ""
                     parts.append(f"volatility {row['Volatility (/yr)']:.0%}/yr{var_text}{betas}")
             if len(regime):
                 row = regime.iloc[0]

@@ -54,6 +54,7 @@ from desk.risk import (  # noqa: E402
     is_hedged,
 )
 from desk.risk import HL_STOP_ATR_MULTIPLE as STOP_ATR_MULTIPLE  # noqa: E402
+from desk.numbers import pct as _pct
 FUNDING_STRESS_PERCENTILE = 0.95
 MIN_ORDER_VALUE_USD = 10.0
 ENTRY_TIMEOUT_SECONDS = 5 * 60
@@ -1770,7 +1771,7 @@ def _place_taker_entry(
         if size > 0:
             return round(size, market.size_decimals), average
     raise RuntimeError(
-        f"{plan.coin}: no fill within {slippage:.2%} of the ${mid:,.6g} mid "
+        f"{plan.coin}: no fill within {_pct(slippage)} of the ${mid:,.6g} mid "
         f"({status.get('error') or status!r}); nothing rests on the book."
     )
 
@@ -2138,7 +2139,7 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
         f"${max(0.0, snapshot.target_equity * (1 - RESERVE_PCT) - snapshot.target_margin_used):,.2f}"
     )
     print(f"Estimated current stop + 5-day adverse funding risk: ${current_risk:,.2f} "
-          f"({current_risk / snapshot.desk_equity:.2%} of desk equity)")
+          f"({_pct(current_risk / snapshot.desk_equity)} of desk equity)")
     print(f"Aggregate stop-risk cap: ${snapshot.desk_equity * MAX_TOTAL_RISK_PCT:,.2f} "
           f"({MAX_TOTAL_RISK_PCT * 100:g}% of desk equity)")
     print(

@@ -14,6 +14,7 @@ adverse only now.
 from __future__ import annotations
 
 import re
+from desk.numbers import pct as _pct
 
 HOURS_PER_YEAR = 24 * 365
 ADVERSE_APR = 0.365          # 0.1% of the position's value a day
@@ -44,7 +45,7 @@ def attention_row(items: list[tuple[str, float, float]]) -> tuple[str, str] | No
                      key=lambda item: -item[2])
     if not flagged:
         return None
-    return TITLE, ", ".join(f"{name} {apr:.1%} APR" for name, apr, _ in flagged) + "."
+    return TITLE, ", ".join(f"{name} {_pct(apr)} APR" for name, apr, _ in flagged) + "."
 
 
 def sustained(rates: list[float], direction: int) -> float | None:
@@ -97,8 +98,8 @@ def consolidate(rows: list[tuple[str, str]]) -> list[tuple[str, str]]:
     worst_first = lambda values: sorted(values, key=lambda value: value[1])
     parts = []
     if sustained:
-        parts.append(", ".join(f"{name} {apr:.1%}" for name, apr in worst_first(sustained.values())) + f" avg APR over {hours} hrs")
+        parts.append(", ".join(f"{name} {_pct(apr)}" for name, apr in worst_first(sustained.values())) + f" avg APR over {hours} hrs")
     only_now = [value for key, value in now.items() if key not in sustained]
     if only_now:
-        parts.append(", ".join(f"{name} {apr:.1%}" for name, apr in worst_first(only_now)) + " APR now")
+        parts.append(", ".join(f"{name} {_pct(apr)}" for name, apr in worst_first(only_now)) + " APR now")
     return kept[:at] + [(ROW_TITLE, "; ".join(parts) + ".")] + kept[at:]

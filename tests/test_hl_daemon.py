@@ -488,7 +488,7 @@ class ExecutorFastPathTests(unittest.TestCase):
     def test_an_urgent_entry_with_nothing_inside_the_cap_leaves_nothing_resting(self):
         exchange = MagicMock()
         exchange.order.return_value = statuses({"error": "Order could not immediately match"})
-        with self.assertRaisesRegex(RuntimeError, "no fill within 0.50%"):
+        with self.assertRaisesRegex(RuntimeError, "no fill within 0.5%"):
             ht._place_taker_entry(exchange, WALLET, self.plan, self.market, reference=8.0, baseline=0.0)
 
     def test_a_failed_send_is_settled_from_the_position(self):
@@ -832,7 +832,7 @@ class FundingAlertTests(unittest.TestCase):
         alerts = self.check(-1000, [-0.0001] * 8)  # longs receive: the short pays 87.6% APR
         item = alerts.items[f"funding:{WALLET}:MELANIA"]
         self.assertEqual(item["title"], "funding")
-        self.assertEqual(item["text"], f"...{WALLET[-4:]} MELANIA short -87.6% avg APR over 6 hrs")
+        self.assertEqual(item["text"], f"...{WALLET[-4:]} MELANIA short -88% avg APR over 6 hrs")
 
     def test_one_earning_hour_in_the_six_clears_it(self):
         alerts = self.check(-1000, [-0.0001] * 5 + [0.00001] + [-0.0001] * 2)

@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from desk.hl import signal_research as research
-from desk.numbers import usd as _usd
+from desk.numbers import usd as _usd, pct as _pct
 
 ROOT = Path(__file__).resolve().parents[1]
 SCREENER_FILE = ROOT / "data" / "screener.json"
@@ -44,17 +44,20 @@ RISK_BUDGET_PCT = 0.80 * 0.05            # 5% of the 80% usable equity (desk/ris
 # Scores point the way a signal's long side buys, so shorts are the lowest scores. The fallback, the desk's record
 # (short alts already weak against BTC over 30 days), ranks by that return: the weakest score lowest.
 FALLBACK = {"rel30": 1.0}
+CROWDED_LONG_APR = 0.365                 # longs paying 0.1% a day on average over 7 days: a crowded long (desk/funding_watch.py)
 CROWDED_SHARE = 0.5                      # shorts paid in more than half the hours of the last 7 days: crowded
 FUNDING_DAYS = 7
 # Research columns only: the stop, the size and the margin are the executor's and the daemon's.
-CANDIDATE_COLUMNS = ["Coin", "Score", "Basis", "30d vs BTC", "7d vs BTC", "From 60d high", "Funding 7d (APR)",
-                     "Crowding", "OI / volume", "24h volume", "Notes"]
-CANDIDATE_FORMATS = {"Score": "num2", "30d vs BTC": "spct", "7d vs BTC": "spct", "From 60d high": "spct",
-                     "Funding 7d (APR)": "spct", "OI / volume": "num2", "24h volume": "usd"}
-MM_COLUMNS = ["Coin", "Efficiency (30d)", "30d move", "Range position (60d)", "Daily range", "24h volume", "Funding (APR)",
+CANDIDATE_COLUMNS = ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "From high 60d", "Funding 7d (APR)",
+                     "OI / volume", "Volume 24h", "Notes"]
+CANDIDATE_FORMATS = {"Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "From high 60d": "spct",
+                     "Funding 7d (APR)": "spct", "OI / volume": "num2", "Volume 24h": "usd"}
+# Funding for a ladder: the 7-day time-weighted average from the long side (positive: longs pay). The ladder's
+# position swings both ways, so what it pays is that average times its lean; a crowded side is flagged in Notes.
+MM_COLUMNS = ["Coin", "Efficiency 30d", "Move 30d", "Range position 60d", "Daily range 30d", "Volume 24h", "Longs pay 7d (APR)",
               "Own ladder edge per $1k", "Notes"]
-MM_FORMATS = {"Efficiency (30d)": "num2", "30d move": "spct", "Range position (60d)": "pct", "Daily range": "pct",
-              "24h volume": "usd", "Funding (APR)": "spct", "Own ladder edge per $1k": "susd"}
+MM_FORMATS = {"Efficiency 30d": "num2", "Move 30d": "spct", "Range position 60d": "pct", "Daily range 30d": "pct",
+              "Volume 24h": "usd", "Longs pay 7d (APR)": "spct", "Own ladder edge per $1k": "susd"}
 MM_EDGE_ZONE = (0.2, 0.8)                # outside this part of the 60-day range a breakout is likelier: flagged
 MAX_LEVERAGE = 4                         # the executor's cap on main-DEX perps
 
@@ -123,10 +126,10 @@ def zscores(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
 
 def _stress_note(note: str) -> str:
     """stress.fit_entry's note in a few words, for an entry the size of the risk budget at the 3 x ATR stop."""
-    if "entry refused" in note:
+    if note.startswith("entry refused"):
         return "refused: stress over limit"
-    if "entry cut to" in note:
-        return "cut to " + note.rsplit("entry cut to ", 1)[1] + ": stress"
+    if note.startswith("entry cut to"):
+        return note.split(":")[0].removeprefix("entry ") + ": stress over limit"   # "cut to 40%: stress over limit"
     return "stress warning"
 
 
@@ -152,20 +155,21 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
         size = budget / stop if stop > 0 else float("nan")
         _, note = stress.fit_entry(exposures, desk_equity, "crypto perp", coin, -size) if desk_equity > 0 and size == size else (1.0, "")
         apr, paid = crowding(funding_history(coin))
-        notes = trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else []) \
+        crowded = ["crowded"] if paid == paid and paid > CROWDED_SHARE else []   # shorts paid in most hours this week
+        notes = crowded + trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else []) \
             + (["already held"] if coin in held else [])
         volume = live.loc[coin, "volume24h"]
         open_interest = live.loc[coin, "open_interest"] if "open_interest" in live.columns else float("nan")
-        rows.append({"Coin": coin, "Score": row["score"], "Basis": basis, "30d vs BTC": row.get("rel30"), "7d vs BTC": row.get("rel7"),
-                     "From 60d high": row.get("from_high60"), "Funding 7d (APR)": apr,
-                     "Crowding": "crowded" if paid == paid and paid > CROWDED_SHARE else "",
-                     "OI / volume": open_interest / volume if volume else float("nan"), "24h volume": volume,
+        rows.append({"Coin": coin, "Score": row["score"], "Basis": basis, "vs BTC 30d": row.get("rel30"), "vs BTC 7d": row.get("rel7"),
+                     "From high 60d": row.get("from_high60"), "Funding 7d (APR)": apr,
+                     "OI / volume": open_interest / volume if volume else float("nan"), "Volume 24h": volume,
                      "Notes": "; ".join(notes)})
     return pd.DataFrame(rows, columns=CANDIDATE_COLUMNS)
 
 
 def market_making_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[str], laddered: set[str],
-                             top: int = MM_TOP_N, edges: dict[str, float] | None = None) -> pd.DataFrame:
+                             top: int = MM_TOP_N, edges: dict[str, float] | None = None,
+                             funding_history=recent_funding) -> pd.DataFrame:
     """Liquid coins that have gone nowhere: low efficiency ratio, ranked half by it and half by liquidity."""
     names = [coin for coin in tradable if coin in live.index and coin in signals.index]
     columns = ["efficiency", "move30", "range_pct"] + (["range_position"] if "range_position" in signals.columns else [])
@@ -179,10 +183,15 @@ def market_making_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable
     rows = []
     for coin, row in frame.iterrows():
         position = row.get("range_position", float("nan"))
-        notes = (["ladder running"] if coin in laddered else []) + (
-            ["near the edge of its 60-day range: breakout risk"] if position == position and not MM_EDGE_ZONE[0] <= position <= MM_EDGE_ZONE[1] else [])
-        rows.append({"Coin": coin, "Efficiency (30d)": row["efficiency"], "30d move": row["move30"], "Range position (60d)": position,
-                     "Daily range": row["range_pct"], "24h volume": row["volume24h"], "Funding (APR)": live.loc[coin, "funding_hour"] * 8760,
+        rates = funding_history(coin)
+        longs_pay = float(np.mean(rates)) * 8760 if rates else float("nan")
+        shorts_paid = float(np.mean([rate < 0 for rate in rates])) if rates else float("nan")
+        crowd = (["crowded short"] if shorts_paid == shorts_paid and shorts_paid > CROWDED_SHARE else
+                 ["crowded long"] if longs_pay == longs_pay and longs_pay >= CROWDED_LONG_APR else [])
+        notes = crowd + (["ladder running"] if coin in laddered else []) + (
+            ["breakout risk: near the edge of its 60-day range"] if position == position and not MM_EDGE_ZONE[0] <= position <= MM_EDGE_ZONE[1] else [])
+        rows.append({"Coin": coin, "Efficiency 30d": row["efficiency"], "Move 30d": row["move30"], "Range position 60d": position,
+                     "Daily range 30d": row["range_pct"], "Volume 24h": row["volume24h"], "Longs pay 7d (APR)": longs_pay,
                      "Own ladder edge per $1k": (edges or {}).get(coin, float("nan")), "Notes": "; ".join(notes)})
     return pd.DataFrame(rows, columns=MM_COLUMNS)
 
@@ -250,16 +259,16 @@ def load(path: Path = SCREENER_FILE) -> dict | None:
 
 
 def _formatters() -> dict:
-    percent = lambda value: "" if value is None or value != value else f"{value:.1%}"
+    percent = lambda value: "" if value is None or value != value else f"{_pct(value)}"
     from desk.numbers import usd
 
     money = lambda value: usd(value, missing="")
     number = lambda value: "" if value is None or value != value else f"{value:.2f}"
-    return {"Score": number, "30d vs BTC": percent, "7d vs BTC": percent, "From 60d high": percent, "Funding 7d (APR)": percent,
+    return {"Score": number, "vs BTC 30d": percent, "vs BTC 7d": percent, "From high 60d": percent, "Funding 7d (APR)": percent,
             "OI / volume": number,
-            "Funding (APR)": percent,
-            "24h volume": money,
-            "Efficiency (30d)": number, "30d move": percent, "Range position (60d)": percent, "Daily range": percent,
+            "Longs pay 7d (APR)": percent,
+            "Volume 24h": money,
+            "Efficiency 30d": number, "Move 30d": percent, "Range position 60d": percent, "Daily range 30d": percent,
             "Own ladder edge per $1k": lambda value: "" if value is None or value != value else f"{_usd(value)}"}
 
 
@@ -292,7 +301,7 @@ def show_ladder_candidates() -> None:
         return
     formats = _formatters()
     display_interactive_table(pd.DataFrame(state["market_making"], columns=MM_COLUMNS), title="MARKET-MAKING CANDIDATES",
-                              formatters={key: formats[key] for key in MM_COLUMNS if key in formats}, key_columns={"Efficiency (30d)": "min"})
+                              formatters={key: formats[key] for key in MM_COLUMNS if key in formats}, key_columns={"Efficiency 30d": "min"})
     print("Efficiency: the 30-day net move over the sum of daily moves (near 0 is chop, good for a ladder). Own ladder edge: "
           "spread captured less fees per $1,000 where a ladder has traded the coin.")
 

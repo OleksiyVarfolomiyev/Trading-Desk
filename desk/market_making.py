@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from desk.numbers import since, usd as _usd
+from desk.numbers import since, usd as _usd, pct as _pct
 
 LADDERS_FILE = Path.home() / ".trading-desk" / "ladders.json"
 LADDER_CLOID_PREFIX = "0x1add"
@@ -265,7 +265,7 @@ def show_market_making() -> None:
                     "Fills": lambda value: "" if value != value else f"{value:,.0f}",
                     "Quotes": lambda value: "" if value != value else f"{value:,.0f}",
                     "Queued": lambda value: "" if value != value else f"{value:,.0f}",
-                    "Position vs base": lambda value: "" if value != value else f"{value:.1%}"},
+                    "Position vs base": lambda value: "" if value != value else f"{_pct(value)}"},
         key_columns={"Ladder PnL": "abs"})
     print("Ladder PnL is the ladders' result against simply holding the position you opened: spread captured (round "
           "trips) plus inventory drift (what the unmatched buys or sells made as the price moved) plus fees (paid: negative) plus funding (on the ladder's own inventory only: received positive, paid negative). Captured per "

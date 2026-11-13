@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from desk.hl.trade_analytics import post_info
-from desk.numbers import usd as _usd
+from desk.numbers import usd as _usd, pct as _pct
 
 TOP_N = 20
 TRADFI_CATEGORIES = {"stocks", "stock", "indices", "commodities", "fx", "preipo", "rates"}
@@ -189,7 +189,7 @@ def _kind_highlights(universe: pd.DataFrame, suffix: str) -> tuple[list, list]:
     if len(changes):
         up = (changes[CHANGE] > 0).mean()
         well.append((f"Breadth{suffix}", f"{up:.0%} of {len(changes):,} markets are up over 24h; median change "
-                                f"{changes[CHANGE].median():.2f}%."))
+                                f"{_pct(changes[CHANGE].median(), scaled=True)}."))
         # Gainers must be up and losers down: in a falling market the "top 3" are only the smallest
         # declines, and a small view could otherwise list one market as both.
         gainers, losers = changes[changes[CHANGE] > 0], changes[changes[CHANGE] < 0]
@@ -244,7 +244,7 @@ def show_market_research(view: str) -> None:
             columns=TABLE_COLUMNS,
             cell_style=signed_style,
             formatters={
-                CHANGE: lambda v: f"{v:.2f}%" if pd.notna(v) else "n/a",
+                CHANGE: lambda v: f"{_pct(v, scaled=True)}" if pd.notna(v) else "n/a",
                 FUNDING: lambda v: f"{v:.4f}%" if pd.notna(v) else "n/a",
                 VOLUME: lambda v: f"{_usd(v)}" if pd.notna(v) else "n/a",
                 OPEN_INTEREST: lambda v: f"{_usd(v)}" if pd.notna(v) else "n/a",
