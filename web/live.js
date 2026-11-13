@@ -861,9 +861,7 @@
     const recent = performanceRows.slice(0, performanceCount).filter((r) => fin(r["Return 30D"]));
     if (recent.length > 1) {
       const best = recent.reduce((a, b) => (b["Return 30D"] > a["Return 30D"] ? b : a));
-      const worst = recent.reduce((a, b) => (b["Return 30D"] < a["Return 30D"] ? b : a));
       well.splice(1, 0, ["Best account, 30D", `${best.Account} ${percent(best["Return 30D"], true)}.`]);
-      if (worst["Return 30D"] < 0) attention.splice(1, 0, ["Worst account, 30D", `${worst.Account} ${percent(worst["Return 30D"], true)}.`]);
     }
     if (tradePositions.length) {
       const splitOf = (group) => {  // "IB -13.4%": uPnL over the group's position value
@@ -874,13 +872,16 @@
       const parts = [["IB", ibGroup], ["HL", restGroup]].filter(([, group]) => group.length).map(([name, group]) => `${name} ${splitOf(group)}`);
       (unrealized >= 0 ? well : attention).push(["uPnL", `${gross ? percent(unrealized / gross, true) : "n/a"}: ${parts.join(", ")}.`]);
       const mover = (p) => `${p.symbol} ${fin(share(p)) ? percent(share(p), true) : "n/a"}`;
-      KINDS.forEach((kind) => {  // crypto and stocks ranked apart
+      const winnerParts = [], loserParts = [];
+      KINDS.forEach((kind) => {  // crypto and stocks ranked apart, shown in one row per side
         const group = ranked.filter((p) => marketKind(p) === kind);
         const winners = group.slice().reverse().filter((p) => p.unrealized > 0).slice(0, HIGHLIGHT_MOVERS);
         const losers = group.filter((p) => p.unrealized < 0).slice(0, HIGHLIGHT_MOVERS);
-        if (winners.length) well.push([`Largest winners (${kind.toLowerCase()})`, winners.map(mover).join(", ") + "."]);
-        if (losers.length) attention.push([`Largest losers (${kind.toLowerCase()})`, losers.map(mover).join(", ") + "."]);
+        if (winners.length) winnerParts.push(`${kind.toLowerCase()}: ${winners.map(mover).join(", ")}`);
+        if (losers.length) loserParts.push(`${kind.toLowerCase()}: ${losers.map(mover).join(", ")}`);
       });
+      if (winnerParts.length) well.push(["Largest winners", winnerParts.join("; ") + "."]);
+      if (loserParts.length) attention.push(["Largest losers", loserParts.join("; ") + "."]);
       const largest = tradePositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
       const concentration = deskEquity ? Math.abs(value(largest)) / deskEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {
@@ -914,8 +915,6 @@
       else if (riskUsed > riskCap * NEAR_CAP_PCT) attention.push(["Open risk near cap", text]);
       else well.push(["Open risk within cap", text]);
     }
-    (drawdown <= DEEP_DRAWDOWN ? attention : well).push(["Drawdown now",
-      drawdown < 0 ? `${percent(drawdown)} from the ${dayKey(peak.t)} peak.` : "At its peak."]);
     if (riskRow && fin(riskRow["Volatility (/yr)"])) {
       const betas = [["BTC", riskRow["Beta BTC"]], ["S&P 500", riskRow["Beta S&P 500"]]]
         .filter(([, b]) => fin(b)).map(([name, b]) => `, beta ${name} ${b.toFixed(2)}`).join("");

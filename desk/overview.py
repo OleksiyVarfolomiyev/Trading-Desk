@@ -762,14 +762,19 @@ class DeskOverview:
                 # The % is unrealized PnL over the position's entry value, as in the movers table.
                 share = _pnl_share(position)
                 return f"{position.symbol} {share:.1%}" if math.isfinite(share) else f"{position.symbol} n/a"
-            for kind in MARKET_KINDS:  # crypto and stocks ranked apart
+            winner_parts, loser_parts = [], []
+            for kind in MARKET_KINDS:  # crypto and stocks ranked apart, shown in one row per side
                 group = [item for item in ranked if market_kind(item[1]) == kind]
                 winners = [item for item in group[::-1] if item[1].unrealized_usd > 0][:HIGHLIGHT_MOVERS]
                 losers = [item for item in group if item[1].unrealized_usd < 0][:HIGHLIGHT_MOVERS]
                 if winners:
-                    well.append((f"Largest winners ({kind.lower()})", ", ".join(mover(p) for _, p in winners) + "."))
+                    winner_parts.append(f"{kind.lower()}: " + ", ".join(mover(p) for _, p in winners))
                 if losers:
-                    attention.append((f"Largest losers ({kind.lower()})", ", ".join(mover(p) for _, p in losers) + "."))
+                    loser_parts.append(f"{kind.lower()}: " + ", ".join(mover(p) for _, p in losers))
+            if winner_parts:
+                well.append(("Largest winners", "; ".join(winner_parts) + "."))
+            if loser_parts:
+                attention.append(("Largest losers", "; ".join(loser_parts) + "."))
             label, largest = max(positions, key=lambda item: abs(item[1].notional_usd))
             share = abs(largest.notional_usd) / self.desk_equity if self.desk_equity else float("nan")
             if share > CONCENTRATION_PCT:

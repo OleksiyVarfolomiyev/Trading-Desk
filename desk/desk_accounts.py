@@ -610,14 +610,10 @@ class DeskAccounts:
         table = self.account_pnl()
         recent = table.dropna(subset=["Return 30D"]) if "Return 30D" in table else table.iloc[0:0]
         if len(recent) > 1:
-            best, worst = recent.loc[recent["Return 30D"].idxmax()], recent.loc[recent["Return 30D"].idxmin()]
+            best = recent.loc[recent["Return 30D"].idxmax()]
             well.insert(1, ("Best account, 30D", f"{best['Account']} {percent(best['Return 30D'], signed=True)}."))
-            if worst["Return 30D"] < 0:
-                attention.insert(1, ("Worst account, 30D", f"{worst['Account']} {percent(worst['Return 30D'], signed=True)}."))
+        # Drawdown is in the dashboard's tiles; it stays a tracked metric here, not a highlight row.
         drawdown = float(self.index.iloc[-1] / self.index.cummax().iloc[-1] - 1)
-        peak_day = self.index.idxmax()
-        text = f"{percent(drawdown)} from the {peak_day:%Y-%m-%d} peak." if drawdown < 0 else "At its peak."
-        (attention if drawdown <= DEEP_DRAWDOWN else well).append(("Drawdown now", text))
         sharpe = beta_spy = beta_btc = np.nan
         risk = getattr(self, "risk_table", None)
         if risk is not None and len(risk):
