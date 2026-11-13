@@ -18,12 +18,12 @@ class AlertRowTests(unittest.TestCase):
             {"title": "ladder stopped", "text": "closed", "since": "2026-11-11T20:00:00", "expires": 900.0}]}
         rows = alerts.rows(state, now=1100.0)
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][0], "Desk alert: ladder out of band: rebalance (...c248 BTC)")
+        self.assertEqual(rows[0][0], "Ladder out of band: rebalance (...c248 BTC)")
         self.assertIn("since 2026-11-11 17:00 ET", rows[0][1])  # the daemon stamps UTC; the desk reads Eastern
 
     def test_a_silent_daemon_is_flagged(self):
         rows = alerts.rows({"heartbeat": 0.0, "alerts": []}, now=20 * 60.0)
-        self.assertEqual(rows[0][0], "Desk alert: trading daemon not reporting")
+        self.assertEqual(rows[0][0], "Trading daemon not reporting")
         self.assertEqual(alerts.rows(None), [])
 
 

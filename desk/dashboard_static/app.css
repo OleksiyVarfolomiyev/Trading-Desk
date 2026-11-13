@@ -94,7 +94,13 @@ main { margin: 0; padding: 12px 12px 48px; display: flex; flex-direction: column
 }
 .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
 .caption { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
-.loading { color: var(--ink-2); }
+/* While the first data loads: a thin bar sliding under the top band, no text. */
+.progress { height: 3px; border-radius: 2px; background: var(--grid); overflow: hidden; }
+.progress[hidden] { display: none; }
+.progress span { display: block; width: 30%; height: 100%; border-radius: 2px; background: var(--good);
+  animation: progress-slide 1.2s ease-in-out infinite; }
+@keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .progress span { animation: none; width: 100%; opacity: 0.5; } }
 .grid.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 /* One 12px gap between every card and tile, across and down (the tiles use the same). */
 #content:not([hidden]) { display: flex; flex-direction: column; gap: 12px; }

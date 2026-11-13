@@ -950,9 +950,9 @@
     if (daemonAlerts) {  // the trading daemon's problems (desk/alerts.py), first
       const age = (Date.now() / 1000 - Number(daemonAlerts.heartbeat || 0)) / 60;
       const rows = age > 15
-        ? [["Desk alert: trading daemon not reporting", `Silent ${age.toFixed(0)} min: guards, margin guard and ladders stopped.`]]
+        ? [["Trading daemon not reporting", `Silent ${age.toFixed(0)} min: guards, margin guard and ladders stopped.`]]
         : (daemonAlerts.alerts || []).filter((a) => !a.expires || a.expires > Date.now() / 1000)
-          .map((a) => [`Desk alert: ${a.title}`, `${a.text} (since ${eastern(a.since, true)})`]);
+          .map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), `${a.text} (since ${eastern(a.since, true)})`]);
       rows.reverse().forEach((row) => attention.unshift(row));
     }
 

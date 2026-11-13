@@ -831,8 +831,8 @@ class FundingAlertTests(unittest.TestCase):
     def test_a_short_paying_for_six_hours_raises_an_alert(self):
         alerts = self.check(-1000, [-0.0001] * 8)  # longs receive: the short pays 87.6% APR
         item = alerts.items[f"funding:{WALLET}:MELANIA"]
-        self.assertEqual(item["title"], "funding adverse for hours")
-        self.assertIn("87.6% APR", item["text"])
+        self.assertEqual(item["title"], "funding")
+        self.assertEqual(item["text"], f"...{WALLET[-4:]} MELANIA short -87.6% avg APR over 6 hrs")
 
     def test_one_earning_hour_in_the_six_clears_it(self):
         alerts = self.check(-1000, [-0.0001] * 5 + [0.00001] + [-0.0001] * 2)

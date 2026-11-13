@@ -1191,10 +1191,9 @@ class Alerts:
             direction = 1 if size > 0 else -1
             apr = funding_watch.sustained([float(rate) for rate in history["fundingRate"]], direction)
             if apr is not None and funding_watch.daily_cost(apr, value) >= funding_watch.MIN_DAILY_USD:
-                self.set(key, "funding adverse for hours",
-                         f"...{wallet[-4:]} {coin} {'long' if size > 0 else 'short'} has paid funding for the last "
-                         f"{funding_watch.SUSTAINED_HOURS} hours, {-apr:.1%} APR on average "
-                         f"(${funding_watch.daily_cost(apr, value):,.2f}/day on ${value:,.0f}).")
+                self.set(key, "funding",
+                         f"...{wallet[-4:]} {coin} {'long' if size > 0 else 'short'} {apr:.1%} avg APR "
+                         f"over {funding_watch.SUSTAINED_HOURS} hrs")
             else:
                 self.clear(key)
         with self.lock:
