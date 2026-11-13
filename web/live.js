@@ -1153,7 +1153,6 @@
     return running;
   }
   window.DESK_SOURCE = async () => Object.assign({}, doc, { server_time: new Date().toISOString() });
-  window.DESK_REFRESH = refresh;
   refresh();
   setInterval(refresh, CFG.refreshSeconds * 1000);
 })();

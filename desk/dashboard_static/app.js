@@ -353,32 +353,8 @@ function renderBanners(doc, now) {
   host.replaceChildren(...banners);
 }
 
-function renderStatus(doc, now) {
-  const status = doc.status || {};
-  const dot = document.getElementById("status-dot");
-  const text = document.getElementById("status-text");
-  const button = document.getElementById("refresh");
-  button.disabled = !!status.refreshing;
-  if (status.refreshing) {
-    dot.className = "dot busy";
-    text.textContent = status.last_ok ? `Refreshing… (updated ${ago(status.last_ok, now)})` : "Reading accounts…";
-  } else if (status.error) {
-    dot.className = "dot error";
-    text.textContent = `Refresh failed · data ${ago(status.last_ok, now)}`;
-  } else if (status.last_ok) {
-    dot.className = "dot live";
-    const next = new Date(new Date(status.last_ok).getTime() + (status.interval_s || 60) * 1000);
-    const wait = Math.max(0, Math.round((next - now) / 60000));
-    text.textContent = `Live · updated ${ago(status.last_ok, now)} · next ${wait < 1 ? "within a minute" : "in " + wait + " min"}`;
-  } else {
-    dot.className = "dot";
-    text.textContent = "Waiting for the first refresh…";
-  }
-}
-
 function render(doc) {
   const now = new Date(doc.server_time || Date.now());
-  renderStatus(doc, now);
   renderBanners(doc, now);
   const data = doc.data;
   if (!data) return;
@@ -408,23 +384,17 @@ async function load() {
     latest = await response.json();
     render(latest);
   } catch (error) {
-    document.getElementById("status-dot").className = "dot error";
-    document.getElementById("status-text").textContent = "Dashboard server not reachable (is python -m desk.dashboard running?)";
+    // The page shows no status unless something is wrong: this goes in the top band's warnings.
+    const message = window.DESK_SOURCE ? `Could not read the desk data (${error.message || error}).`
+      : "Dashboard server not reachable (is python -m desk.dashboard running?)";
+    document.getElementById("banners").replaceChildren(el("div", { class: "banner warning", role: "alert" }, [
+      el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }), el("div", { text: message })]));
   }
 }
 
 function poll() {          // the one polling loop
   load().finally(() => setTimeout(poll, POLL_MS));
 }
-
-document.getElementById("refresh").addEventListener("click", async () => {
-  document.getElementById("refresh").disabled = true;
-  try {
-    if (window.DESK_REFRESH) await window.DESK_REFRESH();
-    else await fetch("/api/refresh", { method: "POST" });
-  } catch (error) { /* the next poll reports it */ }
-  setTimeout(load, 500);   // one extra read, not a second loop
-});
 
 // Redraw charts in the other theme's colors when the system theme changes.
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
