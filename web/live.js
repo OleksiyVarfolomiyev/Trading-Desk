@@ -1029,14 +1029,14 @@
       })(),
       candidates: (() => {  // desk/screener.py
         const rows = (research && research.screener && research.screener.shorts) || [];
-        return rows.length ? table(rows, ["Coin", "Score", "Basis", "30d vs BTC", "7d vs BTC", "From 60d high", "Funding (8h)", "24h volume", "Stop (3 ATR)", "Size at budget", "Max by margin", "Alt-rally stress after", "Notes"],
-          { "Score": "num2", "30d vs BTC": "spct", "7d vs BTC": "spct", "From 60d high": "spct", "Funding (8h)": "spct", "24h volume": "usd", "Stop (3 ATR)": "pct", "Size at budget": "usd", "Alt-rally stress after": "pct" },
+        return rows.length ? table(rows, ["Coin", "Score", "Basis", "30d vs BTC", "7d vs BTC", "From 60d high", "Funding 7d (APR)", "Shorts paid (7d)", "OI / volume", "24h volume", "Stop (3 ATR)", "Size at budget", "Max by margin", "Alt-rally stress after", "Notes"],
+          { "Score": "num2", "30d vs BTC": "spct", "7d vs BTC": "spct", "From 60d high": "spct", "Funding 7d (APR)": "spct", "Shorts paid (7d)": "pct", "OI / volume": "num2", "24h volume": "usd", "Stop (3 ATR)": "pct", "Size at budget": "usd", "Alt-rally stress after": "pct" },
           { key: { "Score": "min" } }) : { columns: [], rows: [], total: null };
       })(),
       mm_candidates: (() => {
         const rows = (research && research.screener && research.screener.market_making) || [];
-        return rows.length ? table(rows, ["Coin", "Efficiency (30d)", "30d move", "Range position (60d)", "Daily range", "24h volume", "Funding (8h)", "Own ladder edge per $1k", "Notes"],
-          { "Efficiency (30d)": "num2", "30d move": "spct", "Range position (60d)": "pct", "Daily range": "pct", "24h volume": "usd", "Funding (8h)": "spct", "Own ladder edge per $1k": "susd" },
+        return rows.length ? table(rows, ["Coin", "Efficiency (30d)", "30d move", "Range position (60d)", "Daily range", "24h volume", "Funding (APR)", "Own ladder edge per $1k", "Notes"],
+          { "Efficiency (30d)": "num2", "30d move": "spct", "Range position (60d)": "pct", "Daily range": "pct", "24h volume": "usd", "Funding (APR)": "spct", "Own ladder edge per $1k": "susd" },
           { key: { "Efficiency (30d)": "min" } }) : { columns: [], rows: [], total: null };
       })(),
       wallets: table(walletRows, ["Wallet", "Chain", "Symbol", "Value", "% of desk", "Amount", "Price", "Note"],

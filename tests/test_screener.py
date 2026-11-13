@@ -20,7 +20,8 @@ class ScreenerTests(unittest.TestCase):
         signals = pd.DataFrame({"rel7": [0.3, -0.2, 0.0, -0.4], "rel30": [0.1, -0.1, 0.0, -0.3],
                                 "from_high60": [-0.1] * 4, "atr_pct": [0.05] * 4}, index=["A", "B", "C", "D"])
         live = pd.DataFrame({"funding_hour": [0.00001] * 4, "volume24h": [5e6] * 4}, index=["A", "B", "C", "D"])
-        rows = screener.short_candidates(signals, live, ["A", "B", "C", "D"], {"rel7": 1.0}, "validated: 7d", 10_000.0, [], {"B"}, top=2)
+        rows = screener.short_candidates(signals, live, ["A", "B", "C", "D"], {"rel7": 1.0}, "validated: 7d", 10_000.0, [], {"B"}, top=2,
+                                         funding_history=lambda coin: [])
         self.assertEqual(list(rows["Coin"]), ["D", "B"])                   # weakest first
         self.assertAlmostEqual(rows.iloc[0]["Size at budget"], 0.04 * 10_000 / 0.15)   # $400 risk at a 15% stop
         self.assertIn("already held", rows.iloc[1]["Notes"])
@@ -41,8 +42,26 @@ class ScreenerTests(unittest.TestCase):
         signals = pd.DataFrame({"rel30": [0.28, -0.20, 0.05], "rel7": [0.0] * 3, "from_high60": [-0.1] * 3,
                                 "atr_pct": [0.05] * 3}, index=["STRONG", "WEAK", "FLAT"])
         live = pd.DataFrame({"funding_hour": [0.0] * 3, "volume24h": [5e6] * 3}, index=["STRONG", "WEAK", "FLAT"])
-        rows = screener.short_candidates(signals, live, ["STRONG", "WEAK", "FLAT"], weights, basis, 10_000.0, [], set())
+        rows = screener.short_candidates(signals, live, ["STRONG", "WEAK", "FLAT"], weights, basis, 10_000.0, [], set(),
+                                         funding_history=lambda coin: [])
         self.assertEqual(list(rows["Coin"]), ["WEAK", "FLAT", "STRONG"])
+
+    def test_crowded_shorts_are_flagged_from_a_week_of_funding_without_moving_the_score(self):
+        signals = pd.DataFrame({"rel30": [-0.3, -0.2], "atr_pct": [0.05, 0.05]}, index=["CROWD", "CLEAN"])
+        live = pd.DataFrame({"funding_hour": [0.0, 0.0], "volume24h": [1e6, 1e6], "open_interest": [2e6, 5e5]}, index=["CROWD", "CLEAN"])
+        history = {"CROWD": [-0.00005] * 80 + [0.0000125] * 20, "CLEAN": [0.0000125] * 100}   # shorts pay 80% of hours; base rate
+        rows = screener.short_candidates(signals, live, ["CROWD", "CLEAN"], {"rel30": 1.0}, "b", 10_000.0, [], set(),
+                                         funding_history=history.get).set_index("Coin")
+        self.assertEqual(list(rows.index), ["CROWD", "CLEAN"])                             # ranking unchanged by the flag
+        self.assertAlmostEqual(rows.loc["CROWD", "Shorts paid (7d)"], 0.8)
+        self.assertAlmostEqual(rows.loc["CROWD", "Funding 7d (APR)"], (-0.00005 * 0.8 + 0.0000125 * 0.2) * 8760)   # the short pays
+        self.assertIn("crowded short: shorts paid 80% of hours", rows.loc["CROWD", "Notes"])
+        self.assertAlmostEqual(rows.loc["CLEAN", "Funding 7d (APR)"], 0.0000125 * 8760)    # HL's base rate: longs pay, the short earns ~11%
+        self.assertNotIn("crowded", rows.loc["CLEAN", "Notes"])
+        self.assertAlmostEqual(rows.loc["CROWD", "OI / volume"], 2.0)
+
+    def test_no_funding_history_leaves_the_columns_blank(self):
+        self.assertTrue(all(value != value for value in screener.crowding([])))
 
     def test_margin_caps_per_wallet(self):
         self.assertEqual(screener.margin_caps({"07f2": 200.0, "c248": -10.0}, 10), "07f2 $800, c248 $0")   # 4x cap, nothing below zero
