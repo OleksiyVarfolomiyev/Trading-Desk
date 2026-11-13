@@ -209,13 +209,13 @@ def current(max_age: float = STATE_MAX_AGE_SECONDS, path: Path = STATE_FILE) -> 
 
 # Each signal as a few words with its number, for the highlights (only the signals that are on are shown).
 SIGNAL_TEXT = {
-    "A1": lambda m: f"alts {_pct(m['rel7'], signed=True)} vs BTC 7d",
+    "A1": lambda m: f"alts {_pct(m['rel7'])} vs BTC 7d",
     "A2": lambda m: f"breadth {m['breadth7']:.0%}",
-    "A3": lambda m: f"alts {_pct(m['rel30'], signed=True)} vs BTC 30d",
+    "A3": lambda m: f"alts {_pct(m['rel30'])} vs BTC 30d",
     "A4": lambda m: "alt/BTC above rising 20d avg",
     "E1": lambda m: f"SPY {_pct(m['drawdown60'])} from 60d high",
     "E2": lambda m: "SPY below falling 50d avg",
-    "E3": lambda m: f"VIX {m['vix']:.1f} ({m['vix5']:+.0%} 5d)",
+    "E3": lambda m: f"VIX {m['vix']:.1f} ({_pct(m['vix5'])} 5d)",
     "E4": lambda m: f"10d vol {m['vol10']:.0%} (top {1 - m['vol10_rank']:.0%})",
 }
 

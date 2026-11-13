@@ -16,14 +16,14 @@ UNITS = ((1e9, "B"), (1e6, "M"), (1e3, "K"))
 
 
 def usd(value, signed: bool = False, missing: str = "n/a") -> str:
-    """``value`` in dollars, rounded to three significant figures from $1,000 up (``signed``: a "+" on gains)."""
+    """``value`` in dollars, rounded to three significant figures from $1,000 up (no "+" on gains)."""
     try:
         value = float(value)
     except (TypeError, ValueError):
         return missing
     if not math.isfinite(value):
         return missing
-    sign = "-" if value < 0 else ("+" if signed and value > 0 else "")
+    sign = "-" if value < 0 else ""
     size = abs(value)
     rounded = float(f"{size:.3g}")
     for scale, unit in UNITS:
@@ -84,7 +84,7 @@ def clock(when, now=None) -> str:
 def pct(value, signed: bool = False, missing: str = "n/a", scaled: bool = False) -> str:
     """A share or return for reading: whole percents from 10% up (100%, 57%), one decimal from 1% (5.3%), two
     below (0.42%), trailing zeros dropped (5%, not 5.0%). ``value`` is a fraction (0.05), or already in percent
-    with ``scaled``; ``signed`` puts a "+" on gains. The dashboards' ``pct`` and ``percent`` follow the same rule."""
+    with ``scaled``. Gains carry no "+" (the colour says it). The dashboards' ``pct`` and ``percent`` follow the same rule."""
     try:
         value = float(value)
     except (TypeError, ValueError):
@@ -99,5 +99,5 @@ def pct(value, signed: bool = False, missing: str = "n/a", scaled: bool = False)
         text = text.rstrip("0").rstrip(".")
     if text == "0":
         return "0%"
-    sign = "-" if number < 0 else ("+" if signed else "")
+    sign = "-" if number < 0 else ""   # no "+" anywhere on the desk: colour carries the sign; ``signed`` is kept for callers
     return f"{sign}{text}%"

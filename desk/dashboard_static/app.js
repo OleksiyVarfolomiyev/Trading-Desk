@@ -216,7 +216,7 @@ function tile(label, value, sub, extra) {  // extra.title: the definition, on ho
   return el("div", { class: "tile", title: (extra && extra.title) || "" }, [
     el("div", { class: "label", text: label }),
     el("div", { class: "value " + (extra && extra.valueClass ? extra.valueClass : ""), text: value }),
-    extra && extra.line ? el("div", { class: "line " + (extra.line.cls || ""), text: extra.line.text,
+    extra && extra.line && extra.line.text ? el("div", { class: "line " + (extra.line.cls || ""), text: extra.line.text,
       title: extra.line.title || "" }) : null,
     sub ? el("div", { class: "sub", text: sub }) : null,
   ]);
@@ -229,7 +229,8 @@ function dayChangeLine(day) {
   const parts = Object.entries(day.parts || {}).map(([name, value]) => `${name}: ${usd(value)}`);
   const missing = (day.missing || []).length ? [`Not included: ${day.missing.join(", ")}`] : [];
   return {
-    text: `24h ${isNum(day.pct) ? (day.pct > 0 ? "+" : "") + pct(day.pct) : usd(day.change)}${missing.length ? " *" : ""}`,
+    // A change that rounds to 0% says nothing: no line (the dollars stay on hover of the value).
+    text: isNum(day.pct) && pct(day.pct) === "0%" ? "" : `24h ${isNum(day.pct) ? pct(day.pct) : usd(day.change)}${missing.length ? " *" : ""}`,
     cls: signClass(day.change),
     title: [`24h ${usd(day.change)}, net of deposits, withdrawals and transfers.`, ...parts, ...missing].join("\n"),
   };
@@ -380,10 +381,10 @@ function renderCharts(charts) {
   const twr = (charts.twr || []).map((s, i) => ({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
     line: { width: 2, color: colors[i % colors.length], shape: "linear" },
-    hovertemplate: "%{fullData.name}: %{y:+.1f}%<extra></extra>",
+    hovertemplate: "%{fullData.name}: %{y:.1f}%<extra></extra>",
   }));
   // % since the start; the desk line ends at the "TW return" tile.
-  const labels = endLabels(charts.twr || [], (v) => (v > 0 ? "+" : "") + readablePct(v / 100));
+  const labels = endLabels(charts.twr || [], (v) => readablePct(v / 100));
   const twrLayout = baseLayout({
     annotations: labels,
     shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }],
