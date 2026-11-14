@@ -1089,8 +1089,13 @@
         if (rows.length < 2) return { columns: [], rows: [], total: null };
         // Each strategy's PnL as a share of desk value (desk/journal.py performance_view): Realized 30d is net of fees
         // and includes funding; activity (positions, volume, fills) stays in the data.
+        // uPnL is live: the daemon sends it by strategy every minute (journal.live_unrealized); the table's own
+        // figure is hourly. The total row is their sum.
+        const fresh = daemonAlerts && daemonAlerts.strategy_upnl && Date.now() / 1000 - Number(daemonAlerts.strategy_upnl_at || 0) < 600;
+        const liveUpnl = (r) => (!fresh ? num(r["Unrealized PnL"])
+          : r.Strategy === "Total" ? sum(Object.values(daemonAlerts.strategy_upnl).map(Number)) : Number(daemonAlerts.strategy_upnl[r.Strategy] || 0));
         const view = (r) => {
-          const realized = (num(r["Realized PnL 30d"]) + num(r["Funding 30d"])) / deskEquity, unrealized = num(r["Unrealized PnL"]) / deskEquity;
+          const realized = (num(r["Realized PnL 30d"]) + num(r["Funding 30d"])) / deskEquity, unrealized = liveUpnl(r) / deskEquity;
           return { "Strategy": r.Strategy, "Realized 30d": realized, "uPnL": unrealized, "Total": realized + unrealized };
         };
         return table(rows.slice(0, -1).map(view), ["Strategy", "Realized 30d", "uPnL", "Total"],

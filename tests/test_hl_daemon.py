@@ -1002,3 +1002,29 @@ class LadderTrendRequestTests(unittest.TestCase):
             ladders._trend(ladder, now=1_000_000.0, config=hl_daemon.ladder_config())
         self.assertEqual(asked[0]["req"]["coin"], "xyz:SP500")   # the bare "SP500" with dex xyz is an HTTP 500
         self.assertEqual(asked[0]["dex"], "xyz")
+
+
+class StrategyUpnlTests(unittest.TestCase):
+    def daemon(self):
+        position = SimpleNamespace(wallet="0xabc0000000000000000000000000000000c248", coin="ETH", quantity=-1.0,
+                                   entry_price=2000.0, mark_price=1900.0)
+        return SimpleNamespace(state=SimpleNamespace(wallets=["w"], snapshot=lambda wallets: SimpleNamespace(positions=[position])))
+
+    def test_live_uPnL_by_strategy_is_published_with_the_alerts(self):
+        from desk import journal
+
+        alerts = hl_daemon.Alerts(path=None)
+        with patch.object(journal, "ib_positions", return_value={"U1238440": [{"symbol": "MU", "quantity": 5, "unrealized": -20.0}]}), \
+                patch.object(journal, "load", return_value=[]):
+            alerts.refresh_strategy_upnl(self.daemon())
+        state = alerts.state()
+        self.assertAlmostEqual(state["strategy_upnl"]["untagged"], 100.0 - 20.0)   # HL ETH short +100, IB MU -20
+        self.assertIsNotNone(state["strategy_upnl_at"])
+
+    def test_without_ib_the_figure_is_withheld_not_partial(self):
+        from desk import journal
+
+        alerts = hl_daemon.Alerts(path=None)
+        with patch.object(journal, "ib_positions", return_value={}):
+            alerts.refresh_strategy_upnl(self.daemon())
+        self.assertIsNone(alerts.state()["strategy_upnl"])

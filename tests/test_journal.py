@@ -147,3 +147,24 @@ class PerformanceViewTests(unittest.TestCase):
         self.assertAlmostEqual(view["uPnL"], -0.01)
         self.assertAlmostEqual(view["Total"], 0.02)
         self.assertTrue(journal.performance_view(frame, 0.0).empty)
+
+
+class LiveUnrealizedTests(unittest.TestCase):
+    def test_uPnL_by_strategy_from_live_positions_ties_to_the_accounts(self):
+        entries = [{"wallet": "07f2", "coin": "BERA", "strategy": "directional", "opened": "2026-11-11T00:00:00", "closed": None},
+                   {"wallet": "8440", "coin": "MU", "strategy": "conviction", "opened": "2026-11-01T00:00:00", "closed": None}]
+        hl = [("07f2", "BERA", -100.0, 0.10, 0.09),        # a short up $1.00
+              ("c248", "ETH", -1.0, 2000.0, 1900.0)]        # untagged, up $100
+        ib = {"8440": [{"symbol": "MU", "quantity": 5, "unrealized": -20.0}, {"symbol": "NET", "quantity": 2, "unrealized": -7.0}]}
+        live = journal.live_unrealized(entries, hl, ib, now_ms=pd.Timestamp("2026-11-14", tz="UTC").timestamp() * 1000)
+        self.assertAlmostEqual(live["directional"], 1.0)
+        self.assertAlmostEqual(live["untagged"], 100.0 - 7.0)
+        self.assertAlmostEqual(live["conviction"], -20.0)
+        self.assertAlmostEqual(sum(live.values()), 1.0 + 100.0 - 7.0 - 20.0)       # all of HL plus all of IB
+
+    def test_a_table_takes_the_live_figures_and_recomputes_its_total(self):
+        frame = pd.DataFrame([["directional", 1, 50.0, 0, 0, 0, 0, 0], ["conviction", 1, -30.0, 0, 0, 0, 0, 0],
+                              ["Total", 2, 20.0, 0, 0, 0, 0, 0]], columns=journal.COLUMNS)
+        shown = journal.with_live_unrealized(frame, {"directional": 80.0, "conviction": -10.0}).set_index("Strategy")
+        self.assertEqual(list(shown["Unrealized PnL"]), [80.0, -10.0, 70.0])
+        self.assertIs(journal.with_live_unrealized(frame, None), frame)             # no live figure: unchanged

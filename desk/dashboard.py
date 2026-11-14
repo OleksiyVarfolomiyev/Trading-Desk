@@ -339,6 +339,11 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         research_path = ROOT_DATA / "research_state.json"
         research = _json.loads(research_path.read_text()) if research_path.exists() else {}
         strategies = pd.DataFrame(research.get("strategies", []), columns=journal.COLUMNS)
+        from desk import alerts as daemon_alerts
+
+        alerts_now = daemon_alerts.read() or {}   # the daemon's live uPnL by strategy (every minute), when fresh
+        if alerts_now.get("strategy_upnl") and time.time() - float(alerts_now.get("strategy_upnl_at") or 0) < 600:
+            strategies = journal.with_live_unrealized(strategies, alerts_now["strategy_upnl"])
         view = journal.performance_view(strategies, overview.desk_equity) if len(strategies) > 1 else pd.DataFrame()
         tables["strategies"] = (table(view, journal.VIEW_FORMATS, total_last=True, key={"Total": "abs"}) if len(view)
                                 else table(view, {}))

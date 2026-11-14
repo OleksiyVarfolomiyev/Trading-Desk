@@ -273,6 +273,39 @@ def ib_positions() -> dict[str, list[dict]]:
     return {str(payload.get("id") or "ib"): payload.get("positions") or []}   # journal entries use its last four
 
 
+def live_unrealized(entries: list[dict], hl_positions: list[tuple], ib_positions: dict[str, list[dict]] | None = None,
+                    now_ms: float | None = None) -> dict[str, float]:
+    """Open-position uPnL by journal strategy from live positions: the daemon publishes it every minute so the
+    strategy table's uPnL ties to the accounts table (the table itself is rebuilt hourly).
+
+    ``hl_positions``: (wallet, coin, quantity, entry price, mark price); ``ib_positions``: IB account id ->
+    positions with ``symbol``, ``quantity`` and ``unrealized``."""
+    now_ms = time.time() * 1000 if now_ms is None else now_ms
+    totals: dict[str, float] = {}
+    for wallet, coin, quantity, entry, mark in hl_positions:
+        strategy = strategy_at(entries, wallet, coin, now_ms)
+        totals[strategy] = totals.get(strategy, 0.0) + float(quantity) * (float(mark) - float(entry))
+    for account, positions in (ib_positions or {}).items():
+        for position in positions:
+            if float(position.get("quantity") or 0):
+                strategy = strategy_at(entries, account, str(position.get("symbol")), now_ms)
+                totals[strategy] = totals.get(strategy, 0.0) + float(position.get("unrealized") or 0)
+    return totals
+
+
+def with_live_unrealized(frame: pd.DataFrame, live: dict[str, float] | None) -> pd.DataFrame:
+    """``frame`` (COLUMNS rows, a Total row last) with each strategy's unrealized PnL replaced by the live figure and
+    the total recomputed; unchanged without live figures."""
+    if not live or frame.empty:
+        return frame
+    out = frame.copy()
+    body = out["Strategy"] != "Total"
+    out.loc[body, "Unrealized PnL"] = out.loc[body, "Strategy"].map(lambda name: float(live.get(name, 0.0)))
+    if (~body).any():
+        out.loc[~body, "Unrealized PnL"] = out.loc[body, "Unrealized PnL"].sum()
+    return out
+
+
 def total_row(frame: pd.DataFrame) -> dict:
     return {"Strategy": "Total", **{column: frame[column].sum() for column in COLUMNS[1:]}}
 

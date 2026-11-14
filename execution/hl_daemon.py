@@ -1080,6 +1080,24 @@ class Alerts:
         self.market_making: list[dict] = []
         self.market_making_at = 0.0
         self.ladders: list[dict] = []
+        self.strategy_upnl: dict[str, float] | None = None
+        self.strategy_upnl_at = 0.0
+
+    def refresh_strategy_upnl(self, daemon: "Daemon") -> None:
+        """Open-position uPnL by journal strategy, every minute, from the live positions (no HL requests) and IB as
+        the relay holds it. If IB cannot be read the figure is withheld: a partial book would not tie to the accounts."""
+        if time.time() - self.strategy_upnl_at < 60:
+            return
+        from desk import journal
+
+        self.strategy_upnl_at = time.time()
+        ib = journal.ib_positions()
+        if not ib:
+            self.strategy_upnl = None
+            return
+        positions = [(position.wallet[-4:].lower(), position.coin, position.quantity, position.entry_price, position.mark_price)
+                     for position in daemon.state.snapshot(daemon.state.wallets).positions]
+        self.strategy_upnl = journal.live_unrealized(journal.load(), positions, {key[-4:].lower(): value for key, value in ib.items()})
 
     def refresh_market_making(self, daemon: "Daemon") -> None:
         """The ladders' metrics (desk/market_making.py) for the dashboards, every five minutes."""
@@ -1127,7 +1145,8 @@ class Alerts:
             for key in [key for key, item in self.items.items() if item["expires"] and item["expires"] < now]:
                 self.items.pop(key)
             return {"heartbeat": now, "as_of": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
-                    "alerts": list(self.items.values()), "ladders": self.ladders, "market_making": self.market_making}
+                    "alerts": list(self.items.values()), "ladders": self.ladders, "market_making": self.market_making,
+                    "strategy_upnl": self.strategy_upnl, "strategy_upnl_at": self.strategy_upnl_at if self.strategy_upnl else None}
 
     def run(self, daemon: "Daemon") -> None:
         while not daemon.stopped.wait(30):
@@ -1137,6 +1156,11 @@ class Alerts:
                     self.refresh_market_making(daemon)
                 except Exception as exc:
                     log(f"market-making metrics failed ({type(exc).__name__}: {exc})")
+                try:
+                    self.refresh_strategy_upnl(daemon)
+                except Exception as exc:  # the strategy table then keeps its hourly uPnL
+                    self.strategy_upnl = None
+                    log(f"strategy uPnL failed ({type(exc).__name__}: {exc})")
                 state = self.state()
                 if self.path is not None:
                     self.path.write_text(json.dumps(state, indent=1))
