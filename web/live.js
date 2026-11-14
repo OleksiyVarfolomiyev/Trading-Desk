@@ -1095,10 +1095,10 @@
         // and includes funding; activity (positions, volume, fills) stays in the data.
         const view = (r) => {
           const realized = (num(r["Realized PnL 30d"]) + num(r["Funding 30d"])) / deskEquity, unrealized = num(r["Unrealized PnL"]) / deskEquity;
-          return { "Strategy": r.Strategy, "Realized 30d": realized, "Unrealized": unrealized, "Total": realized + unrealized };
+          return { "Strategy": r.Strategy, "Realized 30d": realized, "uPnL": unrealized, "Total": realized + unrealized };
         };
-        return table(rows.slice(0, -1).map(view), ["Strategy", "Realized 30d", "Unrealized", "Total"],
-          { "Realized 30d": "spct", "Unrealized": "spct", "Total": "spct" },
+        return table(rows.slice(0, -1).map(view), ["Strategy", "Realized 30d", "uPnL", "Total"],
+          { "Realized 30d": "spct", "uPnL": "spct", "Total": "spct" },
           { total: view(rows[rows.length - 1]), key: { "Total": "abs" } });
       })(),
       candidates: (() => {  // desk/screener.py
@@ -1132,6 +1132,7 @@
     notes.push("SPY is Yahoo Finance's daily close, read through the relay; S&P 500 beta in the risk table uses HL's S&P 500 perp, which trades every day like the crypto book.");
     notes.push("Current-holdings risk is a historical simulation: today's positions moved by each of the last 90 days' prices.");
     [...new Set(riskNotes)].forEach((note) => notes.push(`Open risk: ${note}`));
+    reconcile(tables).reverse().forEach((row) => attention.unshift(row));   // tables that should tie out and don't
 
     return plain({
       kpis: {
@@ -1163,6 +1164,31 @@
     const before = known.map((r) => r.Value / (1 + r["24h change (%)"]));
     const base = sum(before.map(Math.abs));
     return base ? sum(known.map((r, i) => r.Value - before[i])) / base : NaN;
+  }
+
+  // Cross-checks between the tables, as desk/reconcile.py: totals of the same money agree, shares add up to 100%.
+  const RECONCILE_TOLERANCE = 0.01;
+  function reconcile(tables) {
+    const has = (t, column) => t && (t.columns || []).some((c) => c.key === column);
+    const columnSum = (t, column) => {
+      if (!has(t, column)) return NaN;
+      if (t.total && fin(t.total[column])) return t.total[column];
+      const values = (t.rows || []).map((r) => r[column]).filter(fin);
+      return values.length ? sum(values) : NaN;
+    };
+    const rowSum = (list, column) => {
+      const values = list.filter(Boolean).flatMap((t) => (t.rows || []).map((r) => r[column])).filter(fin);
+      return values.length ? sum(values) : NaN;
+    };
+    const found = [];
+    const compare = (label, leftName, left, rightName, right) => {
+      if (fin(left) && fin(right) && Math.abs(left - right) > RECONCILE_TOLERANCE)
+        found.push(["Tables disagree", `${label}: ${leftName} ${percent(left)}, ${rightName} ${percent(right)}`]);
+    };
+    compare("uPnL", "strategies", columnSum(tables.strategies, "uPnL"), "accounts", columnSum(tables.accounts, "uPnL / equity"));
+    compare("desk shares", "accounts", rowSum([tables.accounts], "% of desk"), "expected", 1);
+    compare("position weights", "crypto and stocks", rowSum([tables.positions, tables.positions_stocks], "Weight"), "expected", 1);
+    return found;
   }
 
   function exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value, ibs, ibCloses }) {

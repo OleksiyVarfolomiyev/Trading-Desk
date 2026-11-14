@@ -400,6 +400,9 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
                 twr.append({"name": name, "x": [ts.strftime("%Y-%m-%d") for ts in prices.index],
                             "y": (100 * (prices / prices.iloc[0] - 1)).round(2).tolist()})
 
+    from desk import reconcile
+
+    attention = reconcile.checks(tables) + attention   # tables that should tie out and don't: first
     notes = list(desk.notes)
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     return {

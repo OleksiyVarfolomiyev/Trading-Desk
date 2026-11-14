@@ -127,6 +127,6 @@ class PerformanceViewTests(unittest.TestCase):
         view = journal.performance_view(frame, 2000.0).iloc[0]
         self.assertEqual(list(view.index), journal.VIEW_COLUMNS)              # no positions, volume or fills
         self.assertAlmostEqual(view["Realized 30d"], 0.03)                     # (50 + 10 funding) / 2,000; fees already in
-        self.assertAlmostEqual(view["Unrealized"], -0.01)
+        self.assertAlmostEqual(view["uPnL"], -0.01)
         self.assertAlmostEqual(view["Total"], 0.02)
         self.assertTrue(journal.performance_view(frame, 0.0).empty)

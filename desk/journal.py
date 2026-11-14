@@ -42,8 +42,8 @@ COLUMNS = ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL 30d", "
            "Fills 30d"]
 # What the front end shows: each strategy's result as a share of desk value, as the Performance table shows returns.
 # Realized 30d is net of fees and includes funding; activity (positions, volume, fills) stays in the data.
-VIEW_COLUMNS = ["Strategy", "Realized 30d", "Unrealized", "Total"]
-VIEW_FORMATS = {"Realized 30d": "spct", "Unrealized": "spct", "Total": "spct"}
+VIEW_COLUMNS = ["Strategy", "Realized 30d", "uPnL", "Total"]   # "uPnL", as the accounts and positions tables
+VIEW_FORMATS = {"Realized 30d": "spct", "uPnL": "spct", "Total": "spct"}
 
 
 def performance_view(frame: pd.DataFrame, desk_value: float) -> pd.DataFrame:
@@ -52,7 +52,7 @@ def performance_view(frame: pd.DataFrame, desk_value: float) -> pd.DataFrame:
         return pd.DataFrame(columns=VIEW_COLUMNS)
     realized = (frame["Realized PnL 30d"] + frame["Funding 30d"]) / desk_value
     unrealized = frame["Unrealized PnL"] / desk_value
-    return pd.DataFrame({"Strategy": frame["Strategy"], "Realized 30d": realized, "Unrealized": unrealized,
+    return pd.DataFrame({"Strategy": frame["Strategy"], "Realized 30d": realized, "uPnL": unrealized,
                          "Total": realized + unrealized})[VIEW_COLUMNS]
 
 
