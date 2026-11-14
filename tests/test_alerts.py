@@ -21,6 +21,11 @@ class AlertRowTests(unittest.TestCase):
         self.assertEqual(rows[0][0], "Ladder out of band: rebalance (...c248 BTC)")
         self.assertIn("(since Nov 11, 5 pm)", rows[0][1])  # the daemon stamps UTC; the desk reads Eastern, no zone name
 
+    def test_a_squeeze_row_carries_no_time(self):
+        state = {"heartbeat": 1000.0, "alerts": [
+            {"title": "Squeeze: BERA short", "text": "24h 36%, funding -7.1% d, SL 7.2%", "since": "2026-11-13T20:00:00"}]}
+        self.assertEqual(alerts.rows(state, now=1100.0), [("Squeeze: BERA short", "24h 36%, funding -7.1% d, SL 7.2%")])
+
     def test_a_silent_daemon_is_flagged(self):
         rows = alerts.rows({"heartbeat": 0.0, "alerts": []}, now=20 * 60.0)
         self.assertEqual(rows[0][0], "Trading daemon not reporting")

@@ -1004,7 +1004,8 @@
       const rows = age > 15
         ? [["Trading daemon not reporting", `Silent ${age.toFixed(0)} min: guards, margin guard and ladders stopped.`]]
         : (daemonAlerts.alerts || []).filter((a) => !a.expires || a.expires > Date.now() / 1000)
-          .map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), `${a.text} (since ${eastern(a.since, true)})`]);
+          .map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1),
+            /^squeeze/i.test(a.title) ? a.text : `${a.text} (since ${eastern(a.since, true)})`]);  // a squeeze is about now: no time
       rows.reverse().forEach((row) => attention.unshift(row));
     }
     // One "Funding" row (desk/funding_watch.py consolidate): the daemon's sustained payers, worst first, with their

@@ -152,17 +152,15 @@ def squeeze(side: str, move: float, funding_apr: float) -> bool:
 
 
 def squeeze_alert(coin: str, side: str, move: float, funding_apr: float, mark: float, stop: float | None) -> tuple[str, str]:
-    """("Squeeze: BERA short", "up 29% in 24h against you; shorts paying 2,738% APR (7.5% of the position a day);
-    the stop at 0.1412 is 8% away"): the signal first."""
-    paying = abs(funding_apr)
-    direction = "up" if side == "short" else "down"
-    text = (f"{direction} {_pct(abs(move))} in 24h against you; {'shorts' if side == 'short' else 'longs'} paying "
-            f"{_pct(paying)} APR ({_pct(paying / 365)} of the position a day)")
-    if stop and mark:
-        text += f"; the stop at {stop:.6g} is {_pct(abs(stop / mark - 1))} away"
-    else:
-        text += "; no stop on HL"
-    return f"Squeeze: {coin.split(':')[-1]} {side}", text
+    """("Squeeze: BERA short", "24h 29%, funding -7.5% d, SL 8.3%"): the move against the position, the funding it
+    pays a day (negative: paid), the stop's distance."""
+    return f"Squeeze: {coin.split(':')[-1]} {side}", f"24h {_pct(abs(move))}, {_funding_stop(funding_apr, mark, stop)}"
+
+
+def _funding_stop(funding_apr: float, mark: float, stop: float | None) -> str:
+    """"funding -7.5% d, SL 8.3%": what the squeezed side pays a day, and how far the stop is (or "no SL")."""
+    stop_text = f"SL {_pct(abs(stop / mark - 1))}" if stop and mark else "no SL"
+    return f"funding {_pct(-abs(funding_apr) / 365)} d, {stop_text}"
 
 
 # Naming: "Squeeze stalled" is only a squeeze that stopped running while its funding still bleeds (critical: the cue
@@ -193,13 +191,9 @@ def stalled_squeeze(closes: list[float], side: str) -> bool:
 
 
 def stall_alert(coin: str, side: str, funding_apr: float, mark: float, stop: float | None) -> tuple[str, str]:
-    """("Squeeze stalled: BERA short", "flat 12h; funding 8.6% of the position a day, the cost now runs without the
-    price helping; the stop at 0.1412 is 9% away"): the cue to cut a squeezed position that stopped moving."""
-    paying = abs(funding_apr)
-    text = (f"flat {STALL_HOURS}h; funding {_pct(paying / 365)} of the position a day ({_pct(paying)} APR), "
-            "the cost now runs without the price helping")
-    text += f"; the stop at {stop:.6g} is {_pct(abs(stop / mark - 1))} away" if stop and mark else "; no stop on HL"
-    return f"Squeeze stalled: {coin.split(':')[-1]} {side}", text
+    """("Squeeze stalled: BERA short", "flat 12h, funding -8.6% d, SL 9%"): the cue to cut a squeezed position that
+    stopped moving while its funding still bleeds."""
+    return f"Squeeze stalled: {coin.split(':')[-1]} {side}", f"flat {STALL_HOURS}h, {_funding_stop(funding_apr, mark, stop)}"
 
 
 def book_move(positions: list[dict], contexts_by_coin: dict[str, dict], equity: float) -> float:

@@ -962,3 +962,31 @@ class MakerReductionTests(unittest.TestCase):
                                                timeout=0.0, interval=0.0)
         exchange.market_close.assert_called_once_with("TRX", 1.0)         # 10 -> 6, of which 3 filled as maker
         self.assertEqual((maker, taker), (3.0, 1.0))
+
+
+class LadderStopTests(unittest.TestCase):
+    def test_closing_the_position_stops_the_ladder_without_an_alert(self):
+        daemon = SimpleNamespace(alerts=hl_daemon.Alerts(path=None),
+                                 state=SimpleNamespace(position_quantity=lambda wallet, coin, dex: 0.0))
+        ladders = hl_daemon.Ladders(daemon, path=None)
+        ladders._cancel_own = lambda wallet, coin, dex: None
+        ladder = {"wallet": "0xabc0000000000000000000000000000000c248", "coin": "LIT", "dex": "", "base": -249.0}
+        ladders.ladders[(ladder["wallet"], "LIT")] = ladder
+        ladders.step(ladder, time.time())
+        self.assertEqual(ladders.ladders, {})
+        self.assertEqual(daemon.alerts.items, {})   # a deliberate close is not something that needs attention
+
+
+class SlowPushTests(unittest.TestCase):
+    def test_the_regime_reaches_the_relay_when_ib_comes_from_the_relay(self):
+        from desk import web_sync
+
+        state = SimpleNamespace(slow_sent_at=0.0)
+        book = SimpleNamespace(ib_reads=[("entry", "snapshot")], ib_from_relay=True)   # the server
+        with patch.object(web_sync, "push_regime") as regime, patch.object(web_sync, "push_wallets") as wallets, \
+                patch.object(web_sync, "push_ib") as ib:
+            hl_daemon.HLState.send_ib(SimpleNamespace(send_slow=lambda: hl_daemon.HLState.send_slow(state)), book)
+            hl_daemon.HLState.send_ib(SimpleNamespace(send_slow=lambda: hl_daemon.HLState.send_slow(state)), book)
+        regime.assert_called_once()          # hourly, not on every book read
+        wallets.assert_called_once()
+        ib.assert_not_called()               # IB is not sent back to where it came from

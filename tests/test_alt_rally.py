@@ -79,9 +79,8 @@ class SqueezeTests(unittest.TestCase):
     def test_the_alert_leads_with_the_squeeze_and_shows_the_stop(self):
         title, text = alt_rally.squeeze_alert("BERA", "short", 0.288, -27.38, 0.1304, 0.1412)
         self.assertEqual(title, "Squeeze: BERA short")
-        self.assertEqual(text, "up 29% in 24h against you; shorts paying 2738% APR (7.5% of the position a day); "
-                               "the stop at 0.1412 is 8.3% away")
-        self.assertIn("no stop on HL", alt_rally.squeeze_alert("xyz:AMD", "long", -0.2, 6.0, 500, None)[1])
+        self.assertEqual(text, "24h 29%, funding -7.5% d, SL 8.3%")
+        self.assertIn("no SL", alt_rally.squeeze_alert("xyz:AMD", "long", -0.2, 6.0, 500, None)[1])
 
 
 class StallTests(unittest.TestCase):
@@ -95,7 +94,7 @@ class StallTests(unittest.TestCase):
         self.assertFalse(alt_rally.stalled_squeeze(squeeze_then_flat, "long"))        # it ran for a long, not against
         title, text = alt_rally.stall_alert("BERA", "short", -31.37, 0.1304, 0.1412)
         self.assertEqual(title, "Squeeze stalled: BERA short")
-        self.assertTrue(text.startswith("flat 12h; funding 8.6% of the position a day (3137% APR)"))
+        self.assertEqual(text, "flat 12h, funding -8.6% d, SL 8.3%")
 
 
 if __name__ == "__main__":

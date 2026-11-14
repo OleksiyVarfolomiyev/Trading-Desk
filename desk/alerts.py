@@ -8,6 +8,7 @@ An old heartbeat is itself an alert: the daemon has stopped, so nothing is guard
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from desk.numbers import clock
 
 ALERTS_FILE = Path.home() / ".trading-desk" / "daemon_alerts.json"
 STALE_SECONDS = 15 * 60
+UNTIMED = re.compile(r"squeeze", re.I)   # a squeeze is about now: the row carries no "since"
 
 
 def read(path: Path = ALERTS_FILE) -> dict | None:
@@ -43,5 +45,6 @@ def rows(state: dict | None, now: float | None = None) -> list[tuple[str, str]]:
                  "are not running. Start it: .venv/bin/python execution/hl_daemon.py serve")]
 
     title = lambda text: text[:1].upper() + text[1:]  # "funding adverse" reads "Funding adverse"
-    return [(title(item['title']), f"{item['text']} (since {clock(item.get('since', '')) or '?'})")
+    stamp = lambda item: "" if UNTIMED.match(item["title"]) else f" (since {clock(item.get('since', '')) or '?'})"
+    return [(title(item['title']), f"{item['text']}{stamp(item)}")
             for item in state.get("alerts", []) if float(item.get("expires", 0) or 0) == 0 or float(item["expires"]) > now]

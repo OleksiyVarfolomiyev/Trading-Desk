@@ -358,6 +358,7 @@ class HLState:
 
     def send_ib(self, book) -> None:
         """Send IB, as just read for the risk checks, to the web relay every ten minutes (desk/web_sync.py)."""
+        self.send_slow()
         if not book.ib_reads or getattr(book, "ib_from_relay", False) \
                 or time.time() - getattr(self, "ib_sent_at", 0.0) < IB_WEB_EVERY_SECONDS:  # the server: IB came from the relay
             return
@@ -372,12 +373,22 @@ class HLState:
                 except Exception:
                     moves = None
                 web_sync.push_ib(snapshot, entry, moves)
-            if time.time() - getattr(self, "slow_sent_at", 0.0) >= 3600:  # slow-changing readings, hourly
-                self.slow_sent_at = time.time()
-                web_sync.push_wallets()
-                web_sync.push_regime()
         except Exception as exc:  # the web page keeps the last IB it received
             log(f"IB not sent to the web relay ({type(exc).__name__}: {exc})")
+
+    def send_slow(self) -> None:
+        """The slow-changing readings (wallet performance, market regime) to the web relay, hourly. Separate from the
+        IB push, which the server skips (its IB comes from the relay), so the regime reaches the page there too."""
+        if time.time() - getattr(self, "slow_sent_at", 0.0) < 3600:
+            return
+        self.slow_sent_at = time.time()
+        from desk import web_sync
+
+        for name, push in (("wallets", web_sync.push_wallets), ("regime", web_sync.push_regime)):
+            try:
+                push()
+            except Exception as exc:  # the web page keeps the last reading it received
+                log(f"{name} not sent to the web relay ({type(exc).__name__}: {exc})")
 
     # -- websocket messages
     def on_wallet(self, wallet: str, channel: str, data: Any) -> None:
@@ -2054,10 +2065,8 @@ class Ladders:
                 self.ladders.pop((wallet, coin), None)
             self.save()
             self._cancel_own(wallet, coin, dex)
+            # Closing the position is a deliberate act and the ladder stopping is its expected result: logged, no alert.
             log(f"ladder ...{wallet[-4:]} {coin}: the position is closed or flipped; ladder stopped and its orders cancelled")
-            self.daemon.alerts.set(f"ladder-stopped:{wallet}:{coin}", f"ladder stopped (...{wallet[-4:]} {coin})",
-                                   "The position was closed or flipped, so the ladder stopped and cancelled its orders.",
-                                   ttl=6 * 3600)
             for key in ("band", "adds"):
                 self.daemon.alerts.clear(f"ladder-{key}:{wallet}:{coin}")
             return
