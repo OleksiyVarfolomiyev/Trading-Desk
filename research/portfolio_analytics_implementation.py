@@ -1475,7 +1475,7 @@ class _PerformanceMixin(_TableStyleMixin):
         # At 252-day annualization the main Sharpe already is the sqrt-252 one (same column).
         if not has_spy:
             metrics=metrics.drop(columns=['Beta (SPY)'])
-        self.show_table(metrics,title='RISK-ADJUSTED METRICS (IN-SAMPLE)',formatters={
+        formats={
             f'Sharpe (excess, sqrt {periods})':'{:.3f}',
             'Sharpe (excess, sqrt 252)':'{:.3f}',
             'Sharpe (raw, sqrt 252)':'{:.3f}',
@@ -1497,7 +1497,26 @@ class _PerformanceMixin(_TableStyleMixin):
             'Bootstrap VaR 99% (90% CI high)':'{:.2%}',
             'Risk-Free Rate':'{:.2%}',
             'Max Drawdown':'{:.2%}',
-        },key_columns={f'Sharpe (excess, sqrt {periods})':None,'Alpha':None,'Beta (BTC)':None,'Max Drawdown':None})
+        }
+        # One row of ~25 measures is too wide to read: three tables, each answering one question.
+        groups=[
+            ('RISK-ADJUSTED RETURN (IN-SAMPLE)',[f'Sharpe (excess, sqrt {periods})','Sharpe (excess, sqrt 252)','Sharpe (raw, sqrt 252)',
+                f'Sortino ({periods}d)','Beta (BTC)','Beta (SPY)','Alpha',f'Arithmetic Return ({periods}d, linear)',
+                'Risk-Free Rate','Max Drawdown'],
+             {f'Sharpe (excess, sqrt {periods})':None,'Alpha':None,'Beta (BTC)':None,'Max Drawdown':None}),
+            ('VOLATILITY AND HISTORICAL VAR (IN-SAMPLE)',['Hist Vol (daily)',f'Hist Vol (annualized, {periods}d)',
+                'Historical 1D VaR 95%','Historical VaR 95% ($ / $100)','Historical 1D VaR 99%','Historical VaR 99% ($ / $100)',
+                'Daily Return Observations','Historical VaR 99% Tail Observations'],
+             {'Historical 1D VaR 95%':None}),
+            ('BOOTSTRAP VAR (IN-SAMPLE)',['Bootstrap 1D VaR 95%','Bootstrap VaR 95% ($ / $100)','Bootstrap VaR 95% (90% CI low)',
+                'Bootstrap VaR 95% (90% CI high)','Bootstrap 1D VaR 99%','Bootstrap VaR 99% ($ / $100)',
+                'Bootstrap VaR 99% (90% CI low)','Bootstrap VaR 99% (90% CI high)'],
+             {'Bootstrap 1D VaR 95%':None}),
+        ]
+        for title,columns,keys in groups:
+            columns=[column for column in columns if column in metrics.columns]
+            self.show_table(metrics[columns],title=title,formatters={column:formats[column] for column in columns if column in formats},
+                            key_columns={column:mode for column,mode in keys.items() if column in columns})
         calendar_text=('US trading days with 252-day annualization (crypto prices are sampled at each '
                        'trading day\'s close)' if self.uses_trading_calendar else 'daily observations with 365-day '
                        'crypto annualization')
