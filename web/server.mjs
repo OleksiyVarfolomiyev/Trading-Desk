@@ -5,9 +5,10 @@
 //   * storage: each key Cloudflare kept in KV is a JSON file in DESK_STORE (default ~/.trading-desk/relay);
 //   * the 6-hourly history capture (the Worker's cron), on a timer;
 //   * the page: the files web/build_site.sh assembles into web/site;
-//   * a login: every request needs the dashboard password (HTTP basic auth, over Caddy's HTTPS) or the
-//     relay token (the Mac's pushes and reads). Requests from this machine itself (the daemon, the
-//     daily job) need neither.
+//   * a login: a browser signs in on the desk's own sign-in page and keeps a session cookie for 30 days
+//     (the browser's built-in basic-auth box is not used: Brave, for one, never shows it). Scripts use
+//     the relay token (the Mac's pushes and reads) or basic auth. Requests from this machine itself (the
+//     daemon, the daily job) need none of it.
 //
 // Config: DESK_RELAY_CONFIG (default ~/.trading-desk/relay.json, readable only by the desk user):
 //   {"wallets": {"07f2": "0x..."}, "ingest_token": "...", "user": "desk", "password_scrypt": "salt:hash"}
@@ -90,6 +91,89 @@ function passwordMatches(config, given) {
   return sameText(crypto.scryptSync(given, Buffer.from(salt, "hex"), 32).toString("hex"), hash);
 }
 
+// A session is "expiry.signature", signed with a key derived from the stored password hash: changing the
+// password signs everyone out.
+const SESSION_COOKIE = "desk_session";
+const SESSION_DAYS = 30;
+const failures = new Map();   // address -> [times of failed sign-ins], to slow guessing
+
+function sessionKey(config) {
+  return crypto.createHash("sha256").update("desk-session:" + String(config.password_scrypt || "")).digest();
+}
+
+function makeSession(config) {
+  const expiry = String(Date.now() + SESSION_DAYS * 86400_000);
+  return `${expiry}.${crypto.createHmac("sha256", sessionKey(config)).update(expiry).digest("hex")}`;
+}
+
+function sessionValid(request, config) {
+  if (!config.password_scrypt) return false;
+  const cookies = Object.fromEntries(String(request.headers.cookie || "").split(";").map((part) => {
+    const at = part.indexOf("=");
+    return at > 0 ? [part.slice(0, at).trim(), part.slice(at + 1).trim()] : ["", ""];
+  }));
+  const [expiry, signature] = String(cookies[SESSION_COOKIE] || "").split(".");
+  if (!expiry || !signature || Number(expiry) < Date.now()) return false;
+  return sameText(signature, crypto.createHmac("sha256", sessionKey(config)).update(expiry).digest("hex"));
+}
+
+function clientAddress(request) {
+  return String(request.headers["x-forwarded-for"] || request.socket.remoteAddress || "").split(",")[0].trim();
+}
+
+function tooManyFailures(address) {
+  const recent = (failures.get(address) || []).filter((time) => Date.now() - time < 15 * 60_000);
+  failures.set(address, recent);
+  return recent.length >= 10;
+}
+
+function loginPage(message = "") {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
+<title>Trading Desk</title>
+<style>
+:root { --bg: #f6f7f9; --card: #fff; --text: #16181d; --muted: #6b7280; --line: #d9dde3; --accent: #2563eb; --bad: #c62828; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0f1115; --card: #171a21; --text: #e8eaee; --muted: #9aa1ad; --line: #2a2f3a; --accent: #5b8def; --bad: #ef5350; } }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text);
+  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 16px; }
+form { width: 100%; max-width: 320px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
+h1 { font-size: 18px; margin: 0 0 16px; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+input { width: 100%; font: inherit; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); }
+button { width: 100%; margin-top: 20px; padding: 10px; font: inherit; font-weight: 600; border: 0; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; }
+.message { color: var(--bad); font-size: 13px; margin-top: 12px; min-height: 1em; }
+</style></head><body>
+<form method="post" action="/login">
+<h1>Trading Desk</h1>
+<label for="user">User</label><input id="user" name="user" autocomplete="username" value="desk" required>
+<label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" autofocus required>
+<button type="submit">Sign in</button>
+<div class="message">${message}</div>
+</form></body></html>`;
+}
+
+async function signIn(request, response) {
+  const config = readConfig(), address = clientAddress(request);
+  if (tooManyFailures(address)) {
+    response.writeHead(429, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    response.end(loginPage("Too many attempts. Try again in 15 minutes."));
+    return;
+  }
+  const form = new URLSearchParams((await readBody(request)).toString("utf8"));
+  if (sameText(form.get("user") || "", config.user || "desk") && passwordMatches(config, form.get("password") || "")) {
+    failures.delete(address);
+    response.writeHead(303, { Location: "/", "Cache-Control": "no-store",
+      "Set-Cookie": `${SESSION_COOKIE}=${makeSession(config)}; Path=/; Max-Age=${SESSION_DAYS * 86400}; HttpOnly; Secure; SameSite=Lax` });
+    response.end();
+    return;
+  }
+  failures.get(address).push(Date.now());
+  await new Promise((resolve) => setTimeout(resolve, 1000));   // a failed attempt costs a second
+  response.writeHead(401, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  response.end(loginPage("Wrong user or password."));
+}
+
 function allowed(request) {
   const header = request.headers.authorization || "";
   // This machine itself (the daemon, the daily job): Caddy's proxied requests always carry X-Forwarded-For.
@@ -106,7 +190,7 @@ function allowed(request) {
     const split = decoded.indexOf(":");
     return split > 0 && sameText(decoded.slice(0, split), config.user || "desk") && passwordMatches(config, decoded.slice(split + 1));
   }
-  return false;
+  return sessionValid(request, config);
 }
 
 // ---- the page ----
@@ -130,12 +214,21 @@ async function readBody(request) {
 }
 
 async function handle(request, response) {
-  if (!allowed(request)) {
-    response.writeHead(401, { "WWW-Authenticate": 'Basic realm="Desk", charset="UTF-8"', "Content-Type": "text/plain" });
-    response.end("Sign in to see the desk.");
+  const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/login" && request.method === "POST") return signIn(request, response);
+  if (url.pathname === "/logout") {
+    response.writeHead(303, { Location: "/", "Set-Cookie": `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax` });
+    response.end();
     return;
   }
-  const url = new URL(request.url, "http://localhost");
+  if (!allowed(request)) {
+    // A page request gets the sign-in page; anything else (the page's data calls, scripts) a plain 401, with no
+    // basic-auth challenge, so no browser pops up (or silently withholds) its own login box.
+    const page = request.method === "GET" && String(request.headers.accept || "").includes("text/html");
+    response.writeHead(page ? 200 : 401, { "Content-Type": page ? "text/html; charset=utf-8" : "text/plain", "Cache-Control": "no-store" });
+    response.end(page ? loginPage() : "Sign in to see the desk.");
+    return;
+  }
   if (request.method === "GET") {
     const file = await staticFile(url.pathname);
     if (file) {
