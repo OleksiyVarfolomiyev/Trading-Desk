@@ -619,7 +619,7 @@ class DeskOverview:
                                                      "% of desk": _percent},
                                   cell_style=lambda *args: "color:inherit", bold_last=True,
                                   blank_missing_cells={(last, "Amount"), (last, "Price")},
-                                  title="WALLET HOLDINGS OUTSIDE HL", key_columns={"Value": "max"})
+                                  title="WALLETS HOLDINGS", key_columns={"Value": "max"})
         for snapshot in self._wallets():
             for note in snapshot.notes:
                 print(f"{snapshot.label}: {note}")
@@ -715,7 +715,7 @@ class DeskOverview:
         rows = [
             ("Desk value (all accounts)", _money(desk)),
             ("Trading accounts (HL, IB)", of_desk(trading_equity)),
-            ("Wallet holdings outside HL", of_desk(wallet_value)),
+            ("Wallets holdings", of_desk(wallet_value)),
             ("Cash", of_desk(cash) + " IB cash; HL collateral is in the account values"),
             ("Margin used", f"{sum(s.margin_used_usd for s in trading) / trading_equity:.0%} of trading equity"
              if trading_equity else "n/a"),

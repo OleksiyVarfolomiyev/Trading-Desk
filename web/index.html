@@ -73,19 +73,23 @@
       </div>
     </section>
 
-    <section class="card">
-      <h2 title="Value is signed (shorts negative). Weight is the share of gross exposure across both tables (together they sum to 100%); exposure / desk value sums to gross leverage. Funding (APR) is what the position earns (green) or pays (red) per year at the current rate.">Open positions: crypto</h2>
-      <div class="table-wrap" id="t-positions"></div>
-    </section>
+    <!-- Crypto and stocks stacked on the left so their columns stay aligned; the wallets beside them. -->
+    <section class="grid two">
+      <div class="stack">
+        <div class="card">
+          <h2 title="Value is signed (shorts negative). Weight is the share of gross exposure across both tables (together they sum to 100%); exposure / desk value sums to gross leverage. Funding (APR) is what the position earns (green) or pays (red) per year at the current rate.">Open positions: crypto</h2>
+          <div class="table-wrap" id="t-positions"></div>
+        </div>
 
-    <section class="card">
-      <h2 title="IB holdings and Hyperliquid equity, index and commodity perps. Wallet tokens are in the wallet holdings table; weights here are shares of the trading positions.">Open positions: stocks and tradfi</h2>
-      <div class="table-wrap" id="t-positions_stocks"></div>
-    </section>
-
-    <section class="card">
-      <h2>Wallet holdings outside HL</h2>
-      <div class="table-wrap" id="t-wallets"></div>
+        <div class="card">
+          <h2 title="IB holdings and Hyperliquid equity, index and commodity perps. Wallet tokens are in the wallets holdings table; weights here are shares of the trading positions.">Open positions: stocks and tradfi</h2>
+          <div class="table-wrap" id="t-positions_stocks"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2 title="Tokens held in the HL wallets (07f2 and c248) on-chain, outside trading: main tokens and Venice staking.">Wallets holdings</h2>
+        <div class="table-wrap" id="t-wallets"></div>
+      </div>
     </section>
 
     <section class="card">

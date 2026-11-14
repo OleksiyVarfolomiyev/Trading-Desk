@@ -275,7 +275,7 @@ function renderTable(id, spec) {
   const body = el("tbody", {}, rows.map((row, index) => el("tr", row.__hover ? { title: row.__hover } : {},
     spec.columns.map((column) => cell(row, column, index)))));
   const parts = [el("thead", {}, head), body];
-  if (spec.total) {
+  if (spec.total && spec.rows.length > 1) {  // the total of a single row only repeats it
     parts.push(el("tfoot", {}, el("tr", { class: "total" }, spec.columns.map((column) => cell(spec.total, column)))));
   }
   if (shared.length) host.append(el("p", { class: "table-note", text: shared.join(" · ") }));

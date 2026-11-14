@@ -101,7 +101,8 @@ main { margin: 0; padding: 12px 12px 48px; display: flex; flex-direction: column
   animation: progress-slide 1.2s ease-in-out infinite; }
 @keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 @media (prefers-reduced-motion: reduce) { .progress span { animation: none; width: 100%; opacity: 0.5; } }
-.grid.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.grid.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.stack { display: grid; gap: 12px; min-width: 0; }
 /* One 12px gap between every card and tile, across and down (the tiles use the same). */
 #content:not([hidden]) { display: flex; flex-direction: column; gap: 12px; }
 @media (max-width: 980px) { .grid.two { grid-template-columns: minmax(0, 1fr); } }
