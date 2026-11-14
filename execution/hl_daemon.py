@@ -1342,7 +1342,17 @@ class Alerts:
                 except (KeyError, TypeError, ValueError):
                     continue
                 side = "long" if size > 0 else "short"
-                if not before or not alt_rally.squeeze(side, mark / before - 1, funding_apr):
+                paying = -funding_apr if side == "short" else funding_apr   # what the position's side pays, as an APR
+                if not before or paying < alt_rally.SQUEEZE_FUNDING_APR:
+                    continue
+                running = alt_rally.squeeze(side, mark / before - 1, funding_apr)
+                try:  # a stalled squeeze? the run of the prior day and the last 12 hours, read only for a position paying this much
+                    since_ms = int((time.time() - (24 + alt_rally.STALL_HOURS + 1) * 3600) * 1000)
+                    candles = post_info({"type": "candleSnapshot", "req": {"coin": coin, "interval": "1h", "startTime": since_ms}}) or []
+                    flat = alt_rally.stalled_squeeze([float(candle["c"]) for candle in candles], side)
+                except Exception:
+                    flat = False
+                if not running and not flat:
                     continue
                 dex = coin.split(":")[0] if ":" in coin else ""
                 if dex not in orders:  # the wallet's stops on that DEX, read once and only when needed
@@ -1354,7 +1364,10 @@ class Alerts:
                              and order.get("reduceOnly") and "Stop" in str(order.get("orderType"))), None)
                 key = f"squeeze:{wallet}:{coin}"
                 squeezed.add(key)
-                self.set(key, *alt_rally.squeeze_alert(coin, side, mark / before - 1, funding_apr, mark, stop))
+                if flat:  # the cue to cut: the funding runs on while the price no longer moves
+                    self.set(key, *alt_rally.stall_alert(coin, side, funding_apr, mark, stop))
+                else:
+                    self.set(key, *alt_rally.squeeze_alert(coin, side, mark / before - 1, funding_apr, mark, stop))
         with self.lock:
             over = [key for key in self.items if key.startswith("squeeze:") and key not in squeezed]
         for key in over:

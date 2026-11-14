@@ -165,6 +165,43 @@ def squeeze_alert(coin: str, side: str, move: float, funding_apr: float, mark: f
     return f"Squeeze: {coin.split(':')[-1]} {side}", text
 
 
+# Naming: "Squeeze stalled" is only a squeeze that stopped running while its funding still bleeds (critical: the cue
+# to cut). A position that is merely not moving is a capital-efficiency matter and, if it is ever labelled, is
+# "Idle" (an amber marker or a screener note), never "stalled", so the two cannot be mistaken for each other.
+STALL_HOURS = 12
+STALL_BAND = 0.03          # every hourly close within +-3% of the stretch's midpoint: the move has stalled
+
+
+def stalled(closes: list[float]) -> bool:
+    """The last STALL_HOURS hourly closes all within +-STALL_BAND of their midpoint (the price has stopped moving)."""
+    if len(closes) < STALL_HOURS:
+        return False
+    recent = closes[-STALL_HOURS:]
+    middle = (max(recent) + min(recent)) / 2
+    return middle > 0 and max(recent) <= middle * (1 + STALL_BAND) and min(recent) >= middle * (1 - STALL_BAND)
+
+
+def stalled_squeeze(closes: list[float], side: str) -> bool:
+    """A squeeze that stopped: the coin ran SQUEEZE_MOVE against the position in the 24 hours before the last
+    STALL_HOURS, and those hours are flat. ``closes``: hourly, oldest first, at least 24 + STALL_HOURS of them.
+    A coin that was merely flat while paying funding is not a stalled squeeze."""
+    if len(closes) < 24 + STALL_HOURS or not stalled(closes):
+        return False
+    start, before = closes[-STALL_HOURS], closes[-(24 + STALL_HOURS):-STALL_HOURS]
+    run = start / min(before) - 1 if side == "short" else 1 - start / max(before)
+    return run >= SQUEEZE_MOVE
+
+
+def stall_alert(coin: str, side: str, funding_apr: float, mark: float, stop: float | None) -> tuple[str, str]:
+    """("Squeeze stalled: BERA short", "flat 12h; funding 8.6% of the position a day, the cost now runs without the
+    price helping; the stop at 0.1412 is 9% away"): the cue to cut a squeezed position that stopped moving."""
+    paying = abs(funding_apr)
+    text = (f"flat {STALL_HOURS}h; funding {_pct(paying / 365)} of the position a day ({_pct(paying)} APR), "
+            "the cost now runs without the price helping")
+    text += f"; the stop at {stop:.6g} is {_pct(abs(stop / mark - 1))} away" if stop and mark else "; no stop on HL"
+    return f"Squeeze stalled: {coin.split(':')[-1]} {side}", text
+
+
 def book_move(positions: list[dict], contexts_by_coin: dict[str, dict], equity: float) -> float:
     """What the 24-hour moves did to the book: the sum over main-DEX positions of size times the price change,
     as a share of ``equity`` (negative: the book lost). ``positions`` are HL position dicts (coin, szi)."""

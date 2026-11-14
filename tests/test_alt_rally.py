@@ -84,5 +84,19 @@ class SqueezeTests(unittest.TestCase):
         self.assertIn("no stop on HL", alt_rally.squeeze_alert("xyz:AMD", "long", -0.2, 6.0, 500, None)[1])
 
 
+class StallTests(unittest.TestCase):
+    def test_twelve_flat_hours_is_a_stall_and_the_alert_says_cut(self):
+        self.assertTrue(alt_rally.stalled([0.130, 0.132, 0.128, 0.131] * 3))          # within +-3%
+        self.assertFalse(alt_rally.stalled([0.120, 0.125, 0.130, 0.135] * 3))         # still running
+        self.assertFalse(alt_rally.stalled([0.13] * 6))                                # too few hours
+        squeeze_then_flat = [0.106] * 12 + [0.106 + 0.002 * i for i in range(12)] + [0.130, 0.132, 0.128, 0.131] * 3
+        self.assertTrue(alt_rally.stalled_squeeze(squeeze_then_flat, "short"))       # ran +20%, then flat
+        self.assertFalse(alt_rally.stalled_squeeze([0.13] * 36, "short"))             # flat all along: no squeeze
+        self.assertFalse(alt_rally.stalled_squeeze(squeeze_then_flat, "long"))        # it ran for a long, not against
+        title, text = alt_rally.stall_alert("BERA", "short", -31.37, 0.1304, 0.1412)
+        self.assertEqual(title, "Squeeze stalled: BERA short")
+        self.assertTrue(text.startswith("flat 12h; funding 8.6% of the position a day (3137% APR)"))
+
+
 if __name__ == "__main__":
     unittest.main()
