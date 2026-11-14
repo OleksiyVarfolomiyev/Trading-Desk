@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import requests
-from desk.hl.trade_analytics import expected_forward_return, fetch_funding_history, post_info
+from desk.hl.trade_analytics import fetch_funding_history, post_info
 from factor_model import (
     alpha_verdict,
     fama_macbeth,
@@ -1297,44 +1297,13 @@ class _KellyMixin(_TableStyleMixin):
         self.full_portfolio=pd.concat([
             self.full_kelly,pd.Series({'Cash':1.0-self.full_kelly.sum()},name='weight')
         ])
-        completed_prices=self.prices[self.assets].copy()
-        completed_prices.index=pd.to_datetime(completed_prices.index,utc=True)
-        completed_prices=completed_prices.loc[
-            completed_prices.index<pd.Timestamp.now(tz='UTC').normalize()
-        ]
-        expected_returns={}
-        expected_warnings=[]
-        for asset in self.assets:
-            try:
-                expected_returns[asset],_=expected_forward_return(
-                    completed_prices[asset],horizon_days=5
-                )
-            except ValueError as exc:
-                expected_returns[asset]=float('nan')
-                expected_warnings.append(f'{asset}: {exc}')
-        expected_pnl_contribution=pd.Series(index=self.full_portfolio.index,dtype=float)
-        for asset in self.assets:
-            expected_pnl_contribution[asset]=(
-                100*self.full_portfolio.loc[asset]*expected_returns[asset]
-            )
-        expected_pnl_contribution['Cash']=(
-            100*self.full_portfolio.loc['Cash']*((1+self.risk_free_daily)**5-1)
-        )
-        self.expected_pnl_contribution=expected_pnl_contribution
-        weight_table=pd.DataFrame({
-            'Weight (%)':100*self.full_portfolio,
-            'Expected Price PnL / $100 equity (5d)':expected_pnl_contribution,
-        })
+        weight_table=pd.DataFrame({'Weight (%)':100*self.full_portfolio})
         long_exposure=weights[weights>0].sum()
         short_exposure=-weights[weights<0].sum()
         print(f'Gross long exposure: {long_exposure:.1%}; gross short exposure: {short_exposure:.1%}; net exposure: {weights.sum():.1%}.')
-        print('Expected price PnL is a historical mean-forward-return contribution per $100 of portfolio equity; it excludes funding, fees, and slippage.')
         self.show_table(weight_table,title='CONSTRAINED LONG/SHORT FULL-KELLY WEIGHTS (sorted by weight)',formatters={
             'Weight (%)':'{:.2f}',
-            'Expected Price PnL / $100 equity (5d)':'${:.2f}',
         },key_columns={'Weight (%)':'abs'})
-        if expected_warnings:
-            print('Expected-PnL history warnings: ' + '; '.join(expected_warnings))
 
 
 # ----------------------------------------------------------------------------

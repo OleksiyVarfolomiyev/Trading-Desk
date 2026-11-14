@@ -17,7 +17,6 @@ from desk.hl.trade_analytics import (
     position_book_beta,
     MAX_RATE_LIMIT_RETRIES,
     _rate_limit_delay,
-    add_expected_pnl_columns,
     adverse_funding_cost_per_unit,
     consolidate_current_funding,
     fetch_collateral_equity,
@@ -1538,10 +1537,6 @@ def _positions_total_row(frame, equity=None):
     position_value = frame['Pos'].abs().sum()
     margin = frame['Margin'].sum()
     equity = _account_equity(frame) if equity is None else equity
-    price_pnl, funding_pnl = frame['Expected Price PnL (5d)'], frame['Expected Funding PnL (5d)']
-    def expected_return(pnl):
-        notional = frame.loc[pnl.notna(), 'Pos'].abs().sum()
-        return pnl.sum() / notional * 100 if notional else float('nan')
     # A partial fee total would understate fees, so any unknown fee blanks the total.
     fees = -frame['Fees USD'].abs().sum() if frame['Fees USD'].notna().all() else float('nan')
     return {
@@ -1549,11 +1544,6 @@ def _positions_total_row(frame, equity=None):
         'uPnL (%)': _upnl_pct_total(frame),
         'ROE': frame['uPnL'].sum() / margin * 100 if margin else float('nan'),
         'Funding (since open)': frame['Funding (since open)'].sum(),
-        'Expected Price PnL (5d)': price_pnl.sum(),
-        'Expected Funding PnL (5d)': funding_pnl.sum(),
-        'Expected PnL incl. funding (5d)': frame['Expected PnL incl. funding (5d)'].sum(),
-        'Expected Price Return (5d)': expected_return(price_pnl),
-        'Expected Funding Return (5d)': expected_return(funding_pnl),
         'Pos': position_value, 'Margin': margin,
         'Fees': f'{_usd(-abs(fees))}' if pd.notna(fees) else 'n/a',
         'Fees / Position (%)': abs(fees) / position_value * 100 if position_value else float('nan'),
@@ -1567,7 +1557,6 @@ def display_positions(rows,show_wallet=False):
     if not rows:
         print('No open positions.')
         return
-    rows, expected_pnl_warnings = add_expected_pnl_columns(rows)
     frame=pd.DataFrame(rows).sort_values('Pos',key=lambda values:values.abs(),ascending=False).reset_index(drop=True)
     position_value = pd.to_numeric(frame['Pos'], errors='coerce').abs()
     equity = pd.to_numeric(frame['Account value'], errors='coerce')
@@ -1580,9 +1569,6 @@ def display_positions(rows,show_wallet=False):
     identifiers=(['Wallet'] if show_wallet else [])+['Ticker','Side']
     pnl_columns=identifiers+['Liq %','ROE','uPnL','uPnL (%)','24h change (%)','Funding (since open)',
              'Funding (1h)','Funding APR']
-    expected_columns=identifiers+['Expected Price PnL (5d)','Expected Funding PnL (5d)',
-             'Expected PnL incl. funding (5d)',
-             'Expected Price Return (5d)','Expected Funding Return (5d)']
     position_columns=identifiers+['Entry','Mark','Pos','Margin','Margin Type','Margin %','Fees',
              'Fees / Position (%)','Position / Account (%)',
              'Liq Px','Lev.','Sz']
@@ -1606,9 +1592,7 @@ def display_positions(rows,show_wallet=False):
                 'color:#d97706;' if value <= 25 else 'color:#188038;'
         if column in {'Fees','Fees / Position (%)'}:
             return 'color:#c62828;'
-        if column in {'uPnL','uPnL (%)','24h change (%)','ROE','Funding (since open)','Expected Price PnL (5d)',
-                'Expected Funding PnL (5d)','Expected PnL incl. funding (5d)',
-                'Expected Price Return (5d)','Expected Funding Return (5d)'} and pd.notna(value):
+        if column in {'uPnL','uPnL (%)','24h change (%)','ROE','Funding (since open)'} and pd.notna(value):
             return 'color:#188038;' if value>0 else 'color:#c62828;' if value<0 else ''
         if column=='Fees': return 'color:#c62828;'
         return ''
@@ -1622,11 +1606,6 @@ def display_positions(rows,show_wallet=False):
         'Position / Account (%)':lambda v:f'{_pct(v, scaled=True)}' if pd.notna(v) else 'n/a',
         'Funding (1h)':lambda v:f'{v:.6f}%' if pd.notna(v) else 'n/a',
         'Funding APR':lambda v:f'{_pct(v, scaled=True)}' if pd.notna(v) else 'n/a',
-        'Expected Price PnL (5d)':usd,
-        'Expected Funding PnL (5d)':usd,
-        'Expected PnL incl. funding (5d)':usd,
-        'Expected Price Return (5d)':lambda v:f'{v:.2f}%' if pd.notna(v) else 'n/a',
-        'Expected Funding Return (5d)':lambda v:f'{v:.2f}%' if pd.notna(v) else 'n/a',
         'Entry':lambda v:f'{v:,.8g}','Mark':lambda v:f'{v:,.8g}',
         'Liq Px':lambda v:f'{v:,.5g}' if pd.notna(v) else 'n/a','Lev.':lambda v:f'{v:.2f}x',
         'Margin %':lambda v:f'{_pct(v, scaled=True)}' if pd.notna(v) else 'n/a',
@@ -1643,14 +1622,12 @@ def display_positions(rows,show_wallet=False):
         total_row['Funding APR']=funding_summary['Net Funding APR (%) (simple, covered)']
         table=pd.concat([table,pd.DataFrame([total_row])],ignore_index=True)
         blank_total_cells={(len(table)-1,column) for column in table.columns}
-        for columns,view in ((pnl_columns,'PNL AND RISK'),(expected_columns,'EXPECTED PNL (5D)'),
-                             (position_columns,'SIZE AND MARGIN')):
+        for columns,view in ((pnl_columns,'PNL AND RISK'),(position_columns,'SIZE AND MARGIN')):
             display_interactive_table(table,columns=columns,cell_style=style,formatters=formatters,
                                       bold_last=True,blank_missing_cells=blank_total_cells,
                                       title=f'OPEN POSITIONS: {group.upper()}, {view}',
                                       # Risk view: nearest liquidation and PnL; sizing view: biggest share.
-                                      key_columns={'Liq %':'min','uPnL':'abs','Expected PnL incl. funding (5d)':'abs',
-                                                    'Position / Account (%)':'max'})
+                                      key_columns={'Liq %':'min','uPnL':'abs','Position / Account (%)':'max'})
     notional, margin_total = frame['Pos'].abs().sum(), frame['Margin'].sum()
     print(f"All positions: notional {_usd(notional)} | margin {_usd(margin_total)} | uPnL "
           + (f"{_pct(frame['uPnL'].sum() / notional)} of notional." if notional else f"{usd(frame['uPnL'].sum())}."))
@@ -1659,8 +1636,6 @@ def display_positions(rows,show_wallet=False):
           'longs pay shorts.')
     print('Funding and fees are cumulative since the position was opened. Fee ratios are '
           'shown only for complete USDC-denominated fees; otherwise they are n/a.')
-    if expected_pnl_warnings:
-        print('Expected-PnL history warnings: ' + '; '.join(expected_pnl_warnings))
 
 def _long_short_markup(long_value, short_value):
     """Render a ``long/short`` table cell with long in green and short in red."""

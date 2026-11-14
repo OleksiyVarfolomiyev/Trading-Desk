@@ -417,9 +417,6 @@ class RealizedPnlTests(unittest.TestCase):
             "Pos": [600.0, 400.0, 1_000.0], "Margin": [100.0, 100.0, 200.0],
             "uPnL": [10.0, -30.0, 60.0], "Funding (since open)": [1.0, 2.0, 3.0],
             "Fees USD": [1.0, 1.0, 2.0],
-            "Expected Price PnL (5d)": [6.0, float("nan"), 10.0],
-            "Expected Funding PnL (5d)": [1.0, 1.0, 2.0],
-            "Expected PnL incl. funding (5d)": [7.0, 1.0, 12.0],
         })
         total = self.account._positions_total_row(frame)
         self.assertEqual(total["Pos"], 2_000.0)
@@ -427,7 +424,6 @@ class RealizedPnlTests(unittest.TestCase):
         self.assertEqual(total["Lev."], 5.0)
         self.assertEqual(total["Position / Account (%)"], 100.0)
         self.assertEqual(total["Fees"], "-$4.00")
-        self.assertAlmostEqual(total["Expected Price Return (5d)"], 16 / 1_600 * 100)
         frame.loc[0, "Fees USD"] = float("nan")
         self.assertEqual(self.account._positions_total_row(frame)["Fees"], "n/a")
 
@@ -560,25 +556,23 @@ class RealizedPnlTests(unittest.TestCase):
         def position(coin, wallet, pos, margin, upnl):
             return {"Wallet": wallet, "Coin": coin, "Side": "SHORT", "Pos": pos, "Margin": margin,
                     "uPnL": upnl, "Account value": 1_000.0 if wallet == "a" else 3_000.0,
-                    "Funding": 0.0, "Fees USD": -1.0, "Funding (1h)": 0.01, "Expected Price PnL (5d)": 0.0,
-                    "Expected Funding PnL (5d)": 0.0, "Expected PnL incl. funding (5d)": 0.0}
+                    "Funding": 0.0, "Fees USD": -1.0, "Funding (1h)": 0.01}
         rows = [position("BTC", "a", -100.0, 10.0, 1.0), dict(position("xyz:AAPL", "b", 400.0, 40.0, -2.0), Side="LONG"),
                 position("para:ANSEM", "b", -50.0, 5.0, 3.0)]
         shown = []
-        with patch.object(self.account, "add_expected_pnl_columns", return_value=(rows, [])), \
-                patch.object(self.account, "display_interactive_table",
-                             side_effect=lambda frame, **kwargs: shown.append((kwargs["title"], frame, kwargs))):
+        with patch.object(self.account, "display_interactive_table",
+                          side_effect=lambda frame, **kwargs: shown.append((kwargs["title"], frame, kwargs))):
             self.account.display_positions(rows, show_wallet=True)
         self.assertEqual([title for title, *_ in shown],
                          [f"OPEN POSITIONS: {group}, {view}" for group in ("PERP CRYPTO", "PERP TRADFI")
-                          for view in ("PNL AND RISK", "EXPECTED PNL (5D)", "SIZE AND MARGIN")])
-        crypto, tradfi = shown[0][1], shown[3][1]
+                          for view in ("PNL AND RISK", "SIZE AND MARGIN")])
+        crypto, tradfi = shown[0][1], shown[2][1]
         self.assertEqual(list(crypto["Ticker"]), ["BTC", "para:ANSEM", "Net/total"])
         self.assertEqual(list(tradfi["Ticker"]), ["xyz:AAPL", "Net/total"])
         self.assertAlmostEqual(crypto["uPnL"].iloc[-1], 4.0)
-        # The Expected columns have a table of their own, beside the identifiers.
-        self.assertNotIn("Expected Price PnL (5d)", shown[0][2]["columns"])
-        self.assertEqual(shown[1][2]["columns"][-1], "Expected Funding Return (5d)")
+        # The trailing-average "Expected PnL" estimate is not shown: it did not predict (tests of 2026-11-14).
+        for _, frame, _kwargs in shown:
+            self.assertFalse([column for column in frame.columns if str(column).startswith("Expected")])
         # Shorts receive a positive rate; the long pays it.
         self.assertAlmostEqual(crypto["Funding (1h)"].iloc[-1], 0.01)
         self.assertAlmostEqual(crypto["Funding APR"].iloc[-1], 87.6)
