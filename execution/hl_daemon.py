@@ -1994,7 +1994,7 @@ class Ladders:
         if now - ladder.get("trend_at", 0.0) >= config["trend_refresh_seconds"]:
             interval, bars = config["trend_interval"], int(config["trend_bars"])
             seconds = {"m": 60, "h": 3600, "d": 86400}[interval[-1]] * int(interval[:-1])
-            market_coin, dex = ladder["coin"].split(":")[-1], ladder["dex"]
+            market_coin, dex = ladder["coin"], ladder["dex"]   # a HIP-3 market by its full name (xyz:SP500): HL answers 500 to the bare one
             request = {"type": "candleSnapshot", "req": {"coin": market_coin, "interval": interval,
                                                          "startTime": int((now - (bars + 3) * seconds) * 1000),
                                                          "endTime": int(now * 1000)}}

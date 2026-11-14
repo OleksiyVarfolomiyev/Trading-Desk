@@ -990,3 +990,15 @@ class SlowPushTests(unittest.TestCase):
         regime.assert_called_once()          # hourly, not on every book read
         wallets.assert_called_once()
         ib.assert_not_called()               # IB is not sent back to where it came from
+
+
+class LadderTrendRequestTests(unittest.TestCase):
+    def test_a_hip3_ladder_asks_for_candles_by_its_full_market_name(self):
+        ladders = hl_daemon.Ladders(SimpleNamespace(), path=None)
+        asked = []
+        ladder = {"coin": "xyz:SP500", "dex": "xyz"}
+        with patch.object(hl_daemon.ht, "post_info", side_effect=lambda request: asked.append(request) or
+                          [{"t": i, "c": str(100 + i)} for i in range(15)]):
+            ladders._trend(ladder, now=1_000_000.0, config=hl_daemon.ladder_config())
+        self.assertEqual(asked[0]["req"]["coin"], "xyz:SP500")   # the bare "SP500" with dex xyz is an HTTP 500
+        self.assertEqual(asked[0]["dex"], "xyz")
