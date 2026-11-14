@@ -1531,7 +1531,8 @@ class _PerformanceMixin(_TableStyleMixin):
              {'Bootstrap 1D VaR 95%':None}),
         ]
         for title,columns,keys in groups:
-            columns=[column for column in columns if column in metrics.columns]
+            # At 252-day annualization 'Sharpe (excess, sqrt {periods})' and 'Sharpe (excess, sqrt 252)' are one name.
+            columns=list(dict.fromkeys(column for column in columns if column in metrics.columns))
             self.show_table(metrics[columns],title=title,formatters={column:formats[column] for column in columns if column in formats},
                             key_columns={column:mode for column,mode in keys.items() if column in columns})
         calendar_text=('US trading days with 252-day annualization (crypto prices are sampled at each '

@@ -24,3 +24,5 @@ class MarketNameTests(unittest.TestCase):
         self.assertEqual(list(shown["Ticker"]), ["AAPL", "BTC"])
         self.assertEqual(list(shown.index), ["AAPL", "BTC"])
         self.assertEqual(list(frame["Ticker"]), ["xyz:AAPL", "BTC"])                # the data itself is untouched
+        twice = pd.DataFrame([["xyz:AAPL", 1.0, "io:IONQ"]], columns=["Ticker", "Value", "Ticker"])
+        self.assertEqual(market_frame(twice).iloc[0].tolist(), ["AAPL", 1.0, "IONQ"])   # repeated column names are fine

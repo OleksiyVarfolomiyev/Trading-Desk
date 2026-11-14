@@ -74,9 +74,9 @@ def market_frame(frame):
 
     text = lambda dtype: dtype == object or pd.api.types.is_string_dtype(dtype)   # object on pandas 2, str on pandas 3
     out = frame.copy()
-    for column in out.columns:
-        if text(out[column].dtype):
-            out[column] = out[column].map(market_names)
+    for position in range(out.shape[1]):   # by position: column names may repeat
+        if text(out.iloc[:, position].dtype):
+            out.isetitem(position, out.iloc[:, position].map(market_names))
     if text(out.index.dtype):
         out.index = out.index.map(market_names)
     return out
