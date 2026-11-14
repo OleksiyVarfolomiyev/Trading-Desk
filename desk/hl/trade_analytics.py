@@ -1094,15 +1094,13 @@ def add_expected_pnl_columns(
 def trade_highlights(market: str, side: str, mark_price: float, oracle_price: float, atr: float,
                      stop_distance: float, funding_reserve_per_unit: float, expected: ExpectedPnl,
                      quantity: float, horizon_days: int) -> tuple[list, list]:
-    """What stands out for one proposed position: stop width, expected PnL, funding and data depth."""
+    """What stands out for one proposed position: stop width, funding and the mark-oracle gap. (No expected price PnL:
+    the trailing mean return did not predict, see memory expected-pnl-dropped.) ``expected`` supplies the funding estimate."""
     well, attention = [], []
     stop_pct = stop_distance / mark_price if mark_price else np.nan
     well.append(("Stop", f"{market} {side.lower()}: stop {stop_distance:,.6g} away ({_pct(stop_pct)} of mark), "
                          f"ATR {atr:,.6g}; risk per unit including the funding reserve "
                          f"{stop_distance + funding_reserve_per_unit:,.6g}."))
-    text = (f"{expected.net_pnl:,.2f} over {horizon_days}d for {quantity:g} units "
-            f"(price {expected.price_pnl:,.2f}, funding {expected.funding_pnl:,.2f}).")
-    (well if expected.net_pnl > 0 else attention).append(("Expected PnL (historical)", text))
     if expected.funding_pnl < 0:
         attention.append(("Funding", f"This side pays funding: about {expected.funding_pnl:,.2f} over {horizon_days}d; "
                                      f"stress reserve {funding_reserve_per_unit * quantity:,.2f}."))
@@ -1114,7 +1112,6 @@ def trade_highlights(market: str, side: str, mark_price: float, oracle_price: fl
     gap = mark_price / oracle_price - 1 if oracle_price else np.nan
     if np.isfinite(gap) and abs(gap) > 0.005:
         attention.append(("Mark vs oracle", f"Mark is {_pct(gap)} from the oracle price."))
-    if expected.forward_observations < 60:
-        attention.append(("Short history", f"Only {expected.forward_observations} forward-return observations; "
-                                           "treat the expected PnL as rough."))
+    if expected.funding_observations < 5:
+        attention.append(("Short history", f"Only {expected.funding_observations} funding windows; treat the funding estimate as rough."))
     return well, attention

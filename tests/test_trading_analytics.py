@@ -2346,3 +2346,15 @@ class NetLossGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TradeHighlightsNoExpectedPriceTests(unittest.TestCase):
+    def test_a_proposed_trades_highlights_have_no_expected_price_pnl_row(self):
+        from desk.hl.trade_analytics import ExpectedPnl, trade_highlights
+
+        expected = ExpectedPnl(price_pnl=-20.0, funding_pnl=1.5, net_pnl=-18.5, mean_forward_return=0.01,
+                               forward_observations=300, funding_observations=15)
+        well, attention = trade_highlights("NEAR", "SHORT", 3.1, 3.1, 0.2, 0.6, 0.0, expected, 100.0, 5)
+        titles = [title for title, _ in well + attention]
+        self.assertFalse([title for title in titles if "Expected" in title])
+        self.assertIn("Funding", titles)                       # the funding estimate stays
