@@ -95,6 +95,8 @@ main { margin: 0; padding: 12px 12px 48px; display: flex; flex-direction: column
 .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
 .caption { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
 /* While the first data loads: a thin bar sliding under the top band, no text. */
+.loading[hidden] { display: none; }
+.loading p { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
 .progress { height: 3px; border-radius: 2px; background: var(--grid); overflow: hidden; }
 .progress[hidden] { display: none; }
 .progress span { display: block; width: 30%; height: 100%; border-radius: 2px; background: var(--good);
