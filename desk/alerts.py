@@ -25,6 +25,12 @@ def read(path: Path = ALERTS_FILE) -> dict | None:
         return None
 
 
+def hovers(state: dict | None) -> dict[str, str]:
+    """Attention row title -> the alert's context (the headlines around a big move), shown on hover."""
+    title = lambda text: text[:1].upper() + text[1:]
+    return {title(item["title"]): item["context"] for item in (state or {}).get("alerts", []) if item.get("context")}
+
+
 def rows(state: dict | None, now: float | None = None) -> list[tuple[str, str]]:
     """(title, text) attention rows: each current alert, or a stopped daemon."""
     if not state:

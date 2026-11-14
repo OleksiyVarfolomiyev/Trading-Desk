@@ -344,14 +344,28 @@ function renderAccountStatus(rows, now) {
   ])));
 }
 
-function renderHighlights(id, rows) {
+// How loud a highlight is (desk/notebook_highlights.py ``severity``): "critical" rows call for action now and sit
+// first in a red band; "watch" rows get an amber marker.
+const CRITICAL_TITLES = /cut gross|margin guard|not reporting|over cap|liquidat|^major hack$/i;
+const WATCH_TITLES = /^alt rally$|^stock dip$|near cap|^hack$|^burn approaching$|^burn$|^unlock$/i;
+function severity(title, text) {
+  if (CRITICAL_TITLES.test(title) || (/^regime$/i.test(title) && /\bhigh\b/.test(text))) return "critical";
+  if (WATCH_TITLES.test(title) || /^regime$/i.test(title)) return "watch";
+  return "";
+}
+
+function renderHighlights(id, rows, hover = {}) {
   const host = document.getElementById(id);
   if (!rows || !rows.length) {
     host.replaceChildren(el("li", {}, el("span", { class: "empty", text: "Nothing to report." })));
     return;
   }
-  host.replaceChildren(...rows.map(([area, text]) => el("li", {}, [
-    el("span", { class: "area", text: area }), el("span", { class: "text", text }),
+  const rank = { critical: 0, watch: 1, "": 2 };
+  const ordered = rows.map(([area, text]) => [area, text, severity(area, text)])
+    .sort((a, b) => rank[a[2]] - rank[b[2]]);  // stable: same-level rows keep their order
+  host.replaceChildren(...ordered.map(([area, text, level]) => el("li", Object.assign(level ? { class: level } : {},
+    hover[area] ? { title: hover[area] } : {}), [
+    el("span", { class: "area", text: (level === "critical" ? "⚠ " : "") + area }), el("span", { class: "text", text }),
   ])));
 }
 
@@ -503,8 +517,9 @@ function render(doc) {
   if (lastRendered === doc.status.last_ok) return;   // same data: keep tables, sort and hover as they are
   lastRendered = doc.status.last_ok;
   renderTiles(data.kpis || {});
-  renderHighlights("hl-well", data.highlights && data.highlights.well);
-  renderHighlights("hl-attention", data.highlights && data.highlights.attention);
+  const hover = (data.highlights && data.highlights.hover) || {};  // headlines around a big move, per alert title
+  renderHighlights("hl-well", data.highlights && data.highlights.well, hover);
+  renderHighlights("hl-attention", data.highlights && data.highlights.attention, hover);
   const context = { deskValue: (data.kpis || {}).desk_value };
   for (const id of TABLES) renderTable(id, applyView(id, data.tables && data.tables[id], context));
   renderCharts(data.charts);

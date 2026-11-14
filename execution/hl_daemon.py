@@ -1054,6 +1054,7 @@ API_KEY_WARN_DAYS = 30           # warn this long before an HL API wallet expire
 API_KEY_CHECK_SECONDS = 6 * 3600
 FUNDING_CHECK_SECONDS = 600      # adverse-funding check (desk/funding_watch.py); funding history is cached hourly
 ALT_RALLY_CHECK_SECONDS = 300    # alt rally watch (desk/alt_rally.py): one request, HL's 24-hour moves
+EVENT_CHECK_SECONDS = 3600       # supply events, burn heads-up and debriefs (desk/event_watch.py)
 ALT_RALLY_FILE = Path(__file__).resolve().parents[1] / "data" / "alt_rally_watches.json"  # when watches fired
 STOCK_DIP_FILE = Path(__file__).resolve().parents[1] / "data" / "stock_dip_watches.json"
 
@@ -1089,14 +1090,17 @@ class Alerts:
             self.dirty = True
         self.market_making = rows
 
-    def set(self, key: str, title: str, text: str, ttl: float = 0.0) -> None:
+    def set(self, key: str, title: str, text: str, ttl: float = 0.0, context: str | None = None) -> None:
+        """Raise or update an alert. ``context`` (the headlines around a big move) is shown on hover; left out, an
+        existing alert keeps the context it has."""
         with self.lock:
             old = self.items.get(key)
-            if old and old["title"] == title and old["text"] == text:
+            context = (old or {}).get("context", "") if context is None else context
+            if old and old["title"] == title and old["text"] == text and old.get("context", "") == context:
                 return
             self.items[key] = {"title": title, "text": daemon_link.mask(text),
                                "since": old["since"] if old else time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
-                               "expires": time.time() + ttl if ttl else 0}
+                               "expires": time.time() + ttl if ttl else 0, "context": context}
             self.dirty = True
         if not old:
             log(f"ALERT {title}: {text}")
@@ -1220,6 +1224,21 @@ class Alerts:
         main = [by_dex.get("", {}) for by_dex in states]
         equity = sum(float((state.get("marginSummary") or {}).get("accountValue") or 0) for state in main)
 
+        def context_for(kind: str, move: float, fresh: bool, crowd: tuple[int, int] | None,
+                        snapshot: dict) -> tuple[str, str]:
+            """The one-line context and the headlines for a big-move alert (desk/market_context.py); a fresh alert
+            (a new stretch) also logs its event, with the prices of the moment, for the debriefs (desk/event_watch.py)."""
+            from desk import event_watch, market_context
+
+            mood, hacks, news = market_context.fear_greed(), market_context.recent_hacks(), market_context.headlines()
+            if fresh:
+                try:
+                    event_watch.record(kind, {"move": move, "mood": mood, "crowding": crowd, "hacks": hacks[:3],
+                                              "headlines": news}, snapshot)
+                except OSError as exc:
+                    log(f"event not logged ({type(exc).__name__}: {exc})")
+            return market_context.summary(mood, crowd, hacks), market_context.hover(news)
+
         def remembered(path: Path, fired: bool) -> list[float]:
             """When this watch fired before; with ``fired``, now is added (one per six-hour stretch)."""
             try:
@@ -1236,20 +1255,30 @@ class Alerts:
         # Alts: the 40 most traded main-DEX alts, against the short-alt book.
         meta, contexts = post_info({"type": "metaAndAssetCtxs"})
         move, rising, count = alt_rally.basket_move(meta, contexts)
-        name = alt_rally.level(move, remembered(ALT_RALLY_FILE, False), now)
+        watches = remembered(ALT_RALLY_FILE, False)
+        name = alt_rally.level(move, watches, now)
         if name == "none":
             self.clear("alt_rally")
         else:
+            from desk import market_context
+
             by_coin = {asset["name"]: context for asset, context in zip(meta.get("universe", []), contexts)}
             positions = [item.get("position", {}) for state in main for item in state.get("assetPositions", [])]
-            self.set("alt_rally", *alt_rally.alert(name, move, rising, count, alt_rally.book_move(positions, by_coin, equity)))
+            title, text = alt_rally.alert(name, move, rising, count, alt_rally.book_move(positions, by_coin, equity))
+            from desk import event_watch
+
+            fresh = not watches or now - max(watches) > 6 * 3600
+            line, news = context_for("alt rally", move, fresh, market_context.crowding(meta, contexts),
+                                     event_watch.prices(meta, contexts, []))
+            self.set("alt_rally", title, f"{text} Context: {line}." if line else text, context=news)
             remembered(ALT_RALLY_FILE, True)
 
         # Stocks: HL's S&P 500 perp, against the stock longs on HL's xyz DEX.
+        main_meta, main_contexts = meta, contexts
         meta, contexts = post_info({"type": "metaAndAssetCtxs", "dex": alt_rally.STOCK_DEX})
         move = alt_rally.index_move(meta, contexts)
-        name = alt_rally.level(move, remembered(STOCK_DIP_FILE, False), now,
-                               alt_rally.STOCK_WATCH_MOVE, alt_rally.STOCK_CUT_MOVE)
+        watches = remembered(STOCK_DIP_FILE, False)
+        name = alt_rally.level(move, watches, now, alt_rally.STOCK_WATCH_MOVE, alt_rally.STOCK_CUT_MOVE)
         if name == "none":
             self.clear("stock_dip")
         else:
@@ -1269,8 +1298,100 @@ class Alerts:
                 log(f"stock dip: IB not read from the relay ({type(exc).__name__}: {exc})")
             trading = equity + ib_equity
             share = (hl_change + ib_change) / trading if trading else float("nan")
-            self.set("stock_dip", *alt_rally.stock_alert(name, move, share))
+            title, text = alt_rally.stock_alert(name, move, share)
+            from desk import event_watch
+
+            snapshot = event_watch.prices(main_meta, main_contexts, [])
+            index_mark = next((float(c.get("markPx") or 0) for a, c in zip(meta.get("universe", []), contexts)
+                               if a.get("name") == alt_rally.STOCK_INDEX), 0.0)
+            snapshot["marks"][alt_rally.STOCK_INDEX] = index_mark
+            line, news = context_for("stock dip", move, not watches or now - max(watches) > 6 * 3600, None,
+                                     {**snapshot, "index": alt_rally.STOCK_INDEX})
+            self.set("stock_dip", title, f"{text} Context: {line}." if line else text, context=news)
             remembered(STOCK_DIP_FILE, True)
+
+        # Hacks (DefiLlama): a large one is news the price may not have finished pricing.
+        from desk import market_context
+
+        live = set()
+        for hack in market_context.recent_hacks():
+            key = f"hack:{hack.get('name')}:{int(float(hack.get('date') or 0))}"
+            live.add(key)
+            title, text = market_context.hack_alert(hack, now)
+            self.set(key, title, text, context=market_context.hover(market_context.headlines(hours=48)))
+        with self.lock:
+            stale = [key for key in self.items if key.startswith("hack:") and key not in live]
+        for key in stale:  # older than the window
+            self.clear(key)
+        try:
+            self.watch_events(main_meta, main_contexts, meta, contexts)
+        except Exception as exc:  # the event watch is extra: the market alerts stand without it
+            log(f"event watch failed ({type(exc).__name__}: {exc})")
+
+    def watch_events(self, meta: dict, contexts: list, xyz_meta: dict, xyz_contexts: list) -> None:
+        """Hourly (desk/event_watch.py): VVV burns and HYPE unlocks from the chain and HL, the heads-up before the
+        monthly VVV burn, and the 1- and 7-day outcomes of every logged event (with a debrief for a coin's own)."""
+        from desk import event_watch
+        from desk.numbers import usd
+
+        now = time.time()
+        if now - getattr(self, "events_checked_at", 0.0) < EVENT_CHECK_SECONDS:
+            return
+        self.events_checked_at = now
+        day = time.strftime("%Y-%m-%d", time.gmtime(now))
+        marks = {asset["name"]: float(context.get("markPx") or 0) for asset, context in zip(meta.get("universe", []), contexts)}
+        marks.update({asset["name"]: float(context.get("markPx") or 0)
+                      for asset, context in zip(xyz_meta.get("universe", []), xyz_contexts)})
+        history = event_watch.load_supply()
+        for coin, read in (("VVV burned", event_watch.vvv_burned), ("HYPE circulating", event_watch.hype_circulating)):
+            try:
+                event_watch.record_supply(history, coin, read(), day)
+            except Exception as exc:
+                log(f"supply not read: {coin} ({type(exc).__name__}: {exc})")
+        event_watch.SUPPLY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        event_watch.SUPPLY_FILE.write_text(json.dumps(history, indent=1))
+        events = event_watch.load_events()
+        logged = {(event.get("kind"), event.get("coin"), event.get("day")) for event in events}
+
+        # VVV: the monthly buy-and-burn, detected on the chain
+        burned, price = event_watch.day_change(history, "VVV burned", day), marks.get("VVV", float("nan"))
+        if event_watch.is_discretionary_burn(burned, event_watch.usual_burn(history, "VVV burned", day), price) \
+                and ("burn", "VVV", day) not in logged:
+            earlier = [usd_value for _, usd_value in event_watch.KNOWN_VVV_BURNS] + [
+                float(event.get("usd") or 0) for event in events if event.get("kind") == "burn"]
+            record = burned * price > max(earlier, default=0)
+            event_watch.record("burn", {"coin": "VVV", "day": day, "amount": burned, "usd": burned * price},
+                               event_watch.prices(meta, contexts, ["VVV"]))
+            self.set(f"burn:VVV:{day}", "Burn", f"VVV {usd(burned * price)} bought and burned today "
+                     f"({burned:,.0f} VVV{'; a record' if record else ''})", ttl=86400)
+        burns = event_watch.KNOWN_VVV_BURNS + [(event["day"], float(event.get("usd") or 0))
+                                               for event in event_watch.load_events() if event.get("kind") == "burn"]
+        from datetime import date
+
+        soon = event_watch.heads_up(burns, date.fromisoformat(day))
+        if soon:
+            self.set("burn_soon:VVV", *soon)
+        else:
+            self.clear("burn_soon:VVV")
+
+        # HYPE: an unlock is a jump in circulating supply
+        added = event_watch.day_change(history, "HYPE circulating", day)
+        base = history.get("HYPE circulating", {}).get(day, float("nan")) - added
+        if added == added and base and added / base >= event_watch.UNLOCK_SHARE and ("unlock", "HYPE", day) not in logged:
+            event_watch.record("unlock", {"coin": "HYPE", "day": day, "amount": added, "share": added / base},
+                               event_watch.prices(meta, contexts, ["HYPE"]))
+            self.set(f"unlock:HYPE:{day}", "Unlock", f"HYPE circulating supply up {_pct(added / base)} today "
+                     f"({added:,.0f} HYPE, {usd(added * marks.get('HYPE', 0))})", ttl=86400)
+
+        # Debriefs: what followed each logged event, 1 and 7 days on
+        events = event_watch.load_events()
+        filled = event_watch.due_outcomes(events, marks, now)
+        if filled:
+            event_watch.save_events(events)
+        for event, horizon in filled:
+            note = event_watch.debrief(event, horizon)
+            if note:
+                self.set(f"debrief:{int(event['time'])}:{horizon}", *note, ttl=86400)
 
     def watch(self, daemon: "Daemon") -> None:
         """The daemon's own health: stale account data, dead websockets, guards that cannot check."""

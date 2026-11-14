@@ -229,3 +229,17 @@ class ZeroCellTests(unittest.TestCase):
                 frame, formatters={"PnL": lambda v: f"${v:,.2f}", "Share": lambda v: f"{v:.1%}", "Fills": lambda v: f"{v:,.0f}"})
         cells = re.findall(r"<td[^>]*>([^<]*)</td>", shown[0])
         self.assertEqual(cells, ["A", "", "", "0", "B", "$5.00", "25.0%", "3"])
+
+
+class SeverityTests(unittest.TestCase):
+    def test_critical_rows_lead_in_a_red_band_and_watch_rows_get_a_marker(self):
+        from desk import notebook_highlights as nh
+
+        self.assertEqual(nh.severity("Alt rally: cut gross", "alts 9% in 24h"), "critical")
+        self.assertEqual(nh.severity("Regime", "Alt season high 3/4: ..."), "critical")
+        self.assertEqual(nh.severity("Regime", "Equity sell-off notice 2/4: ..."), "watch")
+        self.assertEqual(nh.severity("Stock dip", "S&P 500 -2.2% in 24h"), "watch")
+        self.assertEqual(nh.severity("Funding", "BERA short -57% APR now."), "")
+        html_out = nh._rows_html("NEEDS ATTENTION", [("Funding", "x"), ("Margin guard cutting positions", "y")], nh.BAD)
+        self.assertLess(html_out.index("Margin guard"), html_out.index("Funding"))   # critical first
+        self.assertIn("rgba(208,59,59,.14)", html_out)

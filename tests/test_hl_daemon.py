@@ -859,15 +859,59 @@ class AltRallyAlertTests(unittest.TestCase):
         position = {"coin": "SOL", "szi": "-10"}
         state = SimpleNamespace(lock=threading.RLock(), states={WALLET: {"": {
             "assetPositions": [{"position": position}], "marginSummary": {"accountValue": "1000"}}}})
+        from desk import market_context
+
+        hack = {"name": "BigVenue", "amount": 300_000_000, "chain": ["Ethereum"], "classification": "CeFi", "date": time.time() - 7200}
+        news = [{"time": time.time() - 3600, "source": "The Block", "title": "Alts jump on ETF approval", "link": ""}]
         with tempfile.TemporaryDirectory() as folder, \
                 patch.object(hl_daemon, "ALT_RALLY_FILE", Path(folder) / "watches.json"), \
-                patch.object(hl_daemon, "post_info", return_value=(meta, contexts)):
+                patch.object(hl_daemon, "STOCK_DIP_FILE", Path(folder) / "dips.json"), \
+                patch.object(hl_daemon, "post_info", return_value=(meta, contexts)), \
+                patch.object(market_context, "fear_greed", return_value=(20, "Extreme Fear")), \
+                patch.object(market_context, "recent_hacks", return_value=[hack]), \
+                patch.object(market_context, "headlines", return_value=news), \
+                patch.object(__import__("desk.event_watch").event_watch, "EVENTS_FILE", Path(folder) / "events.jsonl"), \
+                patch.object(hl_daemon.Alerts, "watch_events", lambda *args: None):
             alerts.watch_alt_rally(SimpleNamespace(state=state))
             saved = (Path(folder) / "watches.json").read_text()
+            logged = (Path(folder) / "events.jsonl").read_text().splitlines()
         item = alerts.items["alt_rally"]
         self.assertEqual(item["title"], "Alt rally")
         self.assertIn("alts 5% in 24h (2 of 2 up); the book -6% on it", item["text"])   # -10 SOL x $6 on $1,000
+        self.assertIn("Context: mood extreme fear 20; shorts pay on 0 of 2 alts; hack: BigVenue $300M.", item["text"])
+        self.assertIn("The Block · Alts jump on ETF approval", item["context"])      # the headlines, on hover
         self.assertEqual(len(__import__("json").loads(saved)), 1)
+        self.assertEqual(len(logged), 1)                                              # the event, for later study
+        hack_item = next(value for key, value in alerts.items.items() if key.startswith("hack:"))
+        self.assertEqual(hack_item["title"], "Major hack")
+        self.assertTrue(hack_item["text"].startswith("BigVenue $300M (Ethereum; CeFi), 2 h ago"))
+
+
+class EventWatchTests(unittest.TestCase):
+    """The hourly event check: a VVV burn on the chain raises "Burn" and logs it for its debrief."""
+
+    def test_a_burn_day_raises_the_alert_and_logs_the_event(self):
+        import tempfile
+
+        from desk import event_watch
+
+        alerts = hl_daemon.Alerts(path=None)
+        meta = {"universe": [{"name": "BTC"}, {"name": "VVV"}]}
+        contexts = [{"markPx": "100000", "dayNtlVlm": "9e9"}, {"markPx": "21", "dayNtlVlm": "5e7"}]
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        yesterday = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 86400))
+        with tempfile.TemporaryDirectory() as folder:
+            supply, events = Path(folder) / "supply.json", Path(folder) / "events.jsonl"
+            supply.write_text(json.dumps({"VVV burned": {yesterday: 33_000_000.0}}))
+            with patch.object(event_watch, "SUPPLY_FILE", supply), patch.object(event_watch, "EVENTS_FILE", events), \
+                    patch.object(event_watch, "vvv_burned", return_value=33_021_657.0), \
+                    patch.object(event_watch, "hype_circulating", return_value=float("nan")):
+                alerts.watch_events(meta, contexts, {"universe": []}, [])
+                logged = event_watch.load_events()
+        burn = alerts.items[f"burn:VVV:{today}"]
+        self.assertEqual(burn["title"], "Burn")
+        self.assertTrue(burn["text"].startswith("VVV $455K bought and burned today (21,657 VVV"))
+        self.assertEqual([(event["kind"], event["coin"]) for event in logged], [("burn", "VVV")])
 
 
 class MakerReductionTests(unittest.TestCase):

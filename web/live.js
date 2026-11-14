@@ -1148,7 +1148,8 @@
         money_weighted: moneyWeighted(histories, start), since: iso(headline.start), drawdown: headline.drawdown,
         peak_date: iso(headline.peak.t),
       },
-      highlights: { well, attention },
+      highlights: { well, attention, hover: Object.fromEntries(((daemonAlerts && daemonAlerts.alerts) || [])
+        .filter((a) => a.context).map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), a.context])) },
       tables,
       charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [] },
       problems, notes,

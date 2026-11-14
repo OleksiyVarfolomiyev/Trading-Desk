@@ -147,6 +147,11 @@ main { margin: 0; padding: 12px 12px 48px; display: flex; flex-direction: column
 .highlights .area { font-weight: 500; color: var(--ink); }
 .highlights .text { color: var(--ink-2); }
 .highlights .empty { color: var(--muted); display: block; }
+/* Critical rows (act now) in a red band, first; watch rows with an amber marker. */
+.highlights li.critical { background: color-mix(in srgb, var(--critical) 14%, transparent); border-left: 4px solid var(--critical);
+  border-radius: 4px; padding: 6px 8px; margin: 0 -8px; }
+.highlights li.critical .area, .highlights li.critical .text { color: var(--ink); font-weight: 600; }
+.highlights li.watch { border-left: 3px solid var(--warning); padding-left: 8px; margin-left: -11px; }
 @media (max-width: 600px) { .highlights li { grid-template-columns: 1fr; gap: 0; } }
 
 .chart { width: 100%; height: 320px; }

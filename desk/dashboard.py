@@ -410,7 +410,8 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     return {
         "kpis": kpis,
-        "highlights": {"well": [list(row) for row in well], "attention": [list(row) for row in attention]},
+        "highlights": {"well": [list(row) for row in well], "attention": [list(row) for row in attention],
+                       "hover": daemon_alerts.hovers(daemon_alerts.read())},  # headlines around a big move
         "tables": tables,
         "charts": {"value": value_series, "value_with_wallets": with_wallets, "twr": twr,
                    # Stretches with no trading on any account, collapsed on the value chart.

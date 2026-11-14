@@ -12,6 +12,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -119,15 +120,38 @@ class HighlightsState:
         return since
 
 
+CRITICAL_TITLES = re.compile(r"cut gross|margin guard|not reporting|over cap|liquidat|^major hack$", re.I)
+WATCH_TITLES = re.compile(r"^alt rally$|^stock dip$|near cap|^hack$|^burn approaching$|^burn$|^unlock$", re.I)
+WARN = "#e8a10c"
+
+
+def severity(title: str, text: str) -> str:
+    """How loud a highlight is, as on the dashboards (desk/dashboard_static/app.js): "critical" (act now),
+    "watch", or ""."""
+    regime = title.strip().lower() == "regime"
+    if CRITICAL_TITLES.search(title) or (regime and re.search(r"\bhigh\b", text)):
+        return "critical"
+    return "watch" if WATCH_TITLES.search(title) or regime else ""
+
+
 def _rows_html(title: str, rows: list[Row], color: str) -> str:
     head = (f"<div style='font-weight:600;margin:10px 0 4px;color:{color}'>{html.escape(title)}</div>")
     if not rows:
         return head + "<div style='margin:0 0 4px;opacity:.75'>Nothing to report.</div>"
-    body = "".join(
-        f"<tr><td style='padding:3px 12px 3px 8px;border-left:3px solid {color};white-space:nowrap;"
-        f"vertical-align:top;font-weight:500'>{html.escape(area)}</td>"
-        f"<td style='padding:3px 8px;text-align:left'>{html.escape(text)}</td></tr>"
-        for area, text in rows)
+    rank = {"critical": 0, "watch": 1, "": 2}
+    ordered = sorted(((area, text, severity(area, text)) for area, text in rows), key=lambda row: rank[row[2]])
+
+    def row(area, text, level):
+        if level == "critical":  # a red band, first: act now
+            return (f"<tr style='background:rgba(208,59,59,.14)'><td style='padding:5px 12px 5px 8px;border-left:4px solid {BAD};"
+                    f"white-space:nowrap;vertical-align:top;font-weight:700'>&#9888; {html.escape(area)}</td>"
+                    f"<td style='padding:5px 8px;text-align:left;font-weight:600'>{html.escape(text)}</td></tr>")
+        edge = WARN if level == "watch" else color
+        return (f"<tr><td style='padding:3px 12px 3px 8px;border-left:3px solid {edge};white-space:nowrap;"
+                f"vertical-align:top;font-weight:500'>{html.escape(area)}</td>"
+                f"<td style='padding:3px 8px;text-align:left'>{html.escape(text)}</td></tr>")
+
+    body = "".join(row(*item) for item in ordered)
     return head + f"<table style='border-collapse:collapse;margin:0'>{body}</table>"
 
 
