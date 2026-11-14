@@ -60,6 +60,17 @@ class JournalTests(unittest.TestCase):
         self.assertAlmostEqual(frame.loc["hedge", "Funding 30d"], 1.0)
         self.assertAlmostEqual(frame["Funding 30d"].sum(), 1.2)
 
+    def test_ib_positions_count_as_untagged_until_tagged(self):
+        entries = [{"wallet": "8440", "coin": "MU", "side": "LONG", "strategy": "conviction",
+                    "opened": "2026-11-01T00:00:00", "closed": None}]
+        ib = {"U0008440": [{"symbol": "GOOGL", "quantity": 10, "unrealized": -169.0},
+                           {"symbol": "MU", "quantity": 5, "unrealized": 27.0},
+                           {"symbol": "OLD", "quantity": 0, "unrealized": 5.0}]}     # closed: not counted
+        frame = journal.split_by_strategy(entries, {}, {}, {}, ib).set_index("Strategy")
+        self.assertEqual(frame.loc["untagged", "Unrealized PnL"], -169.0)
+        self.assertEqual(frame.loc["conviction", "Unrealized PnL"], 27.0)
+        self.assertEqual(frame["Open positions"].sum(), 2)
+
     def test_results_split_by_strategy(self):
         opened = "2026-11-01T00:00:00"
         entries = [{"wallet": "07f2", "coin": "VVV", "side": "SHORT", "strategy": "hedge", "opened": opened, "closed": None},

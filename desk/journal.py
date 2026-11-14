@@ -133,7 +133,8 @@ def fill_strategy(entries: list[dict], wallet: str, fill: dict) -> str:
 
 def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]],
                       positions_by_wallet: dict[str, list[dict]],
-                      funding_by_wallet: dict[str, list[dict]] | None = None) -> pd.DataFrame:
+                      funding_by_wallet: dict[str, list[dict]] | None = None,
+                      ib_positions: dict[str, list[dict]] | None = None) -> pd.DataFrame:
     """Per strategy: open positions and unrealized PnL now; realized PnL, fees, volume and fills from ``fills``.
 
     ``positions_by_wallet`` holds HL position dicts (``coin``, ``szi``, ``unrealizedPnl``, ``positionValue``). A
@@ -146,6 +147,10 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
 
     ``funding_by_wallet`` holds HL's funding events (``time`` and ``delta`` with ``coin`` and signed ``usdc``:
     positive received). Funding goes to the strategy the position had when it was paid, never to market making.
+
+    ``ib_positions`` (IB account id -> positions with ``symbol`` and ``unrealized``) adds IB's open positions: each
+    under its journal strategy (wallet = the account's last four), else untagged, so the table's unrealized PnL
+    covers the whole trading book, as the accounts table does.
     """
     rows: dict[str, dict] = {}
 
@@ -165,6 +170,13 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
             target = row(strategy_at(entries, wallet, position["coin"], now_ms))
             target["Open positions"] += 1
             target["Unrealized PnL"] += float(position.get("unrealizedPnl") or 0)
+    for account, positions in (ib_positions or {}).items():
+        for position in positions:
+            if not float(position.get("quantity") or 0):
+                continue
+            target = row(strategy_at(entries, account, str(position.get("symbol")), now_ms))
+            target["Open positions"] += 1
+            target["Unrealized PnL"] += float(position.get("unrealized") or 0)
     for wallet, fills in fills_by_wallet.items():  # no open position (or no value given): the coin's last fill price
         for fill in sorted(fills, key=lambda item: item["time"], reverse=True):
             marks.setdefault((wallet, fill["coin"]), float(fill["px"]))
@@ -227,7 +239,18 @@ def strategy_frame(days: int = 30) -> pd.DataFrame:
             state = post({"type": "clearinghouseState", "user": account.id, **({"dex": dex} if dex else {})}) or {}
             positions_by_wallet[account.id] += [item["position"] for item in state.get("assetPositions", [])]
         funding_by_wallet[account.id] = market_making.funding_events(account.id, since)
-    return split_by_strategy(entries, fills_by_wallet, positions_by_wallet, funding_by_wallet)
+    return split_by_strategy(entries, fills_by_wallet, positions_by_wallet, funding_by_wallet, ib_positions())
+
+
+def ib_positions() -> dict[str, list[dict]]:
+    """IB's open positions as the relay last received them (the Mac pushes them every ten minutes); empty if unreadable."""
+    from desk import web_sync
+
+    try:
+        payload = web_sync.relay_get("/ib")
+    except Exception:
+        return {}
+    return {str(payload.get("id") or "ib"): payload.get("positions") or []}   # journal entries use its last four
 
 
 def total_row(frame: pd.DataFrame) -> dict:
