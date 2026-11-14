@@ -1020,6 +1020,7 @@ class StrategyUpnlTests(unittest.TestCase):
         state = alerts.state()
         self.assertAlmostEqual(state["strategy_upnl"]["untagged"], 100.0 - 20.0)   # HL ETH short +100, IB MU -20
         self.assertIsNotNone(state["strategy_upnl_at"])
+        self.assertTrue(alerts.dirty)        # so it reaches the relay at once, not at the 15-minute heartbeat
 
     def test_without_ib_the_figure_is_withheld_not_partial(self):
         from desk import journal

@@ -1098,6 +1098,7 @@ class Alerts:
         positions = [(position.wallet[-4:].lower(), position.coin, position.quantity, position.entry_price, position.mark_price)
                      for position in daemon.state.snapshot(daemon.state.wallets).positions]
         self.strategy_upnl = journal.live_unrealized(journal.load(), positions, {key[-4:].lower(): value for key, value in ib.items()})
+        self.dirty = True   # a new figure goes to the web relay within the minute (the heartbeat alone is every 15 minutes)
 
     def refresh_market_making(self, daemon: "Daemon") -> None:
         """The ladders' metrics (desk/market_making.py) for the dashboards, every five minutes."""
