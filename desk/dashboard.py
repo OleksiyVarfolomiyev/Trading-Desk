@@ -213,7 +213,7 @@ def with_day_returns(performance: pd.DataFrame, day_change: DayChange | None) ->
     return frame
 
 
-def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_change: DayChange | None = None,
+def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
                   moves: dict[tuple[str, str], float] | None = None,
                   funding: dict[tuple[str, str], float] | None = None) -> dict:
     """The page's data from a fetched DeskAccounts: tiles, highlights, tables and chart series.
@@ -359,12 +359,6 @@ def build_payload(desk: DeskAccounts, risk_table: pd.DataFrame | None, day_chang
         tables["wallets"] = table(holdings, {"Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct"},
                                   {"Wallet": "Total", "Value": holdings["Value"].sum(),
                                    "% of desk": holdings["% of desk"].sum()}, key={"Value": "max"})
-    if risk_table is not None and len(risk_table):
-        tables["risk"] = table(risk_table, {
-            **money, "Periods": "int", "Return (total)": "spct", "Volatility (/yr)": "pct", "Sharpe": "num2",
-            "Max drawdown": "spct", "Beta BTC": "num2", "Beta SPY": "num2",
-            "Alpha vs BTC (/yr)": "spct", "Alpha vs SPY (/yr)": "spct", "Coverage": "pct"},
-            key={"VaR 95%": None, "Beta BTC": None})
 
     start = desk.common_start
     value_series = []
@@ -436,8 +430,6 @@ class Dashboard:
         self.wake = threading.Event()
         self.payload: dict | None = None
         self.payload_json = b""
-        self.risk_table: pd.DataFrame | None = None
-        self.risk_accounts: tuple[str, ...] = ()
         self.last_history = 0.0
         self.last_ib_record = 0.0
         self.last_seen: dict[str, str] = {}
@@ -464,11 +456,6 @@ class Dashboard:
             self._publish()
         try:
             self.desk.fetch_data(refresh_history=history, record_ib_history=record)
-            # Risk statistics are hourly, but recomputed at once when an account drops out or returns.
-            accounts_in_history = tuple(self.desk.histories)
-            if history or self.risk_table is None or accounts_in_history != self.risk_accounts:
-                self.risk_table = self.desk.risk_metrics()
-                self.risk_accounts = accounts_in_history
             try:
                 day = desk_day_change(self.desk.overview.snapshots)
             except Exception:  # the tile then shows no 24-hour change; everything else still updates
@@ -484,7 +471,7 @@ class Dashboard:
             except Exception:  # the funding column is then blank
                 traceback.print_exc()
                 funding = None
-            payload = build_payload(self.desk, self.risk_table, day, moves, funding)
+            payload = build_payload(self.desk, day, moves, funding)
             payload["accounts_status"] = self.account_status(payload["problems"])
             self._send_ib_to_web(moves)
             with self.lock:

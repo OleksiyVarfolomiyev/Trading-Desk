@@ -1,7 +1,7 @@
 "use strict";
 
 const POLL_MS = 5000;
-const TABLES = ["performance", "accounts", "risk", "positions", "positions_stocks", "exposure", "open_risk", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
+const TABLES = ["performance", "accounts", "positions", "positions_stocks", "exposure", "open_risk", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
 const sortState = {};          // table id -> {key, dir}; click a header to change it (the builders' order is the ranking)
 let lastRendered = null;        // last_ok of the data currently drawn
 let latest = null;              // latest /api/state document
@@ -135,8 +135,12 @@ const ASSET_NAMES = { "crypto perp": "Crypto", "crypto spot": "Wallet tokens", "
 const marketName = (symbol) => String(symbol || "").replace(/^[a-z0-9]+:/, "");  // "xyz:AMD" -> "AMD"
 const POSITION_VIEW = {
   derive: (r) => ({ Symbol: marketName(r.Symbol) }),
-  columns: [["Account"], ["Symbol"], ["Side"], ["Value"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"],
+  // No Side column: Value is signed and coloured (shorts negative, red), which already says the side.
+  columns: [["Account"], ["Symbol"], ["Value"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"],
     ["Funding (APR)"], ["Weight"]],
+  // The crypto and the stocks tables sit one above the other: the same columns at the same widths, so Value, uPnL
+  // and 24h line up (no column is collapsed or hidden in either).
+  align: { "Account": 15, "Symbol": 18, "Value": 15, "uPnL": 13, "24h": 12, "Funding (APR)": 15, "Weight": 12 },
 };
 const VIEWS = {
   performance: { columns: [["Account"], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
@@ -161,18 +165,6 @@ const VIEWS = {
     derive: (r) => ({ _cap: isNum(r["% of desk equity"]) ? r["% of desk equity"] / RISK_CAP : NaN }),
     columns: [["Account"], ["% of desk equity", "Open risk", "rpct"], ["_cap", "Of the 33% cap", "rpct"]],
   },
-  risk: {
-    derive: (r, context) => ({
-      _book: /^current holdings/i.test(String(r.Basis)) ? "Now" : /^current regime/i.test(String(r.Basis)) ? "This regime" : r.Basis,
-      _var: isNum(r["VaR 95%"]) && context.deskValue ? r["VaR 95%"] / context.deskValue : NaN,
-    }),
-    hover: (r) => [r.Basis, isNum(r.Periods) ? `${r.Periods} days, ${r.From || ""} to ${r.To || ""}` : "",
-      isNum(r.Coverage) ? `coverage ${pct(r.Coverage)}` : "", isNum(r["VaR 99%"]) ? `VaR 99% ${usd(r["VaR 99%"])}` : "",
-      r["Beta BTC 90% range"] ? `beta BTC range ${r["Beta BTC 90% range"]}` : "", r["Not priced"] ? `not priced: ${r["Not priced"]}` : "",
-      r.Note || ""].filter(Boolean).join("\n"),
-    columns: [["_book", "Book"], ["Volatility (/yr)", "Volatility /yr", "pct"], ["_var", "VaR 95% /day", "rpct"],
-      ["Max drawdown", "Max drawdown", "spct"], ["Beta BTC", "Beta BTC", "num2"], ["Sharpe", "Sharpe", "num2"]],
-  },
   candidates: { columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
   mm_candidates: { columns: [["Coin"], ["Daily range 30d"], ["Longs pay 7d (APR)"], ["Own ladder edge per $1k"], ["Volume 24h"], ["Notes"]] },
@@ -192,7 +184,8 @@ function applyView(id, spec, context) {
     if (view.hover) out.__hover = view.hover(row);
     return out;
   };
-  const columns = view.columns.filter(([from]) => from in source || from.startsWith("_"))  // derived fields start with _
+  // Derived fields start with _; an aligned table keeps every column, present in its data or not.
+  const columns = view.columns.filter(([from]) => view.align || from in source || from.startsWith("_"))
     .map(([from, name, fmt]) => ({ key: name || from, fmt: fmt || (source[from] || {}).fmt, emphasis: (source[from] || {}).emphasis }));
   const rows = spec.rows.filter((row) => !view.keep || view.keep(row)).map(shape);
   let total = spec.total ? shape(spec.total) : null;
@@ -214,7 +207,8 @@ function renderTable(id, spec) {
   if (empty) return;
   // A text column with the same value in every row is said once, above the table; an empty one is left out.
   const shared = [];
-  if (spec.rows.length > 1) {
+  const align = (VIEWS[id] || {}).align;
+  if (spec.rows.length > 1 && !align) {
     spec = Object.assign({}, spec, { columns: spec.columns.filter((column, i) => {
       const format = FORMATS[column.fmt] || FORMATS.text;
       if (i === 0) return true;
@@ -285,7 +279,10 @@ function renderTable(id, spec) {
     parts.push(el("tfoot", {}, el("tr", { class: "total" }, spec.columns.map((column) => cell(spec.total, column)))));
   }
   if (shared.length) host.append(el("p", { class: "table-note", text: shared.join(" · ") }));
-  host.append(el("table", {}, parts));
+  if (align) {  // fixed widths shared with the tables it is aligned with
+    parts.unshift(el("colgroup", {}, spec.columns.map((column) => el("col", { style: `width:${align[column.key] || 10}%` }))));
+  }
+  host.append(el("table", align ? { class: "aligned" } : {}, parts));
 }
 
 // ---------------------------------------------------------------- tiles

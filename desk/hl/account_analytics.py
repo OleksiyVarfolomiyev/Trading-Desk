@@ -1959,7 +1959,7 @@ class _OpenPositionsMixin:
              f'{_usd(remaining_available_margin)} ({remaining_available_margin_pct:,.1f}%)'
              if pd.notna(remaining_available_margin) and pd.notna(remaining_available_margin_pct) else 'n/a'),
             (f'Aggregate risk used (cap {self.aggregate_risk_pct:g}% of collateral)',
-             f'{open_risk/aggregate_risk_cap*100:,.0f}% of the cap' if aggregate_risk_cap else 'n/a'),
+             f'{open_risk/self.collateral_equity*100:,.0f}% of collateral' if self.collateral_equity else 'n/a'),
             ('Aggregate risk room',f'{_usd(aggregate_risk_cap-open_risk)} '
              f'({(aggregate_risk_cap-open_risk)/self.collateral_equity*100:,.1f}% of collateral)'
              if self.collateral_equity else f'{_usd(aggregate_risk_cap-open_risk)}'),

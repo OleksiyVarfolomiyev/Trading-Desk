@@ -140,7 +140,8 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
     how crowded the short is (``funding_history``: coin -> its last 7 days of hourly funding rates)."""
     from desk import stress, trade_rules
 
-    names = [coin for coin in tradable if coin in live.index and coin in signals.index]
+    # A coin already held is a candidate that became a trade: it leaves the list and the next one moves up.
+    names = [coin for coin in tradable if coin in live.index and coin in signals.index and coin not in held]
     frame = signals.loc[names].copy()
     usable = [name for name in weights if name in frame.columns]
     if not usable or frame.empty:
@@ -156,8 +157,7 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
         _, note = stress.fit_entry(exposures, desk_equity, "crypto perp", coin, -size) if desk_equity > 0 and size == size else (1.0, "")
         apr, paid = crowding(funding_history(coin))
         crowded = ["crowded"] if paid == paid and paid > CROWDED_SHARE else []   # shorts paid in most hours this week
-        notes = crowded + trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else []) \
-            + (["already held"] if coin in held else [])
+        notes = crowded + trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else [])
         volume = live.loc[coin, "volume24h"]
         open_interest = live.loc[coin, "open_interest"] if "open_interest" in live.columns else float("nan")
         rows.append({"Coin": coin, "Score": row["score"], "Basis": basis, "vs BTC 30d": row.get("rel30"), "vs BTC 7d": row.get("rel7"),

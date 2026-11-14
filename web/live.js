@@ -960,7 +960,7 @@
     // One Risk row: open risk against the cap, then the book's volatility, VaR and betas. It needs attention
     // once open risk nears the cap.
     const riskParts = [];
-    if (book.length) riskParts.push(`open risk ${percent(riskUsed / riskCap, false, 0)} of the cap`);
+    if (book.length) riskParts.push(`open risk ${percent(riskUsed / riskEquity, false, 0)} of equity (cap ${percent(MAX_TOTAL_RISK_PCT, false, 0)})`);
     if (riskRow && fin(riskRow["Volatility (/yr)"])) {
       riskParts.push(`volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr`);
       if (deskEquity > 0 && fin(riskRow["VaR 95%"])) riskParts.push(`VaR 95% ${percent(riskRow["VaR 95%"] / deskEquity)}/day`);
@@ -1102,7 +1102,9 @@
           { total: view(rows[rows.length - 1]), key: { "Total": "abs" } });
       })(),
       candidates: (() => {  // desk/screener.py
-        const rows = (research && research.screener && research.screener.shorts) || [];
+        // A coin held now is a candidate already taken (the screener runs hourly; positions are live).
+        const held = new Set(hlPositions.map((p) => p.coin));
+        const rows = ((research && research.screener && research.screener.shorts) || []).filter((r) => !held.has(r.Coin));
         return rows.length ? table(rows, ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "From high 60d", "Funding 7d (APR)", "OI / volume", "Volume 24h", "Notes"],
           { "Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "From high 60d": "spct", "Funding 7d (APR)": "spct", "OI / volume": "num2", "Volume 24h": "usd" },
           { key: { "Score": "min" } }) : { columns: [], rows: [], total: null };
@@ -1117,10 +1119,6 @@
         { "Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct" },
         { total: { "Wallet": "Total", "Value": sum(walletRows.map((r) => r.Value)), "% of desk": sum(walletRows.map((r) => r["% of desk"])) },
           key: { "Value": "max" } }),
-      risk: riskRow ? table([riskRow], Object.keys(riskRow),
-        { "Periods": "int", "Coverage": "pct", "Volatility (/yr)": "pct", "Max drawdown": "spct", "VaR 95%": "usd",
-          "VaR 99%": "usd", "Beta BTC": "num2", "Beta S&P 500": "num2" }, { key: { "VaR 95%": null, "Beta BTC": null } })
-        : { columns: [], rows: [], total: null },
     };
 
     if (ibs.length) {

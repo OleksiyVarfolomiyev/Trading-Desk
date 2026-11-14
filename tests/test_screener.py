@@ -22,8 +22,8 @@ class ScreenerTests(unittest.TestCase):
         live = pd.DataFrame({"funding_hour": [0.00001] * 4, "volume24h": [5e6] * 4}, index=["A", "B", "C", "D"])
         rows = screener.short_candidates(signals, live, ["A", "B", "C", "D"], {"rel7": 1.0}, "validated: 7d", 10_000.0, [], {"B"}, top=2,
                                          funding_history=lambda coin: [])
-        self.assertEqual(list(rows["Coin"]), ["D", "B"])                   # weakest first
-        self.assertIn("already held", rows.iloc[1]["Notes"])
+        self.assertEqual(list(rows["Coin"]), ["D", "C"])                   # weakest first; B is held, so C moves up
+        self.assertNotIn("already held", " ".join(rows["Notes"]))
         for execution in ("Stop (3 ATR)", "Size at budget", "Max by margin"):   # the executor's and the daemon's, not research
             self.assertNotIn(execution, rows.columns)
 
