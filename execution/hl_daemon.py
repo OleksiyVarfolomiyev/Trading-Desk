@@ -2198,7 +2198,9 @@ class ResearchFeed:
                       position.quantity * position.mark_price) for position in snapshot.positions]
         exposures += stress.desk_exposures(book) if book is not None else []
         desk_equity = snapshot.equity + (book.equity_usd if book is not None else 0.0)
+        # Market-made already: a ladder running, or one with fills in the last 30 days (stopped ones included).
         laddered = {item["coin"] for item in list(self.daemon.ladders.ladders.values())}
+        laddered |= {str(row.get("Coin")) for row in self.daemon.alerts.market_making if row.get("Coin")}
         free_margin = {}
         for wallet in state.wallets:  # margin above each wallet's 20% reserve, as the executor counts it
             own = state.snapshot([wallet])

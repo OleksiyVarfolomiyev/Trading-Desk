@@ -31,11 +31,13 @@ class ScreenerTests(unittest.TestCase):
         signals = pd.DataFrame({"efficiency": [0.9, 0.1, 0.2], "move30": [0.5, 0.01, -0.02], "range_pct": [0.05, 0.04, 0.03]},
                                index=["TREND", "CHOP", "QUIET"])
         live = pd.DataFrame({"funding_hour": [0.0] * 3, "volume24h": [5e6, 5e6, 1e6]}, index=["TREND", "CHOP", "QUIET"])
-        rows = screener.market_making_candidates(signals, live, ["TREND", "CHOP", "QUIET"], {"CHOP"}, top=2,
+        rows = screener.market_making_candidates(signals, live, ["TREND", "CHOP", "QUIET"], set(), top=2,
                                                  funding_history=lambda coin: [])
         self.assertEqual(rows.iloc[0]["Coin"], "CHOP")
-        self.assertEqual(rows.iloc[0]["Notes"], "ladder running")
         self.assertNotIn("TREND", list(rows["Coin"]))
+        made = screener.market_making_candidates(signals, live, ["TREND", "CHOP", "QUIET"], {"CHOP"}, top=2,
+                                                 funding_history=lambda coin: [])
+        self.assertEqual(list(made["Coin"]), ["QUIET"])                  # CHOP was market-made already: QUIET moves up
 
 
     def test_the_fallback_puts_the_weakest_coin_first(self):

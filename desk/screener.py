@@ -170,8 +170,9 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
 def market_making_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[str], laddered: set[str],
                              top: int = MM_TOP_N, edges: dict[str, float] | None = None,
                              funding_history=recent_funding) -> pd.DataFrame:
-    """Liquid coins that have gone nowhere: low efficiency ratio, ranked half by it and half by liquidity."""
-    names = [coin for coin in tradable if coin in live.index and coin in signals.index]
+    """Liquid coins that have gone nowhere: low efficiency ratio, ranked half by it and half by liquidity.
+    ``laddered``: coins market-made already (a ladder running, or one in the last 30 days); they leave the list."""
+    names = [coin for coin in tradable if coin in live.index and coin in signals.index and coin not in laddered]
     columns = ["efficiency", "move30", "range_pct"] + (["range_position"] if "range_position" in signals.columns else [])
     frame = signals.loc[names, columns].dropna(subset=["efficiency", "move30", "range_pct"]).copy()
     frame = frame[frame["efficiency"] <= MM_MAX_EFFICIENCY]
@@ -188,7 +189,7 @@ def market_making_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable
         shorts_paid = float(np.mean([rate < 0 for rate in rates])) if rates else float("nan")
         crowd = (["crowded short"] if shorts_paid == shorts_paid and shorts_paid > CROWDED_SHARE else
                  ["crowded long"] if longs_pay == longs_pay and longs_pay >= CROWDED_LONG_APR else [])
-        notes = crowd + (["ladder running"] if coin in laddered else []) + (
+        notes = crowd + (
             ["breakout risk: near the edge of its 60-day range"] if position == position and not MM_EDGE_ZONE[0] <= position <= MM_EDGE_ZONE[1] else [])
         rows.append({"Coin": coin, "Efficiency 30d": row["efficiency"], "Move 30d": row["move30"], "Range position 60d": position,
                      "Daily range 30d": row["range_pct"], "Volume 24h": row["volume24h"], "Longs pay 7d (APR)": longs_pay,
