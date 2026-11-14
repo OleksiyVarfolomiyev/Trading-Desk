@@ -202,6 +202,13 @@ def end_labels(fig):
                        "text": _end_text(y, axis, chart_title), "showarrow": False, "xanchor": "left", "xshift": 6,
                        "font": {"size": 11, **({"color": color} if color else {})}})
     labels = [label for label in labels if label]
+    # A label sitting on a reference line (the zero line of a PnL chart) is not struck through by it: the label
+    # carries the plot's own background, which paints over the line behind the text.
+    background = (fig.layout.plot_bgcolor or (fig.layout.template.layout.plot_bgcolor if fig.layout.template else None)
+                  or fig.layout.paper_bgcolor or (fig.layout.template.layout.paper_bgcolor if fig.layout.template else None))
+    if background:
+        for label in labels:
+            label.update(bgcolor=background, borderpad=1)
     _spread(fig, labels)
     for label in labels:
         fig.add_annotation(**label)

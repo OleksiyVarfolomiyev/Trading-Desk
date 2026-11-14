@@ -55,3 +55,16 @@ class WholeDollarAxisTests(unittest.TestCase):
         fig.update_yaxes(title_text="PnL ($)")
         dollar_axes(fig)
         self.assertEqual((fig.layout.xaxis.tickformat, fig.layout.yaxis.tickformat), ("$,.0f", "$~s"))
+
+
+class EndLabelBackgroundTests(unittest.TestCase):
+    def test_an_end_label_on_the_zero_line_carries_the_plot_background(self):
+        import pandas as pd
+        import plotly.graph_objects as go
+        from desk import charts
+
+        fig = go.Figure(go.Scatter(x=pd.date_range("2026-11-01", periods=3), y=[2.0, -1.0, 0.0], mode="lines+markers"))
+        fig.add_hline(y=0)
+        fig.update_layout(plot_bgcolor="#101010")
+        charts.end_labels(fig)
+        self.assertEqual(fig.layout.annotations[0].bgcolor, "#101010")   # paints over the line behind the text
