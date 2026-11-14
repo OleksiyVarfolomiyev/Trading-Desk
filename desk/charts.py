@@ -57,7 +57,7 @@ def _legend_rows(fig, width_px: float) -> int:
 
 
 # d3 currency format: $1,234.5 and -$50.0 (a "$" tickprefix would print $-50.0).
-USD_TICKS = {"tickprefix": "", "tickformat": "$,.1f"}
+USD_TICKS = {"tickprefix": "", "tickformat": "$~s"}  # $10k: short ticks that fit; end labels carry the detail
 _USD_ONLY = re.compile(r"^\s*(USD|\$|US\$)\s*$", re.I)
 _USD_UNIT = re.compile(r"\s*\((USD|\$|US\$)\)\s*$", re.I)
 

@@ -36,9 +36,9 @@ class ChartStyleTests(unittest.TestCase):
         fig.update_yaxes(title_text="Weeks", row=3, col=1)
         dollar_axes(fig)
         self.assertIsNone(fig.layout.yaxis.title.text)
-        self.assertEqual((fig.layout.yaxis.tickformat, fig.layout.yaxis.tickprefix), ("$,.1f", ""))
+        self.assertEqual((fig.layout.yaxis.tickformat, fig.layout.yaxis.tickprefix), ("$~s", ""))
         self.assertEqual(fig.layout.yaxis2.title.text, "Daily realized PnL")
-        self.assertEqual(fig.layout.yaxis2.tickformat, "$,.1f")
+        self.assertEqual(fig.layout.yaxis2.tickformat, "$~s")
         self.assertIsNone(fig.layout.yaxis3.tickformat)  # not a dollar axis
 
 
@@ -54,4 +54,4 @@ class WholeDollarAxisTests(unittest.TestCase):
         fig.update_xaxes(title_text="Volume ($)", tickformat="$,.0f")
         fig.update_yaxes(title_text="PnL ($)")
         dollar_axes(fig)
-        self.assertEqual((fig.layout.xaxis.tickformat, fig.layout.yaxis.tickformat), ("$,.0f", "$,.1f"))
+        self.assertEqual((fig.layout.xaxis.tickformat, fig.layout.yaxis.tickformat), ("$,.0f", "$~s"))

@@ -431,7 +431,7 @@ function renderCharts(charts) {
   const value = (charts.value || []).map((s, i) => ({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y, stackgroup: "value",
     line: { width: 2, color: colors[i % colors.length] }, fillcolor: withAlpha(colors[i % colors.length], 0.18),
-    hovertemplate: "%{fullData.name}: $%{y:,.2f}<extra></extra>",
+    hovertemplate: "%{fullData.name}: $%{y:,.0f}<extra></extra>",
   }));
   // Not stacked: it covers only the days wallet values are known (recorded, or rebuilt before
   // recording began), never implying zero outside them.
@@ -440,12 +440,13 @@ function renderCharts(charts) {
     const note = withWallets.note ? `<br><span style="font-size:11px">${withWallets.note}</span>` : "";
     value.push({ type: "scatter", mode: "lines", name: withWallets.name, x: withWallets.x, y: withWallets.y,
       line: { width: 2, dash: "dot", color: token("--ink-2") },
-      hovertemplate: `%{fullData.name}: $%{y:,.2f}${note}<extra></extra>` });
+      hovertemplate: `%{fullData.name}: $%{y:,.0f}${note}<extra></extra>` });
   }
   // Collapse stretches with no trading on any account, as the HL account charts do, and say so.
   const idle = charts.value_idle || [];
   const month = (d) => new Date(d + "T00:00:00Z").toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
-  const valueLayout = baseLayout({ yaxis: Object.assign(baseLayout().yaxis, { tickformat: "$,.1f" }) });
+  // Short dollar ticks ($10k), so the axis labels fit; the end labels and hover carry the detail.
+  const valueLayout = baseLayout({ yaxis: Object.assign(baseLayout().yaxis, { tickformat: "$~s" }) });
   if (idle.length) {
     valueLayout.xaxis = Object.assign(valueLayout.xaxis, { rangebreaks: idle.map((p) => ({ bounds: [p[0], p[1]] })) });
     valueLayout.margin = Object.assign({}, valueLayout.margin, { b: 56 });
@@ -457,7 +458,7 @@ function renderCharts(charts) {
   }
   // End values, as on the return chart: each stacked layer's own value at the top of its layer, then the
   // line with wallets. Labels sit on the plot's right edge (the layers can end on different days).
-  const money = (v) => (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const money = usd;  // end values rounded for reading ($11.3K), as everywhere on the desk
   let stackTop = 0;
   const valueEnds = value.filter((trace) => trace.y && trace.y.length).map((trace) => {
     const own = trace.y[trace.y.length - 1];
