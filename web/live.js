@@ -755,12 +755,15 @@
       "uPnL / equity": a.equity > 0 ? a.unrealized / a.equity : NaN,
       "Gross / equity": a.equity > 0 ? sum(a.positions.map((p) => Math.abs(value(p)))) / a.equity : NaN,
       "Net / equity": a.equity > 0 ? sum(a.positions.map(value)) / a.equity : NaN, "Positions": a.positions.length,
+      // Open risk over the account's risk equity (the executor's); the total row is the desk against its cap.
+      "Open risk": (() => { const b = book.find((x) => x.label === a.label); return b && b.equity > 0 ? b.risk / b.equity : NaN; })(),
     }));
     const accountTotal = { "Account": "Total", "% of desk": 1, "Positions": sum(accounts.map((a) => a.positions.length)),
       "Cash / equity": sum(accounts.map((a) => a.cash)) / deskEquity, "Margin used / equity": sum(accounts.map((a) => a.margin_used)) / deskEquity,
       "Available / equity": sum(accounts.map((a) => a.available)) / deskEquity,
       "uPnL / equity": sum(accounts.map((a) => a.unrealized)) / deskEquity,
-      "Gross / equity": sum(allPositions.map((p) => Math.abs(value(p)))) / deskEquity, "Net / equity": sum(allPositions.map(value)) / deskEquity };
+      "Gross / equity": sum(allPositions.map((p) => Math.abs(value(p)))) / deskEquity, "Net / equity": sum(allPositions.map(value)) / deskEquity,
+      "Open risk": riskEquity ? riskUsed / riskEquity : NaN };
 
     // -- performance by account
     // 24h return: each account's 24-hour change (the desk-value tile's own figures) over its value a day ago.
@@ -1046,9 +1049,9 @@
         { "Return 24h": "spct", "Return 7D": "spct", "Return 30D": "spct", "Return 90D": "spct", "Return 1Y": "spct", "Return since inception": "spct" },
         { totalLast: true, key: { "Return 30D": "abs" } }),
       accounts: table(accountRows, ["Account", "% of desk", "Cash / equity", "Margin used / equity", "Available / equity",
-        "uPnL / equity", "Gross / equity", "Net / equity", "Positions"],
+        "uPnL / equity", "Gross / equity", "Net / equity", "Open risk", "Positions"],
       { "% of desk": "pct", "Cash / equity": "pct", "Margin used / equity": "pct", "Available / equity": "pct",
-        "uPnL / equity": "spct", "Gross / equity": "pct", "Net / equity": "spct", "Positions": "int" },
+        "uPnL / equity": "spct", "Gross / equity": "pct", "Net / equity": "spct", "Open risk": "rpct", "Positions": "int" },
       { total: accountTotal, key: { "% of desk": "max" } }),
       exposure: table(exposureRows, ["Asset class", "Long", "Short", "Net", "Gross", "Gross / equity", "Net / equity"],
         Object.assign({}, money2, { "Net": "susd", "Gross / equity": "pct", "Net / equity": "spct" }), { totalLast: true, key: { "Net / equity": "abs" } }),
@@ -1066,13 +1069,6 @@
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
         { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
       { total: positionTotal(tableRows.filter((r) => !isCrypto(r))), key: { "Weight": "max" } }),
-      open_risk: table(book.map((b) => ({ "Venue": b.venue, "Account": b.label, "Positions": b.positions, "Risk equity": b.equity,
-        "Open risk": b.risk, "% of desk equity": riskEquity ? b.risk / riskEquity : NaN }))
-        .concat([{ "Venue": "Total", "Account": "", "Positions": sum(book.map((b) => b.positions)), "Risk equity": riskEquity,
-          "Open risk": riskUsed, "% of desk equity": riskEquity ? riskUsed / riskEquity : NaN }]),
-      ["Venue", "Account", "Positions", "Risk equity", "Open risk", "% of desk equity"],
-      Object.assign({}, money2, { "Positions": "int", "Open risk": "rusd", "% of desk equity": "rpct" }),
-      { totalLast: true, key: { "% of desk equity": "max" } }),
       market_making: (() => {  // the ladders, as the trading daemon last sent them (desk/market_making.py)
         const rows = (daemonAlerts && daemonAlerts.market_making) || [];
         if (!rows.length) return { columns: [], rows: [], total: null };

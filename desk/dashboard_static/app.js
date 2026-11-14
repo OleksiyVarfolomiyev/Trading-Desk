@@ -1,7 +1,7 @@
 "use strict";
 
 const POLL_MS = 5000;
-const TABLES = ["performance", "accounts", "positions", "positions_stocks", "exposure", "open_risk", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
+const TABLES = ["performance", "accounts", "positions", "positions_stocks", "exposure", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
 const sortState = {};          // table id -> {key, dir}; click a header to change it (the builders' order is the ranking)
 let lastRendered = null;        // last_ok of the data currently drawn
 let latest = null;              // latest /api/state document
@@ -148,7 +148,7 @@ const VIEWS = {
   accounts: {
     keep: (r) => !/wallet$/i.test(String(r.Account || "")),  // margin and leverage mean nothing for a wallet
     columns: [["Account"], ["% of desk"], ["Margin used / equity", "Margin used", "pct"], ["Gross / equity", "Gross", "lev"],
-      ["Net / equity", "Net", "slev"], ["uPnL / equity", "uPnL", "spct"]],
+      ["Net / equity", "Net", "slev"], ["uPnL / equity", "uPnL", "spct"], ["Open risk", "Open risk", "rpct"]],
   },
   exposure: {
     derive: (r) => {
@@ -161,10 +161,6 @@ const VIEWS = {
   },
   positions: POSITION_VIEW,
   positions_stocks: POSITION_VIEW,
-  open_risk: {
-    derive: (r) => ({ _cap: isNum(r["% of desk equity"]) ? r["% of desk equity"] / RISK_CAP : NaN }),
-    columns: [["Account"], ["% of desk equity", "Open risk", "rpct"], ["_cap", "Of the 33% cap", "rpct"]],
-  },
   candidates: { columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
   mm_candidates: { columns: [["Coin"], ["Daily range 30d"], ["Longs pay 7d (APR)"], ["Own ladder edge per $1k"], ["Volume 24h"], ["Notes"]] },

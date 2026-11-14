@@ -265,13 +265,20 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     attention = [row for row in attention if row[0] != "Desk return"]
 
     accounts, account_total = account_shares(overview.accounts_frame())
+    # Open risk over each account's risk equity (the executor's); the total row is the desk against its cap.
+    risk_by_label = {entry.label: entry.risk_usd / entry.equity_usd for entry in overview.book if entry.equity_usd > 0}
+    if len(accounts):
+        accounts["Open risk"] = accounts["Account"].map(risk_by_label)
+        if account_total is not None and overview.book:
+            risk_equity, risk_used, _ = overview.risk_totals()
+            account_total["Open risk"] = risk_used / risk_equity if risk_equity else None
     money = {column: "usd" for column in ("Equity", "Cash", "Margin used", "Available", "Gross", "Value", "Risk equity",
                                            "Open risk", "Long", "Short", "VaR 95%", "VaR 99%")}
     signed = {column: "susd" for column in ("uPnL", "Net", "Value")}
     tables = {
         "accounts": table(accounts, {**{column: "pct" for column in ACCOUNT_SHARES.values()},
                                      "uPnL / equity": "spct", "Net / equity": "spct",
-                                     "Positions": "int", "% of desk": "pct"}, account_total,
+                                     "Positions": "int", "% of desk": "pct", "Open risk": "rpct"}, account_total,
                           key={"% of desk": "max"}),
         # Returns only: the dollar PnL is in the accounts' value chart and the desk value tile.
         "performance": table(_without_dust_wallets(with_day_returns(desk.performance_frame(), day_change), overview.desk_equity)[
@@ -342,10 +349,6 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         tables["mm_candidates"] = table(mm, screener.MM_FORMATS, key={"Efficiency 30d": "min"}) if len(mm) else table(mm, {})
     except Exception as exc:
         desk.notes.append(f"Research tables unavailable ({type(exc).__name__}: {exc}).")
-    if overview.book:
-        tables["open_risk"] = table(overview.risk_frame(), {**money, "Positions": "int", "Open risk": "rusd",
-                                                            "% of desk equity": "rpct"}, total_last=True,
-                                    key={"% of desk equity": "max"})
     holdings = overview.wallet_holdings_frame()
     if len(holdings):  # from WALLET_MIN_SHARE of the desk up: smaller holdings are dust for decisions
         from desk.overview import WALLET_MIN_SHARE
