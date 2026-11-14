@@ -63,7 +63,7 @@ def _neutral(row_index, column, value, row):
 def _pnl_style(row_index, column, value, row):
     if column == "Side" and value in ("LONG", "SHORT"):
         return "color:#188038;" if value == "LONG" else "color:#c62828;"
-    signed = "PnL" in column or column in ("24h change (%)", "Value")
+    signed = "PnL" in column or column in ("24h change (%)", "Value", "Amount")
     if isinstance(value, (int, float)) and np.isfinite(value) and signed:
         return "color:#188038;" if value > 0 else "color:#c62828;" if value < 0 else "color:inherit;"
     return "color:inherit;"
@@ -575,7 +575,7 @@ class IBAccountAnalytics:
         from desk.overview import ib_fills_table
 
         table = ib_fills_table(fills.sort_values("time", ascending=False))
-        display_interactive_table(table, formatters={"Quantity": _number, "Price": _money, "Commission": _money,
+        display_interactive_table(table, formatters={"Quantity": _number, "Price": _money, "Amount": _money, "Commission": _money,
                                                      "Realized PnL": _money},
                                   cell_style=_pnl_style, title=f"IB FILLS: LAST {days} DAYS",
                                   key_columns={"Realized PnL": "abs"})

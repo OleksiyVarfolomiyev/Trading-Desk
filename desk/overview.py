@@ -65,7 +65,7 @@ def _percent(value):
 
 
 # Columns coloured by sign (green up, red down) and the Side column (LONG green, SHORT red).
-SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "uPnL (%)", "24h change (%)", "Funding (APR)", "% of position"}
+SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "Amount", "uPnL (%)", "24h change (%)", "Funding (APR)", "% of position"}
 
 
 def _signed_style(row_index, column, value, row):
@@ -148,15 +148,16 @@ US_EASTERN = "America/New_York"
 
 
 def ib_fills_table(fills: pd.DataFrame) -> pd.DataFrame:
-    """IB executions for display: US Eastern date and minute, last four digits of the account."""
-    from desk.accounts import short_id
-
+    """IB executions for display: time (Eastern), symbol, quantity, price and Amount, the dollars bought (positive,
+    green) or sold (negative, red), which also says the side. One IB account and mostly stocks, so no account,
+    type or side columns."""
     times = pd.to_datetime(fills["time"], utc=True, format="mixed").dt.tz_convert(US_EASTERN)
+    multiplier = fills["multiplier"].fillna(1).astype(float) if "multiplier" in fills else 1.0
+    sign = fills["side"].map(lambda side: 1.0 if str(side).upper() in {"BUY", "BOT"} else -1.0)
     table = pd.DataFrame({
-        "Time": times.map(clock),
-        "Account": fills["account"].map(lambda account: f"IB {short_id(account)}"),
-        "Symbol": fills["symbol"], "Type": fills["sec_type"], "Side": fills["side"],
+        "Time": times.map(clock), "Symbol": fills["symbol"],
         "Quantity": fills["quantity"], "Price": fills["price"],
+        "Amount": sign * fills["quantity"].astype(float).abs() * fills["price"].astype(float) * multiplier,
     })
     currency = fills["currency"].fillna("USD") if "currency" in fills else pd.Series("USD", index=fills.index)
     if (currency != "USD").any():  # only then is the currency worth a column
@@ -486,7 +487,8 @@ class DeskOverview:
                                       ascending=[True, False])
             priced = group["uPnL (%)"].notna()
             cost = (group["Value"] - group["uPnL"]).abs()[priced].sum()
-            total = {"Account": "Total", "Symbol": "", "Side": "", "Quantity": float("nan"),
+            group = group.drop(columns="Side", errors="ignore")   # Value is signed and coloured: it says the side
+            total = {"Account": "Total", "Symbol": "", "Quantity": float("nan"),
                      "Avg price": float("nan"), "Mark": float("nan"),
                      "Value": group["Value"].sum(), "uPnL": group["uPnL"].sum(),
                      "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
@@ -494,7 +496,7 @@ class DeskOverview:
                      "Funding (APR)": funding_total(group["Value"], group["Funding (APR)"]),
                      "Weight": group["Weight"].sum(), "Exposure / desk value": group["Exposure / desk value"].sum()}
             group = pd.concat([group, pd.DataFrame([total])], ignore_index=True)
-            group = group[emphasis.key_columns_first(list(group.columns), {"Weight"}, SIGNED_COLUMNS | {"Side"},
+            group = group[emphasis.key_columns_first(list(group.columns), {"Weight"}, SIGNED_COLUMNS,
                                                      text={"Account", "Symbol"})]
             display_interactive_table(
                 group, formatters={"Quantity": number, "Avg price": usd_price, "Mark": usd_price,
@@ -929,7 +931,7 @@ class DeskOverview:
             _signed_style(row_index, "Unrealized PnL", value, row) if column == "Realized PnL" else "color:inherit")
         display_interactive_table(
             table, formatters={"Quantity": "{:,.6g}".format, "Price": _money if usd_only else "{:,.6g}".format,
-                               "Commission": _money, "Realized PnL": _money},
+                               "Amount": _money if usd_only else "{:,.0f}".format, "Commission": _money, "Realized PnL": _money},
             cell_style=signed, title=f"RECENT IB FILLS: LAST {days} DAYS", key_columns={"Realized PnL": "abs"})
         print("Times are US Eastern. " + ("Prices are in USD." if usd_only else
                                           "Prices are in each contract's currency; commission and PnL in USD."))

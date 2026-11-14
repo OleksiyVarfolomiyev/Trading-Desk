@@ -1601,3 +1601,17 @@ class WindowEdgeTests(unittest.TestCase):
         self.assertTrue(through(late, cut).empty)                                    # days past: no 30D return
         early = pd.Series([0.9, 1.0], index=pd.to_datetime(["2026-10-01", "2026-10-20"], utc=True))
         self.assertEqual(list(through(early, cut)), [0.9])                           # the normal case is unchanged
+
+
+class IbFillsTableTests(unittest.TestCase):
+    def test_amount_says_the_side_and_account_type_side_columns_are_gone(self):
+        from desk.overview import ib_fills_table
+
+        fills = pd.DataFrame({"time": ["2026-11-12T15:00:00Z", "2026-11-12T16:00:00Z"], "account": ["U1238440"] * 2,
+                              "symbol": ["MU", "NET"], "sec_type": ["STK"] * 2, "side": ["BUY", "SELL"],
+                              "quantity": [10.0, 5.0], "price": [100.0, 200.0], "currency": ["USD"] * 2,
+                              "multiplier": [1, 1], "commission": [1.0, 1.0], "realized_pnl": [0.0, 50.0]})
+        table = ib_fills_table(fills)
+        self.assertEqual(list(table["Amount"]), [1000.0, -1000.0])      # bought positive, sold negative
+        for gone in ("Account", "Type", "Side"):
+            self.assertNotIn(gone, table.columns)
