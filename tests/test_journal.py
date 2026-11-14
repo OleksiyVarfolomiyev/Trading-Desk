@@ -60,6 +60,16 @@ class JournalTests(unittest.TestCase):
         self.assertAlmostEqual(frame.loc["hedge", "Funding 30d"], 1.0)
         self.assertAlmostEqual(frame["Funding 30d"].sum(), 1.2)
 
+    def test_entries_of_an_account_not_read_stay_open(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "journal.json"
+            journal.record_entry("07f2", "BERA", "SHORT", "directional", path=path)
+            journal.record_entry("8440", "GOOGL", "LONG", "conviction", path=path)
+            journal.close_missing(set(), path=path, scope={"07f2"})        # IB not read: its tag stays
+            state = {item["coin"]: item["closed"] for item in journal.load(path)}
+            self.assertIsNotNone(state["BERA"])
+            self.assertIsNone(state["GOOGL"])
+
     def test_ib_positions_count_as_untagged_until_tagged(self):
         entries = [{"wallet": "8440", "coin": "MU", "side": "LONG", "strategy": "conviction",
                     "opened": "2026-11-01T00:00:00", "closed": None}]

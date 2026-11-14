@@ -100,10 +100,15 @@ def record_entry(wallet: str, coin: str, side: str, strategy: str, signals: dict
     return current
 
 
-def close_missing(open_positions: set[tuple[str, str]], path: Path | None = None) -> int:
-    """Mark journal entries whose position is no longer open (``(wallet last four, coin)`` pairs) as closed."""
+def close_missing(open_positions: set[tuple[str, str]], path: Path | None = None, scope: set[str] | None = None) -> int:
+    """Mark journal entries whose position is no longer open (``(wallet last four, coin)`` pairs) as closed.
+
+    ``scope``: the accounts (last four) whose positions were read; entries of any other account (IB when its
+    positions could not be read) are left as they are. None: every account."""
     entries, changed = load(path), 0
     for item in entries:
+        if scope is not None and item["wallet"] not in scope:
+            continue
         if not item.get("closed") and (item["wallet"], item["coin"]) not in open_positions:
             item["closed"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
             changed += 1

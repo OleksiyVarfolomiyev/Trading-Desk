@@ -2185,7 +2185,11 @@ class ResearchFeed:
         snapshot = state.snapshot(state.wallets)
         book = state.other[0] if state.other else None
         open_pairs = {(position.wallet[-4:].lower(), position.coin) for position in snapshot.positions}
-        journal.close_missing(open_pairs)
+        scope = {wallet[-4:].lower() for wallet in state.wallets}
+        for account, positions in journal.ib_positions().items():   # IB's tags stay while IB holds the position
+            scope.add(account[-4:].lower())
+            open_pairs |= {(account[-4:].lower(), str(item.get("symbol"))) for item in positions if float(item.get("quantity") or 0)}
+        journal.close_missing(open_pairs, scope=scope)
         frame = journal.strategy_frame()
         strategies = json.loads(frame.to_json(orient="records")) + [json.loads(pd.Series(journal.total_row(frame)).to_json())]
         overdue = [{"wallet": item["wallet"], "coin": item["coin"], "side": item["side"], "days": round(item["days"], 1)}
