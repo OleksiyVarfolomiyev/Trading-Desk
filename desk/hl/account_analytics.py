@@ -1837,9 +1837,15 @@ class _HighlightsMixin:
         baseline=self._highlights_baseline
         windows=[fetch_pnl_windows(wallet) for wallet in self.wallet_addresses]
         pnl_24h,cumulative_pnl=(sum(values) for values in zip(*windows))
+        realized=data.realized_df
+        if not realized.empty and realized['coin'].astype(str).str.startswith('@').any():
+            try:  # spot fills carry market IDs ("@107"): the highlights name the token (HYPE)
+                realized=realized.assign(coin=realized['coin'].map(spot_base_token_names()))
+            except Exception:
+                pass
         margin_capacity=self.collateral_equity*(1-self.margin_reserve_pct/100)
         well,attention=build_highlights(
-            now,baseline,rows,data.realized_df,data.funding_df,cumulative_pnl,pnl_24h,
+            now,baseline,rows,realized,data.funding_df,cumulative_pnl,pnl_24h,
             data.current_account_value,
             _aggregate_open_risk(rows,self.position_atr_period,self.position_atr_stop_multiple),
             self.collateral_equity*self.aggregate_risk_pct/100,
