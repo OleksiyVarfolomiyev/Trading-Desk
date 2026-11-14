@@ -504,3 +504,21 @@ class KellyOptimizerTests(unittest.TestCase):
                 trial[index] = np.clip(trial[index] + move, -0.15, 0.15)
                 if trial.sum() <= 1.0:
                     self.assertLessEqual(growth(trial), growth(weights) + 1e-12)
+
+
+class FitSummaryTests(unittest.TestCase):
+    def test_each_row_of_a_model_fit_is_shown_as_the_reader_needs_it(self):
+        summary = pd.Series({
+            "Book": "HL book", "Periods": "40 weeks", "R-squared": 0.4231987654, "Adjusted R-squared": 0.3912345,
+            "Alpha (/yr)": 0.8132456, "Alpha t-stat": 1.8765432, "Residual volatility (/yr)": 0.5512345,
+            "Information ratio": 1.4753219, "Observations": 40.0, "BTC beta (factor model)": 0.8765432,
+        }, name="Style model")
+        shown = portfolio.fit_summary_frame(summary)["Style model"]
+        self.assertEqual(shown["R-squared"], "42.3%")
+        self.assertEqual(shown["Alpha (/yr)"], "81.3%")
+        self.assertEqual(shown["Alpha t-stat"], "1.88")
+        self.assertEqual(shown["Information ratio"], "1.48")
+        self.assertEqual(shown["Residual volatility (/yr)"], "55.1%")
+        self.assertEqual(shown["BTC beta (factor model)"], "0.88")
+        self.assertEqual(shown["Observations"], "40")
+        self.assertEqual(shown["Book"], "HL book")             # text passes through

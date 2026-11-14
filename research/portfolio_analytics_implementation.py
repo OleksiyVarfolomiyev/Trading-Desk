@@ -189,6 +189,23 @@ def wallet_token_ticker(symbol, chain, token):
     return base.upper()
 
 
+def fit_summary_frame(summary):
+    """A one-column summary of a model fit, each row shown as the reader needs it: percentages for R-squared, alpha
+    and volatility (R² 42%), two decimals for t-stats, ratios and betas, whole numbers for counts, text as is."""
+    def show(name,value):
+        if isinstance(value,str) or pd.isna(value):
+            return '' if not isinstance(value,str) and pd.isna(value) else value
+        label=str(name).lower()
+        if 't-stat' in label or 'ratio' in label or 'beta' in label:
+            return f'{value:.2f}'
+        if 'r-squared' in label or 'alpha' in label or 'volatility' in label:
+            return f'{value:.1%}'
+        if float(value).is_integer() and abs(value)>=1:
+            return f'{value:,.0f}'
+        return f'{value:.2f}'
+    return pd.DataFrame({summary.name:[show(name,value) for name,value in summary.items()]},index=summary.index)
+
+
 def _signed_table(frame, formatters=None, key_columns=None, key_rows=None, title=None):
     """Format a table, color positive numbers green and negatives red, and tint its key column(s)
     and headline rows (see desk/emphasis.py)."""
@@ -283,7 +300,7 @@ def _show_beta_table(table, title=None):
             return f'{value:.2f}'
         if row in ('Alpha (/yr)','R-squared'):
             return f'{value:.1%}'
-        return f'{value:.2f}' if row in BETA_CONTEXT_ROWS else f'{value:.3f}'
+        return f'{value:.2f}'
     shown=pd.DataFrame({column:[cell(table.loc[row,column],row,column) for row in table.index]
                         for column in table.columns},index=table.index)
     # Significant betas are what the table is read for: |t| >= 2 tints the t and its beta.
@@ -1120,7 +1137,7 @@ class _CorrelationPlotMixin(_TableStyleMixin):
             z=corr.to_numpy(),x=corr.columns.tolist(),y=corr.index.tolist(),
             zmin=-1,zmax=1,colorscale='RdBu',reversescale=True,
             text=np.round(corr.to_numpy(),2),texttemplate='%{text:.2f}',
-            hovertemplate='%{y} vs %{x}: %{z:.3f}<extra></extra>',
+            hovertemplate='%{y} vs %{x}: %{z:.2f}<extra></extra>',
             showscale=False,
         ))
         fig.update_layout(title=title,template='plotly_dark',
@@ -1314,7 +1331,7 @@ class _KellyMixin(_TableStyleMixin):
         print('Expected price PnL is a historical mean-forward-return contribution per $100 of portfolio equity; it excludes funding, fees, and slippage.')
         self.show_table(weight_table,title='CONSTRAINED LONG/SHORT FULL-KELLY WEIGHTS (sorted by weight)',formatters={
             'Weight (%)':'{:.2f}',
-            'Expected Price PnL / $100 equity (5d)':'${:.3f}',
+            'Expected Price PnL / $100 equity (5d)':'${:.2f}',
         },key_columns={'Weight (%)':'abs'})
         if expected_warnings:
             print('Expected-PnL history warnings: ' + '; '.join(expected_warnings))
@@ -1476,11 +1493,11 @@ class _PerformanceMixin(_TableStyleMixin):
         if not has_spy:
             metrics=metrics.drop(columns=['Beta (SPY)'])
         formats={
-            f'Sharpe (excess, sqrt {periods})':'{:.3f}',
-            'Sharpe (excess, sqrt 252)':'{:.3f}',
-            'Sharpe (raw, sqrt 252)':'{:.3f}',
-            f'Sortino ({periods}d)':'{:.3f}',
-            'Beta (BTC)':'{:.3f}','Beta (SPY)':'{:.3f}','Alpha':'{:.2%}',
+            f'Sharpe (excess, sqrt {periods})':'{:.2f}',
+            'Sharpe (excess, sqrt 252)':'{:.2f}',
+            'Sharpe (raw, sqrt 252)':'{:.2f}',
+            f'Sortino ({periods}d)':'{:.2f}',
+            'Beta (BTC)':'{:.2f}','Beta (SPY)':'{:.2f}','Alpha':'{:.1%}',
             f'Arithmetic Return ({periods}d, linear)':'{:.2%}',
             'Hist Vol (daily)':'{:.2%}',f'Hist Vol (annualized, {periods}d)':'{:.2%}',
             'Historical 1D VaR 95%':'{:.2%}',
@@ -1744,20 +1761,20 @@ class _FactorModelMixin(_TableStyleMixin):
         },name='Factor model fit')
         print(f'Factor model: R²={fit_result.r_squared:.1%} | adjusted R²={fit_result.adjusted_r_squared:.1%} | '
               f'annual alpha={annual_alpha:.2%} | n={fit_result.observations} days')
-        print(f'Single-factor BTC beta={self.beta:.3f} | factor-model BTC beta={summary.loc["BTC market excess","Beta"]:.3f}'
-              + (f' | single-factor SPY beta={self.beta_spy:.3f} | factor-model SPY beta='
-                 f'{summary.loc["SPY market excess","Beta"]:.3f}' if 'SPY market excess' in summary.index else ''))
+        print(f'Single-factor BTC beta={self.beta:.2f} | factor-model BTC beta={summary.loc["BTC market excess","Beta"]:.2f}'
+              + (f' | single-factor SPY beta={self.beta_spy:.2f} | factor-model SPY beta='
+                 f'{summary.loc["SPY market excess","Beta"]:.2f}' if 'SPY market excess' in summary.index else ''))
         print('BTC realized vol beta is the daily return per one standard deviation of lagged 30-day volatility; '
               'alpha is at average volatility. Funding (low - high) is long low-funding and short high-funding '
               'held perps, by lagged 7-day average funding. Returns exclude funding payments and trading costs.')
         if factor_note:
             print(factor_note)
         self.show_table(summary,title='FACTOR MODEL: BETAS, PREMIA AND CONTRIBUTIONS',formatters={
-            'Beta':'{:.3f}','HAC t-stat':'{:.2f}',
+            'Beta':'{:.2f}','HAC t-stat':'{:.2f}',
             'Factor premium (%/yr)':'{:.2%}','Premium t-stat':'{:.2f}',
             'Portfolio contribution (%/yr)':'{:.2%}',
         },key_columns={'HAC t-stat':'abs'})
-        self.show_table(fit.to_frame(),key_rows={'R-squared','Annual alpha'},title='FACTOR MODEL FIT')
+        self.show_table(fit_summary_frame(fit),key_rows={'R-squared','Annual alpha'},title='FACTOR MODEL FIT')
         self.factor_returns=factors
         self.factor_model_summary=summary
         self.factor_model_fit=fit
@@ -1907,10 +1924,10 @@ class _FactorModelMixin(_TableStyleMixin):
         print('Each beta is the book\'s exposure to a factor; the contribution is beta x the factor\'s average '
               'return. Alpha is the intercept: the part of the average return no factor explains. Specific '
               f'return is alpha plus each {unit}\'s residual; it is the return attributable to selection.')
-        self.show_table(table,{'Beta':'{:.3f}','HAC t-stat':'{:.2f}','Factor return (/yr)':'{:.1%}',
+        self.show_table(table,{'Beta':'{:.2f}','HAC t-stat':'{:.2f}','Factor return (/yr)':'{:.1%}',
                                'Contribution (/yr)':'{:.1%}'},key_columns={'Contribution (/yr)':'abs'},
                         title=f'STYLE MODEL: {label.upper()}')
-        self.show_table(summary.to_frame(),key_rows={'Alpha (/yr)','Alpha t-stat','Information ratio'},
+        self.show_table(fit_summary_frame(summary),key_rows={'Alpha (/yr)','Alpha t-stat','Information ratio'},
                         title=f'STYLE MODEL FIT: {label.upper()}')
         self.show_table(attribution.to_frame(),{'Return over sample':'{:.1%}'},
                         key_rows={'Specific return (alpha + residual)','Total excess return'},
@@ -2297,7 +2314,7 @@ class _FactorModelMixin(_TableStyleMixin):
             part=pivot[pivot['Regime']==regime].set_index('Term').reindex(names)
             compare[f'Change vs {reference.split(" (")[0]}: t ({regime.split(" (")[0]})']=part['Difference t-stat']
         # The t of each change is the answer: did that beta move between regimes?
-        self.show_table(compare,{column:('{:.2f}' if column.startswith('Change') else '{:.3f}')
+        self.show_table(compare,{column:'{:.2f}'
                                  for column in compare.columns},
                         key_columns={column:'abs' for column in compare.columns if column.startswith('Change')},
                         title=f'REGIME INTERACTION MODEL, PER 1x GROSS ({observations} weeks; betas per regime, '
@@ -2538,7 +2555,7 @@ class _FactorModelMixin(_TableStyleMixin):
               'evaluated on. Every in-sample row reuses dates the weights were fit on.')
         self.show_table(table.set_index(['Test','Weights fit on','Evaluated on']),{
             'Annual alpha':'{:.2%}','Alpha t-stat':'{:.2f}','R-squared':'{:.1%}',
-            **{f'{name} beta':'{:.3f}' for name in names},
+            **{f'{name} beta':'{:.2f}' for name in names},
         },key_columns={'Alpha t-stat':'abs'},title='ALPHA IN AND OUT OF SAMPLE')
         forward=table.iloc[-2]
         print(f"Forward test (fit on first half, evaluated on second): alpha "

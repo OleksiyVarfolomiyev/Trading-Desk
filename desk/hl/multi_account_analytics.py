@@ -318,7 +318,7 @@ class _MultiWalletVolumeMixin:
             'Volume':lambda v:f'{_usd(v)}','Realized PnL excl. funding (trading + fees)':lambda v:f'{_usd(v)}',
             'Realized PnL / Volume (%)':lambda v:f'{_pct(v, scaled=True)}',
             'PnL / $1k volume':lambda v:f'{_usd(v)}',
-            'Daily Pearson r':lambda v:f'{v:.3f}','Daily Spearman r':lambda v:f'{v:.3f}',
+            'Daily Pearson r':lambda v:f'{v:.2f}','Daily Spearman r':lambda v:f'{v:.2f}',
         },cell_style=style,bold_last=True,title=title,blank_missing_cells=volume_total_blank_cells(summary),
           key_columns={'Realized PnL excl. funding (trading + fees)':'abs'})
         print('Realized PnL is HL closedPnl less USDC trading fees; funding is excluded. '+VOLUME_WINDOW_NOTE)
