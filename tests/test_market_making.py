@@ -78,3 +78,41 @@ class LadderFrameTests(unittest.TestCase):
         self.assertEqual(list(frame["Coin"]), ["BTC"])
         self.assertTrue(frame.iloc[0]["Since"])          # "Nov 12" (or "Nov'26" once old)
         self.assertEqual(frame.iloc[0]["Status"], "quoting")
+
+
+class ConsolidatedHistoryTests(unittest.TestCase):
+    def frame(self, ladders, fills):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        wallet = "0x" + "ab" * 20
+        ladders = [dict(item, wallet=wallet) for item in ladders]
+        state = {"assetPositions": [{"position": {"coin": "BTC", "szi": "-0.021", "positionValue": "1449"}}]}
+        with patch.object(market_making, "running_ladders", return_value=ladders), \
+                patch("desk.accounts.load_accounts", return_value=[SimpleNamespace(id=wallet, venue="hl", name="HL abab")]), \
+                patch("desk.hl.account_analytics.post", return_value=state), \
+                patch.object(market_making, "ladder_fill_rows", return_value=fills), \
+                patch.object(market_making, "funding_events", return_value=[]), \
+                patch.object(market_making, "minute_closes", return_value=pd.Series(dtype=float)):
+            return market_making.market_making_frame()
+
+    def test_a_restart_does_not_reset_the_ladders_history(self):
+        # Fills from before the ladder's latest start still count, and Since is the first time it quoted.
+        import time
+
+        day = 86_400_000
+        now = int(time.time() * 1000)
+        first = pd.Timestamp(now - 6 * day, unit="ms", tz="UTC")
+        early = {"coin": "BTC", "side": "B", "px": "69000", "sz": "0.001", "fee": "0.01", "time": now - 6 * day}
+        late = {"coin": "BTC", "side": "S", "px": "69100", "sz": "0.001", "fee": "0.01", "time": now - 1 * day}
+        restart = (pd.Timestamp(now, unit="ms", tz="UTC") - pd.Timedelta(hours=12)).strftime("%Y-%m-%d %H:%M")
+        frame = self.frame([{"coin": "BTC", "base": -0.02, "started": restart}], [early, late])
+        self.assertEqual(int(frame.iloc[0]["Fills"]), 2)
+        self.assertEqual(frame.iloc[0]["Since"], f"{first:%b} {first.day}")   # the first fill, not the restart 12 hours ago
+
+    def test_a_ladder_that_was_stopped_stays_in_the_table(self):
+        gone = {"coin": "LIT", "side": "B", "px": "3.2", "sz": "10", "fee": "0.01", "time": int(__import__("time").time() * 1000) - 3 * 86_400_000}
+        frame = self.frame([{"coin": "BTC", "base": -0.02, "started": "2026-11-12 10:00"}], [gone])
+        row = frame.set_index("Coin").loc["LIT"]
+        self.assertEqual(row["Status"], "stopped")
+        self.assertEqual(int(row["Fills"]), 1)

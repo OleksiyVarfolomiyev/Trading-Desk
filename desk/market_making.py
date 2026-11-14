@@ -167,7 +167,8 @@ def minute_closes(coin: str, since_ms: int) -> pd.Series:
 def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
                         queued: dict[tuple[str, str], int] | None = None,
                         status: dict[tuple[str, str], str] | None = None) -> pd.DataFrame:
-    """One row per ladder (running, or stopped with fills in the last 30 days) and a total.
+    """One row per coin the ladders ever quoted (running or stopped), over all its ladder fills since the first one: a
+    restart does not reset it. The total row is the whole of market making since it started.
 
     ``quotes`` ((wallet last four, coin) -> quotes resting on HL's book), ``queued`` (quotes the daemon holds
     in memory until the price nears them) and ``status`` (e.g. trims paused in a trend) come from the daemon
@@ -183,27 +184,27 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
     for ladder in ladders:
         by_wallet.setdefault(ladder["wallet"].lower(), []).append(ladder)
     rows = []
-    month_ago = int((time.time() - 30 * 86400) * 1000)
-    for wallet in by_wallet:
-        if wallet not in wallets:
+    for wallet in wallets:   # every HL wallet: a ladder that ran and was stopped still counts
+        running = {item["coin"]: item for item in by_wallet.get(wallet, [])}
+        fills = ladder_fill_rows(wallet, 0)   # the wallet's whole ladder history (HL keeps its latest 10,000 fills)
+        if not running and not fills:
             continue
         state = post({"type": "clearinghouseState", "user": wallet}) or {}
         positions = {item["position"]["coin"]: item["position"] for item in state.get("assetPositions", [])}
-        starts = [pd.Timestamp(item["started"], tz="UTC") for item in by_wallet[wallet]]
-        window_start = min(month_ago, int(min(starts).timestamp() * 1000))
-        fills = ladder_fill_rows(wallet, window_start)
+        starts = [int(pd.Timestamp(item["started"], tz="UTC").timestamp() * 1000) for item in running.values()]
+        window_start = min([fill["time"] for fill in fills] + starts)
         try:  # funding is extra: the table shows without it
             events = funding_events(wallet, window_start)
         except Exception:
             events = []
-        running = {item["coin"]: item for item in by_wallet[wallet]}
         for coin in sorted(set(running) | {fill["coin"] for fill in fills}):
             ladder = running.get(coin)
             position = positions.get(coin, {})
             size = float(position.get("szi") or 0)
             mark = abs(float(position.get("positionValue") or 0) / size) if size else float("nan")
-            started = pd.Timestamp(ladder["started"], tz="UTC") if ladder else None
-            own = [fill for fill in fills if fill["coin"] == coin and (started is None or fill["time"] >= started.timestamp() * 1000)]
+            own = [fill for fill in fills if fill["coin"] == coin]   # all of this coin's ladder fills, restarts included
+            # Since: the first time a ladder quoted this coin, the first fill or the current start, whichever is earlier.
+            first_ms = min([fill["time"] for fill in own] + ([int(pd.Timestamp(ladder["started"], tz="UTC").timestamp() * 1000)] if ladder else []))
             if mark != mark and own:
                 mark = float(own[-1]["px"])
             base = float(ladder["base"]) if ladder else float("nan")
@@ -213,14 +214,14 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
                 closes = pd.Series(dtype=float)
             earned = sum(amount for _, amount in ladder_funding_parts(
                 own, [event for event in events if (event.get("delta") or {}).get("coin") == coin
-                      and (started is None or int(event["time"]) >= started.timestamp() * 1000)]))
+                      and int(event["time"]) >= first_ms]))
             measured = metrics(own, mark)
             measured["Funding"] = earned
             measured["Ladder PnL"] += earned  # the funding on the ladder's inventory is part of its result
             row = {"Account": wallets[wallet].name, "Coin": coin,
                    "Side": ("LONG" if base > 0 else "SHORT") if ladder else "",
                    "Status": ((status or {}).get((short_id(wallet), coin), "quoting")) if ladder else "stopped",
-                   "Since": _since(ladder["started"]) if ladder else "", **measured, **markouts(own, closes),
+                   "Since": _since(pd.Timestamp(first_ms, unit="ms", tz="UTC")), **measured, **markouts(own, closes),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
                    "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan")),
                    "Queued": (queued or {}).get((short_id(wallet), coin), float("nan"))}
