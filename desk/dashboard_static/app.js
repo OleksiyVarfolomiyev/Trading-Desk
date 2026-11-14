@@ -504,6 +504,18 @@ function renderBanners(doc, now) {
   host.replaceChildren(...banners);
 }
 
+// The wallets card sits under the shorter of the two position tables, so the pair fills the screen evenly.
+function balanceColumns() {
+  const grid = document.getElementById("positions-grid");
+  const wallets = document.getElementById("t-wallets");
+  const card = wallets && wallets.closest(".card");
+  if (!grid || !card) return;
+  const [left, right] = grid.querySelectorAll(":scope > .stack");
+  if (!left || !right) return;
+  card.remove();
+  (right.offsetHeight < left.offsetHeight ? right : left).appendChild(card);
+}
+
 function render(doc) {
   const now = new Date(doc.server_time || Date.now());
   renderBanners(doc, now);
@@ -520,6 +532,7 @@ function render(doc) {
   renderHighlights("hl-attention", data.highlights && data.highlights.attention, hover);
   const context = { deskValue: (data.kpis || {}).desk_value };
   for (const id of TABLES) renderTable(id, applyView(id, data.tables && data.tables[id], context));
+  balanceColumns();
   renderCharts(data.charts);
   const notes = document.getElementById("notes");  // developer notes: not on the page (the band shows real problems)
   if (notes) notes.replaceChildren(...(data.notes || []).map((note) => el("li", { text: note })));

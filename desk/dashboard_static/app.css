@@ -159,7 +159,7 @@ main { margin: 0; padding: 12px 12px 48px; display: flex; flex-direction: column
 
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
-table.aligned { table-layout: fixed; min-width: 560px; }
+table.aligned { table-layout: fixed; min-width: 480px; }
 table.aligned td, table.aligned th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 th, td { padding: 6px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
 th {
