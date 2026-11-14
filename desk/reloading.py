@@ -17,15 +17,31 @@ import sys
 from types import ModuleType
 
 
+PASSES = 3
+
+
 def reload_desk(*extra: ModuleType) -> list[str]:
-    """Reload all loaded desk modules, then ``extra`` in the order given; return the names reloaded."""
+    """Reload all loaded desk modules, then ``extra`` in the order given; return the names reloaded.
+
+    A module reloaded before something it imports (``desk.hl`` sorts before ``desk.numbers``) can fail to find
+    a name the new code of that module added. It is not an error yet: the module is retried on the next pass,
+    by which time everything else has new code. Only a failure that survives the last pass is raised.
+    """
     names = sorted(name for name, module in list(sys.modules.items())
                    if module is not None and (name == "desk" or name.startswith("desk.")) and name != __name__)
-    for _ in range(2):
-        for name in names:
-            module = sys.modules.get(name)
-            if module is not None:
+    failed: dict[str, Exception] = {}
+    for _ in range(PASSES):
+        failed = {}
+        for module in [sys.modules.get(name) for name in names] + list(extra):
+            if module is None:
+                continue
+            try:
                 importlib.reload(module)
-        for module in extra:
-            importlib.reload(module)
+            except (ImportError, AttributeError) as error:   # a name the not yet reloaded module lacks
+                failed[module.__name__] = error
+        if not failed:
+            break
+    if failed:
+        name, error = next(iter(failed.items()))
+        raise ImportError(f"{name} could not be reloaded: {error}") from error
     return names + [module.__name__ for module in extra]

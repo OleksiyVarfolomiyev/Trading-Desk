@@ -131,6 +131,32 @@ class ReloadDeskTests(unittest.TestCase):
         self.assertIs(overview.display_interactive_table, analytics.display_interactive_table)
 
 
+    def test_a_module_reloaded_before_what_it_imports_is_retried(self):
+        import importlib
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        from desk.reloading import reload_desk
+
+        with tempfile.TemporaryDirectory() as folder:
+            sys.path.insert(0, folder)
+            try:
+                (Path(folder) / "reload_b.py").write_text("old = 1\n")
+                (Path(folder) / "reload_a.py").write_text("from reload_b import old\n")
+                import reload_a, reload_b
+                # The new code of both: a wants a name only the new b has; a is reloaded first, against the old b.
+                (Path(folder) / "reload_b.py").write_text("old = 1\nnew_name_added_later = 2\n")
+                (Path(folder) / "reload_a.py").write_text("from reload_b import new_name_added_later, old  # newer\n")
+                importlib.invalidate_caches()
+                reload_desk(reload_a, reload_b)          # was: ImportError: cannot import name ...
+                self.assertEqual(reload_a.new_name_added_later, 2)
+            finally:
+                sys.path.remove(folder)
+                sys.modules.pop("reload_a", None)
+                sys.modules.pop("reload_b", None)
+
+
 class MarketKindSplitTests(unittest.TestCase):
     """Crypto and stocks are never ranked against each other."""
 
