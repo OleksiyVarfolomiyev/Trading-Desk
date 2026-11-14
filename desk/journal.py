@@ -100,6 +100,21 @@ def record_entry(wallet: str, coin: str, side: str, strategy: str, signals: dict
     return current
 
 
+USED_DAYS = 30   # a coin traded this recently is no longer a screener candidate
+
+
+def recently_traded(days: float = USED_DAYS, entries: list[dict] | None = None, now: float | None = None) -> set[str]:
+    """Coins with a journal entry opened in the last ``days``, or still open (any account, any side): candidates
+    that became trades, so the screener leaves them out."""
+    now = time.time() if now is None else now
+    found = set()
+    for item in load() if entries is None else entries:
+        opened = pd.Timestamp(item["opened"], tz="UTC").timestamp()
+        if not item.get("closed") or now - opened <= days * 86400:
+            found.add(str(item["coin"]))
+    return found
+
+
 def close_missing(open_positions: set[tuple[str, str]], path: Path | None = None, scope: set[str] | None = None) -> int:
     """Mark journal entries whose position is no longer open (``(wallet last four, coin)`` pairs) as closed.
 

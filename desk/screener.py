@@ -223,8 +223,13 @@ def run(desk_equity: float | None = None, exposures: list | None = None, held: s
     if desk_equity is None or exposures is None or held is None:
         desk_equity, exposures, held = desk_context()
     laddered = laddered if laddered is not None else {item["coin"] for item in _ladders()}
-    shorts = short_candidates(signals, live, tradable, weights, basis, desk_equity, exposures, held, free_margin=free_margin)
-    mm = market_making_candidates(signals, live, tradable, laddered, edges=ladder_edges())
+    # A candidate that became a trade is not a candidate any more: held now, traded in the last 30 days (the
+    # journal), or market-made (a ladder running or recent). It leaves both lists; the next one moves up.
+    from desk import journal
+
+    used = set(held) | set(laddered) | journal.recently_traded()
+    shorts = short_candidates(signals, live, tradable, weights, basis, desk_equity, exposures, used, free_margin=free_margin)
+    mm = market_making_candidates(signals, live, tradable, used, edges=ladder_edges())
     state = {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "candles_to": f"{data['close'].index[-1]:%Y-%m-%d}",
              "basis": basis, "universe": len(tradable), "desk_equity": desk_equity,
              "shorts": json.loads(shorts.to_json(orient="records")), "market_making": json.loads(mm.to_json(orient="records"))}

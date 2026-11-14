@@ -60,6 +60,13 @@ class JournalTests(unittest.TestCase):
         self.assertAlmostEqual(frame.loc["hedge", "Funding 30d"], 1.0)
         self.assertAlmostEqual(frame["Funding 30d"].sum(), 1.2)
 
+    def test_recently_traded_coins_are_used_candidates(self):
+        now = pd.Timestamp("2026-11-14T12:00:00", tz="UTC").timestamp()
+        entries = [{"wallet": "07f2", "coin": "STRK", "opened": "2026-11-12T00:00:00", "closed": "2026-11-14T00:00:00"},
+                   {"wallet": "c248", "coin": "BTC", "opened": "2026-09-01T00:00:00", "closed": None},       # still open
+                   {"wallet": "07f2", "coin": "GMX", "opened": "2026-09-01T00:00:00", "closed": "2026-09-02T00:00:00"}]
+        self.assertEqual(journal.recently_traded(entries=entries, now=now), {"STRK", "BTC"})   # GMX: over 30 days ago
+
     def test_entries_of_an_account_not_read_stay_open(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "journal.json"
