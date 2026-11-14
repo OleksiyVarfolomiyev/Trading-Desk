@@ -346,7 +346,7 @@ function renderAccountStatus(rows, now) {
 
 // How loud a highlight is (desk/notebook_highlights.py ``severity``): "critical" rows call for action now and sit
 // first in a red band; "watch" rows get an amber marker.
-const CRITICAL_TITLES = /cut gross|margin guard|not reporting|over cap|liquidat|^major hack$/i;
+const CRITICAL_TITLES = /cut gross|margin guard|not reporting|over cap|liquidat|^major hack$|^squeeze/i;
 const WATCH_TITLES = /^alt rally$|^stock dip$|near cap|^hack$|^burn approaching$|^burn$|^unlock$/i;
 function severity(title, text) {
   if (CRITICAL_TITLES.test(title) || (/^regime$/i.test(title) && /\bhigh\b/.test(text))) return "critical";

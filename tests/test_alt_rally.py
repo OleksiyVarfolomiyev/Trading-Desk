@@ -68,5 +68,21 @@ class StockDipTests(unittest.TestCase):
         self.assertEqual(alt_rally.stock_alert("cut", -0.04, None)[0], "Stock sell-off: cut gross")
 
 
+class SqueezeTests(unittest.TestCase):
+    def test_a_short_up_15_percent_with_shorts_paying_500_percent_is_squeezed(self):
+        self.assertTrue(alt_rally.squeeze("short", 0.29, -27.38))      # BERA, Nov 14
+        self.assertFalse(alt_rally.squeeze("short", 0.29, 0.11))       # a pop without crowding
+        self.assertFalse(alt_rally.squeeze("short", 0.05, -27.38))     # crowded but not running
+        self.assertTrue(alt_rally.squeeze("long", -0.2, 6.0))          # the mirror for a long
+        self.assertFalse(alt_rally.squeeze("long", 0.29, -27.38))
+
+    def test_the_alert_leads_with_the_squeeze_and_shows_the_stop(self):
+        title, text = alt_rally.squeeze_alert("BERA", "short", 0.288, -27.38, 0.1304, 0.1412)
+        self.assertEqual(title, "Squeeze: BERA short")
+        self.assertEqual(text, "up 29% in 24h against you; shorts paying 2738% APR (7.5% of the position a day); "
+                               "the stop at 0.1412 is 8.3% away")
+        self.assertIn("no stop on HL", alt_rally.squeeze_alert("xyz:AMD", "long", -0.2, 6.0, 500, None)[1])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -137,6 +137,34 @@ def stock_alert(level_name: str, move: float, book_move: float | None) -> tuple[
     return "Stock dip", f"{detail}. Dips mostly bounce: add on red, or hold."
 
 
+SQUEEZE_MOVE = 0.15        # the position's coin moved this much against it in 24 hours...
+SQUEEZE_FUNDING_APR = 5.0  # ...while its side pays this much funding (500% APR): crowded and being squeezed
+
+
+def squeeze(side: str, move: float, funding_apr: float) -> bool:
+    """A position being squeezed: a short up SQUEEZE_MOVE with shorts paying SQUEEZE_FUNDING_APR (or a long the mirror).
+    ``funding_apr`` is HL's rate annualised (positive: longs pay)."""
+    if not (math.isfinite(move) and math.isfinite(funding_apr)):
+        return False
+    if side == "short":
+        return move >= SQUEEZE_MOVE and funding_apr <= -SQUEEZE_FUNDING_APR
+    return move <= -SQUEEZE_MOVE and funding_apr >= SQUEEZE_FUNDING_APR
+
+
+def squeeze_alert(coin: str, side: str, move: float, funding_apr: float, mark: float, stop: float | None) -> tuple[str, str]:
+    """("Squeeze: BERA short", "up 29% in 24h against you; shorts paying 2,738% APR (7.5% of the position a day);
+    the stop at 0.1412 is 8% away"): the signal first."""
+    paying = abs(funding_apr)
+    direction = "up" if side == "short" else "down"
+    text = (f"{direction} {_pct(abs(move))} in 24h against you; {'shorts' if side == 'short' else 'longs'} paying "
+            f"{_pct(paying)} APR ({_pct(paying / 365)} of the position a day)")
+    if stop and mark:
+        text += f"; the stop at {stop:.6g} is {_pct(abs(stop / mark - 1))} away"
+    else:
+        text += "; no stop on HL"
+    return f"Squeeze: {coin.split(':')[-1]} {side}", text
+
+
 def book_move(positions: list[dict], contexts_by_coin: dict[str, dict], equity: float) -> float:
     """What the 24-hour moves did to the book: the sum over main-DEX positions of size times the price change,
     as a share of ``equity`` (negative: the book lost). ``positions`` are HL position dicts (coin, szi)."""

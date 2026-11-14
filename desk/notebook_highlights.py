@@ -120,7 +120,7 @@ class HighlightsState:
         return since
 
 
-CRITICAL_TITLES = re.compile(r"cut gross|margin guard|not reporting|over cap|liquidat|^major hack$", re.I)
+CRITICAL_TITLES = re.compile(r"cut gross|margin guard|not reporting|over cap|liquidat|^major hack$|^squeeze", re.I)
 WATCH_TITLES = re.compile(r"^alt rally$|^stock dip$|near cap|^hack$|^burn approaching$|^burn$|^unlock$", re.I)
 WARN = "#e8a10c"
 

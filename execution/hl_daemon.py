@@ -1323,6 +1323,42 @@ class Alerts:
             stale = [key for key in self.items if key.startswith("hack:") and key not in live]
         for key in stale:  # older than the window
             self.clear(key)
+        # Squeezes: an open position whose coin ran 15% against it in 24h while its side pays 500% APR funding.
+        squeezed = set()
+        markets = {}
+        for dex_meta, dex_contexts in ((main_meta, main_contexts), (meta, contexts)):
+            markets.update({asset["name"]: context for asset, context in zip(dex_meta.get("universe", []), dex_contexts)})
+        for wallet, by_dex in zip(list(daemon.state.states), states):
+            held = [item.get("position", {}) for state in by_dex.values() for item in state.get("assetPositions", [])]
+            orders: dict[str, list] = {}  # per DEX: a stock perp's orders live on its own DEX
+            for position in held:
+                coin, size = str(position.get("coin") or ""), float(position.get("szi") or 0)
+                context = markets.get(coin)
+                if not size or not context:
+                    continue
+                try:
+                    mark, before = float(context["markPx"]), float(context["prevDayPx"])
+                    funding_apr = float(context.get("funding") or 0) * 8760
+                except (KeyError, TypeError, ValueError):
+                    continue
+                side = "long" if size > 0 else "short"
+                if not before or not alt_rally.squeeze(side, mark / before - 1, funding_apr):
+                    continue
+                dex = coin.split(":")[0] if ":" in coin else ""
+                if dex not in orders:  # the wallet's stops on that DEX, read once and only when needed
+                    try:
+                        orders[dex] = post_info({"type": "frontendOpenOrders", "user": wallet, **({"dex": dex} if dex else {})}) or []
+                    except Exception:
+                        orders[dex] = []
+                stop = next((float(order["triggerPx"]) for order in orders[dex] if order.get("coin") == coin
+                             and order.get("reduceOnly") and "Stop" in str(order.get("orderType"))), None)
+                key = f"squeeze:{wallet}:{coin}"
+                squeezed.add(key)
+                self.set(key, *alt_rally.squeeze_alert(coin, side, mark / before - 1, funding_apr, mark, stop))
+        with self.lock:
+            over = [key for key in self.items if key.startswith("squeeze:") and key not in squeezed]
+        for key in over:
+            self.clear(key)
         try:
             self.watch_events(main_meta, main_contexts, meta, contexts)
         except Exception as exc:  # the event watch is extra: the market alerts stand without it
