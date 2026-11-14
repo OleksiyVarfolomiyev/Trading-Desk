@@ -68,3 +68,16 @@ class EndLabelBackgroundTests(unittest.TestCase):
         fig.update_layout(plot_bgcolor="#101010")
         charts.end_labels(fig)
         self.assertEqual(fig.layout.annotations[0].bgcolor, "#101010")   # paints over the line behind the text
+
+
+class BarsWithLabelledLineTests(unittest.TestCase):
+    def test_a_chart_of_bars_and_a_dated_line_gets_its_end_label(self):
+        import pandas as pd
+        import plotly.graph_objects as go
+        from desk import charts
+
+        days = pd.date_range("2026-11-01", periods=3)
+        fig = go.Figure([go.Bar(x=days, y=[1.0, -2.0, 1.5], name="Net"),
+                         go.Scatter(x=days, y=[1.0, 2.0, 3.0], mode="lines", name="Gross")])
+        charts.style(fig)                                   # was: AttributeError: 'Bar' object has no attribute 'stackgroup'
+        self.assertEqual(len(fig.layout.annotations), 1)

@@ -144,7 +144,7 @@ def _spread(fig, labels: list[dict]) -> None:
     for ref in {label["yref"] for label in labels}:
         values = [label["y"] for label in labels if label["yref"] == ref]
         for trace in fig.data:
-            if (trace.yaxis or "y") == ref and trace.y is not None and not trace.stackgroup:
+            if (trace.yaxis or "y") == ref and trace.y is not None and not getattr(trace, "stackgroup", None):   # bars have none
                 values += [float(v) for v in trace.y if v is not None and math.isfinite(float(v))]
         low, high = min(values), max(values)
         if high <= low:
