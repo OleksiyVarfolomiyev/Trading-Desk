@@ -245,6 +245,13 @@ class PositionAction:
     side: str
     margin_usd: float | None = None
     strategy: str = "directional"  # the journal's tag for a position this action opens or adds to
+    # "rigid": the usual stop and take-profit. "none": no stop (the take-profit stays), sized to survive a squeeze: the
+    # position's notional is capped at the per-trade risk budget, so a doubling against it costs at most that budget
+    # (a fade into a squeeze: either a rigid stop or no stop, never covering into the blow-off).
+    stop: str = "rigid"
+
+
+SQUEEZE_ADVERSE_MOVE = 1.0  # a no-stop position must survive the price doubling against it
 
 
 @dataclass(frozen=True)
@@ -1063,7 +1070,7 @@ def read_position_actions(path: Path) -> list[PositionAction]:
         reader = csv.DictReader(file)
         if reader.fieldnames is None or not {"action", "coin"}.issubset(reader.fieldnames):
             raise ValueError(
-                "Action CSV must include action and coin columns; side, dex, margin_usd and strategy are optional."
+                "Action CSV must include action and coin columns; side, dex, margin_usd, strategy and stop are optional."
             )
         for row_number, row in enumerate(reader, start=2):
             action = (row.get("action") or "").strip().lower()
@@ -1099,6 +1106,9 @@ def read_position_actions(path: Path) -> list[PositionAction]:
                 raise ValueError(f"Action CSV row {row_number} requires non-zero signed margin_usd for adjust_margin.")
             if action not in {"open_margin", "adjust_margin"} and margin_usd is not None:
                 raise ValueError(f"Action CSV row {row_number} may only set margin_usd for margin actions.")
+            stop = (row.get("stop") or "").strip().lower() or "rigid"
+            if stop not in {"rigid", "none"}:
+                raise ValueError(f"Action CSV row {row_number} has stop {stop!r}; choose rigid or none.")
             strategy = (row.get("strategy") or "").strip().lower() or "directional"
             from desk.journal import STRATEGIES
 
@@ -1112,6 +1122,7 @@ def read_position_actions(path: Path) -> list[PositionAction]:
                     side=side,
                     margin_usd=margin_usd,
                     strategy=strategy,
+                    stop=stop,
                 )
             )
     if not actions:
@@ -1407,6 +1418,11 @@ def plan_position_actions(
             if entry_plan.quantity + quantity_step / 2 < quantity_delta:
                 target_quantity = current_quantity + entry_plan.quantity
                 quantity_delta = target_quantity - current_quantity
+            if request.stop == "none":  # squeeze size: a doubling against the whole position costs the risk budget
+                most = per_position_cap / (market.mark_price * SQUEEZE_ADVERSE_MOVE)
+                if current_quantity + quantity_delta > most:
+                    target_quantity = max(current_quantity, most)
+                    quantity_delta = target_quantity - current_quantity
             entry_plan = PlannedTrade(
                 **{
                     **entry_plan.__dict__,
@@ -2787,6 +2803,15 @@ def run_position_reconciliation(
             )
             candles = fetch_daily_candles(coin.split(":")[-1], dex)
             protection = plan_position_protection(position, open_orders, candles)
+            if plan.action.stop == "none":  # squeeze-sized: no stop; the take-profit still takes the reversal
+                print(f"{coin}: no stop (squeeze-sized: notional within the per-trade risk budget).")
+                if protection.target_block_reason:
+                    raise RuntimeError(protection.target_block_reason)
+                if protection.target_quantity_to_add > 0:
+                    target_oid = _submit_protection_order(exchange, coin, protection.side, protection.target_quantity_to_add,
+                                                          protection.target_price, "target")
+                    print(f"{coin}: reduce-only take-profit active at ${protection.target_price:,.6g} (order {target_oid}).")
+                continue
             if protection.stop_block_reason or protection.target_block_reason:
                 raise RuntimeError(
                     protection.stop_block_reason or protection.target_block_reason

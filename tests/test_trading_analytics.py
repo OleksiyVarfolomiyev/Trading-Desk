@@ -1859,6 +1859,33 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertLessEqual(plan.entry_plan.risk_budget, 40)
         self.assertAlmostEqual(plan.quantity_delta, plan.target_quantity)
 
+    def test_a_no_stop_fade_is_sized_to_survive_a_doubling(self):
+        market = Market("BTC", "", 100, 100, 3, 10)
+        snapshot = AccountSnapshot(equity=1_000, margin_used=0, target_equity=1_000, target_margin_used=0, positions=(),
+                                   maker_fee_rate=0.0001, taker_fee_rate=0.0004, risk_wallets=("0x" + "1" * 40,))
+        rigid = PositionAction("open_margin", "BTC", "", "SHORT", margin_usd=200, strategy="fade")
+        loose = PositionAction("open_margin", "BTC", "", "SHORT", margin_usd=200, strategy="fade", stop="none")
+        with (
+            patch("hl_trade.fetch_daily_candles", return_value=make_candles()),
+            patch("hl_trade.fetch_funding_history", return_value=make_funding()),
+        ):
+            [with_stop] = plan_position_actions([rigid], {"BTC": market}, snapshot, [])
+            [squeeze] = plan_position_actions([loose], {"BTC": market}, snapshot, [])
+        budget = 1_000 * 0.8 * 0.05                      # the per-trade risk budget: 5% of the usable 80%
+        self.assertLessEqual(squeeze.target_quantity * 100, budget + 1e-9)   # a doubling costs at most the budget
+        self.assertLess(squeeze.target_quantity, with_stop.target_quantity)   # smaller than the stopped size
+
+    def test_position_action_csv_reads_the_stop_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "actions.csv"
+            path.write_text("action,coin,side,dex,margin_usd,strategy,stop\nopen_margin,INIT,SHORT,,50,fade,none\n"
+                            "open_margin,SOL,SHORT,,50,fade,\n", encoding="utf-8")
+            actions = read_position_actions(path)
+            self.assertEqual([action.stop for action in actions], ["none", "rigid"])
+            path.write_text("action,coin,side,dex,margin_usd,strategy,stop\nopen_margin,INIT,SHORT,,50,fade,loose\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                read_position_actions(path)
+
     def test_target_action_reduces_oversized_existing_position_to_protocol_cap(self):
         market = Market("BTC", "", 100, 100, 3, 10)
         position = Position(
