@@ -51,7 +51,7 @@ from desk.privacy import account_file, short_id
 from desk.charts import show as show_chart
 from IPython.display import HTML, display
 from plotly.subplots import make_subplots
-from desk.numbers import clock, usd as _usd, pct as _pct
+from desk.numbers import clock, market_names, usd as _usd, pct as _pct
 API = "https://api.hyperliquid.xyz/info"
 ACCOUNTING_TIMEZONE = "America/New_York"
 ACCOUNT_VALUE_GAP_WARNING_PCT = 2.0
@@ -124,7 +124,9 @@ def display_interactive_table(frame, formatters=None, cell_style=None, bold_last
                 visible = re.sub(r'(?<![\w.])\+(\$?)(?=\d|\.\d)', r'\1', visible)
                 if str(visible).strip().lower() == 'n/a' or is_zero_text(str(visible)):
                     visible = ''  # "not available" and a zero amount ($0.00, 0.0%, 0.00) are empty cells
-                sort_value = str(value) if visible != '' else ''
+                if column not in html_columns:
+                    visible = market_names(str(visible))  # "xyz:AAPL" reads "AAPL", as on the dashboards
+                sort_value = market_names(str(value)) if visible != '' else ''
             style = cell_style(row_index, column, value, row) if cell_style else ''
             if not style and not missing and isinstance(value, (int, float, np.number)) \
                 and not isinstance(value, (bool, np.bool_)):

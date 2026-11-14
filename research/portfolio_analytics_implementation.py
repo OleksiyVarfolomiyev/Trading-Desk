@@ -201,6 +201,8 @@ def _signed_table(frame, formatters=None, key_columns=None, key_rows=None, title
                 if value < 0:
                     return 'color: #ef4444;'
         return ''
+    from desk.numbers import market_frame
+    frame=market_frame(frame)  # venue prefixes dropped ("xyz:AAPL" reads "AAPL"), as on the dashboards
     styler=frame.style.format(formatters or {}, na_rep='N/A').map(sign_color)
     return emphasis.style_frame(styler,frame,key_columns,key_rows,title=title)
 

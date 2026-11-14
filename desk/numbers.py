@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import re
+
 import math
 
 UNITS = ((1e9, "B"), (1e6, "M"), (1e3, "K"))
@@ -54,6 +56,30 @@ def since(when, now=None) -> str:
     if now - stamp > pd.Timedelta(days=STALE_DAYS):
         return f"{stamp:%b}'{stamp:%y}"
     return f"{stamp:%b} {stamp.day}"
+
+
+# A HIP-3 market's venue prefix ("xyz:AAPL", "io:IONQ", "para:ANSEM") is plumbing: readers see AAPL, as on the
+# dashboards (marketName in app.js). A lowercase prefix straight before a ticker; times ("10:30") and prose are untouched.
+_MARKET_PREFIX = re.compile(r"(?<![\w:./-])[a-z][a-z0-9]*:(?=[A-Z0-9])")
+
+
+def market_names(text):
+    """``text`` with HIP-3 venue prefixes dropped: "xyz:AAPL +$5" reads "AAPL +$5". Non-text is returned as is."""
+    return _MARKET_PREFIX.sub("", text) if isinstance(text, str) else text
+
+
+def market_frame(frame):
+    """``frame`` (a copy) with venue prefixes dropped from every text cell and from a text index."""
+    import pandas as pd
+
+    text = lambda dtype: dtype == object or pd.api.types.is_string_dtype(dtype)   # object on pandas 2, str on pandas 3
+    out = frame.copy()
+    for column in out.columns:
+        if text(out[column].dtype):
+            out[column] = out[column].map(market_names)
+    if text(out.index.dtype):
+        out.index = out.index.map(market_names)
+    return out
 
 
 DISPLAY_TIMEZONE = "America/New_York"   # the desk's clock; shown without a zone name
