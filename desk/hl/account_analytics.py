@@ -1577,8 +1577,8 @@ def display_positions(rows,show_wallet=False):
     # Split across two tables so each fits on screen; both repeat the identifying columns.
     identifiers=(['Wallet'] if show_wallet else [])+['Ticker','Side']
     pnl_columns=identifiers+['Liq %','ROE','uPnL','uPnL (%)','24h change (%)','Funding (since open)',
-             'Funding (1h)','Funding APR',
-             'Expected Price PnL (5d)','Expected Funding PnL (5d)',
+             'Funding (1h)','Funding APR']
+    expected_columns=identifiers+['Expected Price PnL (5d)','Expected Funding PnL (5d)',
              'Expected PnL incl. funding (5d)',
              'Expected Price Return (5d)','Expected Funding Return (5d)']
     position_columns=identifiers+['Entry','Mark','Pos','Margin','Margin Type','Margin %','Fees',
@@ -1641,12 +1641,14 @@ def display_positions(rows,show_wallet=False):
         total_row['Funding APR']=funding_summary['Net Funding APR (%) (simple, covered)']
         table=pd.concat([table,pd.DataFrame([total_row])],ignore_index=True)
         blank_total_cells={(len(table)-1,column) for column in table.columns}
-        for columns,view in ((pnl_columns,'PNL AND RISK'),(position_columns,'SIZE AND MARGIN')):
+        for columns,view in ((pnl_columns,'PNL AND RISK'),(expected_columns,'EXPECTED PNL (5D)'),
+                             (position_columns,'SIZE AND MARGIN')):
             display_interactive_table(table,columns=columns,cell_style=style,formatters=formatters,
                                       bold_last=True,blank_missing_cells=blank_total_cells,
                                       title=f'OPEN POSITIONS: {group.upper()}, {view}',
                                       # Risk view: nearest liquidation and PnL; sizing view: biggest share.
-                                      key_columns={'Liq %':'min','uPnL':'abs','Position / Account (%)':'max'})
+                                      key_columns={'Liq %':'min','uPnL':'abs','Expected PnL incl. funding (5d)':'abs',
+                                                    'Position / Account (%)':'max'})
     notional, margin_total = frame['Pos'].abs().sum(), frame['Margin'].sum()
     print(f"All positions: notional {_usd(notional)} | margin {_usd(margin_total)} | uPnL "
           + (f"{_pct(frame['uPnL'].sum() / notional)} of notional." if notional else f"{usd(frame['uPnL'].sum())}."))

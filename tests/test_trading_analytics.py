@@ -567,15 +567,18 @@ class RealizedPnlTests(unittest.TestCase):
         shown = []
         with patch.object(self.account, "add_expected_pnl_columns", return_value=(rows, [])), \
                 patch.object(self.account, "display_interactive_table",
-                             side_effect=lambda frame, **kwargs: shown.append((kwargs["title"], frame))):
+                             side_effect=lambda frame, **kwargs: shown.append((kwargs["title"], frame, kwargs))):
             self.account.display_positions(rows, show_wallet=True)
-        self.assertEqual([title for title, _ in shown],
+        self.assertEqual([title for title, *_ in shown],
                          [f"OPEN POSITIONS: {group}, {view}" for group in ("PERP CRYPTO", "PERP TRADFI")
-                          for view in ("PNL AND RISK", "SIZE AND MARGIN")])
-        crypto, tradfi = shown[0][1], shown[2][1]
+                          for view in ("PNL AND RISK", "EXPECTED PNL (5D)", "SIZE AND MARGIN")])
+        crypto, tradfi = shown[0][1], shown[3][1]
         self.assertEqual(list(crypto["Ticker"]), ["BTC", "para:ANSEM", "Net/total"])
         self.assertEqual(list(tradfi["Ticker"]), ["xyz:AAPL", "Net/total"])
         self.assertAlmostEqual(crypto["uPnL"].iloc[-1], 4.0)
+        # The Expected columns have a table of their own, beside the identifiers.
+        self.assertNotIn("Expected Price PnL (5d)", shown[0][2]["columns"])
+        self.assertEqual(shown[1][2]["columns"][-1], "Expected Funding Return (5d)")
         # Shorts receive a positive rate; the long pays it.
         self.assertAlmostEqual(crypto["Funding (1h)"].iloc[-1], 0.01)
         self.assertAlmostEqual(crypto["Funding APR"].iloc[-1], 87.6)
