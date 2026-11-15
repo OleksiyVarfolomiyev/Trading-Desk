@@ -1283,8 +1283,12 @@ class Alerts:
                 continue
             auto = getattr(daemon, "auto", None)
             natural = "natural flow" in text
-            if auto and coin == "BTC" and natural and not (volume != volume):
-                auto.flip(move, volume, text)
+            if auto and coin == "BTC" and volume == volume:
+                net = auto.net_crypto()
+                if net and (move > 0) == (net < 0) and volume >= auto_config()["flatten_min_volume"]:
+                    auto.flatten(f"Adverse momentum: {text}")    # against the book: flatten first, no flip
+                elif natural:
+                    auto.flip(move, volume, text)
             if move > 0:
                 # The desk's rule: a momentum bounce after a day of hard selling is when the shorts' cash comes off the
                 # table, while the transient regime settles.
@@ -1387,6 +1391,9 @@ class Alerts:
             line, news = context_for("alt rally", move, fresh, market_context.crowding(meta, contexts),
                                      event_watch.prices(meta, contexts, []))
             self.set("alt_rally", title, f"{text} Context: {line}." if line else text, context=news)
+            auto = getattr(daemon, "auto", None)
+            if auto and name == "cut" and auto.net_crypto() < 0:   # an alt squeeze against the short book
+                auto.flatten(f"Alt squeeze: {text}")
             remembered(ALT_RALLY_FILE, True)
 
         # Stocks: HL's S&P 500 perp, against the stock longs on HL's xyz DEX.
@@ -2340,6 +2347,8 @@ AUTO_DEFAULTS = {
     "flip_min_volume": 3.0,
     "flip_trail": 0.015,
     "episode_hours": 12,              # each rule acts once per episode
+    "flatten_on_adverse": True,       # strong momentum against the crypto book: close all crypto, engage the kill switch
+    "flatten_min_volume": 2.0,
 }
 
 
@@ -2457,9 +2466,32 @@ class AutoTrader:
         self._spawn(f"trimmed {side}", lambda: f"{text}. Trimmed {config['trim_share']:.0%} of the {side}: "
                     f"{self._reduce(picks, config['trim_share'])}", [item[1] for item in picks if ":" not in item[1]])
 
+    def net_crypto(self) -> float:
+        """Net main-DEX crypto exposure in USD (negative: net short)."""
+        total = 0.0
+        for wallet, coin, quantity, _ in self._positions(""):
+            mark = self.daemon.state.mark(coin) or 0.0
+            total += quantity * mark
+        return total
+
+    def flatten(self, text: str) -> None:
+        """The user's standing order (2026-11-15): "if strong adverse momentum builds up, kill switch, no crypto."
+        Closes every main-DEX crypto position at market and engages the kill switch (no new entries)."""
+        config = auto_config()
+        if not config["flatten_on_adverse"] or ht.kill_switch_engaged() or not self._claim("flatten", config["episode_hours"]):
+            return
+        picks = self._positions("")
+
+        def work() -> str:
+            closed = self._reduce(picks, 1.0)
+            ht.KILL_SWITCH_FILE.write_text(f"Engaged {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} by the auto flatten\n")
+            return f"{text}. Closed all crypto: {closed}. Kill switch engaged: no new entries until it is cleared"
+        self._spawn("flattened crypto", work, [item[1] for item in picks])
+
     def flip(self, move: float, volume: float, text: str) -> None:
         config = auto_config()
-        if not config["momentum_flip"] or volume < config["flip_min_volume"] or ht.kill_switch_engaged() \
+        recent_flatten = time.time() - float(self.done.get("flatten", 0)) < config["episode_hours"] * 3600
+        if not config["momentum_flip"] or volume < config["flip_min_volume"] or ht.kill_switch_engaged() or recent_flatten \
                 or not self._claim("flip", config["episode_hours"]):
             return
         side = "LONG" if move > 0 else "SHORT"

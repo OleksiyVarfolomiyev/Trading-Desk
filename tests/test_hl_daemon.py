@@ -1097,3 +1097,23 @@ class AutoTraderTests(unittest.TestCase):
             self.assertTrue(auto._claim("bank", 12))
             again = hl_daemon.AutoTrader(SimpleNamespace())  # a restart remembers
             self.assertFalse(again._claim("flip", 12))
+
+
+class FlattenTests(unittest.TestCase):
+    def test_flatten_closes_all_crypto_and_engages_the_kill_switch(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        hl_daemon.load_trading()
+        with tempfile.TemporaryDirectory() as folder, patch.object(hl_daemon, "AUTO_STATE", Path(folder) / "s.json"), \
+                patch.object(hl_daemon.ht, "KILL_SWITCH_FILE", Path(folder) / "KILL_SWITCH"):
+            auto = hl_daemon.AutoTrader(SimpleNamespace(alerts=SimpleNamespace(set=lambda *a, **k: None)))
+            closed = []
+            with patch.object(auto, "_positions", return_value=[("0xa", "WLD", -100.0, 1.0), ("0xa", "ENA", -50.0, -1.0)]), \
+                    patch.object(auto, "_reduce", side_effect=lambda picks, share: closed.extend((c, share) for _, c, _, _ in picks) or "ok"), \
+                    patch.object(auto, "_spawn", side_effect=lambda name, work, coins=None: work()):
+                auto.flatten("test")
+            self.assertEqual(closed, [("WLD", 1.0), ("ENA", 1.0)])
+            self.assertTrue((Path(folder) / "KILL_SWITCH").exists())
