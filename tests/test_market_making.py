@@ -128,3 +128,24 @@ class ConsolidatedHistoryTests(unittest.TestCase):
         row = frame.set_index("Coin").loc["LIT"]
         self.assertEqual(row["Status"], "stopped")
         self.assertEqual(int(row["Fills"]), 1)
+
+
+class CoinAcrossWalletsTests(unittest.TestCase):
+    def test_one_coin_worked_in_two_wallets_is_one_row_with_the_whole_history(self):
+        nan = float("nan")
+        small = {"Account": "HL 07f2", "Coin": "ETH", "Side": "", "Status": "stopped", "Since": "Nov 13", "_first": 2_000, "Fills": 1,
+                 "Volume": 20.0, "Spread captured": 0.0, "Inventory drift": 0.0, "Fees": -0.01, "Funding": 0.0, "Ladder PnL": -0.01,
+                 "Captured per $1k": nan, "Markout 1m (bps)": nan, "Markout 15m (bps)": nan, "Position vs base": nan, "Quotes": nan, "Queued": nan}
+        big = dict(small, Account="HL c248", Side="SHORT", Status="quoting", Since="Nov 12", _first=1_000, Fills=167, Volume=4000.0,
+                   **{"Spread captured": 5.0, "Inventory drift": 1.0, "Fees": -0.5, "Ladder PnL": 5.5, "Markout 1m (bps)": -1.0,
+                      "Position vs base": 0.0, "Quotes": 2, "Queued": 2})
+        other = dict(big, Coin="BTC", Account="HL c248")
+        frame = market_making._by_coin([small, big, other])
+        eth = frame.set_index("Coin").loc["ETH"]
+        self.assertEqual(len(frame), 2)                       # ETH once, BTC once
+        self.assertEqual(int(eth["Fills"]), 168)
+        self.assertEqual(eth["Since"], "Nov 12")              # the earliest first quote
+        self.assertEqual(eth["Account"], "HL 07f2 + c248")
+        self.assertEqual(eth["Status"], "quoting")            # one of its ladders is running
+        self.assertAlmostEqual(eth["Ladder PnL"], 5.49)
+        self.assertAlmostEqual(eth["Markout 1m (bps)"], -1.0)  # only the wallet with a reading counts

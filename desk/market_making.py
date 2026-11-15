@@ -187,8 +187,8 @@ def minute_closes(coin: str, since_ms: int) -> pd.Series:
 def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
                         queued: dict[tuple[str, str], int] | None = None,
                         status: dict[tuple[str, str], str] | None = None) -> pd.DataFrame:
-    """One row per coin the ladders ever quoted (running or stopped), over all its ladder fills since the first one: a
-    restart does not reset it. The total row is the whole of market making since it started.
+    """One row per coin the ladders ever quoted (running or stopped, in any wallet), over all its ladder fills since the
+    first one: a restart does not reset it. The total row is the whole of market making since it started.
 
     ``quotes`` ((wallet last four, coin) -> quotes resting on HL's book), ``queued`` (quotes the daemon holds
     in memory until the price nears them) and ``status`` (e.g. trims paused in a trend) come from the daemon
@@ -241,13 +241,45 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
             row = {"Account": wallets[wallet].name, "Coin": coin,
                    "Side": ("LONG" if base > 0 else "SHORT") if ladder else "",
                    "Status": ((status or {}).get((short_id(wallet), coin), "quoting")) if ladder else "stopped",
-                   "Since": _since(pd.Timestamp(first_ms, unit="ms", tz="UTC")), **measured, **markouts(own, closes),
+                   "Since": _since(pd.Timestamp(first_ms, unit="ms", tz="UTC")), "_first": first_ms, **measured, **markouts(own, closes),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
                    "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan")),
                    "Queued": (queued or {}).get((short_id(wallet), coin), float("nan"))}
             rows.append(row)
-    frame = pd.DataFrame(rows, columns=COLUMNS)
-    return frame
+    return _by_coin(rows)
+
+
+def _by_coin(rows: list[dict]) -> pd.DataFrame:
+    """One row per coin over every account that market-made it: amounts add up, the first quote is the earliest,
+    the account shows each wallet's last four. A coin worked in two wallets is one asset in the history."""
+    merged: dict[str, list[dict]] = {}
+    for row in rows:
+        merged.setdefault(row["Coin"], []).append(row)
+    out = []
+    for coin, group in merged.items():
+        if len(group) == 1:
+            out.append({column: group[0].get(column) for column in COLUMNS} | {"_first": group[0]["_first"]})
+            continue
+        group = sorted(group, key=lambda row: row["_first"])
+        total = {column: sum(row[column] for row in group) for column in
+                 ("Fills", "Volume", "Spread captured", "Inventory drift", "Funding", "Ladder PnL", "Fees")}
+        fees_paid = -total["Fees"]
+        total["Captured per $1k"] = (total["Spread captured"] - fees_paid) / total["Volume"] * 1000 if total["Volume"] else float("nan")
+
+        def weighted(column):   # the average over the wallets that have a reading, by fills
+            known = [(row[column], row["Fills"]) for row in group if row[column] == row[column]]
+            weight = sum(count for _, count in known)
+            return sum(value * count for value, count in known) / weight if weight else float("nan")
+
+        live = [row for row in group if row["Status"] != "stopped"]
+        pick = live[0] if live else group[0]
+        out.append({"Account": "HL " + " + ".join(sorted({row["Account"].replace("HL ", "") for row in group})),
+                    "Coin": coin, "Side": pick["Side"], "Status": pick["Status"], "Since": group[0]["Since"],
+                    "_first": group[0]["_first"], **total,
+                    "Markout 1m (bps)": weighted("Markout 1m (bps)"), "Markout 15m (bps)": weighted("Markout 15m (bps)"),
+                    "Position vs base": pick["Position vs base"], "Quotes": sum(row["Quotes"] for row in live if row["Quotes"] == row["Quotes"]) if live else float("nan"),
+                    "Queued": sum(row["Queued"] for row in live if row["Queued"] == row["Queued"]) if live else float("nan")})
+    return pd.DataFrame(out, columns=COLUMNS + ["_first"]).drop(columns="_first")
 
 
 def total_row(frame: pd.DataFrame) -> dict:
