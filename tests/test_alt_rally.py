@@ -154,3 +154,16 @@ class FundingReadTests(unittest.TestCase):
         self.assertIn("natural flow", alt_rally.funding_read(0.05, 0.03))
         self.assertIn("shorts crowded", alt_rally.funding_read(0.05, -0.5))
         self.assertIn("longs crowded", alt_rally.funding_read(-0.05, 0.5))
+
+
+class ExtraordinaryDayTests(unittest.TestCase):
+    def test_a_move_of_two_daily_deviations_fires_either_way(self):
+        from desk import alt_rally
+
+        closes = [100 * (1.01 if i % 2 else 0.99) ** (i % 2) for i in range(61)]   # about 1% a day
+        closes = [100.0]
+        for i in range(60):
+            closes.append(closes[-1] * (1.01 if i % 2 else 0.99))
+        self.assertGreater(alt_rally.extraordinary(0.04, closes), 2)     # +4% on a 1%-a-day market
+        self.assertLess(alt_rally.extraordinary(-0.04, closes), -2)
+        self.assertIsNone(alt_rally.extraordinary(0.01, closes))

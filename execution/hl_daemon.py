@@ -1290,6 +1290,29 @@ class Alerts:
                     text += f", after {_pct(abs(fell))} down in the day before"
             self.set(key, title, text)
 
+    def watch_extraordinary(self) -> None:
+        """Extraordinary days (desk/alt_rally.py ``extraordinary``): BTC, ETH or the S&P 500 perp 2+ daily standard
+        deviations in 24 hours. Up: trim long profits; down: trim short profits. Checked with the momentum watch."""
+        from desk import alt_rally
+
+        for coin, dex in alt_rally.EXTRAORDINARY_MARKETS:
+            meta, contexts = post_info({"type": "metaAndAssetCtxs", **({"dex": dex} if dex else {})})
+            context = next((ctx for asset, ctx in zip(meta.get("universe", []), contexts) if asset["name"] == coin), None)
+            key = f"extraordinary:{coin}"
+            if not context or not float(context.get("prevDayPx") or 0):
+                continue
+            move = float(context["markPx"]) / float(context["prevDayPx"]) - 1
+            closes = [float(value) for value in ht.fetch_daily_candles(coin.split(":")[-1], dex)["close"]]
+            score = alt_rally.extraordinary(move, closes)
+            name = coin.split(":")[-1]
+            if score is None:
+                self.clear(key)
+                continue
+            side = "longs" if move > 0 else "shorts"
+            self.set(key, f"{name} extraordinary day: trim {side}",
+                     f"{name} {_pct(abs(move))} {'up' if move > 0 else 'down'} in 24h ({abs(score):.1f}x its daily volatility); "
+                     f"take part of the {side}' profit: 1/3 to 2/3 of a big move is the take")
+
     def watch_alt_rally(self, daemon: "Daemon") -> None:
         """Alt rally watch (desk/alt_rally.py): the alt basket's 24-hour move, every ALT_RALLY_CHECK_SECONDS. A watch
         at +5%; a cut alert at +8%, or at a second watch on a later day. When watches fired is kept in
@@ -1549,6 +1572,12 @@ class Alerts:
             self.watch_momentum()
         except Exception as exc:  # and the momentum watch
             log(f"momentum check failed ({type(exc).__name__}: {exc})")
+        try:
+            if time.time() - getattr(self, "extraordinary_checked_at", 0.0) >= MOMENTUM_CHECK_SECONDS:
+                self.extraordinary_checked_at = time.time()
+                self.watch_extraordinary()
+        except Exception as exc:  # and the extraordinary-day watch
+            log(f"extraordinary-day check failed ({type(exc).__name__}: {exc})")
         now = time.time()
         for wallet in daemon.state.wallets:
             age = now - daemon.state.state_time.get(wallet, 0.0)

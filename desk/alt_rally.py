@@ -272,3 +272,22 @@ def funding_read(move: float, funding_apr: float) -> str:
     if against >= CROWDED_FUNDING:
         return f"funding {_pct(funding_apr)} a year: {'shorts' if move > 0 else 'longs'} crowded, a squeeze"
     return f"funding {_pct(funding_apr)} a year: quiet, a natural flow"
+
+
+EXTRAORDINARY_SIGMA = 2.0   # a 24h move this many daily standard deviations is "too good to be true": take some
+EXTRAORDINARY_MARKETS = (("BTC", ""), ("ETH", ""), ("xyz:SP500", "xyz"))
+
+
+def extraordinary(move: float, daily_closes: list[float], sigma: float = EXTRAORDINARY_SIGMA) -> float | None:
+    """The 24h ``move`` in daily standard deviations (the last 60 daily returns) when it reaches ``sigma``, else None.
+    The desk's rule: an extraordinary day is when the side it favours trims profits (1/3 to 2/3 of a big move is the
+    take; nobody calls the top), whichever way it goes."""
+    returns = [b / a - 1 for a, b in zip(daily_closes[-61:-1], daily_closes[-60:]) if a > 0]
+    if len(returns) < 20:
+        return None
+    mean = sum(returns) / len(returns)
+    sd = (sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)) ** 0.5
+    if not sd:
+        return None
+    score = move / sd
+    return score if abs(score) >= sigma else None
