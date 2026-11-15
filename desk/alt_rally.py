@@ -260,3 +260,15 @@ def volume_ratio(candles: list[dict], since_ms: int) -> float:
         return float("nan")
     usual = rest[len(rest) // 2]
     return (sum(move) / len(move)) / usual if usual else float("nan")
+
+
+CROWDED_FUNDING = 0.20   # 20% a year against the move: the other side is crowded and fighting it
+
+
+def funding_read(move: float, funding_apr: float) -> str:
+    """Who is behind a fast move: quiet funding is a natural flow; funding paid by the side the move hurts (shorts
+    paying into a bounce) is a crowded squeeze."""
+    against = -funding_apr if move > 0 else funding_apr   # shorts pay (negative funding) into a bounce
+    if against >= CROWDED_FUNDING:
+        return f"funding {_pct(funding_apr)} a year: {'shorts' if move > 0 else 'longs'} crowded, a squeeze"
+    return f"funding {_pct(funding_apr)} a year: quiet, a natural flow"

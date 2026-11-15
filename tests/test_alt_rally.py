@@ -145,3 +145,12 @@ class TrailStopTests(unittest.TestCase):
 
         self.assertAlmostEqual(hl_daemon.trail_stop(1.0, 100.0, 0.015), 98.5)     # long: under the peak
         self.assertAlmostEqual(hl_daemon.trail_stop(-1.0, 100.0, 0.015), 101.5)   # short: over the trough
+
+
+class FundingReadTests(unittest.TestCase):
+    def test_quiet_funding_is_a_natural_flow_and_paid_funding_a_squeeze(self):
+        from desk import alt_rally
+
+        self.assertIn("natural flow", alt_rally.funding_read(0.05, 0.03))
+        self.assertIn("shorts crowded", alt_rally.funding_read(0.05, -0.5))
+        self.assertIn("longs crowded", alt_rally.funding_read(-0.05, 0.5))

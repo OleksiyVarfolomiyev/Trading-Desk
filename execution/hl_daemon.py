@@ -1258,6 +1258,7 @@ class Alerts:
             return
         self.momentum_checked_at = now
         end = int(now * 1000)
+        contexts, rates = None, {}
         for coin in alt_rally.MOMENTUM_COINS:
             day = post_info({"type": "candleSnapshot", "req": {"coin": coin, "interval": "5m",
                                                                "startTime": end - 86_400_000, "endTime": end}}) or []
@@ -1269,8 +1270,13 @@ class Alerts:
                 continue
             move, minutes, start, price = found
             volume = alt_rally.volume_ratio(day, end - int(minutes * 60000))
+            if contexts is None:
+                meta, contexts = post_info({"type": "metaAndAssetCtxs"})
+                rates = {asset["name"]: float(context.get("funding") or 0) * 24 * 365
+                         for asset, context in zip(meta.get("universe", []), contexts)}
             text = (f"{coin} {_pct(abs(move))} {'up' if move > 0 else 'down'} in {minutes:.0f} min ({usd(start)} to {usd(price)}), "
-                    f"{_pct(abs(move) / minutes * 60)} an hour, volume {volume:.1f}x usual")
+                    f"{_pct(abs(move) / minutes * 60)} an hour, volume {volume:.1f}x usual, "
+                    f"{alt_rally.funding_read(move, rates.get(coin, 0.0))}")
             title = f"{coin} {'bounce' if move > 0 else 'drop'}"
             if move > 0:
                 # The desk's rule: a momentum bounce after a day of hard selling is when the shorts' cash comes off the
