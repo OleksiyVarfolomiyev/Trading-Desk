@@ -65,19 +65,33 @@ def _rate_limit_delay(response: requests.Response, retry_number: int) -> float:
     return float(2 ** (retry_number - 1))
 
 
+TRANSPORT_ATTEMPTS = 3   # a dropped connection is retried twice (1s, 2s) before the request counts as failed
+
+
 def post_info(payload: dict[str, Any], timeout: float = 30) -> Any:
     """Send a request to HL's public info endpoint.
 
     Rate-limit responses are retried with backoff. Transport errors, other
     unsuccessful HTTP responses, and invalid JSON are reported as exceptions.
     """
-    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+    transport_failures = 0
+    attempt = 0
+    while attempt <= MAX_RATE_LIMIT_RETRIES:
         try:
             response = _session().post(INFO_URL, json=payload, timeout=timeout)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            # A dropped connection (HL resets idle pooled ones) or a slow answer: info requests only read, so they are
+            # retried like the account analytics' (account_analytics.post), on a fresh connection.
+            transport_failures += 1
+            if transport_failures >= TRANSPORT_ATTEMPTS:
+                raise RuntimeError(f"HL info request failed ({type(exc).__name__}).") from exc
+            time.sleep(2 ** (transport_failures - 1))
+            continue
         except requests.RequestException as exc:
             raise RuntimeError(f"HL info request failed ({type(exc).__name__}).") from exc
-        if response.status_code == 429 and attempt < MAX_RATE_LIMIT_RETRIES:
-            time.sleep(_rate_limit_delay(response, attempt + 1))
+        attempt += 1
+        if response.status_code == 429 and attempt <= MAX_RATE_LIMIT_RETRIES:
+            time.sleep(_rate_limit_delay(response, attempt))
             continue
         if not response.ok:
             raise RuntimeError(f"HL info request failed (HTTP {response.status_code}).")

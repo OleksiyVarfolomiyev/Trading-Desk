@@ -887,6 +887,26 @@ class TradeAnalyticsTests(unittest.TestCase):
         ):
             post_info({"type": "meta"})
 
+    def test_info_request_retries_a_dropped_connection(self):
+        import requests
+
+        successful = unittest.mock.Mock(status_code=200, ok=True, json=lambda: {"ok": True})
+        dropped = requests.exceptions.ConnectionError("reset by peer")
+        with (
+            patch("desk.hl.trade_analytics._session",
+                  return_value=SimpleNamespace(post=MagicMock(side_effect=[dropped, successful]))),
+            patch("desk.hl.trade_analytics.time.sleep") as sleep,
+        ):
+            self.assertEqual(post_info({"type": "meta"}), {"ok": True})
+        sleep.assert_called_once_with(1)
+        with (
+            patch("desk.hl.trade_analytics._session",
+                  return_value=SimpleNamespace(post=MagicMock(side_effect=dropped))),
+            patch("desk.hl.trade_analytics.time.sleep"),
+            self.assertRaisesRegex(RuntimeError, r"ConnectionError"),
+        ):
+            post_info({"type": "meta"})
+
     def test_side_direction_is_explicit(self):
         self.assertEqual(side_to_direction("long"), 1)
         self.assertEqual(side_to_direction("SHORT"), -1)
