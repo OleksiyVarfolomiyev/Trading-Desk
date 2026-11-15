@@ -802,3 +802,56 @@ def _usd_plain(value) -> str:
     except TypeError:
         return ""
     return _usd(value)
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# Factor model of the book's actual returns (desk/book_factors.py)
+# ----------------------------------------------------------------------------------------------------------------
+def _factor_inputs(book: "Book") -> tuple[pd.Series, pd.DataFrame, int]:
+    from desk import book_factors
+
+    active = book.pnl[book.pnl.abs() > 0]
+    returns = book.returns[book.returns.index >= active.index.min()] if len(active) else book.returns
+    if book.kind == "Crypto":
+        factors = book_factors.crypto_factors(book.benchmark_closes)
+        return returns, factors, 365
+    factors, spy = book_factors.stock_factors()
+    return book_factors.on_calendar(returns, spy), factors, 252
+
+
+def show_factor_model(book: "Book"):
+    """The book's returns on the factors it trades, split-sample validation, and rolling betas."""
+    import plotly.graph_objects as go
+
+    from desk import book_factors
+
+    returns, factors, periods = _factor_inputs(book)
+    days = len(pd.concat([returns, factors], axis=1).dropna())
+    if days < book_factors.MIN_DAYS:
+        print(f"{days} days with returns and factors: too few for a factor model (needs {book_factors.MIN_DAYS}).")
+        return
+    betas, check, rolling = book_factors.model_tables(returns, factors, periods)
+    fmt = {"Beta": lambda v: "" if not np.isfinite(v) else f"{v:.2f}", "t": lambda v: "" if not np.isfinite(v) else f"{v:.1f}"}
+    shown = betas.copy()
+    shown["Beta"] = [(_pct(v) if name == "Alpha (/yr)" else f"{v:.0f}" if name == "Days" else f"{v:.2f}")
+                     if np.isfinite(v) else "" for name, v in shown["Beta"].items()]
+    shown["t"] = [f"{v:.1f}" if np.isfinite(v) else "" for v in shown["t"]]
+    book._table(shown.reset_index(names="Factor"), "FACTOR MODEL", {}, key={})
+    check_fmt = {"Alpha (/yr)": _pct_plain, "t": lambda v: "" if not np.isfinite(v) else f"{v:.1f}",
+                 "R²": lambda v: "" if not np.isfinite(v) else f"{v:.2f}", "Days": "{:.0f}".format}
+    book._table(check.fillna({"Verdict": ""}), "SPLIT-SAMPLE CHECK", check_fmt, key={"Alpha (/yr)": None})
+    if len(rolling):
+        figure = go.Figure([go.Scatter(x=rolling.index, y=rolling[c], name=c) for c in rolling.columns])
+        figure.update_layout(title=f"Rolling {book_factors.ROLLING_DAYS}-day betas", template="plotly_dark",
+                             hovermode="x unified", legend={"orientation": "h", "y": 1.08})
+        show_chart(figure)
+
+
+def _pct_plain(value) -> str:
+    try:
+        return "" if value is None or not np.isfinite(value) else _pct(value)
+    except TypeError:
+        return ""
+
+
+Book.show_factor_model = show_factor_model
