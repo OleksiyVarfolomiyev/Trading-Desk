@@ -1099,6 +1099,36 @@ class AutoTraderTests(unittest.TestCase):
             self.assertFalse(again._claim("flip", 12))
 
 
+class TrimRuleTests(unittest.TestCase):
+    def _trim(self, coin, up):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        hl_daemon.load_trading()
+        with tempfile.TemporaryDirectory() as folder, patch.object(hl_daemon, "AUTO_STATE", Path(folder) / "s.json"), \
+                patch.object(hl_daemon, "AUTO_CONFIG", Path(folder) / "none.json"), \
+                patch.object(hl_daemon.ht, "KILL_SWITCH_FILE", Path(folder) / "KILL_SWITCH"):
+            auto = hl_daemon.AutoTrader(SimpleNamespace())
+            spawned = []
+            with patch.object(auto, "_positions", return_value=[("0xa", "BTC", 0.01, 1.0), ("0xa", "WLD", -100.0, 1.0)]), \
+                    patch.object(auto, "_spawn", side_effect=lambda name, work, coins=None: spawned.append(name)):
+                auto.trim_favoured(coin, up, "test")
+            return spawned
+
+    def test_crypto_up_days_leave_the_longs(self):
+        # Binance 2020-2026: BTC kept rising after a 2-sigma up day; trimming the longs lost in both halves.
+        self.assertEqual(self._trim("BTC", True), [])
+
+    def test_down_days_still_trim_the_shorts_and_stocks_still_trim(self):
+        self.assertEqual(self._trim("BTC", False), ["trimmed shorts"])
+        self.assertEqual(self._trim("xyz:SP500", True), ["trimmed longs"])
+
+    def test_flip_is_off_by_default(self):
+        self.assertFalse(hl_daemon.AUTO_DEFAULTS["momentum_flip"])
+
+
 class FlattenTests(unittest.TestCase):
     def test_flatten_closes_all_crypto_and_engages_the_kill_switch(self):
         import tempfile

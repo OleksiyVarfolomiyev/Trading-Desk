@@ -2341,7 +2341,12 @@ AUTO_DEFAULTS = {
     "bank_share": 0.5,
     "trim_on_extraordinary": True,    # extraordinary day: trim a third of the positions it favours
     "trim_share": 1 / 3,
-    "momentum_flip": True,            # strong burst (3%+, volume 3x, natural flow): BTC in its direction, trailed
+    # Crypto up days are momentum, not "too good to be true": on Binance 2020-2026 (research/binance_rules_test.py)
+    # BTC kept rising after a 2-sigma up day (+2.5% over 7 days, t -4.0 and -3.1 in each half against the trim), so
+    # crypto longs are not trimmed on them. The down-day trim of shorts and the S&P trim stay.
+    "trim_crypto_longs": False,
+    # Off since 2026-11-15: 583 bursts since 2020 earned nothing after costs (t -0.3). The alert stays.
+    "momentum_flip": False,           # strong burst (3%+, volume 3x, natural flow): BTC in its direction, trailed
     "flip_wallet": "07f2",
     "flip_coin": "BTC",
     "flip_min_volume": 3.0,
@@ -2457,8 +2462,11 @@ class AutoTrader:
 
     def trim_favoured(self, coin: str, up: bool, text: str) -> None:
         config = auto_config()
-        if not config["trim_on_extraordinary"] or ht.kill_switch_engaged() \
-                or not self._claim(f"trim:{coin}:{'up' if up else 'down'}", config["episode_hours"]):
+        if not config["trim_on_extraordinary"] or ht.kill_switch_engaged():
+            return
+        if up and not coin.startswith("xyz:") and not config.get("trim_crypto_longs", False):
+            return   # crypto up days run on (see AUTO_DEFAULTS): the longs ride them
+        if not self._claim(f"trim:{coin}:{'up' if up else 'down'}", config["episode_hours"]):
             return
         dex = "xyz" if coin.startswith("xyz:") else ""
         picks = [item for item in self._positions(dex) if (item[2] > 0) == up]
