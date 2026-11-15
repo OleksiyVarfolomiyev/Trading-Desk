@@ -50,6 +50,22 @@ def eastern(utc_text: str) -> str:
     return clock(utc_text)
 
 
+def served_market_making(max_age: float = 900) -> tuple[pd.DataFrame, list[dict]] | None:
+    """The trading daemon's market-making table and running ladders, as it last sent them to the relay, when that is
+    under ``max_age`` seconds old; None otherwise (then the table is computed here from HL and the local ladder file).
+    The daemon runs on the desk server, so its status ("quoting", "stopped", trims paused) is the true one."""
+    try:
+        from desk.web_sync import relay_get
+
+        state = relay_get("/alerts") or {}
+    except Exception:
+        return None
+    rows = state.get("market_making")
+    if not rows or time.time() - float(state.get("heartbeat") or 0) > max_age:
+        return None
+    return pd.DataFrame(rows).drop(columns=["_first"], errors="ignore"), state.get("ladders") or []
+
+
 def running_ladders(path: Path = LADDERS_FILE) -> list[dict]:
     try:
         return json.loads(path.read_text())
@@ -239,7 +255,7 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
             measured["Funding"] = earned
             measured["Ladder PnL"] += earned  # the funding on the ladder's inventory is part of its result
             row = {"Account": wallets[wallet].name, "Coin": coin,
-                   "Side": ("LONG" if base > 0 else "SHORT") if ladder else "",
+                   "Side": ("NEUTRAL" if not base else "LONG" if base > 0 else "SHORT") if ladder else "",
                    "Status": ((status or {}).get((short_id(wallet), coin), "quoting")) if ladder else "stopped",
                    "Since": _since(pd.Timestamp(first_ms, unit="ms", tz="UTC")), "_first": first_ms, **measured, **markouts(own, closes),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
@@ -298,11 +314,14 @@ def show_market_making(keep=None, notes: bool = True) -> None:
     from desk.hl.account_analytics import display_interactive_table
 
     ladders = running_ladders()
+    served = served_market_making()
+    if served is not None:   # the daemon's own table: the server runs the ladders, the Mac's file is not theirs
+        ladders = served[1]
     if notes:
         print(f"Ladders on file: {', '.join(item['coin'] + ' (...' + item['wallet'][-4:] + ')' for item in ladders) or 'none'} "
-              f"({LADDERS_FILE}).")
+              f"({'desk server' if served is not None else LADDERS_FILE}).")
     try:
-        frame = market_making_frame()
+        frame = served[0] if served is not None else market_making_frame()
     except Exception as exc:  # say what failed instead of showing nothing
         print(f"Market-making metrics could not be read: {type(exc).__name__}: {exc}")
         return

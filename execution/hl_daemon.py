@@ -1106,8 +1106,10 @@ class Alerts:
         """The ladders' metrics (desk/market_making.py) for the dashboards, every five minutes."""
         self.ladders = [{"wallet": item["wallet"][-4:], "coin": item["coin"], "quotes": len(item["oids"]),
                          "queued": max(0, len(item.get("grid", [])) - len(item["oids"])),
-                         "status": f"quoting, trims paused (trend {item['trend'][0]:.2f})" if item.get("trims_paused")
-                         else "quoting"}
+                         "status": (("neutral, quoting" if item.get("ranging") else "neutral, waiting for a range")
+                                    if item.get("neutral")
+                                    else f"quoting, trims paused (trend {item['trend'][0]:.2f})" if item.get("trims_paused")
+                                    else "quoting")}
                         for item in list(daemon.ladders.ladders.values())]
         if time.time() - self.market_making_at < 300:
             return
@@ -1990,6 +1992,11 @@ LADDER_DEFAULTS = {
     "verdict_fills": 100,
 }
 LADDER_TREND_REGIME_ER = 0.6   # a 5-day efficiency ratio this high is a trend regime: the ladder verdict waits
+# Neutral ladders (no base position): quote both sides around the mid, leaning against inventory. Replayed on 3.5
+# trending days (research/neutral_mm_replay.py) they lost at every spacing except ETH's wide one, so a neutral
+# ladder quotes only while the coin ranges: 5-day efficiency under NEUTRAL_RANGE_ER, checked hourly.
+NEUTRAL_DEFAULTS = {"level_usd": 11.0, "max_levels": 5, "skew": 0.5}
+NEUTRAL_RANGE_ER = 0.4
 LADDER_CLOID_PREFIX = "0x1add"   # marks the ladder's own orders (client order ids)
 MIN_ORDER_USD = 10.0
 LEVEL_FLOOR_MARGIN = 1.1   # a level raised to the minimum is sized 10% over it, so a small price move keeps it valid
@@ -2070,6 +2077,35 @@ def ladder_quotes(position: float, base: float, mid: float, best_bid: float, bes
     return quotes
 
 
+def neutral_quotes(position: float, mid: float, best_bid: float, best_ask: float, spacing: float, size_decimals: int,
+                   levels: int, level_usd: float, max_levels: int, skew: float, allow_adds: bool = True) -> list[dict]:
+    """A neutral ladder's post-only quotes: ``levels`` per side around a reservation price, the mid shifted against
+    the inventory by ``skew`` spacings per level held, so fills lean the position back to flat. Inventory stops at
+    ``max_levels`` levels either way; ``allow_adds`` False keeps only the side that reduces it (margin pause)."""
+    step = 10 ** -size_decimals
+    tick = ht._price_tick(mid, size_decimals)
+    held_levels = position * mid / level_usd
+    reservation = mid - held_levels * skew * spacing
+    quotes = []
+    for is_buy in (True, False):
+        reduces = (position < 0) if is_buy else (position > 0)
+        room = (max_levels - held_levels) if is_buy else (max_levels + held_levels)   # in levels
+        if not allow_adds and not reduces:
+            continue
+        for level in range(levels):
+            if room < 0.5:
+                break
+            price = reservation - (1 + level) * spacing if is_buy else reservation + (1 + level) * spacing
+            price = min(price, best_ask - tick, mid - 0.5 * spacing) if is_buy else max(price, best_bid + tick, mid + 0.5 * spacing)
+            if price <= 0:
+                break
+            size = math.ceil(max(level_usd, MIN_ORDER_USD * LEVEL_FLOOR_MARGIN) / price / step - 1e-9) * step
+            quotes.append({"is_buy": is_buy, "price": ht._round_price(price, size_decimals), "size": round(size, size_decimals),
+                           "reduce_only": False, "kind": "neutral"})
+            room -= 1
+    return quotes
+
+
 def arm_plan(grid: list[dict], mid: float, spacing: float, config: dict, now: float) -> tuple[list[dict], list[dict]]:
     """Which in-memory quotes to place on the book and which to pull: ``(to_place, to_cancel)``.
 
@@ -2119,7 +2155,8 @@ class Ladders:
             return
         with self.lock:
             records = [{"wallet": item["wallet"], "coin": item["coin"], "dex": item["dex"], "base": item["base"],
-                        "started": item["started"]} for item in self.ladders.values()]
+                        "started": item["started"], **({"neutral": item["neutral"]} if item.get("neutral") else {})}
+                       for item in self.ladders.values()]
         self.path.write_text(json.dumps(records, indent=1))
 
     def resume(self) -> None:
@@ -2131,12 +2168,15 @@ class Ladders:
             return
         for record in records:
             self._cancel_own(record["wallet"], record["coin"], record["dex"])
-            self._add(record["wallet"], record["coin"], record["dex"], record["base"], record["started"])
-            log(f"ladder resumed: ...{record['wallet'][-4:]} {record['coin']} around {record['base']:g}")
+            self._add(record["wallet"], record["coin"], record["dex"], record["base"], record["started"],
+                      record.get("neutral"))
+            log(f"ladder resumed: ...{record['wallet'][-4:]} {record['coin']} "
+                + ("neutral" if record.get("neutral") else f"around {record['base']:g}"))
 
-    def _add(self, wallet: str, coin: str, dex: str, base: float, started: str) -> None:
+    def _add(self, wallet: str, coin: str, dex: str, base: float, started: str, neutral: dict | None = None) -> None:
         with self.lock:
             self.ladders[(wallet, coin)] = {"wallet": wallet, "coin": coin, "dex": dex, "base": base, "started": started,
+                                            "neutral": neutral, "ranging": None, "range_at": 0.0,
                                             "oids": [], "grid": [], "center": None, "placed_position": None,
                                             "placed_at": 0.0, "atr": None, "atr_day": "", "fills": 0, "spacing": None,
                                             "trend": (0.0, 0.0), "trend_at": 0.0, "trims_paused": False}
@@ -2157,6 +2197,35 @@ class Ladders:
             exchange.bulk_cancel(mine)
 
     # -- commands
+    def start_neutral(self, wallet: str, coin: str, session: "Session", settings: dict | None = None) -> int:
+        """A neutral ladder: no base position, both sides quoted around the mid, only while the coin ranges."""
+        dex = coin.split(":")[0] if ":" in coin else ""
+        if wallet not in self.daemon.exchanges:
+            print(f"...{wallet[-4:]} is read-only in the daemon (no key).")
+            return 1
+        neutral = {**NEUTRAL_DEFAULTS, **(settings or {})}
+        config = ladder_config(coin)
+        bid, ask = self._book(coin, dex)
+        mid = (bid + ask) / 2
+        atr = float(ht.wilder_atr(ht.fetch_daily_candles(coin.split(":")[-1], dex), 14))
+        spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
+        ranging, efficiency = self._ranging(coin, dex)
+        print(f"Neutral ladder for ...{wallet[-4:]} {coin}: ${neutral['level_usd']:g} quotes, {spacing:.6g} apart "
+              f"({1e4 * spacing / mid:.0f} bp), inventory within {neutral['max_levels']} levels either way; quotes only "
+              f"while the coin ranges (5-day efficiency under {NEUTRAL_RANGE_ER:g}; now {efficiency:.2f}: "
+              f"{'quoting' if ranging else 'waiting'}). Verdict after {config['verdict_fills']} fills.")
+        if session.ask("Type START LADDER to quote these live: ") != "START LADDER":
+            print("Confirmation did not match; no ladder started.")
+            return 0
+        self._add(wallet, coin, dex, 0.0, time.strftime("%Y-%m-%d %H:%M", time.gmtime()), neutral)
+        print("Neutral ladder started (hl_daemon.py status shows it).")
+        return 0
+
+    def _ranging(self, coin: str, dex: str) -> tuple[bool, float]:
+        closes = [float(value) for value in ht.fetch_daily_candles(coin.split(":")[-1], dex)["close"]][-6:]
+        efficiency, _ = efficiency_ratio(closes)
+        return efficiency < NEUTRAL_RANGE_ER, efficiency
+
     def start(self, wallet: str, coin: str, session: "Session") -> int:
         dex = coin.split(":")[0] if ":" in coin else ""
         quantity = self.daemon.state.position_quantity(wallet, coin, dex)
@@ -2269,6 +2338,8 @@ class Ladders:
                     self.daemon.alerts.clear(f"ladder:{ladder['wallet']}:{ladder['coin']}")
 
     def step(self, ladder: dict, now: float) -> None:
+        if ladder.get("neutral"):
+            return self.step_neutral(ladder, now)
         wallet, coin, dex, base = ladder["wallet"], ladder["coin"], ladder["dex"], ladder["base"]
         position = self.daemon.state.position_quantity(wallet, coin, dex)
         if position is None:
@@ -2315,6 +2386,51 @@ class Ladders:
                                                       or now - ladder["placed_at"] >= config["min_replace_seconds"]):
             self._rebuild(ladder, position, now, config, atr, filled)
         self._arm(ladder, mid, exchange, config, now)
+
+    def step_neutral(self, ladder: dict, now: float) -> None:
+        """A neutral ladder: quote both sides while the coin ranges; in a trend pull the quotes and wait."""
+        wallet, coin, dex, neutral = ladder["wallet"], ladder["coin"], ladder["dex"], ladder["neutral"]
+        position = self.daemon.state.position_quantity(wallet, coin, dex) or 0.0
+        config = ladder_config(coin)
+        if self._verdict(ladder, now, config):
+            return
+        if ladder.get("ranging") is None or now - ladder.get("range_at", 0.0) >= 3600:
+            ranging, efficiency = self._ranging(coin, dex)
+            if ranging != ladder.get("ranging"):
+                log(f"ladder ...{wallet[-4:]} {coin} (neutral): {'quoting, the coin ranges' if ranging else 'waiting, the coin trends'} "
+                    f"(5-day efficiency {efficiency:.2f})")
+                if not ranging:
+                    live = [quote["oid"] for quote in ladder["grid"] if quote.get("oid")]
+                    if live:
+                        self.daemon.exchanges[wallet].bulk_cancel([{"coin": coin, "oid": oid} for oid in live])
+                    ladder.update(grid=[], oids=[], center=None)
+            ladder["ranging"], ladder["range_at"] = ranging, now
+        # In a trend no new quotes; inventory left from the range still gets its reducing side.
+        if not ladder["ranging"] and abs(position) * self._mid(coin, dex) < 0.5 * neutral["level_usd"]:
+            return
+        mid = self._mid(coin, dex)
+        atr = self._atr(ladder)
+        spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
+        level_size = neutral["level_usd"] / mid
+        moved = ladder["center"] is None or abs(mid - ladder["center"]) >= config["replace_move"] * spacing
+        filled = ladder["placed_position"] is not None and abs(position - ladder["placed_position"]) >= 0.5 * level_size
+        stale = now - ladder["placed_at"] >= config["refresh_seconds"]
+        if (moved or filled or stale) and (ladder["center"] is None or now - ladder["placed_at"] >= config["min_replace_seconds"]):
+            health = self.daemon.margin_guard.latest_health.get(wallet, 0.0)
+            bid, ask = self._book(coin, dex)
+            book_mid = (bid + ask) / 2
+            market = self.daemon.state.markets([(coin, dex)])[coin]
+            quotes = neutral_quotes(position, book_mid, bid, ask, spacing, market.size_decimals, int(config["levels"]),
+                                    neutral["level_usd"], int(neutral["max_levels"]), neutral["skew"],
+                                    allow_adds=ladder["ranging"] and health < config["pause_adds_at_health"])
+            live = [quote["oid"] for quote in ladder["grid"] if quote.get("oid")]
+            if live:
+                self.daemon.exchanges[wallet].bulk_cancel([{"coin": coin, "oid": oid} for oid in live])
+            if filled:
+                ladder["fills"] += 1
+            ladder.update(grid=[{**quote, "oid": None} for quote in quotes], oids=[], center=book_mid,
+                          placed_position=position, placed_at=now, spacing=spacing)
+        self._arm(ladder, mid, self.daemon.exchanges[wallet], config, now)
 
     def _verdict(self, ladder: dict, now: float, config: dict) -> bool:
         """Each ladder is a hypothesis: once it has ``verdict_fills`` fills since its start, its round trips (paired
@@ -2975,7 +3091,12 @@ class Daemon:
             wallet = self.wallet(str(request.get("wallet", "")))
             coin = str(request.get("coin", "")).strip()
             coin = coin if ":" in coin else coin.upper()
-            return self.ladders.stop(wallet, coin) if request.get("stop") else self.ladders.start(wallet, coin, session)
+            if request.get("stop"):
+                return self.ladders.stop(wallet, coin)
+            if request.get("neutral"):
+                settings = {key: request[key] for key in ("level_usd", "max_levels") if request.get(key)}
+                return self.ladders.start_neutral(wallet, coin, session, settings)
+            return self.ladders.start(wallet, coin, session)
         if command == "trail":
             wallet = self.wallet(str(request.get("wallet", "")))
             coin = str(request.get("coin", "")).strip()
@@ -3471,6 +3592,10 @@ def main(argv: list[str] | None = None) -> int:
     ladder.add_argument("--wallet", required=True, help="wallet: address or its last 4+ characters")
     ladder.add_argument("--coin", required=True, help="the position's coin (xyz:NVDA for a HIP-3 market)")
     ladder.add_argument("--stop", action="store_true", help="stop the ladder and cancel its orders")
+    ladder.add_argument("--neutral", action="store_true",
+                        help="no base position: quote both sides around the mid, only while the coin ranges")
+    ladder.add_argument("--level-usd", type=float, help="neutral ladder: dollars per quote (default 11)")
+    ladder.add_argument("--max-levels", type=int, help="neutral ladder: inventory cap in levels either way (default 5)")
     trail = commands.add_parser("trail", help="trailing stop on HL behind the best price (momentum plays), or --stop it")
     trail.add_argument("--wallet", required=True)
     trail.add_argument("--coin", required=True)
@@ -3495,7 +3620,8 @@ def main(argv: list[str] | None = None) -> int:
                    "actions": str(args.actions.resolve()) if args.actions else None}
         return call(request)
     if args.command == "ladder":
-        return call({"cmd": "ladder", "wallet": args.wallet, "coin": args.coin, "stop": args.stop})
+        return call({"cmd": "ladder", "wallet": args.wallet, "coin": args.coin, "stop": args.stop,
+                     "neutral": args.neutral, "level_usd": args.level_usd, "max_levels": args.max_levels})
     if args.command == "trail":
         return call({"cmd": "trail", "wallet": args.wallet, "coin": args.coin, "pct": args.pct / 100, "stop": args.stop})
     if args.command == "reattach":

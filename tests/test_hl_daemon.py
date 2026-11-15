@@ -1099,6 +1099,40 @@ class AutoTraderTests(unittest.TestCase):
             self.assertFalse(again._claim("flip", 12))
 
 
+class NeutralLadderTests(unittest.TestCase):
+    def setUp(self):
+        hl_daemon.load_trading()
+
+    def quotes(self, position, allow_adds=True):
+        # ETH-like: mid 2000, spacing 10, $11 levels, at most 5 levels either way.
+        return hl_daemon.neutral_quotes(position, 2000.0, 1999.9, 2000.1, 10.0, 4, 5, 11.0, 5, 0.5, allow_adds)
+
+    def test_flat_quotes_both_sides_symmetrically(self):
+        quotes = self.quotes(0.0)
+        bids = sorted((q["price"] for q in quotes if q["is_buy"]), reverse=True)
+        asks = sorted(q["price"] for q in quotes if not q["is_buy"])
+        self.assertEqual((len(bids), len(asks)), (5, 5))
+        self.assertAlmostEqual(bids[0], 1990.0)
+        self.assertAlmostEqual(asks[0], 2010.0)
+        self.assertTrue(all(not q["reduce_only"] and q["size"] * q["price"] >= 10 for q in quotes))
+
+    def test_inventory_skews_quotes_and_caps_the_side(self):
+        long_three = 3 * 11.0 / 2000.0
+        quotes = self.quotes(long_three)
+        bids = sorted((q["price"] for q in quotes if q["is_buy"]), reverse=True)
+        asks = sorted(q["price"] for q in quotes if not q["is_buy"])
+        self.assertLess(bids[0], 1990.0)          # leaning back to flat: buys further away...
+        self.assertLess(asks[0], 2010.0)          # ...sells nearer
+        self.assertEqual(len(bids), 2)            # two levels of room left on the long side
+        full = self.quotes(5 * 11.0 / 2000.0)
+        self.assertFalse(any(q["is_buy"] for q in full))
+
+    def test_margin_pause_keeps_only_the_reducing_side(self):
+        quotes = self.quotes(-2 * 11.0 / 2000.0, allow_adds=False)
+        self.assertTrue(quotes and all(q["is_buy"] for q in quotes))
+        self.assertEqual(self.quotes(0.0, allow_adds=False), [])
+
+
 class TrimRuleTests(unittest.TestCase):
     def _trim(self, coin, up):
         import tempfile
