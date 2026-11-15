@@ -167,3 +167,15 @@ class ExtraordinaryDayTests(unittest.TestCase):
         self.assertGreater(alt_rally.extraordinary(0.04, closes), 2)     # +4% on a 1%-a-day market
         self.assertLess(alt_rally.extraordinary(-0.04, closes), -2)
         self.assertIsNone(alt_rally.extraordinary(0.01, closes))
+
+
+class FadingTests(unittest.TestCase):
+    def test_a_move_that_gave_back_a_third_or_turned_in_the_last_half_hour_is_fading(self):
+        from desk import alt_rally
+
+        def c(t, low, high, close):
+            return {"t": t, "l": low, "h": high, "c": close}
+        running = [c(i, 100 + i, 101 + i, 100.8 + i) for i in range(12)]           # still climbing
+        self.assertFalse(alt_rally.fading(running, 0.1))
+        gave_back = running + [c(12, 106, 108, 106.5)]                               # off the high by over a third
+        self.assertTrue(alt_rally.fading(gave_back, 0.1))

@@ -1278,6 +1278,9 @@ class Alerts:
                     f"{_pct(abs(move) / minutes * 60)} an hour, volume {volume:.1f}x usual, "
                     f"{alt_rally.funding_read(move, rates.get(coin, 0.0))}")
             title = f"{coin} {'bounce' if move > 0 else 'drop'}"
+            if alt_rally.fading(window, move):
+                self.set(key, f"{title}: momentum fading", text + "; strength gone, nothing to chase")
+                continue
             if move > 0:
                 # The desk's rule: a momentum bounce after a day of hard selling is when the shorts' cash comes off the
                 # table, while the transient regime settles.

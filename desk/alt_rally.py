@@ -291,3 +291,18 @@ def extraordinary(move: float, daily_closes: list[float], sigma: float = EXTRAOR
         return None
     score = move / sd
     return score if abs(score) >= sigma else None
+
+
+def fading(candles: list[dict], move: float, recent: int = 6) -> bool:
+    """True once a fast move has lost its strength: the last ``recent`` candles (30 minutes of 5-minute candles) went
+    against it, or the price gave back a third of the move from its best. Align with strength; a fading move is
+    weakness and is not chased."""
+    if len(candles) <= recent:
+        return False
+    close = float(candles[-1]["c"])
+    then = float(candles[-recent - 1]["c"])
+    if move > 0:
+        low, best = min(float(c["l"]) for c in candles), max(float(c["h"]) for c in candles)
+        return close < then or best - close >= (best - low) / 3
+    high, worst = max(float(c["h"]) for c in candles), min(float(c["l"]) for c in candles)
+    return close > then or close - worst >= (high - worst) / 3
