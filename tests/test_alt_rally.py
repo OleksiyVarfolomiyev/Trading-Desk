@@ -179,3 +179,48 @@ class FadingTests(unittest.TestCase):
         self.assertFalse(alt_rally.fading(running, 0.1))
         gave_back = running + [c(12, 106, 108, 106.5)]                               # off the high by over a third
         self.assertTrue(alt_rally.fading(gave_back, 0.1))
+
+
+class ShortStrengthTests(unittest.TestCase):
+    def test_todays_book_fires(self):
+        # 2026-11-15: the shorts ran +5% to +13% in 24 hours while BTC rose 0.5%.
+        moves = {"AAVE": 0.092, "WLD": 0.067, "ONDO": 0.053, "ENA": 0.060, "GRASS": 0.058, "FARTCOIN": 0.081,
+                 "INIT": 0.135, "XPL": 0.074, "AERO": 0.012, "PONS": 0.060, "USELESS": 0.053}
+        day = alt_rally.shorts_vs_btc([(c, 400.0, m) for c, m in moves.items()], 0.005)
+        self.assertEqual((day["beating"], day["count"]), (11, 11))
+        title, text = alt_rally.strength_alert(day, None)
+        self.assertIn("outrunning BTC", title)
+        self.assertIn("INIT", text)
+
+    def test_one_squeeze_is_not_the_book_turning(self):
+        shorts = [("A", 400.0, 0.40), ("B", 400.0, -0.01), ("C", 400.0, -0.02), ("D", 400.0, 0.0)]
+        read = alt_rally.shorts_vs_btc(shorts, 0.0)
+        self.assertGreater(read["ahead"], alt_rally.STRENGTH_MOVE_24H)
+        self.assertIsNone(alt_rally.strength_alert(read, None))     # one of four ahead: a squeeze, not breadth
+
+    def test_the_intraday_turn_fires_on_its_own(self):
+        recent = alt_rally.shorts_vs_btc([("A", 1.0, 0.03), ("B", 1.0, 0.025), ("C", 1.0, 0.02)], 0.0)
+        title, text = alt_rally.strength_alert(None, recent)
+        self.assertIn("in 4h", text)
+
+    def test_too_few_shorts_say_nothing(self):
+        self.assertIsNone(alt_rally.shorts_vs_btc([("A", 1.0, 0.1), ("B", 1.0, 0.1)], 0.0))
+
+
+    def test_btc_turning_green_with_the_shorts_keeping_pace_fires(self):
+        recent = alt_rally.shorts_vs_btc([("A", 1.0, 0.021), ("B", 1.0, 0.022), ("C", 1.0, 0.019)], 0.02)
+        self.assertIsNone(alt_rally.strength_alert(None, recent))                 # 0.07% ahead: not outrunning
+        title, text = alt_rally.strength_alert(None, recent, btc_off_low=0.021, btc_day=0.004)
+        self.assertIn("Market turned green", title)
+        self.assertIn("off its day low", text)
+        self.assertIsNone(alt_rally.strength_alert(None, recent, btc_off_low=0.021, btc_day=-0.01))  # still red
+
+
+    def test_a_high_beta_follow_of_btc_is_not_outrunning_it(self):
+        # BTC +2%, alts with beta 2 up 4%: exactly what a more volatile BTC does.
+        follow = alt_rally.shorts_vs_btc([("A", 1.0, 0.04, 2.0), ("B", 1.0, 0.041, 2.0), ("C", 1.0, 0.039, 2.0)], 0.02)
+        self.assertAlmostEqual(follow["ahead"], 0.0, places=3)
+        self.assertIsNone(alt_rally.strength_alert(None, follow))
+        # The same alts up 8%: 4% beyond their beta, outrunning.
+        run = alt_rally.shorts_vs_btc([("A", 1.0, 0.08, 2.0), ("B", 1.0, 0.08, 2.0), ("C", 1.0, 0.08, 2.0)], 0.02)
+        self.assertIn("outrunning", alt_rally.strength_alert(None, run)[0])

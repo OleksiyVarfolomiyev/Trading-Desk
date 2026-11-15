@@ -1329,6 +1329,76 @@ class Alerts:
             if auto and coin != "ETH":   # BTC speaks for crypto, the S&P perp for stocks
                 auto.trim_favoured(coin, move > 0, text)
 
+    def btc_betas(self, coins: list[str], days: int = 60) -> dict[str, float]:
+        """Each coin's beta to BTC over ``days`` daily closes (cached daily candles), kept for a day."""
+        cache = getattr(self, "_btc_betas", {})
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        if cache.get("_day") != today:
+            cache = {"_day": today}
+        missing = [coin for coin in coins if coin not in cache]
+        if missing:
+            try:
+                btc = ht.fetch_daily_candles("BTC", "").set_index("time")["close"].astype(float).pct_change().tail(days)
+            except Exception:
+                btc = None
+            for coin in missing:
+                beta = float("nan")
+                try:
+                    if btc is not None:
+                        series = ht.fetch_daily_candles(coin, "").set_index("time")["close"].astype(float).pct_change()
+                        pair = pd.concat([series, btc], axis=1, join="inner").dropna().tail(days)
+                        if len(pair) >= 20 and pair.iloc[:, 1].var() > 0:
+                            beta = float(pair.iloc[:, 0].cov(pair.iloc[:, 1]) / pair.iloc[:, 1].var())
+                except Exception:
+                    pass
+                cache[coin] = beta
+        self._btc_betas = cache
+        return {coin: cache.get(coin, float("nan")) for coin in coins}
+
+    def watch_short_strength(self, main: list[dict], meta: dict, contexts: list[dict]) -> None:
+        """The main-DEX shorts against BTC over 24 hours (HL's day change) and 4 hours (hourly candles): an alert when
+        the short book runs ahead of BTC with most shorts beating it (desk/alt_rally.py strength_alert)."""
+        from desk import alt_rally
+
+        by_coin = {asset["name"]: context for asset, context in zip(meta.get("universe", []), contexts)}
+        shorts = {}
+        for state in main:
+            for item in state.get("assetPositions", []):
+                position = item.get("position", {})
+                coin, size = str(position.get("coin", "")), float(position.get("szi") or 0)
+                if size < 0 and coin != "BTC" and coin in by_coin:
+                    shorts[coin] = shorts.get(coin, 0.0) + abs(float(position.get("positionValue") or 0))
+        if len(shorts) < alt_rally.STRENGTH_MIN_SHORTS:
+            self.clear("short_strength")
+            return
+
+        def day_move(coin):
+            context = by_coin.get(coin, {})
+            mark, before = float(context.get("markPx") or 0), float(context.get("prevDayPx") or 0)
+            return mark / before - 1 if mark > 0 and before > 0 else float("nan")
+
+        end = int(time.time() * 1000)
+
+        def recent_move(coin):
+            candles = post_info({"type": "candleSnapshot", "req": {"coin": coin, "interval": "1h",
+                                                                   "startTime": end - 5 * 3600_000, "endTime": end}}) or []
+            if len(candles) < 4:
+                return float("nan")
+            return float(candles[-1]["c"]) / float(candles[-4]["o"]) - 1   # the last four hours, the forming one included
+
+        betas = self.btc_betas(list(shorts))
+        day = alt_rally.shorts_vs_btc([(c, v, day_move(c), betas.get(c)) for c, v in shorts.items()], day_move("BTC"))
+        recent = alt_rally.shorts_vs_btc([(c, v, recent_move(c), betas.get(c)) for c, v in shorts.items()],
+                                         recent_move("BTC"))
+        btc = post_info({"type": "candleSnapshot", "req": {"coin": "BTC", "interval": "1h",
+                                                           "startTime": end - 24 * 3600_000, "endTime": end}}) or []
+        off_low = (float(btc[-1]["c"]) / min(float(c["l"]) for c in btc) - 1) if btc else float("nan")
+        found = alt_rally.strength_alert(day, recent, off_low, day_move("BTC"))
+        if found is None:
+            self.clear("short_strength")
+        else:
+            self.set("short_strength", *found)
+
     def watch_alt_rally(self, daemon: "Daemon") -> None:
         """Alt rally watch (desk/alt_rally.py): the alt basket's 24-hour move, every ALT_RALLY_CHECK_SECONDS. A watch
         at +5%; a cut alert at +8%, or at a second watch on a later day. When watches fired is kept in
@@ -1395,6 +1465,12 @@ class Alerts:
             if auto and name == "cut" and auto.net_crypto() < 0:   # an alt squeeze against the short book
                 auto.flatten(f"Alt squeeze: {text}")
             remembered(ALT_RALLY_FILE, True)
+
+        # Shorts outrunning BTC (desk/alt_rally.py strength_alert): the thesis turning before the basket watch fires.
+        try:
+            self.watch_short_strength(main, meta, contexts)
+        except Exception as exc:  # the other watches still run
+            log(f"short strength watch failed ({type(exc).__name__}: {exc})")
 
         # Stocks: HL's S&P 500 perp, against the stock longs on HL's xyz DEX.
         main_meta, main_contexts = meta, contexts

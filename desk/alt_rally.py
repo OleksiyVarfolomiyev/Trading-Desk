@@ -306,3 +306,73 @@ def fading(candles: list[dict], move: float, recent: int = 6) -> bool:
         return close < then or best - close >= (best - low) / 3
     high, worst = max(float(c["h"]) for c in candles), min(float(c["l"]) for c in candles)
     return close > then or close - worst >= (high - worst) / 3
+
+
+# Shorts outrunning BTC: the desk shorts alts weaker than BTC, so shorts rising faster than BTC is the thesis turning
+# while the basket may still be under the alt-rally watch. 2026-11-15: the 11 shorts ran +5% to +13% in 24 hours with
+# BTC +0.5% and the basket at +4.5%, and nothing said so until the user did.
+STRENGTH_MOVE_24H = 0.03    # the short book, size-weighted, 3%+ ahead of BTC over 24 hours...
+STRENGTH_MOVE_4H = 0.02     # ...or 2%+ ahead over 4 hours (the turn inside the day)
+STRENGTH_BREADTH = 0.6      # with most of the shorts ahead of BTC, not one squeeze
+STRENGTH_MIN_SHORTS = 3
+
+
+def shorts_vs_btc(shorts: list[tuple], btc_move: float) -> dict | None:
+    """How the short book moved against BTC, beta-adjusted: ``shorts`` are (coin, |notional|, move over the window[,
+    beta to BTC]). Alts are a more volatile BTC, so a short "beats" BTC only when it rises more than its beta times
+    BTC's move (beta 1 when unknown). Returns the size-weighted excess, how many shorts beat their beta-expected move
+    of how many, the book's raw move and the three furthest ahead."""
+    rows = []
+    for item in shorts:
+        coin, size, move = item[:3]
+        beta = item[3] if len(item) > 3 and item[3] is not None and math.isfinite(item[3]) else 1.0
+        if size > 0 and math.isfinite(move):
+            rows.append((coin, size, move, move - beta * btc_move))
+    if len(rows) < STRENGTH_MIN_SHORTS or not math.isfinite(btc_move):
+        return None
+    total = sum(size for _, size, _, _ in rows)
+    leaders = sorted(rows, key=lambda row: row[3], reverse=True)[:3]
+    return {"ahead": sum(size * excess for _, size, _, excess in rows) / total,
+            "beating": sum(excess > 0 for _, _, _, excess in rows), "count": len(rows), "btc": btc_move,
+            "book": sum(size * move for _, size, move, _ in rows) / total,
+            "leaders": [(coin, move) for coin, _, move, _ in leaders]}
+
+
+BTC_TURN_MOVE = 0.02   # BTC 2%+ off its 24-hour low and green on the day: the market turned under a short book
+
+
+def btc_turned(off_low: float, day_move: float) -> bool:
+    """BTC climbed BTC_TURN_MOVE or more off its 24-hour low and is now up on the day (red to green)."""
+    return math.isfinite(off_low) and math.isfinite(day_move) and off_low >= BTC_TURN_MOVE and day_move > 0
+
+
+def strength_alert(day: dict | None, recent: dict | None, btc_off_low: float = float("nan"),
+                   btc_day: float = float("nan")) -> tuple[str, str] | None:
+    """An alert when the short book is off-thesis, or None:
+
+    * "Alts outrunning BTC": the shorts run past their beta times BTC's move over 4 hours (2%+) or 24 hours (3%+), most
+      of them doing so;
+    * "Market turned green": BTC 2%+ off its day low and green on the day, with the shorts at least keeping pace over
+      4 hours, beta-adjusted (the user's checkpoint: BTC from red to green is the market turning; alts are a more
+      volatile BTC, so they follow it by their beta).
+    """
+    def breadth(read):
+        return read is not None and read["beating"] >= STRENGTH_BREADTH * read["count"]
+
+    turned = btc_turned(btc_off_low, btc_day)
+    btc_text = f"BTC {_pct(btc_off_low)} off its day low and green on the day ({_pct(btc_day)})" if turned else ""
+    parts = [(label, read) for label, read, threshold in (("4h", recent, STRENGTH_MOVE_4H), ("24h", day, STRENGTH_MOVE_24H))
+             if breadth(read) and read["ahead"] >= threshold]
+    if parts:
+        label, read = parts[0]
+        title = "Alts outrunning BTC: shorts off-thesis"
+    elif turned and breadth(recent) and recent["ahead"] >= 0:
+        label, read = "4h", recent
+        title = "Market turned green: shorts off-thesis"
+    else:
+        return None
+    leaders = ", ".join(f"{coin.split(':')[-1]} {_pct(move)}" for coin, move in read["leaders"])
+    text = (f"shorts {_pct(read['book'])} vs BTC {_pct(read['btc'])} in {label}, {_pct(read['ahead'])} beyond their "
+            f"beta ({read['beating']} of {read['count']} ahead; {leaders})" + (f"; {btc_text}" if btc_text else "")
+            + ". The weak-alt thesis is off for now: cut, or tighten the stops?")
+    return title, text[0].upper() + text[1:]
