@@ -79,7 +79,8 @@ class DailySyncTests(unittest.TestCase):
                 patch("desk.hl.signal_research.run", return_value={"signals": {"rel7": {"label": "7-day return vs BTC", "validated": True}}}), \
                 patch.object(web_sync, "push_ib", return_value={"ok": True}) as push, \
                 patch.object(web_sync, "push_nav_only", return_value={"ok": True}) as nav_only, \
-                patch("desk.day_change.position_changes", return_value={}):
+                patch("desk.day_change.position_changes", return_value={}), \
+                patch.object(web_sync, "backup_server_state", return_value="state backup: 9 of 9 server files saved"):
             report = web_sync.daily_sync("data")
         return report, hl_history, flex, push, nav_only
 
@@ -89,7 +90,7 @@ class DailySyncTests(unittest.TestCase):
         flex.assert_called_once()
         push.assert_not_called()
         nav_only.assert_called_once()
-        self.assertIn("daily NAV sent", report[-4])
+        self.assertIn("daily NAV sent", report[-5])
         self.assertNotIn(ACCOUNT, " ".join(report))
         self.assertNotIn(WALLET, " ".join(report))
 
@@ -101,7 +102,28 @@ class DailySyncTests(unittest.TestCase):
         self.assertEqual(report, ["HL 07f2: history saved", "07f2 wallet: performance saved (2 days)",
                                   "IB 6543: Flex NAV saved", "IB 6543: sent to the relay (2 positions)",
                                   "research: 1 perps' candles saved; validated signals: 7-day return vs BTC",
-                                  "regime: reading sent to the relay", "wallets: performance sent to the relay"])
+                                  "regime: reading sent to the relay", "wallets: performance sent to the relay",
+                                  "state backup: 9 of 9 server files saved"])
+
+    def test_the_state_backup_copies_into_a_dated_folder_and_keeps_thirty_days(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder)
+            for day in range(1, 33):                       # 32 old daily folders
+                (target / f"2026-10-{day:02d}" if day <= 31 else target / "2026-11-01").mkdir(exist_ok=True)
+
+            def fake_scp(command, **kwargs):
+                self.assertNotIn("relay.json", " ".join(command))          # the sign-in secrets stay on the server
+                (Path(command[-1]) / "ladder.json").write_text("{}")
+                return SimpleNamespace(returncode=0, stderr="")
+            with patch.object(web_sync.subprocess, "run", side_effect=fake_scp), patch.object(web_sync.Path, "exists", return_value=False):
+                note = web_sync.backup_server_state(target, today="2026-11-15")
+            self.assertIn("1 of", note)
+            folders = sorted(path.name for path in target.iterdir())
+            self.assertEqual(len(folders), web_sync.STATE_BACKUP_DAYS)
+            self.assertEqual(folders[-1], "2026-11-15")
 
     def test_the_job_runs_daily_from_the_repository(self):
         job = web_sync.job_plist()

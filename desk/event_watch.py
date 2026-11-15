@@ -29,6 +29,8 @@ BURN_SPIKE = 5.0                  # a discretionary burn: this many times the us
 BURN_HEADS_UP_DAYS = 3
 UNLOCK_SHARE = 0.003              # circulating supply up 0.3% in a day
 HORIZONS = {"1d": 86400, "7d": 7 * 86400}
+RELATIVE_MOVE = 0.15             # a coin up or down this much more than the alt basket (its median) over 24h is logged
+RELATIVE_MIN_VOLUME = 1_000_000   # ... when it trades at least this much a day (a tradable move, not a thin print)
 DEBRIEF_KINDS = {"burn", "unlock"}  # events about one coin get a debrief alert; the rest are logged only
 VVV = {"coin": "VVV", "chain": "base", "token": "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf",
        "burn_address": "0x0000000000000000000000000000000000000000"}
@@ -143,6 +145,42 @@ def prices(meta: dict, contexts: list[dict], coins: list[str]) -> dict:
     basket = sorted(rows, reverse=True)[:ALT_COUNT]
     marks.update({name: mark for _, name, mark in basket})
     return {"marks": marks, "basket": [name for _, name, _ in basket]}
+
+
+def relative_moves(meta: dict, contexts: list[dict], threshold: float = RELATIVE_MOVE,
+                   min_volume: float = RELATIVE_MIN_VOLUME) -> list[dict]:
+    """Main-DEX coins that moved ``threshold`` or more against the alt basket over 24h (HL's prevDayPx), for the
+    event log: the follow-or-fade hypothesis needs every such move, not only the ones noticed by hand."""
+    snapshot = prices(meta, contexts, [])
+    change, info = {}, {}
+    for asset, context in zip(meta.get("universe", []), contexts):
+        name = str(asset.get("name", ""))
+        try:
+            mark, before = float(context.get("markPx") or 0), float(context.get("prevDayPx") or 0)
+            volume, funding = float(context.get("dayNtlVlm") or 0), float(context.get("funding") or 0)
+            interest = float(context.get("openInterest") or 0) * mark
+        except (TypeError, ValueError):
+            continue
+        if asset.get("isDelisted") or mark <= 0 or before <= 0:
+            continue
+        change[name] = mark / before - 1
+        info[name] = {"volume24h_usd": volume, "open_interest_usd": interest, "funding_apr": funding * 24 * 365 * 100}
+    basket = [change[name] for name in snapshot["basket"] if name in change]
+    if not basket:
+        return []
+    basket.sort()   # the basket's median: one coin's own spike does not move the yardstick it is measured against
+    middle = len(basket) // 2
+    alts = basket[middle] if len(basket) % 2 else (basket[middle - 1] + basket[middle]) / 2
+    btc = change.get("BTC", float("nan"))
+    moves = []
+    for name, move in change.items():
+        if name == "BTC" or info[name]["volume24h_usd"] < min_volume or abs(move - alts) < threshold:
+            continue
+        mood = "alts down" if alts < 0 else "alts up"
+        moves.append({"kind": "relative pop" if move > alts else "relative drop", "coin": name, "move": move, "alts": alts,
+                      "btc": btc, **info[name], "regime": f"{mood}, {'with' if (move > 0) == (alts > 0) else 'against'} the market",
+                      "note": "hypothesis log: follow or fade a 15%+ move against the alt basket; logged automatically"})
+    return moves
 
 
 def record(kind: str, info: dict, snapshot: dict, path: Path | None = None, now: float | None = None) -> dict:

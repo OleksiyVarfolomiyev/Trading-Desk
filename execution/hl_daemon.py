@@ -38,6 +38,7 @@ import dataclasses
 import io
 import itertools
 import json
+import math
 import os
 import signal
 import socket
@@ -1468,6 +1469,14 @@ class Alerts:
             self.set(f"unlock:HYPE:{day}", "Unlock", f"HYPE circulating supply up {_pct(added / base)} today "
                      f"({added:,.0f} HYPE, {usd(added * marks.get('HYPE', 0))})", ttl=86400)
 
+        # Relative moves: every 15%+ move against the alt basket is logged once a day, for the follow-or-fade test
+        for move in event_watch.relative_moves(meta, contexts):
+            if (move["kind"], move["coin"], day) not in logged:
+                kind = move.pop("kind")
+                event_watch.record(kind, {**move, "day": day}, event_watch.prices(meta, contexts, [move["coin"]]))
+                logged.add((kind, move["coin"], day))
+                log(f"event logged: {kind} {move['coin']} {_pct(move['move'])} (alts {_pct(move['alts'])})")
+
         # Debriefs: what followed each logged event, 1 and 7 days on
         events = event_watch.load_events()
         filled = event_watch.due_outcomes(events, marks, now)
@@ -1805,9 +1814,12 @@ LADDER_DEFAULTS = {
     "trend_bars": 12,
     "trend_pause_er": 0.40,
     "trend_refresh_seconds": 300,
+    # Verdict: after this many fills since its start a ladder whose round trips lost money after fees stops (0: never).
+    "verdict_fills": 100,
 }
 LADDER_CLOID_PREFIX = "0x1add"   # marks the ladder's own orders (client order ids)
 MIN_ORDER_USD = 10.0
+LEVEL_FLOOR_MARGIN = 1.1   # a level raised to the minimum is sized 10% over it, so a small price move keeps it valid
 
 
 def ladder_config(coin: str | None = None) -> dict:
@@ -1868,13 +1880,16 @@ def ladder_quotes(position: float, base: float, mid: float, best_bid: float, bes
                                      ("trim", config["trim_first"], config["trim_level_pct"], room_trim)):
         is_buy = (kind == "add") == (side > 0)
         for level in range(int(config["levels"])):
-            size = int(min(share * abs(base), room) / step + 1e-9) * step
-            if size <= 0:
-                break
             offset = (first + level) * spacing
             price = mid - offset if is_buy else mid + offset
             price = min(price, best_ask - tick) if is_buy else max(price, best_bid + tick)  # never cross: post-only
-            if price <= 0 or size * price < MIN_ORDER_USD:
+            if price <= 0:
+                break
+            # A level under HL's $10 minimum is raised to it (a small position would otherwise quote nothing at all);
+            # the band still caps the position.
+            floor = math.ceil(MIN_ORDER_USD * LEVEL_FLOOR_MARGIN / price / step - 1e-9) * step
+            size = int(min(max(share * abs(base), floor), room) / step + 1e-9) * step
+            if size <= 0 or size * price < MIN_ORDER_USD:
                 break
             quotes.append({"is_buy": is_buy, "price": ht._round_price(price, size_decimals),
                            "size": round(size, size_decimals), "reduce_only": kind == "trim", "kind": kind})
@@ -2096,6 +2111,8 @@ class Ladders:
                 self.daemon.alerts.clear(f"ladder-{key}:{wallet}:{coin}")
             return
         config = ladder_config(coin)
+        if self._verdict(ladder, now, config):
+            return
         held, low, high = (1 if base > 0 else -1) * position, (1 - config["band"]) * abs(base), (1 + config["band"]) * abs(base)
         band_key = f"ladder-band:{wallet}:{coin}"
         if held > high * 1.02 or held < low * 0.98:
@@ -2125,6 +2142,35 @@ class Ladders:
                                                       or now - ladder["placed_at"] >= config["min_replace_seconds"]):
             self._rebuild(ladder, position, now, config, atr, filled)
         self._arm(ladder, mid, exchange, config, now)
+
+    def _verdict(self, ladder: dict, now: float, config: dict) -> bool:
+        """Each ladder is a hypothesis: once it has ``verdict_fills`` fills since its start, its round trips (paired
+        first in, first out) less fees must be positive, or it stops. Checked hourly; True when it stopped."""
+        need = int(config.get("verdict_fills") or 0)
+        if not need or now - ladder.get("verdict_at", 0.0) < 3600:
+            return False
+        ladder["verdict_at"] = now
+        from desk import market_making
+
+        wallet, coin = ladder["wallet"], ladder["coin"]
+        started_ms = int(pd.Timestamp(ladder["started"], tz="UTC").timestamp() * 1000)
+        fills = [fill for fill in market_making.ladder_fill_rows(wallet, started_ms) if fill["coin"] == coin]
+        if len(fills) < need:
+            return False
+        earned = market_making.round_trip_pnl(fills) - sum(float(fill.get("fee") or 0) for fill in fills)
+        if earned >= 0:
+            return False
+        with self.lock:
+            self.ladders.pop((wallet, coin), None)
+        self.save()
+        self._cancel_own(wallet, coin, ladder["dex"])
+        volume = sum(float(fill["px"]) * float(fill["sz"]) for fill in fills)
+        text = (f"{len(fills)} fills since {ladder['started']} UTC: round trips {earned / volume * 1e4:.0f} bps of volume after fees; "
+                "ladder stopped and its orders cancelled, the position stays")
+        log(f"ladder ...{wallet[-4:]} {coin}: {text}")
+        self.daemon.alerts.set(f"ladder-verdict:{wallet}:{coin}", f"ladder stopped: round trips lost (...{wallet[-4:]} {coin})",
+                               text, ttl=86400)
+        return True
 
     def _rebuild(self, ladder: dict, position: float, now: float, config: dict, atr: float, filled: bool) -> None:
         """A fresh grid of quotes around the mid, kept in memory; the quotes resting on the book are pulled first."""

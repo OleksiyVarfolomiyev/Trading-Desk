@@ -676,13 +676,51 @@ class LadderQuoteTests(unittest.TestCase):
         self.assertTrue(all(q["price"] < 10.01 for q in tight if q["is_buy"]))
         self.assertTrue(all(q["price"] > 9.99 for q in tight if not q["is_buy"]))
 
-    def test_orders_under_ten_dollars_are_left_out(self):
-        self.assertEqual(hl_daemon.ladder_quotes(10.0, 10.0, 10.0, 9.99, 10.01, 1.0, 1, self.config), [])
+    def test_levels_under_ten_dollars_are_raised_to_the_minimum(self):
+        # 2026-11-14 the ETH, MELANIA and S&P ladders sat idle: 2-5% of a small position was under HL's $10 minimum.
+        quotes = hl_daemon.ladder_quotes(10.0, 10.0, 10.0, 9.99, 10.01, 1.0, 1, self.config)
+        self.assertTrue(quotes)
+        self.assertTrue(all(q["size"] * q["price"] >= hl_daemon.MIN_ORDER_USD for q in quotes))
+
+    def test_no_quote_when_the_band_leaves_less_than_the_minimum(self):
+        quotes = hl_daemon.ladder_quotes(14.5, 10.0, 10.0, 9.99, 10.01, 1.0, 1, self.config)   # $5 of room to add
+        self.assertFalse(any(q["kind"] == "add" for q in quotes))
 
     def test_trims_can_be_switched_off_leaving_the_adds(self):
         quotes = hl_daemon.ladder_quotes(-100.0, -100.0, 10.0, 9.99, 10.01, 1.0, 1, self.config, True, False)
         self.assertTrue(quotes)
         self.assertTrue(all(q["kind"] == "add" and not q["is_buy"] for q in quotes))
+
+
+class LadderVerdictTests(unittest.TestCase):
+    def run_verdict(self, fills):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from desk import market_making
+
+        hl_daemon.load_trading()
+        alerts = []
+        daemon = SimpleNamespace(alerts=SimpleNamespace(set=lambda *a, **k: alerts.append(a[1]), clear=lambda *a: None))
+        ladders = hl_daemon.Ladders(daemon, path=None)
+        ladder = {"wallet": "0xabc", "coin": "BTC", "dex": "", "base": -1.0, "started": "2026-11-14 10:00"}
+        ladders.ladders[("0xabc", "BTC")] = ladder
+        with patch.object(market_making, "ladder_fill_rows", return_value=fills), patch.object(ladders, "_cancel_own"):
+            stopped = ladders._verdict(ladder, 10_000.0, {"verdict_fills": 4})
+        return stopped, ladders.ladders, alerts
+
+    def fills(self, buy, sell, count=4):
+        return [{"coin": "BTC", "side": "B" if i % 2 == 0 else "A", "px": str(buy if i % 2 == 0 else sell), "sz": "1",
+                 "fee": "0.01", "time": i} for i in range(count)]
+
+    def test_a_ladder_whose_round_trips_lose_stops(self):
+        stopped, running, alerts = self.run_verdict(self.fills(buy=101, sell=100))
+        self.assertTrue(stopped)
+        self.assertEqual(running, {})
+        self.assertIn("round trips lost", alerts[0])
+
+    def test_a_winning_ladder_or_one_short_of_the_fill_count_keeps_quoting(self):
+        self.assertFalse(self.run_verdict(self.fills(buy=100, sell=101))[0])
+        self.assertFalse(self.run_verdict(self.fills(buy=101, sell=100, count=3))[0])
 
 
 class TrendPauseTests(unittest.TestCase):

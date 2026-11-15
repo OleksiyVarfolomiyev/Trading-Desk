@@ -63,3 +63,18 @@ class DebriefTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RelativeMoveTests(unittest.TestCase):
+    def test_a_coin_far_from_the_alt_basket_is_logged_and_thin_or_close_ones_are_not(self):
+        from desk import event_watch
+
+        def asset(name, mark, before, volume=5e6):
+            return {"name": name}, {"markPx": str(mark), "prevDayPx": str(before), "dayNtlVlm": str(volume),
+                                    "funding": "0.00001", "openInterest": "1000"}
+        rows = [asset("BTC", 97, 100), asset("ASTER", 0.50, 0.646), asset("SOL", 98, 100), asset("XRP", 0.99, 1.0),
+                asset("DOGE", 0.97, 1.0), asset("THIN", 2.0, 1.0, volume=1e5)]
+        meta, contexts = {"universe": [a for a, _ in rows]}, [c for _, c in rows]
+        moves = event_watch.relative_moves(meta, contexts)
+        self.assertEqual([(m["kind"], m["coin"]) for m in moves], [("relative drop", "ASTER")])   # -23% vs the basket
+        self.assertIn("alts down", moves[0]["regime"])

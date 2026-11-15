@@ -273,7 +273,36 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
         report.append("wallets: performance sent to the relay")
     except Exception as exc:
         report.append(f"wallets: performance not sent ({type(exc).__name__}: {exc})")
+    report.append(backup_server_state())
     return report
+
+
+SERVER = "desk"                                   # the desk server's ssh alias
+STATE_BACKUP_DIR = REPO.parent / "trading-desk-state"   # in Dropbox: off the server and versioned
+SERVER_STATE = (".trading-desk/ladder.json", ".trading-desk/ladders.json", ".trading-desk/hl_guards.json",
+                ".trading-desk/held_targets.json", ".trading-desk/margin_guard.json", ".trading-desk/regime_guard.json",
+                "trading-desk/data/trade_journal.json", "trading-desk/data/market_events.jsonl",
+                "trading-desk/data/supply_history.json")   # never relay.json: it holds the sign-in secrets
+STATE_BACKUP_DAYS = 30
+
+
+def backup_server_state(target: Path = STATE_BACKUP_DIR, today: str | None = None) -> str:
+    """Copy the server's state (ladder settings, guards and take-profits, journal, event log) into a dated folder
+    on the Mac: only the stops live on HL, so a lost server would otherwise lose the rest. Keeps 30 days."""
+    if Path("/home/desk").exists():
+        return "state backup: skipped on the server (the Mac's daily job pulls it)"
+    folder = target / (today or pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d"))
+    folder.mkdir(parents=True, exist_ok=True)
+    sources = [f"{SERVER}:{path}" for path in SERVER_STATE]
+    result = subprocess.run(["scp", "-q", "-o", "ConnectTimeout=15", *sources, str(folder)], capture_output=True, text=True)
+    for old in sorted(path for path in target.iterdir() if path.is_dir())[:-STATE_BACKUP_DAYS]:
+        for file in old.iterdir():
+            file.unlink()
+        old.rmdir()
+    copied = len(list(folder.iterdir()))
+    if result.returncode and not copied:
+        return f"state backup: failed ({result.stderr.strip()[:120] or result.returncode})"
+    return f"state backup: {copied} of {len(SERVER_STATE)} server files saved to {folder.name}"
 
 
 def job_plist() -> dict:
