@@ -1067,3 +1067,25 @@ class StrategyUpnlTests(unittest.TestCase):
         with patch.object(journal, "ib_positions", return_value={}):
             alerts.refresh_strategy_upnl(self.daemon())
         self.assertIsNone(alerts.state()["strategy_upnl"])
+
+
+class AutoTraderTests(unittest.TestCase):
+    def test_the_standing_order_answers_both_confirmations(self):
+        session = hl_daemon.AutoSession()
+        self.assertEqual(session.ask("Type LIVE TRADING to submit these mainnet orders: "), "LIVE TRADING")
+        self.assertEqual(session.ask("Type SUBMIT ORDERS to send the refreshed plan: "), "SUBMIT ORDERS")
+        self.assertEqual(session.ask("Type SUBMIT POSITION ACTIONS to execute the refreshed plan: "), "SUBMIT POSITION ACTIONS")
+
+    def test_each_rule_acts_once_per_episode(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder, patch.object(hl_daemon, "AUTO_STATE", Path(folder) / "state.json"):
+            auto = hl_daemon.AutoTrader(SimpleNamespace())
+            self.assertTrue(auto._claim("flip", 12))
+            self.assertFalse(auto._claim("flip", 12))       # the same episode: no second trade
+            self.assertTrue(auto._claim("bank", 12))
+            again = hl_daemon.AutoTrader(SimpleNamespace())  # a restart remembers
+            self.assertFalse(again._claim("flip", 12))

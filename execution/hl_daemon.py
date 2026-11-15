@@ -1247,7 +1247,7 @@ class Alerts:
         for key in stale:  # closed positions
             self.clear(key)
 
-    def watch_momentum(self) -> None:
+    def watch_momentum(self, daemon: "Daemon | None" = None) -> None:
         """Momentum (desk/alt_rally.py ``burst``): BTC or ETH 3% or more off its two-hour low or high, checked every
         minute on 5-minute candles. 2026-11-15 BTC bounced 4.6% in an hour and the desk said nothing."""
         from desk import alt_rally
@@ -1281,6 +1281,10 @@ class Alerts:
             if alt_rally.fading(window, move):
                 self.set(key, f"{title}: momentum fading", text + "; strength gone, nothing to chase")
                 continue
+            auto = getattr(daemon, "auto", None)
+            natural = "natural flow" in text
+            if auto and coin == "BTC" and natural and not (volume != volume):
+                auto.flip(move, volume, text)
             if move > 0:
                 # The desk's rule: a momentum bounce after a day of hard selling is when the shorts' cash comes off the
                 # table, while the transient regime settles.
@@ -1291,9 +1295,11 @@ class Alerts:
                 if fell <= alt_rally.SELLOFF_MOVE:
                     title = f"{coin} bounce after a sell-off: take profits on shorts"
                     text += f", after {_pct(abs(fell))} down in the day before"
+                    if auto and coin == "BTC" and natural:
+                        auto.bank_shorts(coin, text)
             self.set(key, title, text)
 
-    def watch_extraordinary(self) -> None:
+    def watch_extraordinary(self, daemon: "Daemon | None" = None) -> None:
         """Extraordinary days (desk/alt_rally.py ``extraordinary``): BTC, ETH or the S&P 500 perp 2+ daily standard
         deviations in 24 hours. Up: trim long profits; down: trim short profits. Checked with the momentum watch."""
         from desk import alt_rally
@@ -1312,9 +1318,12 @@ class Alerts:
                 self.clear(key)
                 continue
             side = "longs" if move > 0 else "shorts"
-            self.set(key, f"{name} extraordinary day: trim {side}",
-                     f"{name} {_pct(abs(move))} {'up' if move > 0 else 'down'} in 24h ({abs(score):.1f}x its daily volatility); "
-                     f"take part of the {side}' profit: 1/3 to 2/3 of a big move is the take")
+            text = (f"{name} {_pct(abs(move))} {'up' if move > 0 else 'down'} in 24h ({abs(score):.1f}x its daily volatility); "
+                    f"take part of the {side}' profit: 1/3 to 2/3 of a big move is the take")
+            self.set(key, f"{name} extraordinary day: trim {side}", text)
+            auto = getattr(daemon, "auto", None)
+            if auto and coin != "ETH":   # BTC speaks for crypto, the S&P perp for stocks
+                auto.trim_favoured(coin, move > 0, text)
 
     def watch_alt_rally(self, daemon: "Daemon") -> None:
         """Alt rally watch (desk/alt_rally.py): the alt basket's 24-hour move, every ALT_RALLY_CHECK_SECONDS. A watch
@@ -1572,13 +1581,13 @@ class Alerts:
         except Exception as exc:  # so is the alt rally watch
             log(f"alt rally check failed ({type(exc).__name__}: {exc})")
         try:
-            self.watch_momentum()
+            self.watch_momentum(daemon)
         except Exception as exc:  # and the momentum watch
             log(f"momentum check failed ({type(exc).__name__}: {exc})")
         try:
             if time.time() - getattr(self, "extraordinary_checked_at", 0.0) >= MOMENTUM_CHECK_SECONDS:
                 self.extraordinary_checked_at = time.time()
-                self.watch_extraordinary()
+                self.watch_extraordinary(daemon)
         except Exception as exc:  # and the extraordinary-day watch
             log(f"extraordinary-day check failed ({type(exc).__name__}: {exc})")
         now = time.time()
@@ -2307,6 +2316,171 @@ class Ladders:
 # Research feed: performance by strategy, trades due for review and the screener, hourly
 
 # ----------------------------------------------------------------------------------------------
+# Auto-trading: the desk's rules executed when their signal fires (the user's standing order, 2026-11-15)
+
+AUTO_CONFIG = daemon_link.RUN_DIR / "auto_trade.json"
+AUTO_STATE = daemon_link.RUN_DIR / "auto_trade_state.json"
+AUTO_DEFAULTS = {
+    "bank_shorts_on_bounce": True,    # momentum bounce after a 5%+ down day: close half of each crypto short in profit
+    "bank_share": 0.5,
+    "trim_on_extraordinary": True,    # extraordinary day: trim a third of the positions it favours
+    "trim_share": 1 / 3,
+    "momentum_flip": True,            # strong burst (3%+, volume 3x, natural flow): BTC in its direction, trailed
+    "flip_wallet": "07f2",
+    "flip_coin": "BTC",
+    "flip_min_volume": 3.0,
+    "flip_trail": 0.015,
+    "episode_hours": 12,              # each rule acts once per episode
+}
+
+
+def auto_config() -> dict:
+    config = dict(AUTO_DEFAULTS)
+    try:
+        config.update(json.loads(AUTO_CONFIG.read_text()))
+    except (OSError, ValueError):
+        pass
+    return config
+
+
+class AutoSession:
+    """Answers the trade path's confirmations: the user's standing order replaces the typed ones."""
+
+    def ask(self, prompt: str) -> str:
+        return "SUBMIT ORDERS" if "SUBMIT ORDERS" in prompt else (
+            "SUBMIT POSITION ACTIONS" if "SUBMIT POSITION ACTIONS" in prompt else "LIVE TRADING")
+
+    def out(self, text: str) -> None:
+        log(text)
+
+    def data(self, payload: Any) -> None:
+        log(json.dumps(payload, default=str)[:400])
+
+
+class AutoTrader:
+    """Runs the rules the user authorised: banks short profit into a bounce after a sell-off, trims the favoured side
+    on an extraordinary day, flips BTC with a trailing stop on a strong natural-flow burst. Each acts once per
+    episode, in its own thread, through the desk's own order path (risk caps, sizing and guards apply)."""
+
+    def __init__(self, daemon: "Daemon"):
+        self.daemon = daemon
+        self.lock = threading.Lock()
+        try:
+            self.done = json.loads(AUTO_STATE.read_text())
+        except (OSError, ValueError):
+            self.done = {}
+
+    def _claim(self, key: str, hours: float) -> bool:
+        now = time.time()
+        with self.lock:
+            if now - float(self.done.get(key, 0)) < hours * 3600:
+                return False
+            self.done = {name: when for name, when in self.done.items() if now - float(when) < 3 * 86400}
+            self.done[key] = now
+            try:
+                AUTO_STATE.write_text(json.dumps(self.done))
+            except OSError:
+                pass
+        return True
+
+    def _spawn(self, name: str, work: Callable[[], str], coins: list[str] | None = None) -> None:
+        def run():
+            try:
+                note = work()
+            except Exception as exc:
+                note = f"failed ({type(exc).__name__}: {exc})"
+            log(f"auto {name}: {note}")
+            self.daemon.alerts.set(f"auto:{name}:{int(time.time())}", f"Auto: {name}", note, ttl=86400)
+            try:   # the event log keeps every auto trade with the prices of the moment: its 1d and 7d debrief is the A/B
+                from desk import event_watch
+
+                meta, contexts = post_info({"type": "metaAndAssetCtxs"})
+                event_watch.record(f"auto {name}", {"coin": (coins or ["BTC"])[0], "coins": coins or [], "note": note,
+                                                    "day": time.strftime("%Y-%m-%d", time.gmtime())},
+                                   event_watch.prices(meta, contexts, coins or []))
+            except Exception as exc:
+                log(f"auto {name}: not logged ({type(exc).__name__}: {exc})")
+        threading.Thread(target=run, name=f"auto-{name}", daemon=True).start()
+
+    def _positions(self, dex: str) -> list[tuple[str, str, float, float]]:
+        """(wallet, coin, quantity, unrealized PnL) for the keyed wallets on ``dex``; ladder coins are left to their ladder."""
+        laddered = {key for key in self.daemon.ladders.ladders}
+        found = []
+        with self.daemon.state.lock:
+            states = {wallet: dict(by_dex) for wallet, by_dex in self.daemon.state.states.items()}
+        for wallet, by_dex in states.items():
+            if wallet not in self.daemon.exchanges:
+                continue
+            for item in (by_dex.get(dex) or {}).get("assetPositions", []):
+                position = item.get("position", {})
+                quantity = float(position.get("szi") or 0)
+                if quantity and (wallet, position["coin"]) not in laddered:
+                    found.append((wallet, position["coin"], quantity, float(position.get("unrealizedPnl") or 0)))
+        return found
+
+    def _reduce(self, picks: list[tuple[str, str, float, float]], share: float) -> str:
+        done = []
+        for wallet, coin, quantity, _ in picks:
+            market = self.daemon.state.markets([(coin, coin.split(":")[0] if ":" in coin else "")])[coin]
+            size = round(abs(quantity) * share, market.size_decimals)
+            if size <= 0:
+                continue
+            response = self.daemon.exchanges[wallet].market_close(coin, size)
+            done.append(f"...{wallet[-4:]} {coin} {size:g} ({response.get('status', response)})")
+        return "; ".join(done) or "nothing to reduce"
+
+    def bank_shorts(self, coin: str, text: str) -> None:
+        config = auto_config()
+        if not config["bank_shorts_on_bounce"] or ht.kill_switch_engaged() or not self._claim("bank", config["episode_hours"]):
+            return
+        picks = [item for item in self._positions("") if item[2] < 0 and item[3] > 0]
+        self._spawn("banked short profit", lambda: f"{text}. Closed {config['bank_share']:.0%} of each crypto short in "
+                    f"profit: {self._reduce(picks, config['bank_share'])}", [item[1] for item in picks if ":" not in item[1]])
+
+    def trim_favoured(self, coin: str, up: bool, text: str) -> None:
+        config = auto_config()
+        if not config["trim_on_extraordinary"] or ht.kill_switch_engaged() \
+                or not self._claim(f"trim:{coin}:{'up' if up else 'down'}", config["episode_hours"]):
+            return
+        dex = "xyz" if coin.startswith("xyz:") else ""
+        picks = [item for item in self._positions(dex) if (item[2] > 0) == up]
+        side = "longs" if up else "shorts"
+        self._spawn(f"trimmed {side}", lambda: f"{text}. Trimmed {config['trim_share']:.0%} of the {side}: "
+                    f"{self._reduce(picks, config['trim_share'])}", [item[1] for item in picks if ":" not in item[1]])
+
+    def flip(self, move: float, volume: float, text: str) -> None:
+        config = auto_config()
+        if not config["momentum_flip"] or volume < config["flip_min_volume"] or ht.kill_switch_engaged() \
+                or not self._claim("flip", config["episode_hours"]):
+            return
+        side = "LONG" if move > 0 else "SHORT"
+        coin = config["flip_coin"]
+
+        def work() -> str:
+            wallet = self.daemon.wallet(config["flip_wallet"])
+            held = self.daemon.state.position_quantity(wallet, coin, "") or 0.0
+            if held and (held > 0) == (move > 0):
+                return f"{text}. Already {side.lower()} {coin}; no flip"
+            path = daemon_link.RUN_DIR / f"auto_flip_{coin.lower()}.csv"
+            path.write_text(f"coin,side,dex\n{coin},{side},\n")
+            if not self.daemon.trade_lock.acquire(timeout=60):
+                return "another trade held the desk; no flip"
+            try:
+                if held:   # the opposite position closes first
+                    self.daemon.exchanges[wallet].market_close(coin)
+                code = self.daemon.trade({"cmd": "trade", "wallet": wallet, "live": True, "urgent": True, "strategy": "momentum",
+                                          "signals": str(path), "ignore_unreachable": True}, AutoSession())
+            finally:
+                self.daemon.trade_lock.release()
+            if code != 0:
+                return f"{text}. {coin} {side} entry did not complete (code {code}); see the log"
+            time.sleep(3)
+            self.daemon.trails.start(wallet, coin, config["flip_trail"])
+            return f"{text}. Opened {coin} {side} at the risk budget, trailing stop {config['flip_trail']:.1%} behind the best price"
+        self._spawn(f"momentum {side.lower()} {coin}", work, [coin])
+
+
+# ----------------------------------------------------------------------------------------------
 # Trailing stops: momentum plays ride the strength and exit once it fades
 
 TRAILS_FILE = daemon_link.RUN_DIR / "trails.json"
@@ -2543,6 +2717,7 @@ class Daemon:
         self.regime_guard = RegimeGuard(self)
         self.ladders = Ladders(self, None if paper else LADDERS_FILE)
         self.trails = Trails(self, None if paper else TRAILS_FILE)
+        self.auto = AutoTrader(self) if not paper else None
         self.held = HeldTargets(self, None if paper else HELD_TARGETS_FILE)
         self.research = ResearchFeed(self, None if paper else RESEARCH_FILE)
         self.streams: list[Stream] = []

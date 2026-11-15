@@ -33,7 +33,7 @@ def journal_path() -> Path:
     """The journal file: ``DESK_JOURNAL_FILE`` if set (tests point it at a scratch file), else the desk's."""
     return Path(os.environ.get("DESK_JOURNAL_FILE") or JOURNAL_FILE)
 # fade: a reversal of a one-day overshoot or undershoot (short after a big up day, long after a big down day).
-STRATEGIES = ("directional", "conviction", "hedge", "fade")
+STRATEGIES = ("directional", "conviction", "hedge", "fade", "momentum")   # momentum: the daemon's own flips
 MARKET_MAKING = "market making"
 UNTAGGED = "untagged"  # fills from before the journal began
 LADDER_CLOID_PREFIX = "0x1add"
