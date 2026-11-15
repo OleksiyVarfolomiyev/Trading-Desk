@@ -249,3 +249,14 @@ def selloff_before(hourly: list[dict], low_time_ms: int) -> float:
         return 0.0
     low = min(float(candle["l"]) for candle in day)
     return low / max(float(candle["h"]) for candle in day) - 1
+
+
+def volume_ratio(candles: list[dict], since_ms: int) -> float:
+    """Volume per candle since ``since_ms`` (the move) against the median candle of the rest of the day: momentum is
+    read in price speed and volume together."""
+    move = [float(candle.get("v") or 0) for candle in candles if int(candle["t"]) >= since_ms]
+    rest = sorted(float(candle.get("v") or 0) for candle in candles if int(candle["t"]) < since_ms)
+    if not move or not rest:
+        return float("nan")
+    usual = rest[len(rest) // 2]
+    return (sum(move) / len(move)) / usual if usual else float("nan")

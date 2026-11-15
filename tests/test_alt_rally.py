@@ -126,3 +126,22 @@ class SelloffBeforeTests(unittest.TestCase):
         self.assertLess(alt_rally.selloff_before(hourly, 24 * hour), alt_rally.SELLOFF_MOVE)
         flat = [{"t": i * hour, "h": 64100, "l": 63900} for i in range(25)]
         self.assertGreater(alt_rally.selloff_before(flat, 24 * hour), alt_rally.SELLOFF_MOVE)
+
+
+class VolumeRatioTests(unittest.TestCase):
+    def test_the_moves_volume_against_the_usual_candle(self):
+        from desk import alt_rally
+
+        candles = [{"t": i, "v": 10} for i in range(20)] + [{"t": 20 + i, "v": 40} for i in range(4)]
+        self.assertAlmostEqual(alt_rally.volume_ratio(candles, 20), 4.0)
+
+
+class TrailStopTests(unittest.TestCase):
+    def test_the_stop_sits_behind_the_best_price(self):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "execution"))
+        import hl_daemon
+
+        self.assertAlmostEqual(hl_daemon.trail_stop(1.0, 100.0, 0.015), 98.5)     # long: under the peak
+        self.assertAlmostEqual(hl_daemon.trail_stop(-1.0, 100.0, 0.015), 101.5)   # short: over the trough

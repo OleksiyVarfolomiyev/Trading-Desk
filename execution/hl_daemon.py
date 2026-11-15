@@ -1259,15 +1259,18 @@ class Alerts:
         self.momentum_checked_at = now
         end = int(now * 1000)
         for coin in alt_rally.MOMENTUM_COINS:
-            candles = post_info({"type": "candleSnapshot", "req": {"coin": coin, "interval": "5m",
-                                                                   "startTime": end - alt_rally.MOMENTUM_MINUTES * 60000, "endTime": end}}) or []
-            found = alt_rally.burst(candles)
+            day = post_info({"type": "candleSnapshot", "req": {"coin": coin, "interval": "5m",
+                                                               "startTime": end - 86_400_000, "endTime": end}}) or []
+            window = [candle for candle in day if int(candle["t"]) >= end - alt_rally.MOMENTUM_MINUTES * 60000]
+            found = alt_rally.burst(window)
             key = f"momentum:{coin}"
             if found is None:
                 self.clear(key)
                 continue
             move, minutes, start, price = found
-            text = f"{coin} {_pct(abs(move))} {'up' if move > 0 else 'down'} in {minutes:.0f} min ({usd(start)} to {usd(price)})"
+            volume = alt_rally.volume_ratio(day, end - int(minutes * 60000))
+            text = (f"{coin} {_pct(abs(move))} {'up' if move > 0 else 'down'} in {minutes:.0f} min ({usd(start)} to {usd(price)}), "
+                    f"{_pct(abs(move) / minutes * 60)} an hour, volume {volume:.1f}x usual")
             title = f"{coin} {'bounce' if move > 0 else 'drop'}"
             if move > 0:
                 # The desk's rule: a momentum bounce after a day of hard selling is when the shorts' cash comes off the
@@ -2265,6 +2268,132 @@ class Ladders:
 # ----------------------------------------------------------------------------------------------
 # Research feed: performance by strategy, trades due for review and the screener, hourly
 
+# ----------------------------------------------------------------------------------------------
+# Trailing stops: momentum plays ride the strength and exit once it fades
+
+TRAILS_FILE = daemon_link.RUN_DIR / "trails.json"
+TRAIL_DEFAULT_PCT = 0.015       # the stop follows the best price since the start this far behind
+TRAIL_MIN_STEP = 0.001          # the resting stop is moved only when it improves by 0.1% or more
+TRAIL_CHECK_SECONDS = 5
+
+
+def trail_stop(side: float, extreme: float, pct: float) -> float:
+    """The trailing stop price: under the peak for a long (``side`` > 0), over the trough for a short."""
+    return extreme * (1 - pct) if side > 0 else extreme * (1 + pct)
+
+
+class Trails:
+    """A reduce-only stop on HL that the daemon ratchets behind the best price since the start: a momentum play
+    keeps running while the strength lasts and exits on a ``pct`` pullback. The stop always rests on HL, so it holds
+    even if the daemon stops; the position closing ends the trail."""
+
+    def __init__(self, daemon: "Daemon", path: Path | None = TRAILS_FILE):
+        self.daemon, self.path = daemon, path
+        self.lock = threading.RLock()
+        self.trails: dict[tuple[str, str], dict] = {}
+
+    def save(self) -> None:
+        if self.path is None:
+            return
+        with self.lock:
+            records = [{key: item[key] for key in ("wallet", "coin", "dex", "pct", "extreme", "stop", "oid", "started")}
+                       for item in self.trails.values()]
+        self.path.write_text(json.dumps(records, indent=1))
+
+    def resume(self) -> None:
+        if self.path is None or not self.path.exists():
+            return
+        try:
+            for record in json.loads(self.path.read_text()):
+                self.trails[(record["wallet"], record["coin"])] = record
+                log(f"trail resumed: ...{record['wallet'][-4:]} {record['coin']} {record['pct']:.1%} behind {record['extreme']:g}")
+        except (ValueError, KeyError):
+            pass
+
+    def start(self, wallet: str, coin: str, pct: float) -> int:
+        dex = coin.split(":")[0] if ":" in coin else ""
+        quantity = self.daemon.state.position_quantity(wallet, coin, dex)
+        mark = self.daemon.state.mark(coin)
+        if not quantity or not mark:
+            print(f"No {coin} position (or no fresh price) in ...{wallet[-4:]}: open it first, then trail it.")
+            return 1
+        record = {"wallet": wallet, "coin": coin, "dex": dex, "pct": pct, "extreme": mark, "stop": None, "oid": None,
+                  "started": time.strftime("%Y-%m-%d %H:%M", time.gmtime())}
+        with self.lock:
+            self.trails[(wallet, coin)] = record
+        self.step(record)
+        print(f"Trailing stop for ...{wallet[-4:]} {coin} {'LONG' if quantity > 0 else 'SHORT'} {abs(quantity):g}: "
+              f"{pct:.1%} behind the best price, now {record['stop']:.6g} (resting on HL, moved as the price runs).")
+        return 0
+
+    def stop(self, wallet: str, coin: str) -> int:
+        with self.lock:
+            record = self.trails.pop((wallet, coin), None)
+        if record is None:
+            print(f"No trailing stop for ...{wallet[-4:]} {coin}.")
+            return 1
+        self.save()
+        self._cancel(record)
+        print(f"Trailing stop removed for ...{wallet[-4:]} {coin}; the position stays.")
+        return 0
+
+    def _cancel(self, record: dict) -> None:
+        if record.get("oid"):
+            try:
+                self.daemon.exchanges[record["wallet"]].cancel(record["coin"], record["oid"])
+            except Exception as exc:
+                log(f"trail ...{record['wallet'][-4:]} {record['coin']}: cancel failed ({type(exc).__name__}: {exc})")
+
+    def step(self, record: dict) -> None:
+        wallet, coin, dex = record["wallet"], record["coin"], record["dex"]
+        quantity = self.daemon.state.position_quantity(wallet, coin, dex)
+        if quantity is None:
+            return
+        if not quantity:
+            with self.lock:
+                self.trails.pop((wallet, coin), None)
+            self.save()
+            self._cancel(record)
+            log(f"trail ...{wallet[-4:]} {coin}: the position is closed; trail ended")
+            return
+        mark = self.daemon.state.mark(coin)
+        if not mark:
+            return
+        side = 1.0 if quantity > 0 else -1.0
+        record["extreme"] = max(record["extreme"], mark) if side > 0 else min(record["extreme"], mark)
+        wanted = trail_stop(side, record["extreme"], record["pct"])
+        current = record.get("stop")
+        better = current is None or (wanted - current) * side >= TRAIL_MIN_STEP * current
+        if not better and record.get("oid"):
+            return
+        market = self.daemon.state.markets([(coin, dex)])[coin]
+        price = ht._round_price(wanted, market.size_decimals)
+        exchange = self.daemon.exchanges[wallet]
+        response = exchange.order(coin, side < 0, abs(quantity), price,
+                                  {"trigger": {"triggerPx": price, "isMarket": True, "tpsl": "sl"}}, reduce_only=True)
+        status = (response.get("response", {}).get("data", {}).get("statuses") or [{}])[0]
+        oid = (status.get("resting") or {}).get("oid")
+        if not oid:
+            log(f"trail ...{wallet[-4:]} {coin}: stop at {price:g} not placed ({status})")
+            return
+        old = record.get("oid")
+        record.update(stop=price, oid=oid)
+        if old:
+            self._cancel({"wallet": wallet, "coin": coin, "oid": old})
+        self.save()
+        log(f"trail ...{wallet[-4:]} {coin}: stop {price:g} ({record['pct']:.1%} behind {record['extreme']:g})")
+
+    def run(self) -> None:
+        while not self.daemon.stopped.wait(TRAIL_CHECK_SECONDS):
+            with self.lock:
+                items = list(self.trails.values())
+            for record in items:
+                try:
+                    self.step(record)
+                except Exception as exc:
+                    log(f"trail ...{record['wallet'][-4:]} {record['coin']} failed ({type(exc).__name__}: {exc}); retrying")
+
+
 RESEARCH_FILE = Path(__file__).resolve().parents[1] / "data" / "research_state.json"
 RESEARCH_EVERY_SECONDS = 3600
 
@@ -2375,6 +2504,7 @@ class Daemon:
         self.margin_guard = MarginGuard(self)
         self.regime_guard = RegimeGuard(self)
         self.ladders = Ladders(self, None if paper else LADDERS_FILE)
+        self.trails = Trails(self, None if paper else TRAILS_FILE)
         self.held = HeldTargets(self, None if paper else HELD_TARGETS_FILE)
         self.research = ResearchFeed(self, None if paper else RESEARCH_FILE)
         self.streams: list[Stream] = []
@@ -2508,6 +2638,11 @@ class Daemon:
             coin = str(request.get("coin", "")).strip()
             coin = coin if ":" in coin else coin.upper()
             return self.ladders.stop(wallet, coin) if request.get("stop") else self.ladders.start(wallet, coin, session)
+        if command == "trail":
+            wallet = self.wallet(str(request.get("wallet", "")))
+            coin = str(request.get("coin", "")).strip()
+            coin = coin if ":" in coin else coin.upper()
+            return self.trails.stop(wallet, coin) if request.get("stop") else self.trails.start(wallet, coin, float(request["pct"]))
         if command == "stop":
             return self.stop_request(session)
         print(f"Unknown command {command!r}.")
@@ -2552,6 +2687,8 @@ class Daemon:
                          "quotes": len(item["oids"]), "queued": max(0, len(item.get("grid", [])) - len(item["oids"])),
                          "center": item["center"], "fills": item["fills"]}
                         for item in list(self.ladders.ladders.values())],
+            "trails": [{"wallet": item["wallet"][-4:], "coin": item["coin"], "pct": item["pct"], "stop": item["stop"],
+                        "extreme": item["extreme"]} for item in list(self.trails.trails.values())],
             "held_targets": [{"wallet": item["wallet"][-4:], "coin": item["coin"], "side": "buy" if item["is_buy"] else "sell",
                               "size": item["size"], "price": item["price"], "on_book": bool(item.get("oid"))}
                              for item in list(self.held.items)],
@@ -2846,6 +2983,8 @@ def serve(args: argparse.Namespace) -> int:
     threading.Thread(target=daemon.alerts.run, args=(daemon,), name="alerts", daemon=True).start()
     daemon.ladders.resume()
     threading.Thread(target=daemon.ladders.run, name="ladders", daemon=True).start()
+    daemon.trails.resume()
+    threading.Thread(target=daemon.trails.run, name="trails", daemon=True).start()
     daemon.held.resume()
     threading.Thread(target=daemon.held.run, name="held-targets", daemon=True).start()
     threading.Thread(target=daemon.research.run, name="research", daemon=True).start()
@@ -2945,6 +3084,9 @@ def print_data(command: str | None, data: Any) -> None:
         center = f"{ladder['center']:.6g}" if ladder["center"] else "not placed yet"
         print(f"  ladder ...{ladder['wallet']} {ladder['coin']} around {ladder['base']:g}: {ladder['quotes']} quotes on the book, "
               f"{ladder.get('queued', 0)} queued in memory, centred at {center}, {ladder['fills']} re-centres on fills")
+    for trail in data.get("trails", []):
+        stop = f"{trail['stop']:.6g}" if trail.get("stop") else "not placed yet"
+        print(f"  trail ...{trail['wallet']} {trail['coin']}: stop {stop}, {trail['pct']:.1%} behind {trail['extreme']:.6g}")
     regime = data.get("regime_guard")
     if regime:
         levels = ", ".join(f"{key.replace('_', ' ')} {value}" for key, value in regime["levels"].items()) or "not read yet"
@@ -2991,6 +3133,11 @@ def main(argv: list[str] | None = None) -> int:
     ladder.add_argument("--wallet", required=True, help="wallet: address or its last 4+ characters")
     ladder.add_argument("--coin", required=True, help="the position's coin (xyz:NVDA for a HIP-3 market)")
     ladder.add_argument("--stop", action="store_true", help="stop the ladder and cancel its orders")
+    trail = commands.add_parser("trail", help="trailing stop on HL behind the best price (momentum plays), or --stop it")
+    trail.add_argument("--wallet", required=True)
+    trail.add_argument("--coin", required=True)
+    trail.add_argument("--pct", type=float, default=TRAIL_DEFAULT_PCT * 100, help="percent behind the best price (default 1.5)")
+    trail.add_argument("--stop", action="store_true", help="remove the trailing stop (the position stays)")
     commands.add_parser("stop", help="stop the daemon (guards resume on the next start)")
     args = parser.parse_args(argv)
 
@@ -3011,6 +3158,8 @@ def main(argv: list[str] | None = None) -> int:
         return call(request)
     if args.command == "ladder":
         return call({"cmd": "ladder", "wallet": args.wallet, "coin": args.coin, "stop": args.stop})
+    if args.command == "trail":
+        return call({"cmd": "trail", "wallet": args.wallet, "coin": args.coin, "pct": args.pct / 100, "stop": args.stop})
     if args.command == "reattach":
         return call({"cmd": "reattach", "wallet": args.wallet, "live": args.live,
                      "coins": [item for item in (args.coins or "").split(",") if item.strip()]})
