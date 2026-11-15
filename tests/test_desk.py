@@ -1268,7 +1268,7 @@ class LiveRiskTests(unittest.TestCase):
         self.assertAlmostEqual(rows["SPY"]["Beta (on desk value)"], 1.0, delta=0.05)
         self.assertAlmostEqual(rows["SPY"]["Beta per $ held"], 2.0, delta=0.1)
         self.assertAlmostEqual(rows["BTC"]["Beta per $ held"], -1.5, delta=0.15)
-        self.assertIn("per $ held", self.live_risk.book_line(rows["SPY"]))
+        self.assertEqual(self.live_risk.book_line(rows["SPY"]).split(",")[0], "stocks β 1.00 (2.00 per $)")
 
     def test_paired_returns_keep_mondays_and_compound_the_weekend(self):
         days = pd.date_range("2026-10-30", "2026-11-04", freq="D", tz="UTC")  # Fri .. Wed

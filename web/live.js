@@ -982,21 +982,20 @@
     // One Risk row: open risk against the cap, then the book's volatility, VaR and betas. It needs attention
     // once open risk nears the cap.
     const riskParts = [];
-    if (book.length) riskParts.push(`open risk ${percent(riskUsed / riskEquity, false, 0)} of equity (cap ${percent(MAX_TOTAL_RISK_PCT, false, 0)})`);
+    if (book.length) riskParts.push(`open risk ${percent(riskUsed / riskEquity, false, 0)}`);
     if (riskRow && fin(riskRow["Volatility (/yr)"])) {
-      riskParts.push(`desk volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr`);
-      if (deskEquity > 0 && fin(riskRow["VaR 95%"])) riskParts.push(`VaR 95% ${percent(riskRow["VaR 95%"] / deskEquity)}/day`);
-      const signed = (x) => `${x >= 0 ? "+" : ""}${x.toFixed(2)}`;
-      (riskRow.books || []).forEach((row) => {  // desk/live_risk.py book_line
+      riskParts.push(`vol ${percent(riskRow["Volatility (/yr)"], false, 0)}`);
+      if (deskEquity > 0 && fin(riskRow["VaR 95%"])) riskParts.push(`VaR ${percent(riskRow["VaR 95%"] / deskEquity)}/day`);
+      (riskRow.books || []).forEach((row) => {  // desk/live_risk.py book_line: terse, the reader knows the benchmarks
         const parts = [];
-        if (fin(row.beta)) parts.push(`beta ${signed(row.beta)} to ${row.benchmark} on desk value` + (fin(row.perHeld) ? ` (${signed(row.perHeld)} per $ held)` : ""));
-        parts.push(`net ${percent(row.net / deskEquity)} of desk`);
-        if (fin(row.vol)) parts.push(`vol ${percent(row.vol, false, 0)}/yr`);
-        riskParts.push(`${row.name}: ${parts.join(", ")}`);
+        if (fin(row.beta)) parts.push(`β ${row.beta.toFixed(2)}` + (fin(row.perHeld) ? ` (${row.perHeld.toFixed(2)} per $)` : ""));
+        parts.push(`net ${percent(row.net / deskEquity, false, 0)}`);
+        if (fin(row.vol)) parts.push(`vol ${percent(row.vol, false, 0)}`);
+        riskParts.push(`${row.name} ${parts.join(", ")}`);
       });
     }
     if (riskParts.length) {
-      const text = riskParts.join(", ").replace(/, (crypto|stocks): /g, "; $1: ").replace(/^./, (c) => c.toUpperCase()) + ".";
+      const text = riskParts.join(", ").replace(/, (crypto|stocks) /g, "; $1 ").replace(/^./, (c) => c.toUpperCase()) + ".";
       if (book.length && riskUsed > riskCap) attention.unshift(["Risk: over cap", text]);
       else if (book.length && riskUsed > riskCap * NEAR_CAP_PCT) attention.push(["Risk: near cap", text]);
       else well.push(["Risk", text]);

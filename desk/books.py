@@ -649,7 +649,7 @@ class Book:
             if window in perf.index:
                 r = perf.at[window, "Return (on equity)"]
                 b = perf.at[window, self.benchmark] if self.benchmark in perf else np.nan
-                text = f"{_signed_pct(r)} of equity ({_usd(perf.at[window, 'PnL'])}); {self.benchmark} {_signed_pct(b)}"
+                text = f"{_pct(r)}; {self.benchmark} {_pct(b)}"
                 (good if r > 0 else attention).append((f"Return {window}", text))
         summary = self.summary()
         exposure = self.exposure()
@@ -660,24 +660,23 @@ class Book:
             beta = today.iloc[0][f'Beta {self.benchmark}']
             gross = abs(summary["Gross"])
             held = beta * self.overview.desk_equity / gross if gross else np.nan
-            attention.append(("Beta now", f"{beta:+.2f} to {self.benchmark} on desk value ({held:+.2f} per $ held; "
-                              f"{_usd(beta * self.overview.desk_equity)} {self.benchmark}-equivalent); "
-                              f"net {_signed_pct(summary['Net / equity'])}, gross {_pct(summary['Gross / equity'])} of equity"))
+            attention.append(("Beta now", f"{beta:.2f} ({held:.2f} per $), net {_pct(summary['Net / equity'])}, "
+                              f"gross {_pct(summary['Gross / equity'])}"))
         realized = risk[risk["Basis"].str.startswith("Last 90")] if len(risk) else risk
         if len(realized) and f"Beta {self.benchmark}" in realized:
             row = realized.iloc[0]
-            attention.append(("Beta realized", f"{row[f'Beta {self.benchmark}']:+.2f} to {self.benchmark} over "
-                              f"{row['Periods']:.0f} days ({row.get(f'Beta {self.benchmark} 90% range', 'n/a')})"))
+            attention.append(("Beta realized", f"{row[f'Beta {self.benchmark}']:.2f} over {row['Periods']:.0f} days "
+                              f"({row.get(f'Beta {self.benchmark} 90% range', 'n/a')})"))
         if np.isfinite(summary["Open risk / cap"]):
-            attention.append(("Open risk", f"{_pct(summary['Open risk / cap'])} of the desk cap ({_usd(summary['Open risk'])})"))
+            attention.append(("Open risk", f"{_pct(summary['Open risk / cap'])} of cap"))
         movers = self.attribution(7)
         movers = movers[movers["Market"] != "Total"] if len(movers) else movers
         if len(movers):
             best, worst = movers.iloc[-1], movers.iloc[0]
             if best["PnL"] > 0:
-                good.append(("Best 7D", f"{best['Market']} {_signed_pct(best['PnL / equity'])} of equity ({_usd(best['PnL'])})"))
+                good.append(("Best 7D", f"{best['Market']} {_pct(best['PnL / equity'])}"))
             if worst["PnL"] < 0:
-                attention.append(("Worst 7D", f"{worst['Market']} {_signed_pct(worst['PnL / equity'])} of equity ({_usd(worst['PnL'])})"))
+                attention.append(("Worst 7D", f"{worst['Market']} {_pct(worst['PnL / equity'])}"))
         show_lines(good, attention)
 
     def show_positions(self):
@@ -789,7 +788,7 @@ def _signed_pct(value) -> str:
             return ""
     except TypeError:
         return ""
-    return ("+" if value > 0 else "") + _pct(value)
+    return _pct(value)   # no "+" on positive numbers (desk style)
 
 
 def _usd_plain(value) -> str:

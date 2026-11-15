@@ -860,7 +860,7 @@ class DeskOverview:
             risk_used = sum(entry.risk_usd for entry in self.book)
             risk_cap = equity * MAX_TOTAL_RISK_PCT
             # The Risk row (desk_accounts adds the book's volatility, VaR and betas to it).
-            text = f"Open risk {risk_used / equity:.0%} of equity (cap {MAX_TOTAL_RISK_PCT:.0%})."  # not "% of the cap": read as the risk itself
+            text = f"Open risk {_pct(risk_used / equity)}."  # of equity; the cap is constant and not repeated
             if risk_used > risk_cap:
                 attention.insert(0, ("Risk: over cap", text))
             elif risk_used > risk_cap * NEAR_CAP_PCT:

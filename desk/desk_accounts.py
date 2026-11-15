@@ -638,8 +638,8 @@ class DeskAccounts:
                 betas = ("; " + "; ".join(live_risk_line(item) for item in books)) if books else ""
                 if pd.notna(row.get("Volatility (/yr)", np.nan)):
                     var95, equity = row.get("VaR 95%", np.nan), self.overview.desk_equity
-                    var_text = f", VaR 95% {_pct(var95 / equity)}/day" if pd.notna(var95) and equity else ""
-                    parts.append(f"desk volatility {row['Volatility (/yr)']:.0%}/yr{var_text}{betas}")
+                    var_text = f", VaR {_pct(var95 / equity)}/day" if pd.notna(var95) and equity else ""
+                    parts.append(f"vol {_pct(row['Volatility (/yr)'])}{var_text}{betas}")
             if len(regime):
                 row = regime.iloc[0]
                 sharpe = row.get("Sharpe", np.nan)
@@ -757,7 +757,7 @@ class DeskAccounts:
             return
         formats = {"Return (total)": "{:.1%}", "Volatility (/yr)": "{:.1%}", "Sharpe": "{:.2f}", "Max drawdown": "{:.1%}",
                    "VaR 95%": _usd, "VaR 99%": _usd, "Beta BTC": "{:.2f}", "Beta SPY": "{:.2f}",
-                   "Beta BTC (crypto)": "{:+.2f}", "Beta SPY (stocks)": "{:+.2f}",
+                   "Beta BTC (crypto)": "{:.2f}", "Beta SPY (stocks)": "{:.2f}",
                    "Alpha vs BTC (/yr)": "{:.1%}", "Alpha vs SPY (/yr)": "{:.1%}", "Periods": "{:.0f}"}
         formats["Coverage"] = "{:.0%}"
         basis = table.set_index("Basis")
@@ -777,8 +777,8 @@ class DeskAccounts:
         columns = [c for c in ["Benchmark", "Net", "Gross", "Net / desk", "Gross / desk", "Beta (on desk value)",
                                "Beta per $ held", "Benchmark-equivalent", "Volatility (/yr)", "VaR 95%", "Coverage"]
                    if c in frame]
-        formats = {"Net": _usd, "Gross": _usd, "Net / desk": "{:+.0%}", "Gross / desk": "{:.0%}",
-                   "Beta (on desk value)": "{:+.2f}", "Beta per $ held": "{:+.2f}", "Benchmark-equivalent": _usd,
+        formats = {"Net": _usd, "Gross": _usd, "Net / desk": "{:.0%}", "Gross / desk": "{:.0%}",
+                   "Beta (on desk value)": "{:.2f}", "Beta per $ held": "{:.2f}", "Benchmark-equivalent": _usd,
                    "Volatility (/yr)": "{:.1%}", "VaR 95%": _usd, "Coverage": "{:.0%}"}
         styler = frame[columns].style.format({k: v for k, v in formats.items() if k in columns}, na_rep="")
         display(emphasis.style_frame(styler, frame[columns], {"Beta (on desk value)": None}, title="RISK BY BOOK"))

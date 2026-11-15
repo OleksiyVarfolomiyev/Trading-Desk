@@ -266,19 +266,18 @@ def book_rows(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benc
 
 
 def book_line(row: dict) -> str:
-    """"crypto: beta -0.32 to BTC on desk value (-0.67 per $ held), net -14%, vol 15%/yr": one book's risk in a line."""
+    """"crypto β 0.18 (1.05 per $), net 17%, vol 23%": one book's risk, terse (the reader knows the benchmarks)."""
     from desk.numbers import pct
 
     name = row["Basis"].split(" book")[0].lower()
     parts = []
     if np.isfinite(row.get("Beta (on desk value)", np.nan)):
         held = row.get("Beta per $ held", np.nan)
-        parts.append(f"beta {row['Beta (on desk value)']:+.2f} to {row['Benchmark']} on desk value"
-                     + (f" ({held:+.2f} per $ held)" if np.isfinite(held) else ""))
-    parts.append(f"net {pct(row['Net / desk'])} of desk")
+        parts.append(f"β {row['Beta (on desk value)']:.2f}" + (f" ({held:.2f} per $)" if np.isfinite(held) else ""))
+    parts.append(f"net {pct(row['Net / desk'])}")
     if np.isfinite(row.get("Volatility (/yr)", np.nan)):
-        parts.append(f"vol {pct(row['Volatility (/yr)'])}/yr")
-    return f"{name}: " + ", ".join(parts)
+        parts.append(f"vol {pct(row['Volatility (/yr)'])}")
+    return f"{name} " + ", ".join(parts)
 
 
 def book_betas(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benchmarks: pd.DataFrame) -> dict:
