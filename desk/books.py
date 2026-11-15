@@ -728,8 +728,15 @@ class Book:
         if len(closes):
             figure.add_trace(go.Scatter(x=closes.index, y=100 * (closes / closes.iloc[0] - 1), name=self.benchmark,
                                         line={"color": "#F7931A" if self.benchmark == "BTC" else "#16a34a"}))
+        # Each day's return, on its own axis: up days green, down days red, one legend entry each.
+        daily = 100 * returns
+        for name, color, part in (("Up day", "#16a34a", daily.where(daily >= 0)),
+                                  ("Down day", "#dc2626", daily.where(daily < 0))):
+            figure.add_trace(go.Bar(x=part.index, y=part, name=name, yaxis="y2", opacity=0.4, marker_color=color))
         figure.update_layout(title=f"{self.kind} book vs {self.benchmark} (%, since {_since(returns.index[0])})",
-                             template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%",
+                             template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%", barmode="overlay",
+                             yaxis2={"overlaying": "y", "side": "right", "ticksuffix": "%", "showgrid": False,
+                                     "title": "daily"},
                              legend={"orientation": "h", "y": 1.08})
         show_chart(figure)
 
