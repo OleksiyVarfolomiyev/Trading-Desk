@@ -608,8 +608,9 @@ class Book:
         return pd.DataFrame(rows)
 
     def reconciliation(self) -> pd.DataFrame:
-        """Crypto + stocks against the desk's own PnL (account values less deposits), per window: the residual is
-        what the per-market accounting does not explain (wallet tokens, unpriced markets, history gaps)."""
+        """Crypto + stocks against the desk's own PnL (HL value history and IB NAV, less deposits), per window. Neither
+        side holds wallet tokens; the residual is what the per-market marks miss: HL spot tokens without a price
+        history, close-of-day timing (UTC close against HL's last reading of the day) and gaps in HL's history."""
         rows = []
         hl = self.all_coins.groupby(["day", "book"])["pnl"].sum().unstack().reindex(self.days).fillna(0.0)
         desk_pnl = pd.Series(0.0, index=self.days)
