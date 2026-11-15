@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import json
+import threading
 import math
 import os
 from pathlib import Path
@@ -135,7 +136,9 @@ def write_cache_json(name: str, document: Any) -> None:
     if CACHE_DIR is None:
         return
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    temporary = CACHE_DIR / f"{name}.tmp"
+    # A temporary name of its own per writer: two threads saving the same market at once (the book notebooks read
+    # wallets in parallel) must not rename each other's file away.
+    temporary = CACHE_DIR / f"{name}.{os.getpid()}.{threading.get_ident()}.tmp"
     temporary.write_text(json.dumps(document))
     temporary.replace(CACHE_DIR / name)
 
