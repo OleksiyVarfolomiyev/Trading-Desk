@@ -693,6 +693,12 @@ class LadderQuoteTests(unittest.TestCase):
 
 
 class LadderVerdictTests(unittest.TestCase):
+    closes = [100, 102, 99, 101, 100, 102]   # a range
+
+    def test_a_trend_regime_defers_the_verdict(self):
+        self.closes = [100, 96, 92, 89, 85, 80]   # five red days
+        self.assertFalse(self.run_verdict(self.fills(buy=101, sell=100))[0])
+
     def run_verdict(self, fills):
         from types import SimpleNamespace
         from unittest.mock import patch
@@ -704,7 +710,9 @@ class LadderVerdictTests(unittest.TestCase):
         ladders = hl_daemon.Ladders(daemon, path=None)
         ladder = {"wallet": "0xabc", "coin": "BTC", "dex": "", "base": -1.0, "started": "2026-11-14 10:00"}
         ladders.ladders[("0xabc", "BTC")] = ladder
-        with patch.object(market_making, "ladder_fill_rows", return_value=fills), patch.object(ladders, "_cancel_own"):
+        daily = pd.DataFrame({"close": self.closes})
+        with patch.object(market_making, "ladder_fill_rows", return_value=fills), patch.object(ladders, "_cancel_own"), \
+                patch.object(hl_daemon.ht, "fetch_daily_candles", return_value=daily):
             stopped = ladders._verdict(ladder, 10_000.0, {"verdict_fills": 4})
         return stopped, ladders.ladders, alerts
 

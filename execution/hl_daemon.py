@@ -1906,6 +1906,7 @@ LADDER_DEFAULTS = {
     # Verdict: after this many fills since its start a ladder whose round trips lost money after fees stops (0: never).
     "verdict_fills": 100,
 }
+LADDER_TREND_REGIME_ER = 0.6   # a 5-day efficiency ratio this high is a trend regime: the ladder verdict waits
 LADDER_CLOID_PREFIX = "0x1add"   # marks the ladder's own orders (client order ids)
 MIN_ORDER_USD = 10.0
 LEVEL_FLOOR_MARGIN = 1.1   # a level raised to the minimum is sized 10% over it, so a small price move keeps it valid
@@ -2248,6 +2249,14 @@ class Ladders:
             return False
         earned = market_making.round_trip_pnl(fills) - sum(float(fill.get("fee") or 0) for fill in fills)
         if earned >= 0:
+            return False
+        # Regime aware: market making is judged in the markets it is built for. In a trend (three or more strong
+        # same-colour days) it is expected to give back, and the directional book earns instead; no verdict then.
+        closes = [float(value) for value in ht.fetch_daily_candles(coin.split(":")[-1], ladder["dex"])["close"]][-6:]
+        efficiency, _ = efficiency_ratio(closes)
+        if efficiency >= LADDER_TREND_REGIME_ER:
+            log(f"ladder ...{wallet[-4:]} {coin}: round trips {earned:.2f} after {len(fills)} fills, but the market "
+                f"trends (5-day efficiency {efficiency:.2f}); verdict waits for a range")
             return False
         with self.lock:
             self.ladders.pop((wallet, coin), None)
