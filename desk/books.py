@@ -919,3 +919,54 @@ def _pct_plain(value) -> str:
 
 
 Book.show_factor_model = show_factor_model
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# Picks against trading the benchmark itself
+# ----------------------------------------------------------------------------------------------------------------
+def versus_benchmark(book: "Book") -> pd.DataFrame:
+    """What the book's markets earned against the same dollars in its benchmark: each day, the exposure held going in
+    (per leg, short and long) times the benchmark's move. The gap is what picking the names added or cost. HL markets
+    only (IB has no per-name exposure history before its saved fills); funding and fees stay with the picks."""
+    from research.factor_model import newey_west_mean
+
+    hl = book.coins[book.coins["venue"] == "hl"].copy()
+    closes = book.benchmark_closes.copy()
+    closes.index = pd.to_datetime(closes.index, utc=True).normalize()
+    bench = closes.pct_change(fill_method=None).reindex(book.days)
+    hl["before"] = hl.groupby(["account", "kind", "asset"])["value"].shift(1).fillna(0.0)
+    rows = []
+    for leg, mask in (("Short", hl["before"] < 0), ("Long", hl["before"] > 0), ("Net", hl["before"] != 0)):
+        part = hl[mask]
+        actual = part.groupby("day")["pnl"].sum().reindex(book.days).fillna(0.0)
+        exposure = part.groupby("day")["before"].sum().reindex(book.days).fillna(0.0)
+        same = (exposure * bench).fillna(0.0)
+        gap = actual - same
+        active = exposure.abs() > 0
+        for label, days in WINDOWS.items():
+            window = book.days > book.days[-1] - pd.Timedelta(days=days)
+            rows.append({"Leg": leg, "Window": label, "Picks": actual[window].sum(),
+                         f"Same $ in {book.benchmark}": same[window].sum(), "Picks added": gap[window].sum(),
+                         "Days held": int((active & window).sum())})
+        share = (gap[active] / book.equity.shift(1)[active]).replace([np.inf, -np.inf], np.nan).dropna()
+        mean, t, n = newey_west_mean(share)
+        rows.append({"Leg": leg, "Window": "Active days", "Picks": actual[active].sum(),
+                     f"Same $ in {book.benchmark}": same[active].sum(), "Picks added": gap[active].sum(),
+                     "Days held": int(n), "t": t})
+    return pd.DataFrame(rows)
+
+
+def show_versus_benchmark(book: "Book"):
+    table = versus_benchmark(book)
+    table = table[table["Days held"] > 0]
+    if table.empty:
+        print("No HL positions in this book yet.")
+        return
+    money = {c: _usd for c in table if c in ("Picks", f"Same $ in {book.benchmark}", "Picks added")}
+    book._table(table.fillna({"t": np.nan}), f"PICKS VS {book.benchmark}",
+                {**money, "Days held": "{:.0f}".format, "t": lambda v: "" if not np.isfinite(v) else f"{v:.1f}"},
+                key={"Picks added": "abs"})
+
+
+Book.versus_benchmark = versus_benchmark
+Book.show_versus_benchmark = show_versus_benchmark
