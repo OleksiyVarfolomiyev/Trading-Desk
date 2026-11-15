@@ -404,6 +404,59 @@ def anchor_to_all_time(history, periods):
     return history.assign(pnl=history['pnl'] + np.interp(seconds, anchors, offsets))
 
 
+def drop_conflicting_points(history):
+    """One row per timestamp: where a timestamp holds several PnL readings, keep the one consistent with its neighbours.
+
+    Value less cumulative PnL is the net deposited so far, so it only changes at a deposit or withdrawal. Earlier
+    merges left some timestamps with a second row whose PnL sat on a drifted baseline (07f2 from 2026-10-10, c248
+    from 2026-11-03); each one read as a jump and back, inflating volatility and bending the desk's beta. The row
+    whose deposit baseline matches the nearest single-reading neighbours is kept.
+    """
+    if history.empty or not history['ts'].duplicated().any():
+        return history
+    history = history.sort_values('ts', kind='stable').reset_index(drop=True)
+    base = history['accountValue'] - history['pnl']
+    single = ~history['ts'].duplicated(keep=False)
+    keep = []
+    for ts, group in history.groupby('ts', sort=False):
+        if len(group) == 1:
+            keep.append(group.index[0])
+            continue
+        first, last = group.index.min(), group.index.max()
+        neighbours = list(base[single & (base.index < first)].tail(1)) + list(base[single & (base.index > last)].head(1))
+        if neighbours:
+            target = float(np.median(neighbours))
+            keep.append((base[group.index] - target).abs().idxmin())
+        else:
+            keep.append(last)
+    return history.loc[sorted(keep)].reset_index(drop=True)
+
+
+def align_to_deposits(history, periods, tolerance=0.5):
+    """Between two allTime points with the same deposit baseline, set PnL to value less that baseline.
+
+    PnL is the change in value less deposits, so value less cumulative PnL only moves at a deposit or withdrawal.
+    HL's finer periods (week, day) report PnL that drifts from the value between allTime points (c248: +-$20, about
+    1% of the account), and a day's last point is often one of them, so the drift became daily return noise. Where
+    the allTime baseline is the same on both sides, no money moved in between and the identity is exact; a stretch
+    with a deposit in it keeps HL's readings.
+    """
+    reference = _period_history(periods, 'allTime')
+    if reference.empty or history.empty:
+        return history
+    reference = reference.sort_values('ts')
+    base = (reference['accountValue'] - reference['pnl']).to_numpy()
+    times = reference['ts'].to_numpy()
+    position = np.searchsorted(times, history['ts'].to_numpy(), side='right')
+    inside = (position > 0) & (position < len(times))
+    before = np.where(inside, base[np.clip(position - 1, 0, len(base) - 1)], np.nan)
+    after = np.where(inside, base[np.clip(position, 0, len(base) - 1)], np.nan)
+    steady = inside & (np.abs(before - after) <= tolerance)
+    pnl = history['pnl'].to_numpy().copy()
+    pnl[steady] = history['accountValue'].to_numpy()[steady] - before[steady]
+    return history.assign(pnl=pnl)
+
+
 def update_portfolio_history(user, data_dir):
     """Merge new HL value and PnL points into the wallet's saved history file."""
     path = account_file(data_dir, 'hl_portfolio_history', user)
@@ -413,8 +466,10 @@ def update_portfolio_history(user, data_dir):
         # Timestamps on an exact second are saved without fractional seconds.
         saved['ts'] = pd.to_datetime(saved['ts'], utc=True, format='ISO8601').dt.tz_convert(ACCOUNTING_TIMEZONE)
     periods = _fetch_portfolio_periods(user)
-    history = merge_portfolio_history(saved, stitch_portfolio_periods(periods))
+    history = merge_portfolio_history(drop_conflicting_points(saved), stitch_portfolio_periods(periods))
+    history = drop_conflicting_points(history)
     history = anchor_to_all_time(history.sort_values('ts', kind='stable').reset_index(drop=True), periods)
+    history = align_to_deposits(history, periods)
     history.to_csv(path, index=False)
     return history
 

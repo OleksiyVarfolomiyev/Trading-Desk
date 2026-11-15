@@ -212,6 +212,43 @@ def paired_returns(book: pd.Series, closes: pd.Series) -> pd.DataFrame:
     return frame[complete].dropna()
 
 
+# Each book against its own benchmark: a short-alt crypto book and a long-stock book partly cancel in one regression,
+# so a single desk beta describes neither (desk/books.py).
+BOOK_BENCHMARKS = {"Crypto": "BTC", "Stocks": "SPY"}
+
+
+def holding_book(venue: str, symbol: str) -> str:
+    """"Crypto" or "Stocks" for a ``position_values`` row: IB is stocks; an HL perp by its market (HIP-3 stock,
+    index and commodity perps and gold are stocks); HL spot and wallet tokens are crypto."""
+    if venue == "ib":
+        return "Stocks"
+    if venue == "hl":
+        from desk.hl.account_analytics import perp_market_group
+        from desk.hl.book_exposure import TRADFI_MAIN_DEX
+
+        return "Stocks" if symbol in TRADFI_MAIN_DEX or perp_market_group(symbol) != "Perp Crypto" else "Crypto"
+    return "Crypto"
+
+
+def book_betas(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benchmarks: pd.DataFrame) -> dict:
+    """Each book's ex-ante beta to its benchmark: today's holdings in that book times each day's return, over
+    ``equity``, regressed on the benchmark. Keys "Beta BTC (crypto)" and "Beta SPY (stocks)"."""
+    out = {}
+    if equity <= 0:
+        return out
+    books = holdings.assign(book=[holding_book(v, s) for v, s in zip(holdings["venue"], holdings["symbol"])])
+    for book, name in BOOK_BENCHMARKS.items():
+        part = books[(books["book"] == book) & books["key"].isin(returns.columns)]
+        if part.empty or name not in benchmarks:
+            continue
+        weights = part.set_index("key")["value"] / equity
+        series = returns[weights.index].fillna(0.0) @ weights
+        pair = paired_returns(series, benchmarks[name])
+        if len(pair) >= 20 and pair["bench"].var() > 0:
+            out[f"Beta {name} ({book.lower()})"] = float(pair["book"].cov(pair["bench"]) / pair["bench"].var())
+    return out
+
+
 def ex_ante_row(
     holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benchmarks: pd.DataFrame, missing: list[str],
 ) -> dict:
@@ -239,6 +276,7 @@ def ex_ante_row(
                 row[f"Beta {name}"] = stats["beta"]
                 row[f"Beta {name} 90% range"] = (f"{stats['beta_low']:.2f} to {stats['beta_high']:.2f}"
                                                  if np.isfinite(stats.get("beta_low", np.nan)) else "n/a")
+    row.update(book_betas(covered, returns, equity, benchmarks))
     if missing:
         row["Not priced"] = ", ".join(sorted(set(missing)))
     return row

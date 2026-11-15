@@ -350,7 +350,21 @@ function mergedHistory(portfolio) {
     const offset = series[0].t >= start ? series[0].pnl - pnlAt(finer, series[0].t) : pnlAt(series, start) - finer[0].pnl;
     series = series.filter((p) => p.t < start).concat(finer.map((p) => ({ t: p.t, value: p.value, pnl: p.pnl + offset })));
   }
-  return series;
+  return alignToDeposits(series, points("allTime"));
+}
+
+// Between two all-time points with the same deposit baseline (value less PnL), PnL is value less that baseline:
+// no money moved in between, and HL's finer windows drift from it by about 1% of the account, which a day's last
+// point carried into daily returns (desk/hl/account_analytics.py align_to_deposits).
+function alignToDeposits(series, reference) {
+  if (reference.length < 2) return series;
+  const base = reference.map((p) => p.value - p.pnl);
+  return series.map((p) => {
+    let i = 0;
+    while (i < reference.length && reference[i].t <= p.t) i++;
+    if (i === 0 || i === reference.length) return p;
+    return Math.abs(base[i - 1] - base[i]) <= 0.5 ? { t: p.t, value: p.value, pnl: p.value - base[i - 1] } : p;
+  });
 }
 
 const dayOf = (t) => new Date(t).toISOString().slice(0, 10);

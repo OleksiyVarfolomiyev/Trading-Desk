@@ -1241,6 +1241,21 @@ class LiveRiskTests(unittest.TestCase):
         self.assertGreater(row["VaR 95%"], 0)
         self.assertNotIn("Sharpe", row)
 
+    def test_each_book_has_its_own_beta(self):
+        rng = np.random.default_rng(5)
+        spy = pd.Series(rng.normal(0, 0.01, 90), index=self.days)
+        benchmarks = self.benchmarks.assign(SPY=100 * (1 + spy).cumprod())
+        returns = self.returns.assign(**{"ib:U1:MU": 2.0 * spy})
+        holdings = pd.DataFrame({"key": ["hl:w:SOL", "ib:U1:MU"], "venue": ["hl", "ib"], "symbol": ["SOL", "MU"],
+                                 "ref": ["", "1"], "value": [-1_000.0, 500.0]})
+        row = self.live_risk.ex_ante_row(holdings, returns, 1_000.0, benchmarks, [])
+        # Crypto: -1x SOL (beta 1.5 to BTC) is about -1.5; stocks: 0.5x MU (beta 2 to SPY) is 1.0.
+        self.assertAlmostEqual(row["Beta BTC (crypto)"], -1.5, delta=0.1)
+        self.assertAlmostEqual(row["Beta SPY (stocks)"], 1.0, delta=0.05)
+        self.assertEqual(self.live_risk.holding_book("hl", "xyz:AMD"), "Stocks")
+        self.assertEqual(self.live_risk.holding_book("hl", "PAXG"), "Stocks")
+        self.assertEqual(self.live_risk.holding_book("wallet", "sVVV"), "Crypto")
+
     def test_paired_returns_keep_mondays_and_compound_the_weekend(self):
         days = pd.date_range("2026-10-30", "2026-11-04", freq="D", tz="UTC")  # Fri .. Wed
         book = pd.Series(0.01, index=days[1:])

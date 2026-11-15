@@ -292,8 +292,8 @@ def total_row(frame: pd.DataFrame) -> dict:
     return row
 
 
-def show_market_making() -> None:
-    """The ladders' table for the notebooks."""
+def show_market_making(keep=None) -> None:
+    """The ladders' table for the notebooks; ``keep`` (coin -> bool) limits it to one book's coins."""
     from desk.hl.account_analytics import display_interactive_table
 
     ladders = running_ladders()
@@ -308,6 +308,11 @@ def show_market_making() -> None:
         print("No market-making ladder is running or has traded in the last 30 days: start one with "
               "hl_daemon.py ladder --wallet c248 --coin X (the trading daemon runs the ladders).")
         return
+    if keep is not None:
+        frame = frame[frame["Coin"].map(keep)].reset_index(drop=True)
+        if frame.empty:
+            print("No market making in this book.")
+            return
     frame = pd.concat([frame, pd.DataFrame([total_row(frame)])], ignore_index=True)
     money = lambda value: "" if value != value else (f"{_usd(-abs(value))}" if value < 0 else f"{_usd(value)}")
     bps = lambda value: "" if value != value else f"{value:.1f}"

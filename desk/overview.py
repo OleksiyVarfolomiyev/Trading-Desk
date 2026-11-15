@@ -458,8 +458,8 @@ class DeskOverview:
 
         show_ladder_candidates()
 
-    def show_positions(self):
-        """Open positions on every venue, one table per asset class."""
+    def show_positions(self, kind: str | None = None):
+        """Open positions on every venue, one table per asset class; ``kind`` ("Crypto" or "Stocks") shows one book."""
         if not self._require():
             return
         frame = self.positions_frame(trading_only=True)  # wallet tokens are in the wallet holdings table
@@ -481,6 +481,13 @@ class DeskOverview:
         except Exception:
             funding = {}
         frame = with_position_returns(frame, moves, funding)
+        if kind is not None:
+            frame = frame[frame["Asset class"].map(lambda name: "Crypto" if str(name).startswith("crypto") else "Stocks") == kind]
+            if frame.empty:
+                print(f"No open {kind.lower()} positions.")
+                return
+            gross = frame["Value"].abs().sum()
+            frame = frame.assign(Weight=frame["Value"].abs() / gross if gross else float("nan"))
         kinds = frame["Asset class"].map(lambda name: "Crypto" if str(name).startswith("crypto") else "Stocks and tradfi")
         for klass, group in frame.groupby(kinds, sort=True):  # Crypto, then stocks and tradfi (IB and HL equity perps)
             group = group.sort_values(["Asset class", "Value"], key=lambda column: column if column.name == "Asset class" else column.abs(),
@@ -510,6 +517,10 @@ class DeskOverview:
             )
         frame = frame.assign(gross=frame["Value"].abs())
         leverage = frame["gross"].sum() / self.desk_equity if self.desk_equity else float("nan")
+        if kind is not None:
+            print(f"Value is signed (shorts negative). Weight is each position's share of this book's gross exposure. "
+                  f"Exposure / desk value sums to this book's gross leverage ({leverage:.0%} of desk value).")
+            return
         print("Value is signed (shorts negative). Weight is each position's share of gross exposure (absolute "
               "values), so weights sum to 100% across both tables (wallet tokens are listed separately). Exposure / desk "
               f"value is gross value over desk value; summed over both tables it is gross leverage ({leverage:.0%} now), "

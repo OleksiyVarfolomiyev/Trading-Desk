@@ -497,6 +497,28 @@ class RealizedPnlTests(unittest.TestCase):
         history = self.account.stitch_portfolio_periods(periods)
         self.assertEqual(list(history["pnl"]), [0.0, 20.0, 30.0, 40.0])
 
+    def test_conflicting_points_keep_the_reading_on_the_deposit_baseline(self):
+        ts = pd.to_datetime(["2026-11-03 01:00", "2026-11-03 03:00", "2026-11-03 03:00", "2026-11-03 05:00"], utc=True)
+        # Value less PnL is 805 (net deposited) on the single readings; the second 03:00 row drifted to 828.
+        history = pd.DataFrame({"ts": ts, "accountValue": [1065.0, 1087.0, 1087.0, 1064.0],
+                                "pnl": [260.0, 282.0, 259.0, 259.0]})
+        cleaned = self.account.drop_conflicting_points(history)
+        self.assertEqual(len(cleaned), 3)
+        self.assertEqual(list(cleaned["pnl"]), [260.0, 282.0, 259.0])
+
+    def test_finer_points_follow_value_less_deposits_between_steady_anchors(self):
+        now = pd.Timestamp("2026-06-30 12:00", tz="UTC")
+        # Deposits of 100 throughout (value - pnl = 100), then a 1,000 deposit between the last two anchors.
+        periods = {"allTime": self._portfolio_period(now, [(48, 110, 10), (24, 120, 20), (0, 1130, 30)])}
+        history = pd.DataFrame({
+            "ts": [now - pd.Timedelta(hours=h) for h in (48, 36, 24, 12, 0)],
+            "accountValue": [110.0, 117.0, 120.0, 625.0, 1130.0],
+            "pnl": [10.0, 15.0, 20.0, 24.0, 30.0],   # 36h drifted (should be 17); 12h straddles the deposit
+        })
+        history["ts"] = history["ts"].dt.tz_convert(self.account.ACCOUNTING_TIMEZONE)
+        aligned = self.account.align_to_deposits(history, periods)
+        self.assertEqual(list(aligned["pnl"]), [10.0, 17.0, 20.0, 24.0, 30.0])
+
     def test_saved_points_survive_after_hl_drops_them(self):
         now = pd.Timestamp("2026-06-30 12:00", tz="UTC")
         times = [now - pd.Timedelta(hours=hours) for hours in (4, 2)]

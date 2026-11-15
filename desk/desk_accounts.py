@@ -605,8 +605,8 @@ class DeskAccounts:
             self._highlights_state = HighlightsState(self.data_dir / ACCOUNTS_HIGHLIGHTS_STATE)
         since = self._highlights_state.compare(metrics, items)
         show_highlights(well, attention, since,
-                        footnote="Returns are time-weighted and net of deposits and withdrawals. Betas here are "
-                                 "simple weekly estimates; the risk metrics section has bootstrap ranges.")
+                        footnote="Returns are time-weighted and net of deposits and withdrawals. Betas are per book on today's "
+                                 "holdings: crypto against BTC, stocks against SPY (desk_crypto and desk_stocks notebooks).")
 
     def highlight_rows(self, funding: dict[tuple[str, str], float] | None = None) -> tuple[list, list, dict, dict]:
         """What stands out and needs attention (performance, risk and current state), and the key numbers.
@@ -631,8 +631,11 @@ class DeskAccounts:
             parts = []
             if len(current):
                 row = current.iloc[0]
-                beta_btc, beta_spy = row.get("Beta BTC", np.nan), row.get("Beta SPY", np.nan)
-                betas = "".join(f", beta {name} {value:.2f}" for name, value in (("BTC", beta_btc), ("SPY", beta_spy))
+                # Each book against its own benchmark (desk/books.py): one desk beta blends a short-alt crypto book
+                # with a long-stock book and describes neither.
+                beta_btc, beta_spy = row.get("Beta BTC (crypto)", np.nan), row.get("Beta SPY (stocks)", np.nan)
+                betas = "".join(f", {book} beta {value:+.2f} to {name}"
+                                for book, name, value in (("crypto", "BTC", beta_btc), ("stocks", "SPY", beta_spy))
                                 if pd.notna(value))
                 if pd.notna(row.get("Volatility (/yr)", np.nan)):
                     var95, equity = row.get("VaR 95%", np.nan), self.overview.desk_equity
@@ -662,7 +665,7 @@ class DeskAccounts:
         metrics.update({"Desk return since start": (returns["since start"], "pct"),
                         "Desk return 30D": (returns.get("30D", np.nan), "pct"),
                         "Drawdown now": (drawdown, "pct"), "Sharpe (current regime)": (sharpe, "num"),
-                        "Beta SPY (current book)": (beta_spy, "num"), "Beta BTC (current book)": (beta_btc, "num")})
+                        "Beta SPY (stock book)": (beta_spy, "num"), "Beta BTC (crypto book)": (beta_btc, "num")})
         try:  # alt season or equity sell-off forming (desk/market_regime.py; read at most every 6 hours)
             from desk import market_regime
 
@@ -753,12 +756,13 @@ class DeskAccounts:
             return
         formats = {"Return (total)": "{:.1%}", "Volatility (/yr)": "{:.1%}", "Sharpe": "{:.2f}", "Max drawdown": "{:.1%}",
                    "VaR 95%": _usd, "VaR 99%": _usd, "Beta BTC": "{:.2f}", "Beta SPY": "{:.2f}",
+                   "Beta BTC (crypto)": "{:+.2f}", "Beta SPY (stocks)": "{:+.2f}",
                    "Alpha vs BTC (/yr)": "{:.1%}", "Alpha vs SPY (/yr)": "{:.1%}", "Periods": "{:.0f}"}
         formats["Coverage"] = "{:.0%}"
         basis = table.set_index("Basis")
         styler = basis.style.format({k: v for k, v in formats.items() if k in table}, na_rep="")
         # Dollar VaR and the BTC beta are what the risk row is read for.
-        display(emphasis.style_frame(styler, basis, {"VaR 95%": None, "Beta BTC": None}, title="DESK RISK METRICS"))
+        display(emphasis.style_frame(styler, basis, {"VaR 95%": None, "Beta BTC (crypto)": None, "Beta SPY (stocks)": None}, title="DESK RISK METRICS"))
         print(RISK_NOTE)
         self.risk_table = table
 

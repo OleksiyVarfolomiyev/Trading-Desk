@@ -27,6 +27,7 @@
   const WALLET_MIN_SHARE = 0.05;  // wallet tokens shown from this share of the desk up (desk/overview.py)
   const ADVERSE_FUNDING_APR = 0.365, ADVERSE_FUNDING_MIN_DAILY = 0.25, FUNDING_SUSTAINED_HOURS = 6;
   const CRYPTO_HIP3_DEXES = new Set(["hyna"]);
+  const TRADFI_MAIN_DEX = new Set(["PAXG", "XAUT"]);  // gold on the main DEX is TradFi (desk/hl/book_exposure.py)
   const CRYPTO_HIP3_MARKETS = new Set(["cash:BTC", "cash:ETH", "flx:BTC", "flx:USDE", "flx:XMR", "io:PRL",
     "para:ANSEM", "para:BTCD", "para:HYPE2", "para:OTHERS", "para:TOTAL2"]);
   const USD_STABLES = ["USDC", "USDT", "USDE", "DAI", "USDH"];
@@ -369,6 +370,17 @@
       // coarse series starts; otherwise where the finer window starts.
       const offset = series[0].t >= start ? series[0].pnl - pnlAt(finer, series[0].t) : pnlAt(series, start) - finer[0].pnl;
       series = series.filter((p) => p.t < start).concat(finer.map((p) => ({ t: p.t, value: p.value, pnl: p.pnl + offset })));
+    }
+    // Between two all-time points with the same deposit baseline (value less PnL) no money moved, so PnL is value
+    // less that baseline; HL's finer windows drift from it by about 1% of the account (worker.js alignToDeposits).
+    const reference = points("allTime"), base = reference.map((p) => p.value - p.pnl);
+    if (reference.length >= 2) {
+      series = series.map((p) => {
+        let i = 0;
+        while (i < reference.length && reference[i].t <= p.t) i++;
+        if (i === 0 || i === reference.length || Math.abs(base[i - 1] - base[i]) > 0.5) return p;
+        return { t: p.t, value: p.value, pnl: p.value - base[i - 1] };
+      });
     }
     // PnL is measured from the wallet's first point, so a wallet joining later enters as a deposit.
     return series.map((p) => ({ t: p.t, value: p.value, pnl: p.pnl - series[0].pnl }));
@@ -974,8 +986,9 @@
     if (riskRow && fin(riskRow["Volatility (/yr)"])) {
       riskParts.push(`volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr`);
       if (deskEquity > 0 && fin(riskRow["VaR 95%"])) riskParts.push(`VaR 95% ${percent(riskRow["VaR 95%"] / deskEquity)}/day`);
-      [["BTC", riskRow["Beta BTC"]], ["S&P 500", riskRow["Beta S&P 500"]]].filter(([, b]) => fin(b))
-        .forEach(([name, b]) => riskParts.push(`beta ${name} ${b.toFixed(2)}`));
+      [["crypto", "BTC", riskRow["Beta BTC (crypto)"]], ["stocks", "S&P 500", riskRow["Beta S&P 500 (stocks)"]]]
+        .filter(([, , b]) => fin(b))
+        .forEach(([book, name, b]) => riskParts.push(`${book} beta ${b >= 0 ? "+" : ""}${b.toFixed(2)} to ${name}`));
     }
     if (riskParts.length) {
       const text = riskParts.join(", ").replace(/^./, (c) => c.toUpperCase()) + ".";
@@ -1201,7 +1214,9 @@
 
   function exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value, ibs, ibCloses }) {
     // Daily close-to-close returns for each holding; wallet tokens and HL spot use HL's perp of the same coin.
-    const holdings = hlPositions.map((p) => ({ coin: p.coin, value: value(p) }));
+    // Each holding's book (desk/live_risk.py holding_book): HL stock, index and commodity perps and gold are stocks.
+    const holdings = hlPositions.map((p) => ({ coin: p.coin, value: value(p),
+      book: assetClass(p.coin) === "crypto perp" && !TRADFI_MAIN_DEX.has(p.coin) ? "crypto" : "stocks" }));
     trading.forEach((a) => a.spot.forEach((s) => holdings.push({ coin: s.coin, value: s.value })));
     wallets.forEach((a) => a.positions.forEach((p) => {
       const coin = riskCoin(p.symbol);
@@ -1231,12 +1246,17 @@
     };
     let covered = 0, total = 0;
     const pnl = days.map(() => 0);
+    const bookPnl = { crypto: days.map(() => 0), stocks: days.map(() => 0) };
+    const add = (book, r, amount) => r.forEach((x, i) => {
+      const change = fin(x) ? amount * x : 0;
+      pnl[i] += change; bookPnl[book][i] += change;
+    });
     for (const holding of ibHoldings) {
       total += Math.abs(holding.value);
       const r = ibReturns(holding.symbol);
       if (!r) continue;
       covered += Math.abs(holding.value);
-      r.forEach((x, i) => { pnl[i] += fin(x) ? holding.value * x : 0; });
+      add("stocks", r, holding.value);
     }
     for (const holding of holdings) {
       total += Math.abs(holding.value);
@@ -1244,7 +1264,7 @@
       const r = holding.coin ? returnsOf(holding.coin) : null;
       if (!r) continue;
       covered += Math.abs(holding.value);
-      r.forEach((x, i) => { pnl[i] += fin(x) ? holding.value * x : 0; });
+      add(holding.book || "crypto", r, holding.value);
     }
     if (!total || !deskEquity) return null;
     const book = pnl.map((x) => x / deskEquity);
@@ -1256,6 +1276,9 @@
       "Coverage": covered / total, "Volatility (/yr)": std(book) * Math.sqrt(365),
       "VaR 95%": -quantile(pnl, 0.05), "VaR 99%": -quantile(pnl, 0.01), "Max drawdown": worst,
       "Beta BTC": btc ? beta(book, btc) : NaN, "Beta S&P 500": sp ? beta(book, sp) : NaN,
+      // Each book against its own benchmark: one desk beta blends a short-alt book with a long-stock book.
+      "Beta BTC (crypto)": btc ? beta(bookPnl.crypto.map((x) => x / deskEquity), btc) : NaN,
+      "Beta S&P 500 (stocks)": sp ? beta(bookPnl.stocks.map((x) => x / deskEquity), sp) : NaN,
     };
   }
 

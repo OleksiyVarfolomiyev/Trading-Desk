@@ -233,6 +233,31 @@ def hl_book_entry(wallets: list[str], label: str = "") -> BookEntry:
     )
 
 
+def hl_position_risks(wallets: list[str]) -> list[dict]:
+    """Each HL position's open risk as the executor counts it (to its resting stop, else 1.25 x ATR, plus adverse
+    funding and fees; a hedge counts nothing): wallet, coin, dex, value, risk, basis. The per-position split of
+    ``hl_book_entry``'s total, for tables that show risk by book or by position."""
+    executor = _hl_executor()
+    dexes = executor.get_dexes([])
+    markets = executor.fetch_markets(dexes)
+    snapshot = executor.collect_snapshot(wallets, dexes, markets)
+    stops = executor.resting_stops(wallets, sorted({position.dex for position in snapshot.positions}))
+    rows = []
+    for position in snapshot.positions:
+        hedge = executor.is_hedged(position.wallet, position.coin)
+        stop = executor.nearest_stop(position, stops)
+        risk = 0.0
+        if not hedge:
+            name = position.coin.split(":")[-1]
+            risk = executor.position_risk(position, executor.fetch_daily_candles(name, position.dex),
+                                          executor.fetch_funding_history(name, position.dex),
+                                          snapshot.taker_fee_rate, snapshot.maker_fee_rate, stop_price=stop)
+        rows.append({"wallet": position.wallet, "coin": position.coin, "dex": position.dex,
+                     "value": position.quantity * position.mark_price, "risk": risk,
+                     "basis": "hedge (not counted)" if hedge else "to its stop" if stop else "1.25 x ATR(14)"})
+    return rows
+
+
 def other_venue_book(venue: str, accounts: list[Account] | None = None,
                      already_counted: tuple[str, ...] = ()) -> DeskBook:
     """Risk book of every configured account the calling executor does not already count.
