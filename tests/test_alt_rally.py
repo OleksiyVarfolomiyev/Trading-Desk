@@ -99,3 +99,30 @@ class StallTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MomentumTests(unittest.TestCase):
+    def test_a_fast_bounce_or_drop_fires_and_a_quiet_tape_does_not(self):
+        from desk import alt_rally
+
+        def candle(t, low, high, close):
+            return {"t": t * 300_000, "l": low, "h": high, "c": close}
+        bounce = [candle(0, 63000, 63500, 63200), candle(1, 61970, 62600, 62063), candle(13, 64500, 64900, 64812)]
+        move, minutes, start, price = alt_rally.burst(bounce)
+        self.assertAlmostEqual(move, 64812 / 61970 - 1)     # 4.6% off the low
+        self.assertEqual((start, price, minutes), (61970, 64812, 65.0))
+        drop = [candle(0, 64000, 65000, 64900), candle(6, 62000, 62500, 62400)]
+        self.assertLess(alt_rally.burst(drop)[0], -0.03)
+        quiet = [candle(0, 64000, 64500, 64200), candle(6, 63800, 64400, 64300)]
+        self.assertIsNone(alt_rally.burst(quiet))
+
+
+class SelloffBeforeTests(unittest.TestCase):
+    def test_the_fall_into_the_bounce_low(self):
+        from desk import alt_rally
+
+        hour = 3_600_000
+        hourly = [{"t": i * hour, "h": 70000 - i * 300, "l": 69500 - i * 300} for i in range(25)]   # a day of selling
+        self.assertLess(alt_rally.selloff_before(hourly, 24 * hour), alt_rally.SELLOFF_MOVE)
+        flat = [{"t": i * hour, "h": 64100, "l": 63900} for i in range(25)]
+        self.assertGreater(alt_rally.selloff_before(flat, 24 * hour), alt_rally.SELLOFF_MOVE)

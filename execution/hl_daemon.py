@@ -1065,6 +1065,7 @@ ALERT_HEARTBEAT_SECONDS = 900    # and at least this often to the web relay
 API_KEY_WARN_DAYS = 30           # warn this long before an HL API wallet expires
 API_KEY_CHECK_SECONDS = 6 * 3600
 FUNDING_CHECK_SECONDS = 600      # adverse-funding check (desk/funding_watch.py); funding history is cached hourly
+MOMENTUM_CHECK_SECONDS = 60     # BTC/ETH fast-move watch (desk/alt_rally.py burst): two 5-minute candle requests
 ALT_RALLY_CHECK_SECONDS = 300    # alt rally watch (desk/alt_rally.py): one request, HL's 24-hour moves
 EVENT_CHECK_SECONDS = 3600       # supply events, burn heads-up and debriefs (desk/event_watch.py)
 ALT_RALLY_FILE = Path(__file__).resolve().parents[1] / "data" / "alt_rally_watches.json"  # when watches fired
@@ -1245,6 +1246,40 @@ class Alerts:
             stale = [key for key in self.items if key.startswith("funding:") and key not in live]
         for key in stale:  # closed positions
             self.clear(key)
+
+    def watch_momentum(self) -> None:
+        """Momentum (desk/alt_rally.py ``burst``): BTC or ETH 3% or more off its two-hour low or high, checked every
+        minute on 5-minute candles. 2026-11-15 BTC bounced 4.6% in an hour and the desk said nothing."""
+        from desk import alt_rally
+        from desk.numbers import usd
+
+        now = time.time()
+        if now - getattr(self, "momentum_checked_at", 0.0) < MOMENTUM_CHECK_SECONDS:
+            return
+        self.momentum_checked_at = now
+        end = int(now * 1000)
+        for coin in alt_rally.MOMENTUM_COINS:
+            candles = post_info({"type": "candleSnapshot", "req": {"coin": coin, "interval": "5m",
+                                                                   "startTime": end - alt_rally.MOMENTUM_MINUTES * 60000, "endTime": end}}) or []
+            found = alt_rally.burst(candles)
+            key = f"momentum:{coin}"
+            if found is None:
+                self.clear(key)
+                continue
+            move, minutes, start, price = found
+            text = f"{coin} {_pct(abs(move))} {'up' if move > 0 else 'down'} in {minutes:.0f} min ({usd(start)} to {usd(price)})"
+            title = f"{coin} {'bounce' if move > 0 else 'drop'}"
+            if move > 0:
+                # The desk's rule: a momentum bounce after a day of hard selling is when the shorts' cash comes off the
+                # table, while the transient regime settles.
+                low_ms = end - int(minutes * 60000)
+                hourly = post_info({"type": "candleSnapshot", "req": {"coin": coin, "interval": "1h",
+                                                                      "startTime": low_ms - 26 * 3600000, "endTime": end}}) or []
+                fell = alt_rally.selloff_before(hourly, low_ms)
+                if fell <= alt_rally.SELLOFF_MOVE:
+                    title = f"{coin} bounce after a sell-off: take profits on shorts"
+                    text += f", after {_pct(abs(fell))} down in the day before"
+            self.set(key, title, text)
 
     def watch_alt_rally(self, daemon: "Daemon") -> None:
         """Alt rally watch (desk/alt_rally.py): the alt basket's 24-hour move, every ALT_RALLY_CHECK_SECONDS. A watch
@@ -1501,6 +1536,10 @@ class Alerts:
             self.watch_alt_rally(daemon)
         except Exception as exc:  # so is the alt rally watch
             log(f"alt rally check failed ({type(exc).__name__}: {exc})")
+        try:
+            self.watch_momentum()
+        except Exception as exc:  # and the momentum watch
+            log(f"momentum check failed ({type(exc).__name__}: {exc})")
         now = time.time()
         for wallet in daemon.state.wallets:
             age = now - daemon.state.state_time.get(wallet, 0.0)

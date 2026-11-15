@@ -33,6 +33,10 @@ REPEAT_WINDOW = (20 * 3600, 48 * 3600)  # a watch this long ago (a previous day,
 EXCLUDED = {"BTC", "ETH", "USDC", "USDT", "USDE", "DAI", "PAXG", "XAUT"}
 STOCK_INDEX = "xyz:SP500"
 STOCK_DEX = "xyz"
+MOMENTUM_COINS = ("BTC", "ETH")   # a fast move in the majors is the desk's momentum signal
+MOMENTUM_MOVE = 0.03               # 3% or more off the low (or the high) ...
+MOMENTUM_MINUTES = 120             # ... within the last two hours
+SELLOFF_MOVE = -0.05               # a bounce after a 5%+ fall over the prior day is the desk's cue to take profits
 STOCK_WATCH_MOVE = -0.02
 STOCK_CUT_MOVE = -0.035
 
@@ -219,3 +223,29 @@ def _pct(value: float) -> str:
     from desk.numbers import pct
 
     return pct(value)
+
+
+def burst(candles: list[dict], threshold: float = MOMENTUM_MOVE) -> tuple[float, float, float, float] | None:
+    """A fast move in the window ``candles`` cover (HL candles: t, h, l, c): ``(move, minutes, from, to)`` off the
+    window's low (a bounce, positive) or high (a drop, negative), whichever is larger, when it reaches ``threshold``."""
+    if not candles:
+        return None
+    close, end = float(candles[-1]["c"]), int(candles[-1]["t"])
+    low = min(candles, key=lambda candle: float(candle["l"]))
+    high = max(candles, key=lambda candle: float(candle["h"]))
+    up = close / float(low["l"]) - 1
+    down = close / float(high["h"]) - 1
+    move, start, price = (up, int(low["t"]), float(low["l"])) if up >= -down else (down, int(high["t"]), float(high["h"]))
+    if abs(move) < threshold:
+        return None
+    return move, max(5.0, (end - start) / 60000 + 5), price, close
+
+
+def selloff_before(hourly: list[dict], low_time_ms: int) -> float:
+    """How far the price fell over the 24 hours up to ``low_time_ms`` (the bounce's low), from HL hourly candles:
+    the low against the highest high of that day (negative)."""
+    day = [candle for candle in hourly if low_time_ms - 86_400_000 <= int(candle["t"]) <= low_time_ms]
+    if not day:
+        return 0.0
+    low = min(float(candle["l"]) for candle in day)
+    return low / max(float(candle["h"]) for candle in day) - 1
