@@ -728,12 +728,8 @@ class Book:
         if len(closes):
             figure.add_trace(go.Scatter(x=closes.index, y=100 * (closes / closes.iloc[0] - 1), name=self.benchmark,
                                         line={"color": "#F7931A" if self.benchmark == "BTC" else "#16a34a"}))
-        daily = self.pnl[self.pnl.index >= returns.index[0]]
-        figure.add_trace(go.Bar(x=daily.index, y=daily, name="Daily PnL ($)", yaxis="y2", opacity=0.35,
-                                marker_color=np.where(daily >= 0, "#16a34a", "#dc2626")))
         figure.update_layout(title=f"{self.kind} book vs {self.benchmark} (%, since {_since(returns.index[0])})",
                              template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%",
-                             yaxis2={"overlaying": "y", "side": "right", "tickprefix": "$", "showgrid": False},
                              legend={"orientation": "h", "y": 1.08})
         show_chart(figure)
 
