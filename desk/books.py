@@ -775,7 +775,7 @@ class Book:
         """The ladders' table (desk/market_making.py), this book's coins only."""
         from desk.market_making import show_market_making
 
-        show_market_making(keep=lambda coin: bool(coin) and hl_kind("perp", coin) == self.kind)
+        show_market_making(keep=lambda coin: bool(coin) and hl_kind("perp", coin) == self.kind, notes=False)
 
     def show_reconciliation(self):
         table = self.reconciliation()

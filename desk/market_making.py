@@ -292,13 +292,15 @@ def total_row(frame: pd.DataFrame) -> dict:
     return row
 
 
-def show_market_making(keep=None) -> None:
-    """The ladders' table for the notebooks; ``keep`` (coin -> bool) limits it to one book's coins."""
+def show_market_making(keep=None, notes: bool = True) -> None:
+    """The ladders' table for the notebooks; ``keep`` (coin -> bool) limits it to one book's coins; ``notes=False``
+    leaves out the explanations (the book notebooks)."""
     from desk.hl.account_analytics import display_interactive_table
 
     ladders = running_ladders()
-    print(f"Ladders on file: {', '.join(item['coin'] + ' (...' + item['wallet'][-4:] + ')' for item in ladders) or 'none'} "
-          f"({LADDERS_FILE}).")
+    if notes:
+        print(f"Ladders on file: {', '.join(item['coin'] + ' (...' + item['wallet'][-4:] + ')' for item in ladders) or 'none'} "
+              f"({LADDERS_FILE}).")
     try:
         frame = market_making_frame()
     except Exception as exc:  # say what failed instead of showing nothing
@@ -325,6 +327,8 @@ def show_market_making(keep=None) -> None:
                     "Queued": lambda value: "" if value != value else f"{value:,.0f}",
                     "Position vs base": lambda value: "" if value != value else f"{_pct(value)}"},
         key_columns={"Ladder PnL": "abs"})
+    if not notes:
+        return
     print("Ladder PnL is the ladders' result against simply holding the position you opened: spread captured (round "
           "trips) plus inventory drift (what the unmatched buys or sells made as the price moved) plus fees (paid: negative) plus funding (on the ladder's own inventory only: received positive, paid negative). Captured per "
           "$1k is the edge apart from the price's path. Markouts: the move 1 and 15 minutes after each fill, for (+) or "

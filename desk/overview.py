@@ -518,9 +518,7 @@ class DeskOverview:
         frame = frame.assign(gross=frame["Value"].abs())
         leverage = frame["gross"].sum() / self.desk_equity if self.desk_equity else float("nan")
         if kind is not None:
-            print(f"Value is signed (shorts negative). Weight is each position's share of this book's gross exposure. "
-                  f"Exposure / desk value sums to this book's gross leverage ({leverage:.0%} of desk value).")
-            return
+            return   # the book notebooks: the table speaks for itself
         print("Value is signed (shorts negative). Weight is each position's share of gross exposure (absolute "
               "values), so weights sum to 100% across both tables (wallet tokens are listed separately). Exposure / desk "
               f"value is gross value over desk value; summed over both tables it is gross leverage ({leverage:.0%} now), "
