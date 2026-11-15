@@ -18,6 +18,18 @@ class LadderMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(row["Fees"], -0.3)  # paid: negative
         self.assertLess(row["Inventory drift"], 0)  # bought into a fall
 
+    def test_spread_pairs_fills_in_time_order_not_by_average(self):
+        # A falling market: bought 1 at 110 (t0), sold 1 at 100 (t1), sold 1 at 90 (t2), bought 1 at 80 (t3).
+        # By average the matched part sold at 95 and bought at 95: 0. In time order the first buy lost 10 on its
+        # sell, and the second sell made 10 on its buy back: 0 as well, but a sell-first trend must not read as loss.
+        fills = [{"side": "A", "px": "100", "sz": "1", "time": 0}, {"side": "B", "px": "90", "sz": "1", "time": 1},
+                 {"side": "A", "px": "90", "sz": "1", "time": 2}, {"side": "B", "px": "80", "sz": "1", "time": 3}]
+        self.assertAlmostEqual(market_making.round_trip_pnl(fills), 20.0)   # both short round trips made 10
+        early_buys = [{"side": "B", "px": "110", "sz": "2", "time": 0}, {"side": "A", "px": "90", "sz": "1", "time": 1},
+                      {"side": "A", "px": "100", "sz": "1", "time": 2}]
+        self.assertAlmostEqual(market_making.round_trip_pnl(early_buys), -30.0)  # bought 110, sold 90 and 100
+        self.assertAlmostEqual(market_making.round_trip_pnl(early_buys[::-1]), -30.0)  # input order does not matter
+
     def test_markouts_are_signed_for_the_fill(self):
         minute = 60_000
         closes = pd.Series({index * minute: 100.0 - index for index in range(30)})  # falls 1 a minute

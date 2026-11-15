@@ -5,10 +5,10 @@ starting ``0x1add``, so HL's own fill history tells their fills apart from the p
 Per ladder, from those fills alone:
 
 * Fills, Volume: how many ladder orders filled, and their notional;
-* Spread captured: the matched part (as much bought as sold) times the average sell less the
-  average buy: what the round trips earned;
-* Inventory drift: what the unmatched part (bought more than sold, or the other way) made or lost
-  as the price moved: what trimming into a trend costs;
+* Spread captured: what the round trips earned, paired in time order (first in, first out): each buy or
+  sell closes the oldest open fills on the other side. Pairing by average price would charge a trend's
+  timing (early buys high, later sells low) to the spread;
+* Inventory drift: the rest, what the fills still open made or lost as the price moved;
 * Fees: what the ladders paid, as a negative amount (a maker rebate would be positive);
 * Funding: what the ladder's own inventory (the position above or below its base) earned (+) or paid (-)
   in funding: each hourly payment times the share of the position that was ladder inventory then;
@@ -107,6 +107,27 @@ def ladder_funding_parts(ladder_fills: list[dict], events: list[dict]):
         yield event, (float(delta["usdc"]) * inventory / size if size and delta.get("usdc") is not None else 0.0)
 
 
+def round_trip_pnl(fills: list[dict]) -> float:
+    """What the round trips earned, paired first in, first out in time order (open fills are not counted)."""
+    ordered = sorted(fills, key=lambda fill: fill.get("time", 0))
+    open_lots: list[list[float]] = []   # [signed size, price], oldest first
+    earned = 0.0
+    for fill in ordered:
+        price, size = float(fill["px"]), float(fill["sz"])
+        left = size if fill["side"] == "B" else -size
+        while left and open_lots and (open_lots[0][0] > 0) != (left > 0):
+            lot = open_lots[0]
+            part = min(abs(lot[0]), abs(left))
+            earned += part * (price - lot[1]) if lot[0] > 0 else part * (lot[1] - price)
+            lot[0] += -part if lot[0] > 0 else part
+            left += -part if left > 0 else part
+            if abs(lot[0]) < 1e-12:
+                open_lots.pop(0)
+        if abs(left) > 1e-12:
+            open_lots.append([left, price])
+    return earned
+
+
 def metrics(fills: list[dict], mark: float) -> dict:
     """Fills, volume, spread captured, ladder PnL (fills' cash + net holding at ``mark`` - fees) and fees."""
     bought = sold = cost = proceeds = fees = 0.0
@@ -117,8 +138,7 @@ def metrics(fills: list[dict], mark: float) -> dict:
             bought, cost = bought + size, cost + price * size
         else:
             sold, proceeds = sold + size, proceeds + price * size
-    matched = min(bought, sold)
-    captured = matched * (proceeds / sold - cost / bought) if bought and sold else 0.0
+    captured = round_trip_pnl(fills)
     net = bought - sold
     pnl = proceeds - cost + (net * mark if mark == mark else 0.0) - fees
     volume = cost + proceeds
