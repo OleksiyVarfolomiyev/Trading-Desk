@@ -807,16 +807,35 @@ def _usd_plain(value) -> str:
 # ----------------------------------------------------------------------------------------------------------------
 # Factor model of the book's actual returns (desk/book_factors.py)
 # ----------------------------------------------------------------------------------------------------------------
+ACTIVE_GROSS = 0.10   # a day counts for the factor model when the book's gross is at least 10% of trading equity
+
+
+def active_days(book: "Book", threshold: float = ACTIVE_GROSS) -> pd.DatetimeIndex:
+    """Days the book held something meaningful: gross exposure at least ``threshold`` of trading equity, judged on the
+    day before (the position that earned the day). Crypto: HL positions marked to the close. Stocks: HL stock perps
+    plus IB's account value (IB's per-stock history only reaches back to the first saved fills)."""
+    hl = book.coins[book.coins["venue"] == "hl"]
+    gross = hl.assign(gross=hl["value"].abs()).groupby("day")["gross"].sum().reindex(book.days).fillna(0.0)
+    if book.kind == "Stocks":
+        for label, history in book.desk.histories.items():
+            if label.startswith("IB"):
+                frame = history.assign(day=pd.to_datetime(history["ts"], utc=True).dt.normalize())
+                value = frame.groupby("day")["accountValue"].last().reindex(book.days).ffill().fillna(0.0)
+                gross = gross + value
+    share = (gross / book.equity.where(book.equity > 0)).shift(1)
+    return share.index[share >= threshold]
+
+
 def _factor_inputs(book: "Book") -> tuple[pd.Series, pd.DataFrame, int]:
     from desk import book_factors
 
-    active = book.pnl[book.pnl.abs() > 0]
-    returns = book.returns[book.returns.index >= active.index.min()] if len(active) else book.returns
+    days = active_days(book)
     if book.kind == "Crypto":
         factors = book_factors.crypto_factors(book.benchmark_closes)
-        return returns, factors, 365
+        return book.returns[book.returns.index.isin(days)], factors, 365
     factors, spy = book_factors.stock_factors()
-    return book_factors.on_calendar(returns, spy), factors, 252
+    returns = book_factors.on_calendar(book.returns, spy)
+    return returns[returns.index.isin(days)], factors, 252
 
 
 def show_factor_model(book: "Book"):
@@ -826,10 +845,13 @@ def show_factor_model(book: "Book"):
     from desk import book_factors
 
     returns, factors, periods = _factor_inputs(book)
-    days = len(pd.concat([returns, factors], axis=1).dropna())
-    if days < book_factors.MIN_DAYS:
-        print(f"{days} days with returns and factors: too few for a factor model (needs {book_factors.MIN_DAYS}).")
+    sample = pd.concat([returns, factors], axis=1, sort=True).dropna().index
+    if len(sample) < book_factors.MIN_DAYS:
+        since = f" (active since {_since(sample.min())})" if len(sample) else ""
+        print(f"{len(sample)} active days{since}: too few for a factor model, which needs {book_factors.MIN_DAYS}.")
         return
+    print(f"{len(sample)} active days, {_since(sample.min())} to {_since(sample.max())} (gross at least "
+          f"{ACTIVE_GROSS:.0%} of equity).")
     betas, check, rolling = book_factors.model_tables(returns, factors, periods)
     fmt = {"Beta": lambda v: "" if not np.isfinite(v) else f"{v:.2f}", "t": lambda v: "" if not np.isfinite(v) else f"{v:.1f}"}
     shown = betas.copy()

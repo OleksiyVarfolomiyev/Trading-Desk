@@ -75,7 +75,7 @@ def fit(dependent: pd.Series, factors: pd.DataFrame, periods: int) -> dict:
 def validate(dependent: pd.Series, factors: pd.DataFrame, periods: int) -> dict:
     """Fit on the first half, carry the betas into the second: in-sample alphas of each half and the out-of-sample
     alpha (second half less the first half's prediction) with its Newey-West t."""
-    data = pd.concat([dependent.rename("y"), factors], axis=1).dropna()
+    data = pd.concat([dependent.rename("y"), factors], axis=1, sort=True).dropna()
     first, second = split_in_half(data.index)
     early, late = fit(data.loc[first, "y"], data.loc[first, factors.columns], periods), \
         fit(data.loc[second, "y"], data.loc[second, factors.columns], periods)
