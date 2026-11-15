@@ -305,7 +305,13 @@
     return replies.map(({ wallet, reply, error }) => {
       const label = `${wallet.label.replace(/^HL /, "")} wallet`;  // its tokens are not HL trading
       if (error) return { venue: "onchain", id: wallet.id, label, error: String(error.message || error) };
-      const positions = [], notes = (reply.problems || []).map((problem) => `${label}: ${problem}`);
+      // A chain read that failed outright, or balances kept from more than 30 minutes ago, is a problem: the status
+      // chip and the note then say the same thing. A node busy for a few minutes (last balances kept) is not.
+      const hard = (reply.problems || []).filter((problem) => {
+        const kept = /last balances read (\d+) min ago/.exec(problem);
+        return !kept || Number(kept[1]) > 30;
+      });
+      const positions = [], notes = hard.map((problem) => `${label}: ${problem}`);
       let unpriced = 0;
       for (const holding of reply.holdings || []) {
         const key = priceKey(holding), price = prices[key];
@@ -327,7 +333,7 @@
       if (unpriced) notes.push(`${label}: ${unpriced} unpriced token balance(s) ignored (mostly spam airdrops)`);
       const equity = sum(positions.map((p) => p.quantity * p.mark_price));
       return { venue: "onchain", id: wallet.id, label, equity, cash: equity, margin_used: 0, available: equity,
-        unrealized: NaN, positions, notes };
+        unrealized: NaN, positions, notes, partial: hard.join("; ") };
     });
   }
 
@@ -566,7 +572,8 @@
     const walletReads = await readWallets(CFG.wallets);
     const wallets = walletReads.filter((w) => !w.error);
     walletReads.forEach((w) => {
-      status.push(w.error ? { name: w.label, ok: false, problem: w.error } : { name: w.label, ok: true });
+      status.push(w.error ? { name: w.label, ok: false, problem: w.error }
+        : w.partial ? { name: w.label, ok: false, problem: `partly read: ${w.partial}` } : { name: w.label, ok: true });
       if (w.error) problems.push(`${w.label}: ${w.error}`);
       (w.notes || []).forEach((note) => notes.push(note));
     });
