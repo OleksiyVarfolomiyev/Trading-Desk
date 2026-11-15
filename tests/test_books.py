@@ -28,11 +28,12 @@ class CoinDayPnl(unittest.TestCase):
         # Buy 1 at 105 on day 2 (close 110): +5 less 0.1 fee; then hold 1 into day 3 (+10).
         path = _path([("2026-11-02 12:00", 1.0, 105.0, 0.1, 1.0)])
         frame = books.coin_day_pnl(0.0, path, closes, pd.Series(dtype=float), DAYS)
-        self.assertAlmostEqual(frame.loc[DAYS[1], "trading"], 4.9)
+        self.assertAlmostEqual(frame.loc[DAYS[1], "trading"], 5.0)
+        self.assertAlmostEqual(frame.loc[DAYS[1], "fees"], -0.1)
         self.assertEqual(frame.loc[DAYS[1], "price"], 0.0)   # flat going into day 2
         self.assertEqual(frame.loc[DAYS[2], "price"], 10.0)
         # A round trip's total is exactly what the trades made: bought 105, worth 120 at the end, less the fee.
-        self.assertAlmostEqual(frame["price"].sum() + frame["trading"].sum(), 120 - 105 - 0.1)
+        self.assertAlmostEqual(frame["price"].sum() + frame["trading"].sum() + frame["fees"].sum(), 120 - 105 - 0.1)
 
     def test_funding_lands_on_its_day(self):
         closes = pd.Series(100.0, index=DAYS)
@@ -52,7 +53,8 @@ class IbNamePnl(unittest.TestCase):
         # One share held before the buy: +5 and +6 from price, then the buy at 100 marked at 101 less $1.
         self.assertEqual(list(frame["held"]), [1.0, 1.0, 2.0, 2.0])
         self.assertAlmostEqual(frame["price"].sum(), 11.0)
-        self.assertAlmostEqual(frame["trading"].sum(), 0.0)
+        self.assertAlmostEqual(frame["trading"].sum(), 1.0)   # the buy at 100 marked at 101
+        self.assertAlmostEqual(frame["fees"].sum(), -1.0)
 
     def test_name_without_closes_is_left_to_ib_other(self):
         positions = [SimpleNamespace(symbol="ZZZ", quantity=1.0, ref="")]

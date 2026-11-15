@@ -72,7 +72,7 @@ def coin_day_pnl(position_before: float, path: pd.DataFrame, closes: pd.Series, 
 
     ``path``: the market's fills (ts, day, signed, px, fee, after) oldest first; ``position_before`` the position before
     the first of them; ``closes`` daily closes by UTC day; ``funding`` funding received per day (negative: paid).
-    Returns columns price (holding through the day), trading (fills against the close, less fees), funding and
+    Returns columns price (holding through the day), trading (fills against the close), fees (paid: negative), funding and
     held (position at the day's end).
     """
     closes = closes.reindex(days).ffill()
@@ -87,11 +87,12 @@ def coin_day_pnl(position_before: float, path: pd.DataFrame, closes: pd.Series, 
     price = (before * closes.diff()).fillna(0.0)
     if len(path):
         at_close = closes.reindex(path["day"]).to_numpy()
-        trade = path["signed"] * (at_close - path["px"]) - path["fee"]
+        trade = path["signed"] * (at_close - path["px"])
         trading = trade.groupby(path["day"].to_numpy()).sum().reindex(days).fillna(0.0)
+        fees = (-path["fee"]).groupby(path["day"].to_numpy()).sum().reindex(days).fillna(0.0)
     else:
-        trading = pd.Series(0.0, index=days)
-    return pd.DataFrame({"price": price, "trading": trading,
+        trading = fees = pd.Series(0.0, index=days)
+    return pd.DataFrame({"price": price, "trading": trading, "fees": fees,
                          "funding": funding.reindex(days).fillna(0.0), "held": held.fillna(0.0)})
 
 
@@ -183,16 +184,18 @@ def hl_wallet_pnl(wallet: str, days: pd.DatetimeIndex) -> tuple[pd.DataFrame, li
             trades = [f for f in spot_fills
                       if (f["coin"].split("/")[0] if "/" in f["coin"] else token_of(f["coin"])) == token]
             trade = pd.Series(0.0, index=days)
+            fees = pd.Series(0.0, index=days)
             for f in trades:
                 day = pd.Timestamp(int(f["time"]), unit="ms", tz="UTC").normalize()
                 if day in trade.index and not math.isnan(close.get(day, np.nan)):
                     fee = float(f.get("fee") or 0.0) * (1.0 if f.get("feeToken") in STABLECOINS else float(f["px"]))
-                    trade[day] += _signed(f) * (close[day] - float(f["px"])) - fee
-            frame = pd.DataFrame({"price": (before * close.diff()).fillna(0.0), "trading": trade, "funding": 0.0,
-                                  "held": units, "value": units * close})
+                    trade[day] += _signed(f) * (close[day] - float(f["px"]))
+                    fees[day] -= fee
+            frame = pd.DataFrame({"price": (before * close.diff()).fillna(0.0), "trading": trade, "fees": fees,
+                                  "funding": 0.0, "held": units, "value": units * close})
             frame["kind"], frame["asset"] = "spot", token
             rows.append(frame.rename_axis("day").reset_index())
-    columns = ["day", "kind", "asset", "price", "trading", "funding", "held", "value"]
+    columns = ["day", "kind", "asset", "price", "trading", "fees", "funding", "held", "value"]
     out = pd.concat(rows, ignore_index=True)[columns] if rows else pd.DataFrame(columns=columns)
     out["wallet"] = wallet
     return out, notes
@@ -236,7 +239,7 @@ def ib_name_pnl(positions: list, fills: pd.DataFrame, days: pd.DatetimeIndex, cl
         frame["value"] = frame["held"] * series.reindex(days).ffill()
         frame["kind"], frame["asset"] = "stock", symbol
         rows.append(frame.rename_axis("day").reset_index())
-    columns = ["day", "kind", "asset", "price", "trading", "funding", "held", "value"]
+    columns = ["day", "kind", "asset", "price", "trading", "fees", "funding", "held", "value"]
     return (pd.concat(rows, ignore_index=True)[columns] if rows else pd.DataFrame(columns=columns)), notes
 
 
@@ -286,29 +289,38 @@ class Book:
 
     # -- data ------------------------------------------------------------------------------------------------------
     def fetch_data(self):
+        from concurrent.futures import ThreadPoolExecutor
+
         from desk.accounts import accounts_for
 
-        self.desk.fetch_data()
-        self.overview = self.desk.overview
+        self._memo = {}   # holdings, their returns and open risk: read once per fetch, shared by every section
         end = pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=1)
         self.days = pd.date_range(end - pd.Timedelta(days=HISTORY_DAYS - 1), end, freq="D")
+        # Each wallet's per-coin rebuild runs in its own thread while the accounts are read here (IB needs this
+        # thread's event loop); the desk's regime detection is skipped, the books measure their own active days.
+        pool = ThreadPoolExecutor(max_workers=4)
+        jobs = [(account, pool.submit(hl_wallet_pnl, account.id, self.days))
+                for account in accounts_for("hl", self.desk.accounts)]
+        self.desk.fetch_data(detect_regime=False)
+        self.overview = self.desk.overview
         frames = []
-        for account in accounts_for("hl", self.desk.accounts):
+        for account, job in jobs:
             if account.name in self.desk.excluded:
                 continue
             try:
-                frame, notes = hl_wallet_pnl(account.id, self.days)
+                frame, notes = job.result()
             except Exception as exc:
                 self.notes.append(f"{account.name}: PnL per coin unavailable ({type(exc).__name__}: {exc}).")
                 continue
             frame["account"] = account.name
             frames.append(frame)
             self.notes += [f"{account.name}: {note}." for note in notes]
+        pool.shutdown(wait=False)
         coins = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
-            columns=["day", "kind", "asset", "price", "trading", "funding", "held", "value", "account"])
+            columns=["day", "kind", "asset", "price", "trading", "fees", "funding", "held", "value", "account"])
         coins["venue"] = "hl"
         coins["book"] = [hl_kind(k, a) for k, a in zip(coins["kind"], coins["asset"])]
-        coins["pnl"] = coins["price"] + coins["trading"] + coins["funding"]
+        coins["pnl"] = coins["price"] + coins["trading"] + coins["fees"] + coins["funding"]
         # The side the market was held on going into the day (a fill-only day counts as the side it ended).
         coins["side"] = np.where(coins.groupby(["account", "kind", "asset"])["held"].shift(1).fillna(coins["held"]) >= 0,
                                  "Long", "Short")
@@ -364,7 +376,7 @@ class Book:
             if frame.empty:
                 continue
             frame["wallet"], frame["account"], frame["venue"], frame["book"] = "", snapshot.label, "ib", "Stocks"
-            frame["pnl"] = frame["price"] + frame["trading"] + frame["funding"]
+            frame["pnl"] = frame["price"] + frame["trading"] + frame["fees"] + frame["funding"]
             frame["side"] = np.where(frame.groupby("asset")["held"].shift(1).fillna(frame["held"]) >= 0, "Long", "Short")
             self.coins = pd.concat([self.coins, frame[self.coins.columns]], ignore_index=True)
             self.notes += [f"{snapshot.label}: {note}." for note in notes]
@@ -384,8 +396,30 @@ class Book:
             frame = frame[~dust]
         return frame
 
+    def _remember(self, key, make):
+        memo = self.__dict__.setdefault("_memo", {})
+        if key not in memo:
+            memo[key] = make()
+        return memo[key]
+
+    def holding_returns(self):
+        """(holdings, unpriced, returns, missing) for today's holdings over the ex-ante window, read once."""
+        from desk import live_risk
+
+        def make():
+            holdings, unpriced = self.holdings()
+            if holdings.empty:
+                return holdings, unpriced, pd.DataFrame(), []
+            returns, missing = live_risk.holding_returns(holdings, live_risk.EX_ANTE_DAYS, self.desk._ib_closes)
+            return holdings, unpriced, returns, missing
+
+        return self._remember("holding_returns", make)
+
     def holdings(self) -> tuple[pd.DataFrame, list[str]]:
         """This book's holdings for ex-ante risk (``live_risk.position_values`` rows), and tokens with no price."""
+        return self._remember("holdings", self._read_holdings)
+
+    def _read_holdings(self) -> tuple[pd.DataFrame, list[str]]:
         from desk import live_risk
         from desk.accounts import accounts_for
 
@@ -406,11 +440,9 @@ class Book:
         benchmark; the rest is the bet on the names themselves."""
         from desk import live_risk
 
-        holdings, unpriced = self.holdings()
+        holdings, unpriced, returns, missing = self.holding_returns()
         if holdings.empty:
             return pd.DataFrame()
-        returns, missing = live_risk.holding_returns(holdings, live_risk.EX_ANTE_DAYS, self.desk._ib_closes)
-        self._holding_returns, self._holdings = returns, holdings
         bench = self.benchmark_closes
         equity = self.capital
         rows = []
@@ -467,6 +499,10 @@ class Book:
         return out
 
     def open_risk(self) -> tuple[float, pd.DataFrame, float]:
+        """This book's open risk per position and the desk cap (read once per fetch; see ``_read_open_risk``)."""
+        return self._remember("open_risk", self._read_open_risk)
+
+    def _read_open_risk(self) -> tuple[float, pd.DataFrame, float]:
         """This book's open risk (to each position's stop, else the ATR stop distance, plus costs, as the executors
         count it), per position, and the desk cap it shares with the other book."""
         from desk.accounts import accounts_for, short_id
@@ -514,6 +550,10 @@ class Book:
         return pd.DataFrame(rows)
 
     def realized_risk(self) -> pd.DataFrame:
+        """Realized and ex-ante risk with bootstrap ranges (computed once per fetch; see ``_realized_risk``)."""
+        return self._remember("realized_risk", self._realized_risk)
+
+    def _realized_risk(self) -> pd.DataFrame:
         """Realized statistics of the book's daily returns over the last 90 days and the last year, with beta and
         alpha against its own benchmark (90% bootstrap range); plus the ex-ante row for today's holdings."""
         from desk import live_risk
@@ -522,9 +562,8 @@ class Book:
         equity = self.capital
         rows = []
         try:
-            holdings, unpriced = self.holdings()
+            holdings, unpriced, returns, missing = self.holding_returns()
             if len(holdings):
-                returns, missing = live_risk.holding_returns(holdings, live_risk.EX_ANTE_DAYS, self.desk._ib_closes)
                 # On desk value, like the desk's risk row and dashboards: today's holdings include wallet tokens.
                 row = live_risk.ex_ante_row(holdings, returns, self.overview.desk_equity,
                                             self.desk.benchmarks[[self.benchmark]], missing + unpriced)
@@ -574,7 +613,7 @@ class Book:
         if window.empty and not (self.kind == "Stocks" and len(self.ib_pnl)):
             return pd.DataFrame()
         keys = ["account", "asset"]
-        table = window.groupby(keys)[["price", "trading", "funding", "pnl"]].sum()
+        table = window.groupby(keys)[["price", "trading", "fees", "funding", "pnl"]].sum()
         table = table.reset_index()
         # The side held now, from today's positions (the daily marks end at yesterday's close).
         positions = self.overview.positions_frame()
@@ -587,10 +626,10 @@ class Book:
             for account, group in ib_names.groupby("account") if len(ib_names) else [("IB", ib_names)]:
                 other = window_sum(self.ib_pnl, days) - group["pnl"].sum()
                 table.loc[len(table)] = {"account": account, "asset": "IB other (older trades, dividends, fees)",
-                                         "price": np.nan, "trading": np.nan, "funding": np.nan, "pnl": other,
+                                         "price": np.nan, "trading": np.nan, "fees": np.nan, "funding": np.nan, "pnl": other,
                                          "Side now": ""}
         table = table[table["pnl"].abs() > 0.005].sort_values("pnl")
-        table = table.rename(columns={"account": "Account", "asset": "Market", "price": "Price", "trading": "Trading",
+        table = table.rename(columns={"account": "Account", "asset": "Market", "price": "Price", "trading": "Fills vs close", "fees": "Fees",
                                       "funding": "Funding", "pnl": "PnL"})
         equity = self.capital
         table["PnL / equity"] = table["PnL"] / equity if equity else np.nan
@@ -604,7 +643,8 @@ class Book:
             window = self.coins[self.coins["day"] > self.days[-1] - pd.Timedelta(days=n)]
             by = window.groupby("side")["pnl"].sum()
             rows.append({"Window": label, "Long": by.get("Long", 0.0), "Short": by.get("Short", 0.0),
-                         "Funding": window["funding"].sum(), "Fills vs close (fees in)": window["trading"].sum()})
+                         "Funding": window["funding"].sum(), "Fills vs close": window["trading"].sum(),
+                         "Fees": window["fees"].sum()})
         return pd.DataFrame(rows)
 
     def reconciliation(self) -> pd.DataFrame:
@@ -762,15 +802,17 @@ class Book:
         if table.empty:
             print("No PnL in this window.")
             return
-        total = {"Account": "Total", "Market": "", "Price": table["Price"].sum(), "Trading": table["Trading"].sum(),
+        total = {"Account": "Total", "Market": "", "Price": table["Price"].sum(),
+                 "Fills vs close": table["Fills vs close"].sum(), "Fees": table["Fees"].sum(),
                  "Funding": table["Funding"].sum(), "PnL": table["PnL"].sum(), "Side now": "",
                  "PnL / equity": table["PnL / equity"].sum()}
         table = pd.concat([table, pd.DataFrame([total])], ignore_index=True)
-        columns = ["Account", "Market", "Side now", "PnL", "PnL / equity", "Price", "Trading", "Funding"]
+        columns = ["Account", "Market", "Side now", "PnL", "PnL / equity", "Price", "Fills vs close", "Fees", "Funding"]
         if self.kind == "Stocks" and not (table["Funding"].abs() > 0.005).any():
             columns.remove("Funding")
         self._table(table[columns], f"PNL BY MARKET, LAST {days} DAYS",
-                    {"PnL": _usd, "PnL / equity": _signed_pct, "Price": _usd, "Trading": _usd, "Funding": _usd},
+                    {"PnL": _usd, "PnL / equity": _signed_pct, "Price": _usd, "Fills vs close": _usd, "Fees": _usd,
+                     "Funding": _usd},
                     bold_last=True, key={"PnL": "abs"})
         sides = self.sides()
         self._table(sides, "LONG AND SHORT LEGS", {c: _usd for c in sides if c != "Window"})

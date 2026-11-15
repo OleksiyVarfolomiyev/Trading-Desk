@@ -808,6 +808,37 @@ def wallet_snapshot(account: Account, chains: list[str] | None = None) -> tuple[
 # last full read re-prices the saved balances instead of reading every chain again (about 30 s).
 BALANCES_MAX_AGE_SECONDS = 30 * 60
 _balances: dict[str, tuple[float, VenueAccount, list[str]]] = {}
+# The last balance read is also kept on disk (git-ignored data/), so a new notebook kernel or dashboard process
+# reuses a read younger than ``max_age`` instead of scanning every chain again (c248's hundreds of spam tokens took
+# about a minute). Prices are still refreshed on every call.
+BALANCES_DIR = Path(__file__).resolve().parents[2] / "data" / "onchain_balances"
+
+
+def _disk_balances(key: str, max_age: float):
+    import pickle
+
+    from desk.privacy import short_id
+
+    path = BALANCES_DIR / f"{short_id(key)}.pkl"
+    try:
+        if time.time() - path.stat().st_mtime > max_age:
+            return None
+        saved = pickle.loads(path.read_bytes())
+        return saved
+    except Exception:
+        return None
+
+
+def _save_disk_balances(key: str, entry) -> None:
+    import pickle
+
+    from desk.privacy import short_id
+
+    try:
+        BALANCES_DIR.mkdir(parents=True, exist_ok=True)
+        (BALANCES_DIR / f"{short_id(key)}.pkl").write_bytes(pickle.dumps(entry))
+    except Exception:
+        pass
 
 
 def wallet_snapshot_cached(account: Account, max_age: float = BALANCES_MAX_AGE_SECONDS) -> tuple[VenueAccount, list[str]]:
@@ -817,8 +848,13 @@ def wallet_snapshot_cached(account: Account, max_age: float = BALANCES_MAX_AGE_S
     key = account.id.lower()
     hit = _balances.get(key)
     if hit is None or time.time() - hit[0] > max_age:
+        hit = _disk_balances(key, max_age)
+        if hit is not None and time.time() - hit[0] <= max_age:
+            _balances[key] = hit
+    if hit is None or time.time() - hit[0] > max_age:
         snapshot, notes = wallet_snapshot(account)
         _balances[key] = (time.time(), snapshot, notes)
+        _save_disk_balances(key, _balances[key])
         return snapshot, notes
     _, snapshot, notes = hit
     keys = {}

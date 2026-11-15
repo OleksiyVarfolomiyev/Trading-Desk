@@ -159,7 +159,7 @@ class DeskAccounts:
         self._highlights_state = None
 
     # ------------------------------------------------------------------
-    def fetch_data(self, refresh_history: bool = True, record_ib_history: bool = True):
+    def fetch_data(self, refresh_history: bool = True, record_ib_history: bool = True, detect_regime: bool = True):
         """Current state of every account, plus each account's value and PnL history.
 
         ``refresh_history=False`` reuses the saved HL and IB Flex histories and the benchmark prices
@@ -240,8 +240,8 @@ class DeskAccounts:
         # Reload benchmarks when the desk start moves earlier (an account dropped out of the window).
         if refresh_history or self.benchmarks.empty or self.benchmarks.index.min() > start - pd.Timedelta(days=5):
             self.benchmarks = self._benchmarks(start - pd.Timedelta(days=10))
-        if refresh_history or self.hl_activity_days is None:
-            self._detect_regime()
+        if detect_regime and (refresh_history or self.hl_activity_days is None):
+            self._detect_regime()   # the book notebooks skip it: they measure their own active days
         if any(account.venue == "hl" and account.onchain for account in self.accounts):
             self.notes.append("Wallet tokens on other chains are left out of returns (they have no deposit and "
                               "withdrawal record); their value over time is the dotted desk-value line, from saved "
