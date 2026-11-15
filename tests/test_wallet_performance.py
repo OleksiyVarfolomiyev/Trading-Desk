@@ -67,7 +67,7 @@ class DayReturnTests(unittest.TestCase):
         from desk.dashboard import with_day_returns
         from desk.day_change import DayChange
 
-        frame = pd.DataFrame({"Account": ["HL 07f2", "07f2 wallet", "Desk (HL + IB)", "Desk incl. wallets"],
+        frame = pd.DataFrame({"Account": ["HL 07f2", "07f2 wallet", "Desk (HL + IB)", "Total"],
                               "Value": [1100.0, 500.0, 1100.0, 1600.0], "Return 7D": [0.0] * 4})
         change = DayChange(change=90.0, value=1600.0, parts={"HL 07f2": 100.0, "07f2 wallet": -10.0})
         out = with_day_returns(frame, change)

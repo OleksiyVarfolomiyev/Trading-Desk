@@ -384,7 +384,7 @@ class DeskOverview:
             return
         frame = self.accounts_frame()
         total = frame.drop(columns=["Venue", "Account", "% of desk"]).sum(numeric_only=True)
-        frame.loc[len(frame)] = {"Venue": "Total", "Account": "", **total.to_dict(), "% of desk": 1.0}
+        frame.loc[len(frame)] = {"Venue": "Total", "Account": "", **total.to_dict(), "% of desk": float("nan")}  # no 100% totals
         money = {column: _money for column in ["Equity", "Cash", "Margin used", "Available",
                                                 "Unrealized PnL", "Gross", "Net"]}
         display_interactive_table(_without_venue(frame),
@@ -501,7 +501,7 @@ class DeskOverview:
                      "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
                      "24h change (%)": day_change_total(group["Value"], group["24h change (%)"]),
                      "Funding (APR)": funding_total(group["Value"], group["Funding (APR)"]),
-                     "Weight": group["Weight"].sum(), "Exposure / desk value": group["Exposure / desk value"].sum()}
+                     "Weight": float("nan"), "Exposure / desk value": group["Exposure / desk value"].sum()}
             group = pd.concat([group, pd.DataFrame([total])], ignore_index=True)
             group = group[emphasis.key_columns_first(list(group.columns), {"Weight"}, SIGNED_COLUMNS,
                                                      text={"Account", "Symbol"})]

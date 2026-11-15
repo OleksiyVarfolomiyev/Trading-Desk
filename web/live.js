@@ -729,7 +729,7 @@
       const priced = rows.filter((r) => fin(r["uPnL (%)"]));
       const pricedCost = sum(priced.map((r) => Math.abs(r.Value - r["uPnL"])));
       return { "Asset class": "Total", "Value": sum(rows.map((r) => r.Value)),
-        "uPnL": sum(rows.map((r) => r["uPnL"])), "Weight": sum(rows.map((r) => r.Weight)),
+        "uPnL": sum(rows.map((r) => r["uPnL"])), "Weight": NaN,  // a 100% total is not shown
         "Exposure / desk value": sum(rows.map((r) => r["Exposure / desk value"])),
         "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN,
         "24h change (%)": dayChangeTotal(rows), "Funding (APR)": fundingTotal(rows) };
@@ -777,7 +777,7 @@
       // Open risk over the account's risk equity (the executor's); the total row is the desk against its cap.
       "Open risk": (() => { const b = book.find((x) => x.label === a.label); return b && b.equity > 0 ? b.risk / b.equity : NaN; })(),
     }));
-    const accountTotal = { "Account": "Total", "% of desk": 1, "Positions": sum(accounts.map((a) => a.positions.length)),
+    const accountTotal = { "Account": "Total", "% of desk": NaN, "Positions": sum(accounts.map((a) => a.positions.length)),
       "Cash / equity": sum(accounts.map((a) => a.cash)) / deskEquity, "Margin used / equity": sum(accounts.map((a) => a.margin_used)) / deskEquity,
       "Available / equity": sum(accounts.map((a) => a.available)) / deskEquity,
       "uPnL / equity": sum(accounts.map((a) => a.unrealized)) / deskEquity,
@@ -835,7 +835,7 @@
         everything.forEach((p) => { if (p.v >= top.v) top = p; });
         headline = { returns: all, start: everything[0].t, drawdown: everything[everything.length - 1].v / top.v - 1, peak: top, series: everything };
       }
-      performanceRows.push({ "Account": "Desk incl. wallets", "Return 24h": dayReturn(accounts.map((a) => a.label)), "Return 7D": all["7D"], "Return 30D": all["30D"], "Return 90D": all["90D"],
+      performanceRows.push({ "Account": "Total", "Return 24h": dayReturn(accounts.map((a) => a.label)), "Return 7D": all["7D"], "Return 30D": all["30D"], "Return 90D": all["90D"],
         "Return 1Y": all["1Y"], "Return since inception": all.since_start, "Since": everything.length ? sinceLabel(everything[0].t) : "" });
     }
 
@@ -875,7 +875,7 @@
       if (live && fin(live.equity) && y.length) y[y.length - 1] = Math.round(live.equity * 100) / 100;
       s.x = x; s.y = y;
     });
-    // The dashed "incl. wallets" line, as on the local dashboard: the stacked accounts plus the wallets' tokens
+    // The dashed "Total" line, as on the local dashboard: the stacked accounts plus the wallets' tokens
     // on other chains, only on days the wallet values are known (relay /walletperf), never a stacked layer
     // (a layer reads as $0 where it has no data). Today's point is the live desk value.
     const valueWithWallets = () => {
@@ -900,14 +900,14 @@
       const x = [...walletDays.keys()].filter((d) => d >= valueSeries.reduce((a, s) => (s.x[0] < a ? s.x[0] : a), today)).sort();
       const y = x.map((d) => Math.round((stackedOn(d) + walletDays.get(d)) * 100) / 100);
       if (x.length && x[x.length - 1] === today && fin(deskEquity)) y[y.length - 1] = Math.round(deskEquity * 100) / 100;
-      return x.length > 1 ? { name: "Desk incl. wallets", note: "", x, y } : null;
+      return x.length > 1 ? { name: "Total", note: "", x, y } : null;
     };
     // The return chart is the tiles' series (``headline``: wallets included when they have history), as % since its
     // start, so the desk line ends at the "TW return" tile; the benchmarks start the same day.
     const chartIndex = headline.series || index, chartStart = headline.start;
     const indexDays = dailyLast(chartIndex, "v");
     const firstLevel = chartIndex.length ? chartIndex[0].v : 1;
-    const twr = [{ name: headline.series ? "Desk incl. wallets" : "Desk (HL + IB)", x: [...indexDays.keys()],
+    const twr = [{ name: headline.series ? "Total" : "Desk (HL + IB)", x: [...indexDays.keys()],
       y: [...indexDays.values()].map((v) => Math.round(1e4 * (v / firstLevel - 1)) / 1e2) }];
     const benchmarkDays = Math.ceil((now - chartStart) / DAY_MS) + 2;
     const rebased = (name, rows) => {  // rows: [{t, c}] daily closes

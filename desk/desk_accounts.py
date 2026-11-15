@@ -509,7 +509,7 @@ class DeskAccounts:
             index.index = pd.to_datetime(index.index, utc=True)
             every = self.desk_returns(index)
             every[INCEPTION] = every.pop("since start")
-            rows.append(combined("Desk incl. wallets", pd.concat([trading, wallets]), every,
+            rows.append(combined("Total", pd.concat([trading, wallets]), every,
                                  _since(index.index[0]) if len(index) else ""))
         table = pd.concat([trading, wallets, pd.DataFrame(rows)], ignore_index=True)
         return table[["Account", "Value"] + [f"{kind} {label}" for label in PERIODS for kind in ("PnL", "Return")] + ["Since"]]
@@ -813,7 +813,7 @@ class DeskAccounts:
         index = headline.resample("1D").last().dropna()
         index.index = index.index.normalize()
         comparison = go.Figure(go.Scatter(x=index.index, y=100 * (index / headline.iloc[0] - 1),
-                                          name="Desk incl. wallets" if headline is not self.index else "Desk (HL + IB)"))
+                                          name="Total" if headline is not self.index else "Desk (HL + IB)"))
         for name, color in (("BTC", "#F7931A"), ("SPY", "#16a34a")):
             if name in self.benchmarks:
                 prices = self.benchmarks[name].dropna()

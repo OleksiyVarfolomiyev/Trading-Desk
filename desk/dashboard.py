@@ -129,7 +129,7 @@ def account_shares(accounts: pd.DataFrame) -> tuple[pd.DataFrame, dict | None]:
         shares[name] = accounts[column] / equity
     shares["Positions"] = accounts["Positions"]
     total_equity = accounts["Equity"].sum()
-    total = {"Venue": "Total", "Account": "", "% of desk": 1.0, "Positions": accounts["Positions"].sum(),
+    total = {"Venue": "Total", "Account": "", "% of desk": None, "Positions": accounts["Positions"].sum(),
              **{name: accounts[column].sum() / total_equity if total_equity > 0 else None
                 for column, name in ACCOUNT_SHARES.items()}}
     return shares, total
@@ -178,7 +178,7 @@ def _value_with_wallets(value_series: list[dict], wallets: dict | None, min_days
     stacked = pd.concat(accounts, axis=1).ffill().fillna(0.0).sum(axis=1) if accounts else pd.Series(dtype=float)
     wallet = pd.Series(wallets["y"], index=pd.to_datetime(wallets["x"]))
     total = (stacked.reindex(wallet.index, method="ffill").fillna(0.0) + wallet).round(2)
-    return {"name": "Desk incl. wallets", "note": wallets.get("note", ""),
+    return {"name": "Total", "note": wallets.get("note", ""),
             "x": [ts.strftime("%Y-%m-%d") for ts in total.index], "y": total.tolist()}
 
 
@@ -201,7 +201,7 @@ def with_day_returns(performance: pd.DataFrame, day_change: DayChange | None) ->
     values = dict(zip(frame["Account"], frame["Value"]))
     day = []
     for name in frame["Account"]:
-        if name.startswith("Desk"):
+        if name.startswith("Desk") or name == "Total":
             named = [account for account in parts if account in values and not (name == "Desk (HL + IB)" and account.endswith(" wallet"))]
             change, value = sum(parts[account] for account in named), sum(values[account] for account in named)
             day.append(change / (value - change) if named and value - change > 0 else float("nan"))
@@ -297,7 +297,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
             ["Asset class", "_abs"], ascending=[True, False]).drop(columns="_abs")
         total = {column: None for column in ordered.columns}
         total.update({"Asset class": "Total", "Value": ordered["Value"].sum(),
-                      "uPnL": ordered["uPnL"].sum(), "Weight": ordered["Weight"].sum(),
+                      "uPnL": ordered["uPnL"].sum(), "Weight": None,   # a 100% total is not shown
                       "Exposure / desk value": ordered["Exposure / desk value"].sum()})
         priced = ordered["uPnL (%)"].notna()
         cost = (ordered["Value"] - ordered["uPnL"]).abs()[priced].sum()
@@ -397,7 +397,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     # its start, so the desk line ends at the "TW return" tile; the benchmarks start the same day.
     index = _daily(headline)
     index.index = index.index.normalize()
-    twr = [{"name": "Desk incl. wallets" if headline is not desk.index else "Desk (HL + IB)",
+    twr = [{"name": "Total" if headline is not desk.index else "Desk (HL + IB)",
             "x": [ts.strftime("%Y-%m-%d") for ts in index.index],
             "y": (100 * (index / headline.iloc[0] - 1)).round(2).tolist()}]
     for name in ("BTC", "SPY"):

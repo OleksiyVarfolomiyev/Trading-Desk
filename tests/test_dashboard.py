@@ -44,7 +44,7 @@ class PayloadTests(unittest.TestCase):
         self.assertAlmostEqual(shares["Margin used / equity"].iloc[0], 0.2)
         self.assertAlmostEqual(shares["Net / equity"].iloc[0], -1.5)
         self.assertAlmostEqual(total["uPnL / equity"], -40.0 / 4000.0)
-        self.assertEqual(total["% of desk"], 1.0)
+        self.assertIsNone(total["% of desk"])   # a 100% total is not shown
 
     def test_positions_drop_venue_and_add_upnl_and_day_percent_after_unrealized_pnl(self):
         positions = pd.DataFrame({
