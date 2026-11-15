@@ -1256,6 +1256,20 @@ class LiveRiskTests(unittest.TestCase):
         self.assertEqual(self.live_risk.holding_book("hl", "PAXG"), "Stocks")
         self.assertEqual(self.live_risk.holding_book("wallet", "sVVV"), "Crypto")
 
+    def test_book_rows_show_beta_on_desk_value_and_per_dollar_held(self):
+        rng = np.random.default_rng(7)
+        spy = pd.Series(rng.normal(0, 0.01, 90), index=self.days)
+        benchmarks = self.benchmarks.assign(SPY=100 * (1 + spy).cumprod())
+        returns = self.returns.assign(**{"ib:U1:MU": 2.0 * spy})
+        holdings = pd.DataFrame({"key": ["hl:w:SOL", "ib:U1:MU"], "venue": ["hl", "ib"], "symbol": ["SOL", "MU"],
+                                 "ref": ["", "1"], "value": [-500.0, 500.0]})
+        rows = {row["Benchmark"]: row for row in self.live_risk.book_rows(holdings, returns, 1_000.0, benchmarks)}
+        # Stocks: half the desk in a beta-2 stock is 1.0 on desk value and 2.0 per dollar held.
+        self.assertAlmostEqual(rows["SPY"]["Beta (on desk value)"], 1.0, delta=0.05)
+        self.assertAlmostEqual(rows["SPY"]["Beta per $ held"], 2.0, delta=0.1)
+        self.assertAlmostEqual(rows["BTC"]["Beta per $ held"], -1.5, delta=0.15)
+        self.assertIn("per $ held", self.live_risk.book_line(rows["SPY"]))
+
     def test_paired_returns_keep_mondays_and_compound_the_weekend(self):
         days = pd.date_range("2026-10-30", "2026-11-04", freq="D", tz="UTC")  # Fri .. Wed
         book = pd.Series(0.01, index=days[1:])

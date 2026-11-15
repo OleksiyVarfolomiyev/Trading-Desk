@@ -230,6 +230,57 @@ def holding_book(venue: str, symbol: str) -> str:
     return "Crypto"
 
 
+def book_rows(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benchmarks: pd.DataFrame) -> list[dict]:
+    """One risk row per book (crypto against BTC, stocks against SPY): today's holdings in that book run through the
+    same daily returns as the desk row. Beta and volatility are on desk value (so the books add up to the desk); the
+    benchmark-equivalent is that beta in dollars, and "per $ held" divides it by the book's gross, which shows how
+    aggressive the holdings themselves are (a long book of high-beta stocks reads 1.5+ there even when it is half
+    the desk)."""
+    rows = []
+    if equity <= 0:
+        return rows
+    books = holdings.assign(book=[holding_book(v, s) for v, s in zip(holdings["venue"], holdings["symbol"])])
+    for book, name in BOOK_BENCHMARKS.items():
+        part = books[books["book"] == book]
+        if part.empty:
+            continue
+        priced = part[part["key"].isin(returns.columns)]
+        gross, net = float(part["value"].abs().sum()), float(part["value"].sum())
+        row = {"Basis": f"{book} book (today's holdings)", "Benchmark": name, "Net": net, "Gross": gross,
+               "Net / desk": net / equity, "Gross / desk": gross / equity,
+               "Coverage": priced["value"].abs().sum() / gross if gross else np.nan}
+        if len(priced) and len(returns) >= 20:
+            weights = priced.set_index("key")["value"] / equity
+            series = returns[weights.index].fillna(0.0) @ weights
+            row["Volatility (/yr)"] = float(series.std() * math.sqrt(365))
+            row["VaR 95%"] = bootstrap_var(series, 0.95)["var"] * equity
+            if name in benchmarks:
+                pair = paired_returns(series, benchmarks[name])
+                if len(pair) >= 20 and pair["bench"].var() > 0:
+                    beta = float(pair["book"].cov(pair["bench"]) / pair["bench"].var())
+                    row["Beta (on desk value)"] = beta
+                    row[f"Benchmark-equivalent"] = beta * equity
+                    row["Beta per $ held"] = beta * equity / gross if gross else np.nan
+        rows.append(row)
+    return rows
+
+
+def book_line(row: dict) -> str:
+    """"crypto: beta -0.32 to BTC on desk value (-0.67 per $ held), net -14%, vol 15%/yr": one book's risk in a line."""
+    from desk.numbers import pct
+
+    name = row["Basis"].split(" book")[0].lower()
+    parts = []
+    if np.isfinite(row.get("Beta (on desk value)", np.nan)):
+        held = row.get("Beta per $ held", np.nan)
+        parts.append(f"beta {row['Beta (on desk value)']:+.2f} to {row['Benchmark']} on desk value"
+                     + (f" ({held:+.2f} per $ held)" if np.isfinite(held) else ""))
+    parts.append(f"net {pct(row['Net / desk'])} of desk")
+    if np.isfinite(row.get("Volatility (/yr)", np.nan)):
+        parts.append(f"vol {pct(row['Volatility (/yr)'])}/yr")
+    return f"{name}: " + ", ".join(parts)
+
+
 def book_betas(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benchmarks: pd.DataFrame) -> dict:
     """Each book's ex-ante beta to its benchmark: today's holdings in that book times each day's return, over
     ``equity``, regressed on the benchmark. Keys "Beta BTC (crypto)" and "Beta SPY (stocks)"."""

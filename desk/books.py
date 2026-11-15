@@ -657,9 +657,12 @@ class Book:
         today = risk[risk["Basis"].str.startswith("Today")] if len(risk) else risk
         if len(today) and f"Beta {self.benchmark}" in today and pd.notna(today.iloc[0].get(f"Beta {self.benchmark}")):
             eq = exposure.iloc[-1].get(f"{self.benchmark}-eq 90d", np.nan) if len(exposure) else np.nan
-            attention.append(("Beta now", f"{today.iloc[0][f'Beta {self.benchmark}']:+.2f} to {self.benchmark} on desk value "
-                              f"({_usd(eq)} {self.benchmark}-equivalent); net {_signed_pct(summary['Net / equity'])}, "
-                              f"gross {_pct(summary['Gross / equity'])} of equity"))
+            beta = today.iloc[0][f'Beta {self.benchmark}']
+            gross = abs(summary["Gross"])
+            held = beta * self.overview.desk_equity / gross if gross else np.nan
+            attention.append(("Beta now", f"{beta:+.2f} to {self.benchmark} on desk value ({held:+.2f} per $ held; "
+                              f"{_usd(beta * self.overview.desk_equity)} {self.benchmark}-equivalent); "
+                              f"net {_signed_pct(summary['Net / equity'])}, gross {_pct(summary['Gross / equity'])} of equity"))
         realized = risk[risk["Basis"].str.startswith("Last 90")] if len(risk) else risk
         if len(realized) and f"Beta {self.benchmark}" in realized:
             row = realized.iloc[0]

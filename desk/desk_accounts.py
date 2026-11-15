@@ -24,7 +24,7 @@ from desk.accounts import accounts_for, ib_data_dir, load_accounts, short_id
 from desk.privacy import account_file
 from desk.hl.account_analytics import display_interactive_table, fetch_btc_candles, update_portfolio_history
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var, time_weighted_index
-from desk.live_risk import MIN_RATIO_DAYS
+from desk.live_risk import MIN_RATIO_DAYS, book_line as live_risk_line
 from desk.notebook_highlights import HighlightsState, percent, signed_money
 from desk.notebook_highlights import show as show_highlights
 from desk.overview import DeskOverview
@@ -634,13 +634,12 @@ class DeskAccounts:
                 # Each book against its own benchmark (desk/books.py): one desk beta blends a short-alt crypto book
                 # with a long-stock book and describes neither.
                 beta_btc, beta_spy = row.get("Beta BTC (crypto)", np.nan), row.get("Beta SPY (stocks)", np.nan)
-                betas = "".join(f", {book} beta {value:+.2f} to {name}"
-                                for book, name, value in (("crypto", "BTC", beta_btc), ("stocks", "SPY", beta_spy))
-                                if pd.notna(value))
+                books = [item for item in getattr(self, "book_risk", [])]
+                betas = ("; " + "; ".join(live_risk_line(item) for item in books)) if books else ""
                 if pd.notna(row.get("Volatility (/yr)", np.nan)):
                     var95, equity = row.get("VaR 95%", np.nan), self.overview.desk_equity
                     var_text = f", VaR 95% {_pct(var95 / equity)}/day" if pd.notna(var95) and equity else ""
-                    parts.append(f"volatility {row['Volatility (/yr)']:.0%}/yr{var_text}{betas}")
+                    parts.append(f"desk volatility {row['Volatility (/yr)']:.0%}/yr{var_text}{betas}")
             if len(regime):
                 row = regime.iloc[0]
                 sharpe = row.get("Sharpe", np.nan)
@@ -704,6 +703,8 @@ class DeskAccounts:
                 returns, missing = live_risk.holding_returns(holdings, live_risk.EX_ANTE_DAYS, self._ib_closes)
                 # Tokens with no HL price at all have no value to weigh, so they are named, not covered.
                 rows.append(live_risk.ex_ante_row(holdings, returns, equity, self.benchmarks, missing + unpriced))
+                # Crypto and stocks are different worlds: each book against its own benchmark, on the same returns.
+                self.book_risk = live_risk.book_rows(holdings, returns, equity, self.benchmarks)
         except Exception as exc:
             self.notes.append(f"Ex-ante risk unavailable ({type(exc).__name__}: {exc}).")
         daily = period_returns(self.index, "1D", self.daily_days)
@@ -765,6 +766,25 @@ class DeskAccounts:
         display(emphasis.style_frame(styler, basis, {"VaR 95%": None, "Beta BTC (crypto)": None, "Beta SPY (stocks)": None}, title="DESK RISK METRICS"))
         print(RISK_NOTE)
         self.risk_table = table
+        self.show_book_risk()
+
+    def show_book_risk(self):
+        """Crypto and stocks side by side, each against its own benchmark (live_risk.book_rows)."""
+        books = getattr(self, "book_risk", [])
+        if not books:
+            return
+        frame = pd.DataFrame(books).set_index("Basis")
+        columns = [c for c in ["Benchmark", "Net", "Gross", "Net / desk", "Gross / desk", "Beta (on desk value)",
+                               "Beta per $ held", "Benchmark-equivalent", "Volatility (/yr)", "VaR 95%", "Coverage"]
+                   if c in frame]
+        formats = {"Net": _usd, "Gross": _usd, "Net / desk": "{:+.0%}", "Gross / desk": "{:.0%}",
+                   "Beta (on desk value)": "{:+.2f}", "Beta per $ held": "{:+.2f}", "Benchmark-equivalent": _usd,
+                   "Volatility (/yr)": "{:.1%}", "VaR 95%": _usd, "Coverage": "{:.0%}"}
+        styler = frame[columns].style.format({k: v for k, v in formats.items() if k in columns}, na_rep="")
+        display(emphasis.style_frame(styler, frame[columns], {"Beta (on desk value)": None}, title="RISK BY BOOK"))
+        print("Each book against its own benchmark, on today's holdings over the last 90 days. Beta on desk value adds "
+              "up across books; per $ held is the same benchmark-equivalent over the book's gross, how aggressive "
+              "the holdings themselves are.")
 
     def plot_value(self):
         """Desk value stacked by account, and the desk return against BTC and SPY."""

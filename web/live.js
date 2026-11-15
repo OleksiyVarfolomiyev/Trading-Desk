@@ -984,14 +984,19 @@
     const riskParts = [];
     if (book.length) riskParts.push(`open risk ${percent(riskUsed / riskEquity, false, 0)} of equity (cap ${percent(MAX_TOTAL_RISK_PCT, false, 0)})`);
     if (riskRow && fin(riskRow["Volatility (/yr)"])) {
-      riskParts.push(`volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr`);
+      riskParts.push(`desk volatility ${percent(riskRow["Volatility (/yr)"], false, 0)}/yr`);
       if (deskEquity > 0 && fin(riskRow["VaR 95%"])) riskParts.push(`VaR 95% ${percent(riskRow["VaR 95%"] / deskEquity)}/day`);
-      [["crypto", "BTC", riskRow["Beta BTC (crypto)"]], ["stocks", "S&P 500", riskRow["Beta S&P 500 (stocks)"]]]
-        .filter(([, , b]) => fin(b))
-        .forEach(([book, name, b]) => riskParts.push(`${book} beta ${b >= 0 ? "+" : ""}${b.toFixed(2)} to ${name}`));
+      const signed = (x) => `${x >= 0 ? "+" : ""}${x.toFixed(2)}`;
+      (riskRow.books || []).forEach((row) => {  // desk/live_risk.py book_line
+        const parts = [];
+        if (fin(row.beta)) parts.push(`beta ${signed(row.beta)} to ${row.benchmark} on desk value` + (fin(row.perHeld) ? ` (${signed(row.perHeld)} per $ held)` : ""));
+        parts.push(`net ${percent(row.net / deskEquity)} of desk`);
+        if (fin(row.vol)) parts.push(`vol ${percent(row.vol, false, 0)}/yr`);
+        riskParts.push(`${row.name}: ${parts.join(", ")}`);
+      });
     }
     if (riskParts.length) {
-      const text = riskParts.join(", ").replace(/^./, (c) => c.toUpperCase()) + ".";
+      const text = riskParts.join(", ").replace(/, (crypto|stocks): /g, "; $1: ").replace(/^./, (c) => c.toUpperCase()) + ".";
       if (book.length && riskUsed > riskCap) attention.unshift(["Risk: over cap", text]);
       else if (book.length && riskUsed > riskCap * NEAR_CAP_PCT) attention.push(["Risk: near cap", text]);
       else well.push(["Risk", text]);
@@ -1279,6 +1284,16 @@
       // Each book against its own benchmark: one desk beta blends a short-alt book with a long-stock book.
       "Beta BTC (crypto)": btc ? beta(bookPnl.crypto.map((x) => x / deskEquity), btc) : NaN,
       "Beta S&P 500 (stocks)": sp ? beta(bookPnl.stocks.map((x) => x / deskEquity), sp) : NaN,
+      // Per book (desk/live_risk.py book_rows): net, gross, volatility on desk value, and beta per $ held.
+      books: ["crypto", "stocks"].map((name) => {
+        const parts = name === "stocks" ? ibHoldings.concat(holdings.filter((h) => h.book === "stocks"))
+          : holdings.filter((h) => (h.book || "crypto") === "crypto" && !h.stable);
+        const gross = sum(parts.map((h) => Math.abs(h.value))), net = sum(parts.map((h) => h.value));
+        const series = bookPnl[name].map((x) => x / deskEquity), bench = name === "crypto" ? btc : sp;
+        const b = bench ? beta(series, bench) : NaN;
+        return { name, benchmark: name === "crypto" ? "BTC" : "S&P 500", gross, net, beta: b,
+          perHeld: gross > 0 && fin(b) ? b * deskEquity / gross : NaN, vol: std(series) * Math.sqrt(365) };
+      }).filter((row) => row.gross > 0),
     };
   }
 
