@@ -212,7 +212,11 @@ const CHART_VIEWS = {
 };
 const LABEL_FONT = (size = 12, color) => ({ size, color: color || token("--ink-2") });   // the value next to each bar's end
 const INSIDE_INK = () => (document.documentElement.dataset.theme === "light" ? "#ffffff" : token("--ink"));   // names inside bars: white on the light page
-const INSIDE_MIN_SHARE = 0.28;   // a bar shorter than this share of the longest has no room for its name inside
+// A name goes inside its bar only when the bar is long enough, in pixels, to hold it (13px text, about 7.5px a character).
+function nameFits(share, name, host, rightMargin) {
+  const plotPx = Math.max(200, (host.clientWidth || 600) - 20 - rightMargin) * 0.85;   // the longest bar's room, with padding
+  return share * plotPx >= String(name).length * 7.5 + 16;
+}
 const isChartView = () => document.documentElement.dataset.view === "charts";
 
 function chartAxis(format) {  // multiplier and axis look for a cell format
@@ -273,7 +277,7 @@ function renderTableChart(id, spec) {
     const biggest = Math.max(...rows.map((row) => Math.max(size(row, plan.long), size(row, plan.short)))) || 1;
     // Each class's name goes inside its larger bar when that bar has room, else it joins that bar's figure.
     const carrier = rows.map((row) => (size(row, plan.long) >= size(row, plan.short) ? plan.long : plan.short));
-    const roomy = rows.map((row, i) => size(row, carrier[i]) / biggest >= INSIDE_MIN_SHARE);
+    const roomy = rows.map((row, i) => nameFits(size(row, carrier[i]) / biggest, names[i], host, 90));
     const bar = (key, color, title) => ({ type: "bar", orientation: "h", name: title, y: names, marker: { color },
       x: rows.map((row) => (isNum(row[key]) ? Math.abs(row[key]) * axis.mult * (key === plan.short ? -1 : 1) : null)),
       text: rows.map((row, i) => (carrier[i] === key && !roomy[i] ? `${names[i]} · ` : "") + text(key, row[key])),
@@ -297,7 +301,7 @@ function renderTableChart(id, spec) {
       .sort((a, b) => Math.abs(rows[b][plan.value]) - Math.abs(rows[a][plan.value]));
     const axis = chartAxis(formatOf(plan.value));
     const biggest = Math.max(...order.map((i) => Math.abs(rows[i][plan.value]))) || 1;
-    const fits = (i) => Math.abs(rows[i][plan.value]) / biggest >= INSIDE_MIN_SHARE;   // room for the name inside the bar
+    const fits = (i) => nameFits(Math.abs(rows[i][plan.value]) / biggest, names[i], host, plan.text ? 130 : 90);
     const figures = (i) => [text(plan.value, rows[i][plan.value]), plan.text ? text(plan.text, rows[i][plan.text]) : ""]
       .filter(Boolean).join(" · ");
     traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => rows[i][plan.value] * axis.mult),
@@ -316,7 +320,8 @@ function renderTableChart(id, spec) {
     });
     layout = { xaxis: Object.assign({ zeroline: true }, axis), annotations: inside, insideLabels: true };
     height = Math.max(200, order.length * 34 + 80);   // positions read large: a tall row per bar
-    layout.margin = { r: plan.text ? 130 : 90 };
+    // Room at the right for the longest end label (a short bar's label carries its name too).
+    layout.margin = { r: Math.min(320, Math.max(plan.text ? 130 : 90, Math.max(...traces[0].text.map((t) => t.length)) * 7 + 24)) };
   }
   host.replaceChildren();
   const node = el("div", { class: "chart", id: "tc-" + id, style: `height:${height}px` });
