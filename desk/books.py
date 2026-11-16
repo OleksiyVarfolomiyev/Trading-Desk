@@ -1074,8 +1074,15 @@ def plot_picks(book: "Book"):
         go.Scatter(x=picks.index, y=path(picks), name="Picks"),
         go.Scatter(x=same.index, y=path(same), name=f"Same $ in {book.benchmark}",
                    line={"color": "#F7931A" if book.benchmark == "BTC" else "#16a34a"}),
-        go.Scatter(x=picks.index, y=path(picks - same), name="Picks added", line={"dash": "dot"}),
     ])
+    # Picks added: green where the picks are ahead of the benchmark, red where behind; one legend entry.
+    from desk.hl.account_analytics import split_at_zero
+
+    ahead, behind = split_at_zero(path(picks - same))
+    for part, color, legend in ((ahead, "#16a34a", True), (behind, "#dc2626", False)):
+        figure.add_trace(go.Scatter(x=part.index, y=part, name="Picks added", showlegend=legend,
+                                    legendgroup="added", line={"color": color, "dash": "dot"}))
+    figure.update_layout()
     figure.update_layout(title=f"Picks vs {book.benchmark} on the money held (%, since {_since(first)})",
                          template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%",
                          legend={"orientation": "h", "y": 1.08})
