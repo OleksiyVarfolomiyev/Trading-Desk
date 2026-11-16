@@ -21,7 +21,9 @@ import requests
 
 BASE = "https://data.binance.vision/data/futures/um"
 LISTING = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
-CACHE = Path(__file__).resolve().parents[2] / "data" / "binance"
+from desk.cache import cache_dir  # noqa: E402
+
+CACHE = cache_dir("binance")
 KLINE_COLUMNS = ["open_time", "open", "high", "low", "close", "volume", "close_time", "quote_volume", "count",
                  "taker_buy_volume", "taker_buy_quote_volume", "ignore"]
 

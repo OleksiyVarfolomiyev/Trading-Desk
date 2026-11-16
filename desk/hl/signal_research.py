@@ -38,7 +38,9 @@ import pandas as pd
 from desk.numbers import pct as _pct
 
 ROOT = Path(__file__).resolve().parents[2]
-PANEL_FILE = ROOT / "data" / "api_cache" / "signal_panel.csv.gz"   # plain CSV: both Python environments read it
+from desk.cache import cache_dir  # noqa: E402
+
+PANEL_FILE = cache_dir("api_cache") / "signal_panel.csv.gz"   # plain CSV: both Python environments read it
 RESULTS_FILE = ROOT / "data" / "signal_research.json"
 HISTORY_DAYS = 560
 UNIVERSE_SIZE = 40

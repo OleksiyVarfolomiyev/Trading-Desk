@@ -25,7 +25,9 @@ DEFAULT_HORIZON_DAYS = 5
 FUNDING_INTERVAL_HOURS = 1
 # Completed candles and past funding never change, so each is downloaded only once.
 # The cache lives in the repository's data folder, two levels above this package module.
-CACHE_DIR = None if os.environ.get("HL_DISABLE_CACHE") else Path(__file__).resolve().parents[2] / "data" / "api_cache"
+from desk.cache import cache_dir  # noqa: E402
+
+CACHE_DIR = None if os.environ.get("HL_DISABLE_CACHE") else cache_dir("api_cache")
 # A full 500-row funding page costs about 45 of the API's 1,200 weight per minute.
 FULL_PAGE_PAUSE_SECONDS = 2.5
 FUNDING_TIMESTAMP_TOLERANCE = pd.Timedelta(seconds=2)

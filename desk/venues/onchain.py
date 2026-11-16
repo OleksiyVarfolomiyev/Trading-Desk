@@ -125,7 +125,7 @@ CHAINS = {
         Chain("avalanche", 43114, "etherscan", "avax", "AVAX", "coingecko:avalanche-2"),
     )
 }
-NAME_CACHE = Path(__file__).resolve().parents[2] / "data" / "api_cache" / "contract_names.json"
+NAME_CACHE = __import__("desk.cache", fromlist=["cache_dir"]).cache_dir("api_cache") / "contract_names.json"
 ACTIVITY_COLUMNS = ["chain", "time", "hash", "log_index", "direction", "symbol", "token", "amount",
                     "price_usd", "value_usd", "counterparty", "label"]
 
