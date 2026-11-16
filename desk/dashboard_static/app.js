@@ -756,7 +756,19 @@ function setLook(kind, value) {
   if (kind === "view") root.dataset.view = value; else root.dataset.theme = value;
   try { localStorage.setItem(kind === "view" ? "desk-view" : "desk-theme", value); } catch (e) {}
   drawModes();
-  if (latest && latest.data) render(latest);
+  redrawLook(kind);
+}
+// A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
+// switch redraws the tables; a colour switch is CSS for the tables, so only the Plotly charts (which read the colours
+// when drawn) are redrawn, and the table charts when the charts view is on.
+function redrawLook(kind) {
+  if (!latest || !latest.data) return;
+  const data = latest.data, context = { deskValue: (data.kpis || {}).desk_value };
+  if (kind === "view" || isChartView()) {
+    for (const id of TABLES) renderTable(id, applyView(id, data.tables && data.tables[id], context));
+    if (kind === "view") balanceColumns();
+  }
+  if (kind === "theme") renderCharts(data.charts);
 }
 function drawModes() {
   const host = document.getElementById("modes");
