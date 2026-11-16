@@ -92,10 +92,12 @@ def coin_day_pnl(position_before: float, path: pd.DataFrame, closes: pd.Series, 
         trade = path["signed"] * (at_close - path["px"])
         trading = trade.groupby(path["day"].to_numpy()).sum().reindex(days).fillna(0.0)
         fees = (-path["fee"]).groupby(path["day"].to_numpy()).sum().reindex(days).fillna(0.0)
+        # The direction of each day's first fill: the side of a position opened and closed within the day.
+        opened = np.sign(path.groupby(path["day"].to_numpy())["signed"].first()).reindex(days).fillna(0.0)
     else:
-        trading = fees = pd.Series(0.0, index=days)
+        trading = fees = opened = pd.Series(0.0, index=days)
     return pd.DataFrame({"price": price, "trading": trading, "fees": fees,
-                         "funding": funding.reindex(days).fillna(0.0), "held": held.fillna(0.0)})
+                         "funding": funding.reindex(days).fillna(0.0), "held": held.fillna(0.0), "opened": opened})
 
 
 def hl_wallet_pnl(wallet: str, days: pd.DatetimeIndex) -> tuple[pd.DataFrame, list[str]]:
@@ -197,8 +199,9 @@ def hl_wallet_pnl(wallet: str, days: pd.DatetimeIndex) -> tuple[pd.DataFrame, li
                                   "funding": 0.0, "held": units, "value": units * close})
             frame["kind"], frame["asset"] = "spot", token
             rows.append(frame.rename_axis("day").reset_index())
-    columns = ["day", "kind", "asset", "price", "trading", "fees", "funding", "held", "value"]
-    out = pd.concat(rows, ignore_index=True)[columns] if rows else pd.DataFrame(columns=columns)
+    columns = ["day", "kind", "asset", "price", "trading", "fees", "funding", "held", "value", "opened"]
+    out = pd.concat(rows, ignore_index=True).reindex(columns=columns) if rows else pd.DataFrame(columns=columns)
+    out["opened"] = out["opened"].fillna(0.0)
     out["wallet"] = wallet
     return out, notes
 
@@ -273,8 +276,21 @@ def ib_name_pnl(positions: list, fills: pd.DataFrame, days: pd.DatetimeIndex, cl
         frame["value"] = frame["held"] * series.reindex(days).ffill()
         frame["kind"], frame["asset"] = "stock", symbol
         rows.append(frame.rename_axis("day").reset_index())
-    columns = ["day", "kind", "asset", "price", "trading", "fees", "funding", "held", "value"]
-    return (pd.concat(rows, ignore_index=True)[columns] if rows else pd.DataFrame(columns=columns)), notes
+    columns = ["day", "kind", "asset", "price", "trading", "fees", "funding", "held", "value", "opened"]
+    frame = pd.concat(rows, ignore_index=True).reindex(columns=columns) if rows else pd.DataFrame(columns=columns)
+    frame["opened"] = frame["opened"].fillna(0.0)
+    return frame, notes
+
+
+def side_held(frame: pd.DataFrame, keys: list[str]) -> np.ndarray:
+    """"Long" or "Short" per market-day: the side held going into the day, or for a day opened from flat the side
+    it closed on (a short opened from flat is short, not long)."""
+    before = frame.groupby(keys)["held"].shift(1).fillna(0.0)
+    # Held going in decides; a day that starts flat takes the side of its first fill (2026-11-10: three INIT shorts
+    # and a small long opened at 23:32 is a short day), and only then the side it closed on.
+    opened = frame["opened"].fillna(0.0) if "opened" in frame else pd.Series(0.0, index=frame.index)
+    basis = before.where(before.abs() > 1e-12, opened.where(opened != 0, frame["held"]))
+    return np.where(basis < 0, "Short", "Long")
 
 
 def ib_daily_pnl(history: pd.DataFrame) -> pd.Series:
@@ -356,13 +372,12 @@ class Book:
             self.notes += [f"{account.name}: {note}." for note in notes]
         pool.shutdown(wait=False)
         coins = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
-            columns=["day", "kind", "asset", "price", "trading", "fees", "funding", "held", "value", "account"])
+            columns=["day", "kind", "asset", "price", "trading", "fees", "funding", "held", "value", "opened", "account"])
         coins["venue"] = "hl"
         coins["book"] = [hl_kind(k, a) for k, a in zip(coins["kind"], coins["asset"])]
         coins["pnl"] = coins["price"] + coins["trading"] + coins["fees"] + coins["funding"]
         # The side the market was held on going into the day (a fill-only day counts as the side it ended).
-        coins["side"] = np.where(coins.groupby(["account", "kind", "asset"])["held"].shift(1).fillna(coins["held"]) >= 0,
-                                 "Long", "Short")
+        coins["side"] = side_held(coins, ["account", "kind", "asset"])
         self.all_coins = coins
         self.coins = coins[coins["book"] == self.kind].copy()
         ib = pd.Series(0.0, index=self.days)
@@ -451,7 +466,7 @@ class Book:
                 continue
             frame["wallet"], frame["account"], frame["venue"], frame["book"] = "", snapshot.label, "ib", "Stocks"
             frame["pnl"] = frame["price"] + frame["trading"] + frame["fees"] + frame["funding"]
-            frame["side"] = np.where(frame.groupby("asset")["held"].shift(1).fillna(frame["held"]) >= 0, "Long", "Short")
+            frame["side"] = side_held(frame, ["asset"])
             self.coins = pd.concat([self.coins, frame[self.coins.columns]], ignore_index=True)
             self.notes += [f"{snapshot.label}: {note}." for note in notes]
 
@@ -697,7 +712,7 @@ class Book:
         window = self.coins[self.coins["day"] > cut]
         if window.empty and not (self.kind == "Stocks" and len(self.ib_pnl)):
             return pd.DataFrame()
-        keys = ["account", "asset"]
+        keys = ["account", "asset", "side"]   # a market traded both ways shows a row per side
         table = window.groupby(keys)[["price", "trading", "fees", "funding", "pnl"]].sum()
         table = table.reset_index()
         # The side held now, from today's positions (the daily marks end at yesterday's close).
@@ -711,10 +726,12 @@ class Book:
             for account, group in ib_names.groupby("account") if len(ib_names) else [("IB", ib_names)]:
                 other = window_sum(self.ib_pnl, days) - group["pnl"].sum()
                 table.loc[len(table)] = {"account": account, "asset": "IB other (older trades, dividends, fees)",
-                                         "price": np.nan, "trading": np.nan, "fees": np.nan, "funding": np.nan, "pnl": other,
-                                         "Side now": ""}
+                                         "side": "", "price": np.nan, "trading": np.nan, "fees": np.nan,
+                                         "funding": np.nan, "pnl": other, "Side now": ""}
         table = table[table["pnl"].abs() > 0.005].sort_values("pnl")
-        table = table.rename(columns={"account": "Account", "asset": "Market", "price": "Price", "trading": "Fills vs close", "fees": "Fees",
+        table["side"] = table["side"].map({"Short": "▼ Short", "Long": "▲ Long"}).fillna("")
+        table = table.rename(columns={"account": "Account", "asset": "Market", "side": "Side", "price": "Price",
+                                      "trading": "Fills vs close", "fees": "Fees",
                                       "funding": "Funding", "pnl": "PnL"})
         equity = self.capital
         table["PnL / equity"] = table["PnL"] / equity if equity else np.nan
@@ -888,12 +905,12 @@ class Book:
         if table.empty:
             print("No PnL in this window.")
             return
-        total = {"Account": "Total", "Market": "", "Price": table["Price"].sum(),
+        total = {"Account": "Total", "Market": "", "Side": "", "Price": table["Price"].sum(),
                  "Fills vs close": table["Fills vs close"].sum(), "Fees": table["Fees"].sum(),
                  "Funding": table["Funding"].sum(), "PnL": table["PnL"].sum(), "Side now": "",
                  "PnL / equity": table["PnL / equity"].sum()}
         table = pd.concat([table, pd.DataFrame([total])], ignore_index=True)
-        columns = ["Account", "Market", "Side now", "PnL", "PnL / equity", "Price", "Fills vs close", "Fees", "Funding"]
+        columns = ["Account", "Market", "Side", "PnL", "PnL / equity", "Price", "Fills vs close", "Fees", "Funding", "Side now"]
         if self.kind == "Stocks" and not (table["Funding"].abs() > 0.005).any():
             columns.remove("Funding")
         self._table(table[columns], f"PNL BY MARKET, LAST {days} DAYS",
@@ -1029,9 +1046,9 @@ def versus_benchmark(book: "Book") -> pd.DataFrame:
     # against the close is part of the picks, and the same dollars in the benchmark earned nothing that day.
     # So the table's PnL ties out to the book's.
     dust = 0.01   # under a cent of exposure is flat
-    side = hl["before"].where(hl["before"].abs() > dust, hl["value"])
-    rows = []
-    for leg, mask in (("Short", side < -dust), ("Long", side > dust), ("Net", (side.abs() > dust) | (hl["pnl"] != 0))):
+    live = (hl["before"].abs() > dust) | (hl["pnl"] != 0)
+    rows = []   # legs by the books' one side rule (side_held): held going in, else the day's first fill
+    for leg, mask in (("Short", live & (hl["side"] == "Short")), ("Long", live & (hl["side"] == "Long")), ("Net", live)):
         part = hl[mask]
         actual = part.groupby("day")["pnl"].sum().reindex(book.days).fillna(0.0)
         exposure = part.groupby("day")["before"].sum().reindex(book.days).fillna(0.0)
