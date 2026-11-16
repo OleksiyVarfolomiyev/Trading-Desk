@@ -967,6 +967,9 @@ Book.show_factor_model = show_factor_model
 # ----------------------------------------------------------------------------------------------------------------
 # Picks against trading the benchmark itself
 # ----------------------------------------------------------------------------------------------------------------
+PICKS_MIN_HELD = 0.01   # a day counts when the leg holds at least 1% of equity
+
+
 def versus_benchmark(book: "Book") -> pd.DataFrame:
     """What the book's markets earned against the same dollars in its benchmark: each day, the exposure held going in
     (per leg, short and long) times the benchmark's move. The gap is what picking the names added or cost; funding and
@@ -987,7 +990,8 @@ def versus_benchmark(book: "Book") -> pd.DataFrame:
         exposure = part.groupby("day")["before"].sum().reindex(book.days).fillna(0.0)
         same = (exposure * bench).fillna(0.0)
         gap = actual - same
-        active = exposure.abs() > 0
+        gross = part.assign(g=part["before"].abs()).groupby("day")["g"].sum().reindex(book.days).fillna(0.0)
+        active = gross >= PICKS_MIN_HELD * book.equity.shift(1).fillna(0.0).clip(lower=1.0)
         def row(label, window, **extra):
             # Picks added (%): the gap over the average dollars held on those days, the picks' return less the
             # benchmark's on the money actually invested.
@@ -1038,7 +1042,7 @@ def plot_picks(book: "Book"):
     actual = held.groupby("day")["pnl"].sum().reindex(book.days).fillna(0.0)
     exposure = held.groupby("day")["before"].sum().reindex(book.days).fillna(0.0)
     gross = held.assign(g=held["before"].abs()).groupby("day")["g"].sum().reindex(book.days).fillna(0.0)
-    active = gross > 0
+    active = gross >= PICKS_MIN_HELD * book.equity.shift(1).fillna(0.0).clip(lower=1.0)   # dust (0.01 HYPE) is not a book
     if active.sum() < 5:
         return
     first = active.idxmax()
