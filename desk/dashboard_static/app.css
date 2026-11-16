@@ -33,6 +33,8 @@
     --border: rgba(255, 255, 255, 0.10);
     --good-text: #1fa67d;
     --bad-text: #ed7088;
+    --good: #1fa67d;
+    --critical: #ed7088;
     --wash-warning: rgba(250, 178, 25, 0.14);
     --series-1: #3987e5;
     --series-2: #d95926;
@@ -53,6 +55,8 @@
   --border: rgba(255, 255, 255, 0.10);
   --good-text: #1fa67d;
   --bad-text: #ed7088;
+  --good: #1fa67d;
+  --critical: #ed7088;
   --wash-warning: rgba(250, 178, 25, 0.14);
   --series-1: #3987e5;
   --series-2: #d95926;
