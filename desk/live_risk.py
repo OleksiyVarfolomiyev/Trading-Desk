@@ -48,10 +48,21 @@ def position_values(snapshots: Iterable, hl_spot: Iterable[dict] | None = None) 
 def yahoo_stock_closes(symbol: str, days: int) -> pd.Series:
     """Daily closes of a US-listed stock from Yahoo Finance, dated by UTC day: the stand-in for IB's own
     history while TWS does not answer (a symbol Yahoo does not know raises, so it counts as not priced)."""
+    from desk.hl.trade_analytics import read_cache_json, write_cache_json
     from desk.venues.ib_statement import yahoo_closes
 
     end = pd.Timestamp.now(tz="UTC").normalize()
-    series = yahoo_closes(symbol.replace(" ", "-"), end - pd.Timedelta(days=days + 10), end)
+    # Kept for the day (data/api_cache): the stocks notebook prices about 70 names, each a Yahoo request.
+    name = f"yahoo_{symbol.replace(' ', '-').replace('/', '-')}.json"
+    saved = read_cache_json(name) or {}
+    if saved.get("day") == f"{end:%Y-%m-%d}" and saved.get("days", 0) >= days:
+        series = pd.Series(saved["closes"], dtype=float)
+        series.index = pd.to_datetime(series.index)
+    else:
+        series = yahoo_closes(symbol.replace(" ", "-"), end - pd.Timedelta(days=days + 10), end)
+        if not series.empty:
+            write_cache_json(name, {"day": f"{end:%Y-%m-%d}", "days": days,
+                                    "closes": {f"{k:%Y-%m-%d}": float(v) for k, v in series.items()}})
     if series.empty:
         raise KeyError(symbol)
     series.index = pd.DatetimeIndex(series.index).tz_localize("UTC")

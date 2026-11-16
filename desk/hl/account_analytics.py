@@ -2650,9 +2650,17 @@ def build_pnl_attribution(realized_df, open_positions, funding_history=None, non
     return (tables, float(attribution['Realized'].sum() + attribution['uPnL'].sum()))
 
 
+_SPOT_META = {"at": 0.0, "value": None}
+
+
 def spot_base_token_names():
-    """Map spot market IDs such as ``@107`` to base token names such as ``HYPE``."""
-    metadata = post({'type': 'spotMeta'})
+    """Map spot market IDs such as ``@107`` to base token names such as ``HYPE``. HL's spot list is read at most
+    every 10 minutes per process (each wallet's rebuild asked for it again, about 7 s a time)."""
+    import time as _time
+
+    if _SPOT_META["value"] is None or _time.time() - _SPOT_META["at"] > 600:
+        _SPOT_META["value"], _SPOT_META["at"] = post({'type': 'spotMeta'}), _time.time()
+    metadata = _SPOT_META["value"]
     tokens = {token['index']: token['name'] for token in metadata.get('tokens', [])}
     names = {}
     for index, market in enumerate(metadata.get('universe', [])):

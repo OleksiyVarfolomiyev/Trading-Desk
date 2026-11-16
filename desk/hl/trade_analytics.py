@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import copy
 import json
 import threading
 import math
@@ -121,12 +122,23 @@ def normalize_market_symbol(coin: str, dex: str = "") -> tuple[str, str]:
     return (f"{dex}:{coin}" if dex else coin), dex
 
 
+_PARSED: dict[str, tuple[float, int, Any]] = {}
+
+
 def read_cache_json(name: str) -> Any:
-    """Return a cached JSON document, or ``None`` when absent, unreadable, or disabled."""
+    """Return a cached JSON document, or ``None`` when absent, unreadable, or disabled. A parsed document is kept in
+    memory until its file changes (parsing a year of candles for every market on every read added about 10 s)."""
     if CACHE_DIR is None:
         return None
+    path = CACHE_DIR / name
     try:
-        return json.loads((CACHE_DIR / name).read_text())
+        stat = path.stat()
+        hit = _PARSED.get(str(path))
+        if hit and hit[0] == stat.st_mtime and hit[1] == stat.st_size:
+            return copy.deepcopy(hit[2])
+        document = json.loads(path.read_text())
+        _PARSED[str(path)] = (stat.st_mtime, stat.st_size, document)
+        return copy.deepcopy(document)
     except (OSError, ValueError):
         return None
 
@@ -198,19 +210,23 @@ def fetch_daily_candles(
         return _download_daily_candles(coin, market_coin, dex, start, end)
     name = _cache_name("candles", market_coin, dex)
     cached = _read_market_cache(name)
+    changed = True
     if cached is None or cached[0].empty:
         rows, covered_from = _download_daily_candles(coin, market_coin, dex, start, end), start
     else:
         rows, covered_from = cached
         frames = [rows]
+        changed = False
         if start < covered_from:
             frames.append(_download_daily_candles(coin, market_coin, dex, start, covered_from, allow_empty=True))
-            covered_from = start
+            covered_from, changed = start, True
         # The last completed candle is yesterday's; anything older means new candles exist.
         if rows["time"].max() < end.normalize() - pd.Timedelta(days=1):
             frames.append(_download_daily_candles(coin, market_coin, dex, rows["time"].max(), end, allow_empty=True))
-        rows = _merge_rows(frames)
-    _write_market_cache(name, rows, covered_from)
+            changed = True
+        rows = _merge_rows(frames) if changed else rows
+    if changed:   # written only when something new arrived (rewriting every market's history cost about 12 s)
+        _write_market_cache(name, rows, covered_from)
     window = rows.loc[(rows["time"] >= start.floor("D")) & (rows["time"] < end.normalize())].reset_index(drop=True)
     if window.empty:
         raise ValueError(f"No completed daily OHLC candles are available for {coin}.")

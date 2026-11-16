@@ -338,7 +338,7 @@ class Book:
         pool = ThreadPoolExecutor(max_workers=4)
         jobs = [(account, pool.submit(hl_wallet_pnl, account.id, self.days))
                 for account in accounts_for("hl", self.desk.accounts)]
-        self.desk.fetch_data(detect_regime=False)
+        self.desk.fetch_data(detect_regime=False, refresh_history=self._history_stale())
         self.overview = self.desk.overview
         frames = []
         for account, job in jobs:
@@ -389,6 +389,21 @@ class Book:
             print(f"note: {note}")
         return self
 
+    def _history_stale(self, max_age: float = 1800) -> bool:
+        """Whether the saved HL value histories are older than ``max_age`` seconds: a refresh asks HL for four
+        windows per wallet (about 11 s), and the desk notebooks share the files, so a recent one is reused."""
+        import time
+
+        from desk.accounts import accounts_for
+        from desk.desk_accounts import ROOT_DATA
+        from desk.privacy import account_file
+
+        for account in accounts_for("hl", self.desk.accounts):
+            path = account_file(ROOT_DATA, "hl_portfolio_history", account.id)
+            if not path.exists() or time.time() - path.stat().st_mtime > max_age:
+                return True
+        return False
+
     def _add_ib_names(self):
         """IB's PnL per stock (``ib_name_pnl``) into the per-market frame; the NAV total stays the book's IB PnL."""
         from desk import live_risk
@@ -413,10 +428,21 @@ class Book:
             except Exception:
                 ib_refs = {}
 
+            def read(symbol):
+                try:
+                    return symbol, live_risk.yahoo_stock_closes(symbol, self.history_days + 10)
+                except Exception:
+                    return symbol, None
+
+            from concurrent.futures import ThreadPoolExecutor
+
+            symbols = sorted({p.symbol for p in snapshot.positions if p.ref not in ib_refs}
+                             | set(fills["symbol"] if len(fills) else []))
+            with ThreadPoolExecutor(max_workers=6) as pool:   # Yahoo per name, six at a time (it throttles bursts)
+                yahoo = dict(pool.map(read, symbols))
+
             def closes_for(symbol, ref):
-                if ref in ib_refs:
-                    return ib_refs[ref]
-                return live_risk.yahoo_stock_closes(symbol, self.history_days + 10)
+                return ib_refs[ref] if ref in ib_refs else yahoo.get(symbol)
 
             frame, notes = ib_name_pnl(snapshot.positions, fills, self.days, closes_for)
             if frame.empty:
