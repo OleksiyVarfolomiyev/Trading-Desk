@@ -986,16 +986,20 @@ def versus_benchmark(book: "Book") -> pd.DataFrame:
         same = (exposure * bench).fillna(0.0)
         gap = actual - same
         active = exposure.abs() > 0
+        def row(label, window, **extra):
+            # Picks added (%): the gap over the average dollars held on those days, the picks' return less the
+            # benchmark's on the money actually invested.
+            held = exposure[window & active].abs().mean()
+            return {"Leg": leg, "Window": label, "Picks": actual[window].sum(),
+                    f"Same $ in {book.benchmark}": same[window].sum(), "Picks added": gap[window].sum(),
+                    "Picks added (%)": gap[window].sum() / held if held else np.nan, "Avg held": held,
+                    "Days held": int((active & window).sum()), **extra}
+
         for label, days in WINDOWS.items():
-            window = book.days > book.days[-1] - pd.Timedelta(days=days)
-            rows.append({"Leg": leg, "Window": label, "Picks": actual[window].sum(),
-                         f"Same $ in {book.benchmark}": same[window].sum(), "Picks added": gap[window].sum(),
-                         "Days held": int((active & window).sum())})
+            rows.append(row(label, book.days > book.days[-1] - pd.Timedelta(days=days)))
         share = (gap[active] / book.equity.shift(1)[active]).replace([np.inf, -np.inf], np.nan).dropna()
-        mean, t, n = newey_west_mean(share)
-        rows.append({"Leg": leg, "Window": "Active days", "Picks": actual[active].sum(),
-                     f"Same $ in {book.benchmark}": same[active].sum(), "Picks added": gap[active].sum(),
-                     "Days held": int(n), "t": t})
+        _, t, _ = newey_west_mean(share)
+        rows.append(row("Active days", pd.Series(True, index=book.days), t=t))
     return pd.DataFrame(rows)
 
 
@@ -1005,10 +1009,13 @@ def show_versus_benchmark(book: "Book"):
     if table.empty:
         print("No HL positions in this book yet.")
         return
-    money = {c: _usd for c in table if c in ("Picks", f"Same $ in {book.benchmark}", "Picks added")}
-    book._table(table.fillna({"t": np.nan}), f"PICKS VS {book.benchmark}",
-                {**money, "Days held": "{:.0f}".format, "t": lambda v: "" if not np.isfinite(v) else f"{v:.1f}"},
-                key={"Picks added": "abs"})
+    money = {c: _usd for c in table if c in ("Picks", f"Same $ in {book.benchmark}", "Picks added", "Avg held")}
+    columns = ["Leg", "Window", "Picks added (%)", "Picks added", "Picks", f"Same $ in {book.benchmark}", "Avg held",
+               "Days held", "t"]
+    book._table(table.reindex(columns=columns), f"PICKS VS {book.benchmark}",
+                {**money, "Picks added (%)": _signed_pct, "Days held": "{:.0f}".format,
+                 "t": lambda v: "" if not np.isfinite(v) else f"{v:.1f}"},
+                key={"Picks added (%)": "abs"})
 
 
 Book.versus_benchmark = versus_benchmark
