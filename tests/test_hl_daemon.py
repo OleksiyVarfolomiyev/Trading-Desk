@@ -1163,6 +1163,25 @@ class TrimRuleTests(unittest.TestCase):
         self.assertFalse(hl_daemon.AUTO_DEFAULTS["momentum_flip"])
 
 
+class ActedTests(unittest.TestCase):
+    def test_acted_is_true_only_inside_the_episode(self):
+        import tempfile
+        import time
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        hl_daemon.load_trading()
+        with tempfile.TemporaryDirectory() as folder, patch.object(hl_daemon, "AUTO_STATE", Path(folder) / "s.json"), \
+                patch.object(hl_daemon, "AUTO_CONFIG", Path(folder) / "none.json"):
+            auto = hl_daemon.AutoTrader(SimpleNamespace())
+            self.assertFalse(auto.acted("trim:xyz:SP500:down"))
+            auto._claim("trim:xyz:SP500:down", 12)
+            self.assertTrue(auto.acted("trim:xyz:SP500:down"))           # its own alert now says it was done
+            auto.done["trim:xyz:SP500:down"] = time.time() - 13 * 3600
+            self.assertFalse(auto.acted("trim:xyz:SP500:down"))          # a new episode raises the advisory again
+
+
 class BuildUpTests(unittest.TestCase):
     def _step(self, delta, held=-100.0, alerts=(), block=""):
         import tempfile

@@ -1291,6 +1291,9 @@ class Alerts:
                     auto.flatten(f"Adverse momentum: {text}")    # against the book: flatten first, no flip
                 elif natural:
                     auto.flip(move, volume, text)
+                if auto.acted("flatten") or auto.acted("flip"):
+                    self.clear(key)   # the action's own alert says it was done; this one would repeat it
+                    continue
             if move > 0:
                 # The desk's rule: a momentum bounce after a day of hard selling is when the shorts' cash comes off the
                 # table, while the transient regime settles.
@@ -1303,6 +1306,9 @@ class Alerts:
                     text += f", after {_pct(abs(fell))} down in the day before"
                     if auto and coin == "BTC" and natural:
                         auto.bank_shorts(coin, text)
+                        if auto.acted("bank"):
+                            self.clear(key)   # the bank's own alert says it was done; the advisory would repeat it
+                            continue
             self.set(key, title, text)
 
     def watch_extraordinary(self, daemon: "Daemon | None" = None) -> None:
@@ -1326,10 +1332,13 @@ class Alerts:
             side = "longs" if move > 0 else "shorts"
             text = (f"{name} {_pct(abs(move))} {'up' if move > 0 else 'down'} in 24h ({abs(score):.1f}x its daily volatility); "
                     f"take part of the {side}' profit: 1/3 to 2/3 of a big move is the take")
-            self.set(key, f"{name} extraordinary day: trim {side}", text)
             auto = getattr(daemon, "auto", None)
             if auto and coin != "ETH":   # BTC speaks for crypto, the S&P perp for stocks
                 auto.trim_favoured(coin, move > 0, text)
+                if auto.acted(f"trim:{coin}:{'up' if move > 0 else 'down'}"):
+                    self.clear(key)   # the trim's own alert says it was done; the one asking for it would repeat it
+                    continue
+            self.set(key, f"{name} extraordinary day: trim {side}", text)
 
     def btc_betas(self, coins: list[str], days: int = 60) -> dict[str, float]:
         """Each coin's beta to BTC over ``days`` daily closes (cached daily candles), kept for a day."""
@@ -2598,6 +2607,13 @@ class AutoTrader:
             except OSError:
                 pass
         return True
+
+    def acted(self, key: str, hours: float | None = None) -> bool:
+        """Whether the rule ``key`` has already acted in its current episode: its own "Auto: ..." alert then says
+        what was done, and the advisory alert that asked for the action would only repeat it."""
+        hours = auto_config()["episode_hours"] if hours is None else hours
+        with self.lock:
+            return time.time() - float(self.done.get(key, 0)) < hours * 3600
 
     def _spawn(self, name: str, work: Callable[[], str], coins: list[str] | None = None) -> None:
         def run():
