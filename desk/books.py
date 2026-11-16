@@ -775,7 +775,7 @@ class Book:
 
         def style(row_index, column, value, row):
             if isinstance(value, (int, float)) and np.isfinite(value) and column in signed:
-                return "color:#1fa67d" if value > 0 else "color:#ed7088" if value < 0 else ""
+                return "color:#16a34a" if value > 0 else "color:#dc2626" if value < 0 else ""
             return ""
 
         signed = {c for c, f in formats.items() if f in (_usd, _signed_pct)}
@@ -877,8 +877,8 @@ class Book:
                                         line={"color": "#F7931A" if self.benchmark == "BTC" else "#16a34a"}))
         # Each day's return, on its own axis: up days green, down days red, one legend entry each.
         daily = 100 * returns
-        for name, color, part in (("Up day", "#1fa67d", daily.where(daily >= 0)),
-                                  ("Down day", "#ed7088", daily.where(daily < 0))):
+        for name, color, part in (("Up day", "#16a34a", daily.where(daily >= 0)),
+                                  ("Down day", "#dc2626", daily.where(daily < 0))):
             figure.add_trace(go.Bar(x=part.index, y=part, name=name, yaxis="y2", opacity=0.4, marker_color=color))
         figure.update_layout(title=f"{self.kind} book vs {self.benchmark} (%, since {_since(returns.index[0])})",
                              template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%", barmode="overlay",
@@ -1131,7 +1131,7 @@ def plot_picks(book: "Book"):
     from desk.hl.account_analytics import split_at_zero
 
     ahead, behind = split_at_zero(path(picks - same))
-    for part, color, name in ((ahead, "#1fa67d", "Picks added: ahead"), (behind, "#ed7088", "Picks added: behind")):
+    for part, color, name in ((ahead, "#16a34a", "Picks added: ahead"), (behind, "#dc2626", "Picks added: behind")):
         if part.notna().any():   # a legend entry only for a part that is drawn, in the colour it is drawn in
             figure.add_trace(go.Scatter(x=part.index, y=part, name=name, line={"color": color, "dash": "dot"}))
     figure.update_layout()

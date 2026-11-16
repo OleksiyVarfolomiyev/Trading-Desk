@@ -167,7 +167,7 @@ def plot_return_distribution(frame: pd.DataFrame, title: str = "", bins: int = 4
     centers = 100 * (edges[:-1] + edges[1:]) / 2
     width = 100 * (edges[1] - edges[0]) * 0.92
     figure = go.Figure()
-    for name, color, mask in (("Closed at a loss", "#ed7088", centers < 0), ("Closed in profit", "#1fa67d", centers >= 0)):
+    for name, color, mask in (("Closed at a loss", "#dc2626", centers < 0), ("Closed in profit", "#16a34a", centers >= 0)):
         figure.add_trace(go.Bar(x=centers[mask], y=counts[mask], width=width, name=name, marker_color=color, opacity=0.8,
                                 hovertemplate="%{x:.1f}%: $%{y:,.0f} closed<extra></extra>"))
     grid = np.linspace(-clip, clip, 400)
@@ -223,7 +223,7 @@ def plot_trades_vs_pnl(trades: pd.Series, returns: pd.Series, title: str = ""):
     rng = np.random.default_rng(0)
     jitter = frame["trades"] + rng.uniform(-0.18, 0.18, n)   # same counts do not stack on one vertical line
     figure = go.Figure()
-    for name, color, mask in (("Gain days", "#1fa67d", frame["return"] >= 0), ("Loss days", "#ed7088", frame["return"] < 0)):
+    for name, color, mask in (("Gain days", "#16a34a", frame["return"] >= 0), ("Loss days", "#dc2626", frame["return"] < 0)):
         figure.add_trace(go.Scatter(x=jitter[mask], y=frame["return"][mask], mode="markers", name=name,
                                     marker={"color": color, "size": 8, "opacity": 0.8},
                                     text=[f"{d:%b %d}: {int(k)} fills" for d, k in zip(frame.index[mask], frame["trades"][mask])],

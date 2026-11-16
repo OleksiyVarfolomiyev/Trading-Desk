@@ -1173,7 +1173,7 @@ def clip_inactive_periods(fig, periods, axis_selector=None):
     )
 
 
-PNL_GREEN, PNL_RED = '#1fa67d', '#ed7088'   # Hyperliquid's positive and negative text colours
+PNL_GREEN, PNL_RED = '#16a34a', '#dc2626'
 
 
 def split_at_zero(series: pd.Series) -> tuple[pd.Series, pd.Series]:
