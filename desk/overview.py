@@ -789,9 +789,9 @@ class DeskOverview:
         positions = [(snapshot.label, position) for snapshot in trading for position in snapshot.positions]
         if positions:
             ranked = sorted(positions, key=lambda item: item[1].unrealized_usd)
-            def ratio(group):  # uPnL over the group's position value
-                value = sum(abs(position.notional_usd) for _, position in group)
-                return sum(position.unrealized_usd for _, position in group) / value if value else float("nan")
+            def ratio(group):  # uPnL over the group's entry cost, the basis of the uPnL (%) column in the positions table
+                cost = sum(abs(position.notional_usd - position.unrealized_usd) for _, position in group)
+                return sum(position.unrealized_usd for _, position in group) / cost if cost else float("nan")
 
             # uPnL by venue: gains under what stands out, losses under needs attention; the desk total joins
             # the side its sign falls on.
@@ -799,7 +799,7 @@ class DeskOverview:
             rest = [item for item in positions if not item[0].startswith("IB")]
             venues = [(name, ratio(group)) for name, group in (("IB", ib), ("HL", rest)) if group]
             venues = [(name, r) for name, r in venues if math.isfinite(r)]
-            total = unrealized / gross if gross else float("nan")
+            total = ratio(positions)
             for rows, side in ((well, lambda r: r >= 0), (attention, lambda r: r < 0)):
                 parts = [f"{name} {percent(r, signed=True)}" for name, r in venues if side(r)]
                 if math.isfinite(total) and side(total):

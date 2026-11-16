@@ -930,15 +930,15 @@
     let fundingNow = [];  // positions paying adverse funding at the current rate, for the one "Funding" row
     // The desk return is in the TW return and Return 30D tiles and the performance table's bold row: no highlight.
     if (tradePositions.length) {
-      // uPnL by venue, each over its own position value: gains under what stands out, losses under needs
-      // attention; the desk total joins the side its sign falls on.
+      // uPnL by venue, each over its own entry cost (the basis of the uPnL (%) column): gains under what stands out,
+      // losses under needs attention; the desk total joins the side its sign falls on.
       const ratio = (group) => {
-        const notional = sum(group.map((p) => Math.abs(value(p))));
-        return notional ? sum(group.map((p) => p.unrealized)) / notional : NaN;
+        const cost = sum(group.map((p) => Math.abs(value(p) - p.unrealized)));
+        return cost ? sum(group.map((p) => p.unrealized)) / cost : NaN;
       };
       const venues = [["IB", tradePositions.filter((p) => p.venue === "ib")], ["HL", tradePositions.filter((p) => p.venue !== "ib")]]
         .filter(([, group]) => group.length).map(([name, group]) => [name, ratio(group)]).filter(([, r]) => fin(r));
-      const total = gross ? unrealized / gross : NaN;
+      const total = ratio(tradePositions);
       [[well, (r) => r >= 0], [attention, (r) => r < 0]].forEach(([list, side]) => {
         const parts = venues.filter(([, r]) => side(r)).map(([name, r]) => `${name} ${percent(r, true)}`);
         if (fin(total) && side(total)) parts.unshift(`all positions ${percent(total, true)}`);  // not the desk value: open positions only
