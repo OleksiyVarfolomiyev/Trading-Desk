@@ -711,34 +711,33 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
   if (latest && latest.data) renderCharts(latest.data.charts);
 });
 
-// ---------------------------------------------------------------- look switch: Dark, HL, Charts
-// Dark is the default. HL swaps the colours for Hyperliquid's. Charts draws every table as a chart, in whichever of the
-// two colour schemes was last chosen. The choice is remembered in the browser (and ?theme= / ?view= still work).
-const MODES = [["dark", "Dark"], ["hl", "HL"], ["charts", "Charts"]];
-function currentMode() {
-  const root = document.documentElement.dataset;
-  return root.view === "charts" ? "charts" : root.theme === "hl" ? "hl" : "dark";
-}
-function setMode(mode) {
+// ---------------------------------------------------------------- look switches
+// Two switches in the top bar: Numbers (the tables) or Charts (every table drawn as a chart), and the colours: Dark
+// (the default), Light or HL (Hyperliquid's). Both are remembered in the browser (?view= and ?theme= still work).
+const VIEW_CHOICES = [["tables", "Numbers"], ["charts", "Charts"]];
+const THEME_CHOICES = [["dark", "Dark"], ["light", "Light"], ["hl", "HL"]];
+function setLook(kind, value) {
   const root = document.documentElement;
-  if (mode === "charts") root.dataset.view = "charts";
-  else { root.dataset.view = "tables"; root.dataset.theme = mode; }
-  try {
-    localStorage.setItem("desk-view", root.dataset.view);
-    if (mode !== "charts") localStorage.setItem("desk-theme", mode);
-  } catch (e) {}
+  if (kind === "view") root.dataset.view = value; else root.dataset.theme = value;
+  try { localStorage.setItem(kind === "view" ? "desk-view" : "desk-theme", value); } catch (e) {}
   drawModes();
   if (latest && latest.data) render(latest);
 }
 function drawModes() {
   const host = document.getElementById("modes");
   if (!host) return;
-  const active = currentMode();
-  host.replaceChildren(...MODES.map(([mode, name]) => {
-    const button = el("button", { type: "button", "aria-pressed": mode === active ? "true" : "false", text: name });
-    button.addEventListener("click", () => setMode(mode));
-    return button;
-  }));
+  const root = document.documentElement.dataset;
+  const group = (kind, choices, active, label) => {
+    const box = el("div", { class: "switch", role: "group", "aria-label": label });
+    choices.forEach(([value, name]) => {
+      const button = el("button", { type: "button", "aria-pressed": value === active ? "true" : "false", text: name });
+      button.addEventListener("click", () => setLook(kind, value));
+      box.append(button);
+    });
+    return box;
+  };
+  host.replaceChildren(group("view", VIEW_CHOICES, root.view === "charts" ? "charts" : "tables", "Numbers or charts"),
+    group("theme", THEME_CHOICES, THEME_CHOICES.some(([v]) => v === root.theme) ? root.theme : "dark", "Colours"));
 }
 drawModes();
 

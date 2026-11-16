@@ -245,9 +245,10 @@ tr.total td.key { background: rgba(59, 130, 246, 0.12); }
   main { padding: 8px 16px 40px; }
 }
 
-/* Look switch: Dark (default), HL (Hyperliquid colours), Charts (the tables drawn as charts). */
-.modes { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.modes button { background: transparent; color: var(--ink-2); border: 0; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
-.modes button + button { border-left: 1px solid var(--border); }
-.modes button[aria-pressed="true"] { background: var(--border); color: var(--ink); font-weight: 600; }
-.modes button:hover { color: var(--ink); }
+/* Look switches: Numbers / Charts, and Dark (default) / Light / HL. */
+.modes { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.switch button { background: transparent; color: var(--ink-2); border: 0; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+.switch button + button { border-left: 1px solid var(--border); }
+.switch button[aria-pressed="true"] { background: var(--border); color: var(--ink); font-weight: 600; }
+.switch button:hover { color: var(--ink); }
