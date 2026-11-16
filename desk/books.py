@@ -1150,3 +1150,22 @@ def show_versus_benchmark_with_chart(book: "Book"):
 
 
 Book.show_versus_benchmark = show_versus_benchmark_with_chart
+
+
+def show_return_distribution(book: "Book"):
+    """How much volume the book closed at each return, with the density behind it: HL closes only (IB's statements
+    carry no closed PnL per trade)."""
+    from desk import return_distribution as dist
+    from desk.accounts import accounts_for
+    from desk.hl.account_analytics import fetch_user_fills
+
+    fills = {account.id: fetch_user_fills(account.id) for account in accounts_for("hl", book.desk.accounts)}
+    closed = dist.closed_returns(fills)
+    closed = closed[closed["book"] == book.kind]
+    if len(closed) < 20:
+        print(f"Only {len(closed)} closed {book.kind.lower()} positions: too few for a distribution.")
+        return
+    dist.plot_return_distribution(closed, f"{book.kind} closes")
+
+
+Book.show_return_distribution = show_return_distribution
