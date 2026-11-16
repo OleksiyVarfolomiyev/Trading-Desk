@@ -711,4 +711,35 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
   if (latest && latest.data) renderCharts(latest.data.charts);
 });
 
+// ---------------------------------------------------------------- look switch: Dark, HL, Charts
+// Dark is the default. HL swaps the colours for Hyperliquid's. Charts draws every table as a chart, in whichever of the
+// two colour schemes was last chosen. The choice is remembered in the browser (and ?theme= / ?view= still work).
+const MODES = [["dark", "Dark"], ["hl", "HL"], ["charts", "Charts"]];
+function currentMode() {
+  const root = document.documentElement.dataset;
+  return root.view === "charts" ? "charts" : root.theme === "hl" ? "hl" : "dark";
+}
+function setMode(mode) {
+  const root = document.documentElement;
+  if (mode === "charts") root.dataset.view = "charts";
+  else { root.dataset.view = "tables"; root.dataset.theme = mode; }
+  try {
+    localStorage.setItem("desk-view", root.dataset.view);
+    if (mode !== "charts") localStorage.setItem("desk-theme", mode);
+  } catch (e) {}
+  drawModes();
+  if (latest && latest.data) render(latest);
+}
+function drawModes() {
+  const host = document.getElementById("modes");
+  if (!host) return;
+  const active = currentMode();
+  host.replaceChildren(...MODES.map(([mode, name]) => {
+    const button = el("button", { type: "button", "aria-pressed": mode === active ? "true" : "false", text: name });
+    button.addEventListener("click", () => setMode(mode));
+    return button;
+  }));
+}
+drawModes();
+
 poll();
