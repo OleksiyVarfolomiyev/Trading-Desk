@@ -1187,3 +1187,18 @@ def show_return_distribution(book: "Book"):
 
 
 Book.show_return_distribution = show_return_distribution
+
+
+def show_trades_vs_pnl(book: "Book"):
+    """Fills per day against the book's daily return, on the days the book held something meaningful."""
+    from desk import return_distribution as dist
+    from desk.accounts import accounts_for, ib_data_dir
+    from desk.hl.account_analytics import fetch_user_fills
+
+    fills = {account.id: fetch_user_fills(account.id) for account in accounts_for("hl", book.desk.accounts)}
+    ib = ib_statement_fills(ib_data_dir())[0] if book.kind == "Stocks" else None
+    returns = book.returns.reindex(active_days(book)).dropna()
+    dist.plot_trades_vs_pnl(dist.trades_per_day(fills, book.kind, ib), returns, f"{book.kind} book")
+
+
+Book.show_trades_vs_pnl = show_trades_vs_pnl

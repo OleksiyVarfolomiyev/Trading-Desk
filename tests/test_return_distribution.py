@@ -74,3 +74,17 @@ class Metrics(unittest.TestCase):
         self.assertAlmostEqual(row["entry"], 100.0)
         self.assertAlmostEqual(row["hold_days"], 3.0)
         self.assertEqual(row["side"], "LONG")
+
+
+class TradesPerDay(unittest.TestCase):
+    def test_counts_book_fills_per_day_and_skips_ladders(self):
+        from desk.market_making import LADDER_CLOID_PREFIX
+
+        day = 1_794_000_000_000
+        fills = {"0xabcd": [{"coin": "BTC", "time": day, "cloid": None}, {"coin": "ETH", "time": day + 1000, "cloid": None},
+                            {"coin": "BTC", "time": day + 2000, "cloid": LADDER_CLOID_PREFIX + "1"},
+                            {"coin": "xyz:NVDA", "time": day + 3000, "cloid": None},
+                            {"coin": "BTC", "time": day + 90_000_000, "cloid": None}]}
+        crypto = dist.trades_per_day(fills, "Crypto")
+        self.assertEqual(list(crypto.values), [2, 1])
+        self.assertEqual(int(dist.trades_per_day(fills, "Stocks").sum()), 1)

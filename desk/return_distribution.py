@@ -183,3 +183,56 @@ def plot_return_distribution(frame: pd.DataFrame, title: str = "", bins: int = 4
         yaxis2={"title": "Probability density", "overlaying": "y", "side": "right", "rangemode": "tozero",
                 "showgrid": False})
     show(figure)
+
+
+def trades_per_day(fills_by_wallet: dict[str, list[dict]], kind: str, ib_fills: pd.DataFrame | None = None) -> pd.Series:
+    """Fills per UTC day in one book: HL fills of its markets (the ladders' own left out, they are not decisions) and,
+    for stocks, IB's statement trades."""
+    from desk.market_making import LADDER_CLOID_PREFIX
+
+    days = []
+    for fills in fills_by_wallet.values():
+        for fill in fills:
+            coin = str(fill.get("coin", ""))
+            if fill.get("time") is None or "/" in coin or coin.startswith("@") \
+                    or str(fill.get("cloid") or "").startswith(LADDER_CLOID_PREFIX) or holding_kind("hl", coin) != kind:
+                continue
+            days.append(pd.to_datetime(int(fill["time"]), unit="ms", utc=True).normalize())
+    if kind == "Stocks" and ib_fills is not None and len(ib_fills):
+        days += list(pd.to_datetime(ib_fills["time"], utc=True).dt.normalize())
+    return pd.Series(1, index=pd.DatetimeIndex(days)).groupby(level=0).sum() if days else pd.Series(dtype=int)
+
+
+def plot_trades_vs_pnl(trades: pd.Series, returns: pd.Series, title: str = ""):
+    """Each active day as a point: fills that day against the book's return that day (% of the day's equity), with
+    the least-squares line and its correlation and t-stat in the title."""
+    import plotly.graph_objects as go
+
+    from desk.charts import show
+    from desk.numbers import pct
+
+    days = returns.index
+    frame = pd.DataFrame({"trades": trades.reindex(days).fillna(0).astype(int), "return": 100 * returns})
+    n = len(frame)
+    if n < 10:
+        print(f"Only {n} active days: too few to compare.")
+        return
+    slope, intercept = np.polyfit(frame["trades"], frame["return"], 1)
+    corr = float(np.corrcoef(frame["trades"], frame["return"])[0, 1])
+    t = corr * np.sqrt((n - 2) / max(1e-12, 1 - corr ** 2))
+    rng = np.random.default_rng(0)
+    jitter = frame["trades"] + rng.uniform(-0.18, 0.18, n)   # same counts do not stack on one vertical line
+    figure = go.Figure()
+    for name, color, mask in (("Gain days", "#16a34a", frame["return"] >= 0), ("Loss days", "#dc2626", frame["return"] < 0)):
+        figure.add_trace(go.Scatter(x=jitter[mask], y=frame["return"][mask], mode="markers", name=name,
+                                    marker={"color": color, "size": 8, "opacity": 0.8},
+                                    text=[f"{d:%b %d}: {int(k)} fills" for d, k in zip(frame.index[mask], frame["trades"][mask])],
+                                    hovertemplate="%{text}, %{y:.2f}%<extra></extra>"))
+    xs = np.array([0, frame["trades"].max()])
+    figure.add_trace(go.Scatter(x=xs, y=intercept + slope * xs, mode="lines", name="Fit",
+                                line={"color": "#e5e7eb", "dash": "dot"}))
+    figure.update_layout(
+        title=f"{title}: daily return vs fills per day, correlation {corr:.2f} (t {t:.1f}, {n} days)",
+        template="plotly_dark", hovermode="closest", xaxis={"title": "Fills in the day"},
+        yaxis={"title": "Daily return", "ticksuffix": "%", "zeroline": True})
+    show(figure)
