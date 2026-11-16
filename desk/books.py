@@ -308,9 +308,11 @@ def window_sum(series: pd.Series, days: int, end: pd.Timestamp | None = None) ->
 class Book:
     """One of the desk's books ("Crypto" or "Stocks"): holdings, exposure, risk, performance and attribution."""
 
-    def __init__(self, kind: str, data_dir: str = "data", history_days: int = HISTORY_DAYS):
-        """``history_days``: how far back the per-market rebuild and the windows reach (a year by default; IB's
-        statements go back to January 2025)."""
+    def __init__(self, kind: str, data_dir: str = "data", history_days: int = HISTORY_DAYS, since: str | None = None):
+        """``history_days`` (or ``since``, a date): how far back the per-market rebuild reaches; a year by default.
+        The stocks notebook starts at IB's first deposit (its statements go back to January 2025)."""
+        if since is not None:
+            history_days = (pd.Timestamp.now(tz="UTC").normalize() - pd.Timestamp(since, tz="UTC")).days + 1
         self.history_days = history_days
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {list(KINDS)}")
@@ -1020,3 +1022,47 @@ def show_versus_benchmark(book: "Book"):
 
 Book.versus_benchmark = versus_benchmark
 Book.show_versus_benchmark = show_versus_benchmark
+
+
+def plot_picks(book: "Book"):
+    """Cumulative return of the names held against the same dollars in the benchmark, on the days money was held,
+    and the gap between them (picks added), over the book's whole history."""
+    import plotly.graph_objects as go
+
+    closes = book.benchmark_closes.copy()
+    closes.index = pd.to_datetime(closes.index, utc=True).normalize()
+    bench = closes.pct_change(fill_method=None).reindex(book.days).fillna(0.0)
+    coins = book.coins.copy()
+    coins["before"] = coins.groupby(["account", "kind", "asset"])["value"].shift(1).fillna(0.0)
+    held = coins[coins["before"].abs() > 0.01]
+    actual = held.groupby("day")["pnl"].sum().reindex(book.days).fillna(0.0)
+    exposure = held.groupby("day")["before"].sum().reindex(book.days).fillna(0.0)
+    gross = held.assign(g=held["before"].abs()).groupby("day")["g"].sum().reindex(book.days).fillna(0.0)
+    active = gross > 0
+    if active.sum() < 5:
+        return
+    first = active.idxmax()
+    picks = (actual / gross).where(active, 0.0)[first:]
+    same = (exposure * bench / gross).where(active, 0.0)[first:]
+    path = lambda r: 100 * ((1 + r).cumprod() - 1)
+    figure = go.Figure([
+        go.Scatter(x=picks.index, y=path(picks), name="Picks"),
+        go.Scatter(x=same.index, y=path(same), name=f"Same $ in {book.benchmark}",
+                   line={"color": "#F7931A" if book.benchmark == "BTC" else "#16a34a"}),
+        go.Scatter(x=picks.index, y=path(picks - same), name="Picks added", line={"dash": "dot"}),
+    ])
+    figure.update_layout(title=f"Picks vs {book.benchmark} on the money held (%, since {_since(first)})",
+                         template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%",
+                         legend={"orientation": "h", "y": 1.08})
+    show_chart(figure)
+
+
+_show_versus = show_versus_benchmark
+
+
+def show_versus_benchmark_with_chart(book: "Book"):
+    _show_versus(book)
+    plot_picks(book)
+
+
+Book.show_versus_benchmark = show_versus_benchmark_with_chart
