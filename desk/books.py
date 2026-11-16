@@ -308,7 +308,10 @@ def window_sum(series: pd.Series, days: int, end: pd.Timestamp | None = None) ->
 class Book:
     """One of the desk's books ("Crypto" or "Stocks"): holdings, exposure, risk, performance and attribution."""
 
-    def __init__(self, kind: str, data_dir: str = "data"):
+    def __init__(self, kind: str, data_dir: str = "data", history_days: int = HISTORY_DAYS):
+        """``history_days``: how far back the per-market rebuild and the windows reach (a year by default; IB's
+        statements go back to January 2025)."""
+        self.history_days = history_days
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {list(KINDS)}")
         from desk.desk_accounts import DeskAccounts
@@ -327,7 +330,7 @@ class Book:
 
         self._memo = {}   # holdings, their returns and open risk: read once per fetch, shared by every section
         end = pd.Timestamp.now(tz="UTC").normalize() - pd.Timedelta(days=1)
-        self.days = pd.date_range(end - pd.Timedelta(days=HISTORY_DAYS - 1), end, freq="D")
+        self.days = pd.date_range(end - pd.Timedelta(days=self.history_days - 1), end, freq="D")
         # Each wallet's per-coin rebuild runs in its own thread while the accounts are read here (IB needs this
         # thread's event loop); the desk's regime detection is skipped, the books measure their own active days.
         pool = ThreadPoolExecutor(max_workers=4)
@@ -408,7 +411,7 @@ class Book:
             def closes_for(symbol, ref):
                 if ref in ib_refs:
                     return ib_refs[ref]
-                return live_risk.yahoo_stock_closes(symbol, HISTORY_DAYS + 10)
+                return live_risk.yahoo_stock_closes(symbol, self.history_days + 10)
 
             frame, notes = ib_name_pnl(snapshot.positions, fills, self.days, closes_for)
             if frame.empty:
