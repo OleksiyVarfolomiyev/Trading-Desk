@@ -61,6 +61,31 @@
   --series-5: #d55181;
 }
 
+/* Hyperliquid look: deep teal-black page, mint accent, mint-green gains and rose losses. Open the dashboard with
+   ?theme=hl (remembered in the browser); ?theme=dark returns to the default. */
+:root[data-theme="hl"] {
+  color-scheme: dark;
+  --page: #0f1a1e;
+  --surface: #162329;
+  --ink: #f6fefd;
+  --ink-2: #c4d0cd;
+  --muted: #949e9c;
+  --grid: #213138;
+  --axis: #2f434b;
+  --border: rgba(246, 254, 253, 0.10);
+  --good-text: #50d2c1;
+  --bad-text: #ed7088;
+  --good: #1fa67d;
+  --warning: #f0b968;
+  --critical: #ed7088;
+  --wash-warning: rgba(240, 185, 104, 0.14);
+  --series-1: #50d2c1;
+  --series-2: #f0b968;
+  --series-3: #8ea7ff;
+  --series-4: #ed7088;
+  --series-5: #b69bff;
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {
