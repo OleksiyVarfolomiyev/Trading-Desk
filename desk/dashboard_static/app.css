@@ -31,10 +31,10 @@
     --grid: #2c2c2a;
     --axis: #383835;
     --border: rgba(255, 255, 255, 0.10);
-    --good-text: #1fa67d;
-    --bad-text: #ed7088;
-    --good: #1fa67d;
-    --critical: #ed7088;
+    --good-text: #0ca30c;
+    --bad-text: #e66767;
+    --good: #0ca30c;
+    --critical: #d03b3b;
     --wash-warning: rgba(250, 178, 25, 0.14);
     --series-1: #3987e5;
     --series-2: #d95926;
@@ -53,10 +53,10 @@
   --grid: #2c2c2a;
   --axis: #383835;
   --border: rgba(255, 255, 255, 0.10);
-  --good-text: #1fa67d;
-  --bad-text: #ed7088;
-  --good: #1fa67d;
-  --critical: #ed7088;
+  --good-text: #0ca30c;
+  --bad-text: #e66767;
+  --good: #0ca30c;
+  --critical: #d03b3b;
   --wash-warning: rgba(250, 178, 25, 0.14);
   --series-1: #3987e5;
   --series-2: #d95926;
@@ -90,8 +90,8 @@
   --series-5: #b69bff;
 }
 
-/* Viridis: the perceptually uniform palette (purple to yellow), colour-blind safe. Gains and losses use Hyperliquid's green and
-   red; series run yellow, green, teal, blue, violet. ?theme=viridis */
+/* Viridis: the perceptually uniform palette (purple to yellow), colour-blind safe. Gains are viridis green, losses its purple end
+   (lifted to read on the dark page); series run yellow, green, teal, blue, violet. ?theme=viridis */
 :root[data-theme="viridis"] {
   color-scheme: dark;
   --page: #0d0d0f;
@@ -102,11 +102,11 @@
   --grid: #2a2a30;
   --axis: #3a3a42;
   --border: rgba(255, 255, 255, 0.10);
-  --good-text: #1fa67d;
-  --bad-text: #ed7088;
-  --good: #1fa67d;
+  --good-text: #7ad151;
+  --bad-text: #9a7fe0;
+  --good: #5ec962;
   --warning: #fde725;
-  --critical: #ed7088;
+  --critical: #9a7fe0;
   --wash-warning: rgba(253, 231, 37, 0.14);
   --series-1: #fde725;
   --series-2: #7ad151;
