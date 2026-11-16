@@ -41,3 +41,36 @@ class Density(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Metrics(unittest.TestCase):
+    def test_payoff_profit_factor_and_expectancy(self):
+        import pandas as pd
+
+        frame = pd.DataFrame({"side": ["LONG", "LONG", "SHORT"], "return": [0.10, -0.05, 0.02],
+                              "notional": [100.0, 100.0, 50.0], "pnl": [10.0, -5.0, 1.0], "fees": [0.1, 0.1, 0.1],
+                              "hold_days": [1.0, 3.0, 2.0]})
+        table = dist.metrics_table(frame).set_index("Side")
+        self.assertAlmostEqual(table.loc["Long", "Payoff"], 2.0)
+        self.assertAlmostEqual(table.loc["Long", "Profit factor"], 2.0)
+        self.assertAlmostEqual(table.loc["Long", "Expectancy"], 0.025)
+        self.assertEqual(table.loc["All", "Closes"], 3)
+        self.assertAlmostEqual(table.loc["All", "Median hold (days)"], 2.0)
+
+    def test_ib_closes_use_realized_pnl_and_fifo_open_time(self):
+        import tempfile
+        from pathlib import Path
+
+        head = ("Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,C. Price,"
+                "Proceeds,Comm/Fee,Basis,Realized P/L,MTM P/L,Code\\n".replace("\\n", "\n"))
+        text = head + ('Trades,Data,Order,Stocks,USD,MU,"2026-11-02, 10:00:00",2,100,100,-200,-1,200,0,0,O\n'
+                       'Trades,Data,Order,Stocks,USD,MU,"2026-11-05, 10:00:00",-1,110,110,110,-1,-100,9,9,C\n')
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, "ib_statement_0000_20260101_20261113.csv").write_text(text)
+            frame = dist.ib_statement_closes(folder)
+        self.assertEqual(len(frame), 1)
+        row = frame.iloc[0]
+        self.assertAlmostEqual(row["return"], 0.09)          # IB's realized 9 over the basis 100
+        self.assertAlmostEqual(row["entry"], 100.0)
+        self.assertAlmostEqual(row["hold_days"], 3.0)
+        self.assertEqual(row["side"], "LONG")

@@ -14,18 +14,29 @@ import pandas as pd
 from desk.books import holding_kind
 
 
+COLUMNS = ["time", "venue", "account", "coin", "book", "side", "size", "entry", "exit", "notional", "pnl", "fees",
+           "return", "opened", "hold_days"]
+
+
 def closed_returns(fills_by_wallet: dict[str, list[dict]], ladders: bool = False) -> pd.DataFrame:
-    """One row per closing fill: time, coin, book, return, closed notional, closed PnL. The market-making ladders'
-    small closes are left out unless ``ladders`` (they are churn around a position, not trades)."""
+    """One row per HL closing fill, the layout of ``COLUMNS``: when, where, what, side closed, size, entry and exit
+    price, closed notional, PnL (HL's closed PnL), the closing fee (negative, a cost), return (PnL over the cost of the part closed)
+    and how long the position had been open (since its size last left zero). The market-making ladders' small closes
+    are left out unless ``ladders`` (churn around a position, not trades)."""
     from desk.market_making import LADDER_CLOID_PREFIX
 
     rows = []
     for wallet, fills in fills_by_wallet.items():
-        for fill in fills:
-            direction = str(fill.get("dir", ""))
-            if not ladders and str(fill.get("cloid") or "").startswith(LADDER_CLOID_PREFIX):
+        opened: dict[str, int] = {}
+        for fill in sorted((f for f in fills if f.get("time") is not None), key=lambda f: int(f["time"])):
+            coin, direction = str(fill.get("coin", "")), str(fill.get("dir", ""))
+            if "/" in coin or coin.startswith("@"):
                 continue
-            if not direction.startswith("Close") or "/" in str(fill.get("coin", "")) or str(fill["coin"]).startswith("@"):
+            if float(fill.get("startPosition") or 0) == 0 or coin not in opened:
+                opened[coin] = int(fill["time"])
+            if not direction.startswith("Close"):
+                continue
+            if not ladders and str(fill.get("cloid") or "").startswith(LADDER_CLOID_PREFIX):
                 continue
             size, price, pnl = abs(float(fill["sz"])), float(fill["px"]), float(fill.get("closedPnl") or 0)
             if size <= 0 or price <= 0:
@@ -33,10 +44,70 @@ def closed_returns(fills_by_wallet: dict[str, list[dict]], ladders: bool = False
             entry = price - pnl / size if "Long" in direction else price + pnl / size
             if entry <= 0:
                 continue
-            rows.append({"time": pd.to_datetime(int(fill["time"]), unit="ms", utc=True), "wallet": wallet[-4:],
-                         "coin": fill["coin"], "book": holding_kind("hl", fill["coin"]),
-                         "return": pnl / (size * entry), "notional": size * price, "pnl": pnl})
-    return pd.DataFrame(rows)
+            time = pd.to_datetime(int(fill["time"]), unit="ms", utc=True)
+            rows.append({"time": time, "venue": "HL", "account": wallet[-4:], "coin": coin,
+                         "book": holding_kind("hl", coin), "side": "LONG" if "Long" in direction else "SHORT",
+                         "size": size, "entry": entry, "exit": price, "notional": size * price, "pnl": pnl,
+                         "fees": -float(fill.get("fee") or 0), "return": pnl / (size * entry),
+                         "opened": pd.to_datetime(opened[coin], unit="ms", utc=True),
+                         "hold_days": (int(fill["time"]) - opened[coin]) / 86_400_000})
+    return pd.DataFrame(rows, columns=COLUMNS)
+
+
+def ib_statement_closes(folder) -> pd.DataFrame:
+    """The same layout for IB stocks, from the activity statements: each closing trade's realized P/L (IB's, net of
+    commission) over its basis; entry price, open time and holding period from first-in-first-out pairing of the
+    statements' trades (a close of shares bought before the first statement has no open time)."""
+    import re
+    from pathlib import Path
+
+    from desk.venues import ib_statement
+
+    trades, seen = [], set()
+    for path in sorted(Path(folder).glob("ib_statement_*.csv")):
+        try:
+            sections = ib_statement.read_sections(path)
+        except Exception:
+            continue
+        account = (re.search(r"ib_statement_([^_]+)_", path.name) or [None, ""])[1][-4:]
+        for row in sections.get("Trades", []):
+            if row.get("DataDiscriminator") != "Order" or row.get("Asset Category") != "Stocks" or row.get("Currency") != "USD":
+                continue
+            number = lambda key: float(str(row.get(key) or 0).replace(",", "") or 0)
+            when = pd.Timestamp(row["Date/Time"].replace(",", "")).tz_localize("America/New_York").tz_convert("UTC")
+            key = (row["Symbol"], when, number("Quantity"), number("T. Price"))
+            if key in seen:
+                continue
+            seen.add(key)
+            trades.append({"time": when, "coin": row["Symbol"], "quantity": number("Quantity"), "price": number("T. Price"),
+                           "commission": number("Comm/Fee"), "basis": number("Basis"), "realized": number("Realized P/L"),
+                           "closing": "C" in str(row.get("Code") or "").split(";"), "account": account})
+    rows, lots = [], {}
+    for trade in sorted(trades, key=lambda t: t["time"]):
+        book, left = lots.setdefault(trade["coin"], []), trade["quantity"]
+        consumed, weighted, first = 0.0, 0.0, None
+        while left and book and (book[0][0] > 0) != (left > 0):
+            lot = book[0]
+            part = min(abs(lot[0]), abs(left))
+            consumed, weighted = consumed + part, weighted + part * lot[1]
+            first = first or lot[2]
+            lot[0] += -part if lot[0] > 0 else part
+            left += -part if left > 0 else part
+            if abs(lot[0]) < 1e-12:
+                book.pop(0)
+        if abs(left) > 1e-12:
+            book.append([left, trade["price"], trade["time"]])
+        if not trade["closing"] or not trade["basis"]:
+            continue
+        size = abs(trade["quantity"])
+        entry = weighted / consumed if consumed else abs(trade["basis"]) / size
+        rows.append({"time": trade["time"], "venue": "IB", "account": trade["account"], "coin": trade["coin"],
+                     "book": "Stocks", "side": "LONG" if trade["quantity"] < 0 else "SHORT", "size": size, "entry": entry,
+                     "exit": trade["price"], "notional": size * trade["price"], "pnl": trade["realized"],
+                     "fees": trade["commission"], "return": trade["realized"] / abs(trade["basis"]),
+                     "opened": first if first is not None else pd.NaT,
+                     "hold_days": (trade["time"] - first).total_seconds() / 86400 if first is not None else float("nan")})
+    return pd.DataFrame(rows, columns=COLUMNS)
 
 
 def weighted_density(values: np.ndarray, weights: np.ndarray, grid: np.ndarray) -> np.ndarray:
@@ -59,6 +130,27 @@ def summary(frame: pd.DataFrame) -> dict:
             "in profit": float(frame.loc[frame["return"] > 0, "notional"].sum() / frame["notional"].sum()),
             "mean": float((frame["return"] * frame["notional"]).sum() / frame["notional"].sum()),
             "p5": quantile(0.05), "median": quantile(0.5), "p95": quantile(0.95)}
+
+
+def metrics_table(frame: pd.DataFrame) -> pd.DataFrame:
+    """The closes' numbers a model or a backtest needs, by side closed and in all: how often and how big the wins
+    are against the losses (volume-weighted share in profit, payoff = average win over average loss, profit factor =
+    gross profit over gross loss), expectancy per closed dollar, and how long positions were held."""
+    rows = []
+    for name, part in (("Long", frame[frame["side"] == "LONG"]), ("Short", frame[frame["side"] == "SHORT"]), ("All", frame)):
+        if part.empty:
+            continue
+        wins, losses = part[part["pnl"] > 0], part[part["pnl"] < 0]
+        weighted = lambda f: float((f["return"] * f["notional"]).sum() / f["notional"].sum()) if len(f) else float("nan")
+        gross_loss = -float(losses["pnl"].sum())
+        rows.append({"Side": name, "Closes": len(part), "Volume": float(part["notional"].sum()),
+                     "In profit": float(wins["notional"].sum() / part["notional"].sum()),
+                     "Avg win": weighted(wins), "Avg loss": weighted(losses),
+                     "Payoff": weighted(wins) / -weighted(losses) if len(losses) and len(wins) else float("nan"),
+                     "Profit factor": float(wins["pnl"].sum()) / gross_loss if gross_loss else float("nan"),
+                     "Expectancy": weighted(part), "PnL": float(part["pnl"].sum()), "Fees": float(part["fees"].sum()),
+                     "Median hold (days)": float(part["hold_days"].median())})
+    return pd.DataFrame(rows)
 
 
 def plot_return_distribution(frame: pd.DataFrame, title: str = "", bins: int = 40, clip: float = 0.3):

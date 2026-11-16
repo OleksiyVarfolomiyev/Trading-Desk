@@ -1153,19 +1153,37 @@ Book.show_versus_benchmark = show_versus_benchmark_with_chart
 
 
 def show_return_distribution(book: "Book"):
-    """How much volume the book closed at each return, with the density behind it: HL closes only (IB's statements
-    carry no closed PnL per trade)."""
+    """How much volume the book closed at each return, with the density behind it: HL fills and, for stocks, the IB
+    statements' closing trades."""
+    from pathlib import Path
+
     from desk import return_distribution as dist
     from desk.accounts import accounts_for
     from desk.hl.account_analytics import fetch_user_fills
 
     fills = {account.id: fetch_user_fills(account.id) for account in accounts_for("hl", book.desk.accounts)}
     closed = dist.closed_returns(fills)
+    if book.kind == "Stocks":
+        from desk.accounts import ib_data_dir
+
+        closed = pd.concat([closed, dist.ib_statement_closes(ib_data_dir())], ignore_index=True)
     closed = closed[closed["book"] == book.kind]
     if len(closed) < 20:
         print(f"Only {len(closed)} closed {book.kind.lower()} positions: too few for a distribution.")
         return
     dist.plot_return_distribution(closed, f"{book.kind} closes")
+    table = dist.metrics_table(closed)
+    book._table(table, "CLOSED POSITIONS", {"Volume": _usd, "In profit": _pct, "Avg win": _pct, "Avg loss": _pct,
+                                           "Expectancy": _pct, "PnL": _usd, "Fees": _usd,
+                                           "Payoff": lambda v: f"{v:.2f}", "Profit factor": lambda v: f"{v:.2f}",
+                                           "Median hold (days)": lambda v: f"{v:.1f}"})
+    try:   # the closes as a dataset for modelling and backtests
+        path = Path(__file__).resolve().parents[1] / "data" / f"closed_trades_{book.kind.lower()}.csv"
+        closed.to_csv(path, index=False)
+        print(f"{len(closed)} closes saved to data/{path.name}: when, venue, account, coin, side, size, entry, exit, "
+              "notional, pnl, fees, return, opened, hold_days.")
+    except OSError:
+        pass
 
 
 Book.show_return_distribution = show_return_distribution
