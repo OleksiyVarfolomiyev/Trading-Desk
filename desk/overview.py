@@ -252,6 +252,12 @@ def merge_ib_fills(fills: pd.DataFrame, data_dir: Path, account: str) -> pd.Data
     return merged
 
 
+def trading_equity(overview) -> float:
+    """HL wallets and IB (every snapshot but the on-chain wallets): the base of every book's beta and share. A
+    function rather than only a property, so an overview built before a notebook's code reload still answers."""
+    return sum(snapshot.equity_usd for snapshot in overview.snapshots if snapshot.venue != "onchain")
+
+
 class DeskOverview:
     """Read every configured account and show desk-wide tables."""
 
@@ -616,7 +622,7 @@ class DeskOverview:
     @property
     def trading_equity(self) -> float:
         """HL wallets and IB: the money the books trade with (the base of every book's beta and share)."""
-        return sum(snapshot.equity_usd for snapshot in self._trading())
+        return trading_equity(self)
 
     def show_wallet_holdings(self, min_usd: float = 1.0):
         """Each HL wallet's own tokens on other chains worth at least WALLET_MIN_SHARE of the desk (smaller ones are dust

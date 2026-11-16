@@ -20,6 +20,8 @@ through this book".
 
 from __future__ import annotations
 
+from desk.overview import trading_equity as _trading_equity
+
 import math
 from typing import Iterable
 
@@ -377,7 +379,7 @@ class Book:
         # Returns and shares use trading equity (HL wallets and IB): the value whose PnL is recorded. Wallet tokens on
         # other chains are in desk value but have no PnL record, so dividing by them would understate every return.
         self.capital = float(self.equity.iloc[-1]) if len(self.equity) else float("nan")
-        live = self.overview.trading_equity   # today's shares on today's trading equity (HL and IB)
+        live = _trading_equity(self.overview)   # today's shares on today's trading equity (HL and IB)
         if live > 0:
             self.capital = live
         hl_book = self.coins[self.coins["venue"] == "hl"].groupby("day")["pnl"].sum().reindex(self.days).fillna(0.0)
@@ -540,7 +542,7 @@ class Book:
             table = pd.concat([table[~small], pd.DataFrame([row])], ignore_index=True)
         gross = table["Value"].abs().sum()
         table.insert(3, "Weight", table["Value"].abs() / gross if gross else np.nan)
-        total = {"Holding": "Net", "Venue": "", "Value": table["Value"].sum(), "Weight": table["Weight"].sum(),
+        total = {"Holding": "Net", "Venue": "", "Value": table["Value"].sum(), "Weight": np.nan,   # no 100% total
                  f"{self.benchmark}-eq 60d": table[f"{self.benchmark}-eq 60d"].sum(min_count=1),
                  f"{self.benchmark}-eq 90d": table[f"{self.benchmark}-eq 90d"].sum(min_count=1)}
         table = pd.concat([table, pd.DataFrame([total])], ignore_index=True)

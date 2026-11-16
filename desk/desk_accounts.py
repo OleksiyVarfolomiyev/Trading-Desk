@@ -12,6 +12,8 @@ every account has daily data.
 
 from __future__ import annotations
 
+from desk.overview import trading_equity as _trading_equity
+
 import math
 from pathlib import Path
 
@@ -703,9 +705,9 @@ class DeskAccounts:
                 returns, missing = live_risk.holding_returns(holdings, live_risk.EX_ANTE_DAYS, self._ib_closes)
                 # Tokens with no HL price at all have no value to weigh, so they are named, not covered.
                 rows.append(live_risk.ex_ante_row(holdings, returns, equity, self.benchmarks, missing + unpriced,
-                                                  book_equity=self.overview.trading_equity))
+                                                  book_equity=_trading_equity(self.overview)))
                 # Crypto and stocks are different worlds: each book against its own benchmark, on the same returns.
-                self.book_risk = live_risk.book_rows(holdings, returns, self.overview.trading_equity, self.benchmarks)
+                self.book_risk = live_risk.book_rows(holdings, returns, _trading_equity(self.overview), self.benchmarks)
         except Exception as exc:
             self.notes.append(f"Ex-ante risk unavailable ({type(exc).__name__}: {exc}).")
         daily = period_returns(self.index, "1D", self.daily_days)
