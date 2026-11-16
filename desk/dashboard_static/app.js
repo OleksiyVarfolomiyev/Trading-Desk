@@ -292,10 +292,12 @@ function renderTableChart(id, spec) {
   host.append(node);
   const margin = Object.assign({ l: 90, r: 90, t: 8, b: 36 }, layout.margin || {});
   const base = baseLayout(Object.assign({ hovermode: "closest" }, layout, { margin }));
-  base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false });
+  // Values sit at the bar ends: no x labels, grid, zero line or axis line.
+  base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false, showticklabels: false, showgrid: false,
+    zeroline: false, showline: false, ticks: "" });
   // Every row gets its label: a category axis with one tick per bar (Plotly would otherwise thin crowded labels).
   const shown = traces[0] && traces[0].y ? traces[0].y : names;
-  base.yaxis = Object.assign({}, base.yaxis, { type: "category", autorange: "reversed", automargin: true,
+  base.yaxis = Object.assign({}, base.yaxis, { type: "category", autorange: "reversed", automargin: true, showgrid: false, zeroline: false, showline: false,
     tickmode: "array", tickvals: shown, ticktext: shown, tickfont: { color: token("--ink-2"), size: plan.kind === "bars" ? 13 : 11 } });
   if (layout.insideLabels) {   // names are in the bars: no axis labels; the left margin only holds a short's end text
     base.yaxis.showticklabels = false;
