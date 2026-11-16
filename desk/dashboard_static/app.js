@@ -203,7 +203,7 @@ function applyView(id, spec, context) {
 // ?view=charts draws every table as a chart (?view=tables returns): the same builders, rows and formats, so the two
 // views always agree. Percent and money axes follow the cell format; hover carries the table's own text.
 const CHART_VIEWS = {
-  performance: { kind: "grouped", label: "Account", series: ["24h", "7d", "30d", "90d", "Since start"] },
+  performance: { kind: "grouped", label: "Account", series: ["24h", "7d", "30d", "90d", "Since start"], by: "window" },
   accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
   exposure: { kind: "exposure", label: "Asset class", long: "Long", short: "Short", net: "Net" },
   positions: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
@@ -248,12 +248,21 @@ function renderTableChart(id, spec) {
   if (plan.kind === "grouped") {
     const series = plan.series.filter((key) => rows.some((row) => isNum(row[key])));
     const axis = chartAxis(formatOf(series[0]));
-    traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
+    if (plan.by === "window") {   // one group per window, one bar per account inside it
+      traces = rows.map((row, i) => ({ type: "bar", orientation: "h", name: names[i], y: series,
+        x: series.map((key) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
+        text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(),
+        hovertext: series.map((key) => `${names[i]}, ${key}: ${text(key, row[key])}`), hoverinfo: "text+y" }));
+      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
+      height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
+    } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
       text: rows.map((row) => text(key, row[key])), textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(),
       hovertext: rows.map((row) => `${key}: ${text(key, row[key])}`), hoverinfo: "text+y" }));
-    layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
-    height = Math.max(180, rows.length * (series.length * 14 + 14) + 80);
+    if (plan.by !== "window") {
+      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
+      height = Math.max(180, rows.length * (series.length * 14 + 14) + 80);
+    }
   } else if (plan.kind === "exposure") {
     const axis = chartAxis(formatOf(plan.long));
     const bar = (key, color, title) => ({ type: "bar", orientation: "h", name: title, y: names, marker: { color },
