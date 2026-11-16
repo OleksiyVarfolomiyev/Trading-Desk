@@ -201,6 +201,37 @@ def hl_wallet_pnl(wallet: str, days: pd.DatetimeIndex) -> tuple[pd.DataFrame, li
     return out, notes
 
 
+def ib_statement_fills(folder) -> tuple[pd.DataFrame, pd.Timestamp | None]:
+    """Every stock trade in the IB activity statements saved in ``folder`` (``ib_statement_*.csv`` and the older
+    ``transactions.csv``), in the saved-fills layout (time UTC, symbol, side, quantity, price, commission), and the
+    last day the statements cover. Statement times are US Eastern. Non-USD trades are left out (their prices are in
+    another currency); what they made stays in IB other."""
+    import re
+    from pathlib import Path
+
+    from desk.venues import ib_statement
+
+    rows, covered = [], None
+    for path in sorted(Path(folder).glob("ib_statement_*.csv")) + sorted(Path(folder).glob("transactions.csv")):
+        try:
+            sections = ib_statement.read_sections(path)
+        except Exception:
+            continue
+        end = re.search(r"_(\d{8})\.csv$", path.name)
+        for row in sections.get("Trades", []):
+            if row.get("DataDiscriminator") != "Order" or row.get("Asset Category") != "Stocks" or row.get("Currency") != "USD":
+                continue
+            when = pd.Timestamp(row["Date/Time"].replace(",", "")).tz_localize("America/New_York").tz_convert("UTC")
+            quantity = float(str(row["Quantity"]).replace(",", ""))
+            rows.append({"time": str(when), "symbol": row["Symbol"], "side": "BOT" if quantity > 0 else "SLD",
+                         "quantity": abs(quantity), "price": float(str(row["T. Price"]).replace(",", "")),
+                         "commission": float(str(row.get("Comm/Fee") or 0).replace(",", "") or 0)})
+            day = pd.Timestamp(end.group(1), tz="UTC") + pd.Timedelta(days=1) if end else when.normalize() + pd.Timedelta(days=1)
+            covered = day if covered is None or day > covered else covered
+    frame = pd.DataFrame(rows, columns=["time", "symbol", "side", "quantity", "price", "commission"])
+    return frame.drop_duplicates(), covered
+
+
 def ib_name_pnl(positions: list, fills: pd.DataFrame, days: pd.DatetimeIndex, closes_for) -> tuple[pd.DataFrame, list[str]]:
     """IB's daily PnL per stock, marked to each day's close like HL's: today's quantities, walked back through the
     saved fills (``trading-desk-data/ib/ib_fills_*.csv``; TWS keeps about a week, so the desk saves them each run).
@@ -361,6 +392,12 @@ class Book:
             account_id = self.desk.ib_ids.get(snapshot.label, "")
             path = account_file(ib_data_dir(), "ib_fills", account_id) if account_id else None
             fills = pd.read_csv(path) if path is not None and path.exists() else pd.DataFrame()
+            # The activity statements hold every trade up to their end; the saved TWS fills carry on after it.
+            statement, covered = ib_statement_fills(ib_data_dir())
+            if len(statement):
+                if len(fills) and covered is not None:
+                    fills = fills[pd.to_datetime(fills["time"], utc=True, format="mixed") >= covered]
+                fills = pd.concat([statement, fills[statement.columns] if len(fills) else fills], ignore_index=True)
             ib_refs = {}
             try:
                 ib_refs = self.desk._ib_closes([p.ref for p in snapshot.positions if p.ref]) or {}

@@ -81,3 +81,22 @@ class Kinds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatementFillTests(unittest.TestCase):
+    def test_reads_stock_trades_in_eastern_time(self):
+        import tempfile
+        from pathlib import Path
+
+        text = ("Trades,Header,DataDiscriminator,Asset Category,Currency,Symbol,Date/Time,Quantity,T. Price,C. Price,"
+                "Proceeds,Comm/Fee,Basis,Realized P/L,MTM P/L,Code\n"
+                "Trades,Data,Order,Stocks,USD,MU,\"2026-11-09, 09:30:00\",2,100,101,-200,-1,200,0,2,O\n"
+                "Trades,Data,Order,Stocks,EUR,RHMd,\"2026-11-09, 09:30:00\",1,500,501,-500,-1,500,0,1,O\n"
+                "Trades,Data,Order,Forex,USD,EUR.USD,\"2026-11-09, 09:30:00\",10,1.1,1.1,-11,0,0,0,0,\n")
+        with tempfile.TemporaryDirectory() as folder:
+            Path(folder, "ib_statement_0000_20260101_20261113.csv").write_text(text)
+            fills, covered = books.ib_statement_fills(folder)
+        self.assertEqual(list(fills["symbol"]), ["MU"])                  # USD stocks only
+        self.assertEqual(fills.iloc[0]["side"], "BOT")
+        self.assertTrue(fills.iloc[0]["time"].startswith("2026-11-09 14:30"))   # 09:30 New York is 14:30 UTC
+        self.assertEqual(str(covered.date()), "2026-11-14")
