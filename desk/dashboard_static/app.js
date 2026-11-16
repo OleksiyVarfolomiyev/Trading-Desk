@@ -211,6 +211,7 @@ const CHART_VIEWS = {
   wallets: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
 };
 const LABEL_FONT = (size = 12) => ({ size, color: token("--ink-2") });   // the value next to each bar's end
+const INSIDE_MIN_SHARE = 0.28;   // a bar shorter than this share of the longest has no room for its name inside
 const isChartView = () => document.documentElement.dataset.view === "charts";
 
 function chartAxis(format) {  // multiplier and axis look for a cell format
@@ -265,29 +266,45 @@ function renderTableChart(id, spec) {
     }
   } else if (plan.kind === "exposure") {
     const axis = chartAxis(formatOf(plan.long));
+    const size = (row, key) => (isNum(row[key]) ? Math.abs(row[key]) : 0);
+    const biggest = Math.max(...rows.map((row) => Math.max(size(row, plan.long), size(row, plan.short)))) || 1;
+    // Each class's name goes inside its larger bar when that bar has room, else it joins that bar's figure.
+    const carrier = rows.map((row) => (size(row, plan.long) >= size(row, plan.short) ? plan.long : plan.short));
+    const roomy = rows.map((row, i) => size(row, carrier[i]) / biggest >= INSIDE_MIN_SHARE);
     const bar = (key, color, title) => ({ type: "bar", orientation: "h", name: title, y: names, marker: { color },
       x: rows.map((row) => (isNum(row[key]) ? Math.abs(row[key]) * axis.mult * (key === plan.short ? -1 : 1) : null)),
-      text: rows.map((row) => text(key, row[key])), textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(),
+      text: rows.map((row, i) => (carrier[i] === key && !roomy[i] ? `${names[i]} · ` : "") + text(key, row[key])),
+      textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(),
       hovertext: rows.map((row) => `${title}: ${text(key, row[key])}`), hoverinfo: "text+y" });
     traces = [bar(plan.long, good, "Long"), bar(plan.short, bad, "Short"),
       { type: "scatter", mode: "markers+text", name: "Net", y: names, textposition: "middle right", textfont: LABEL_FONT(),
         text: rows.map((row) => text(plan.net, row[plan.net])), marker: { color: token("--ink"), symbol: "diamond", size: 10 },
         x: rows.map((row) => (isNum(row[plan.net]) ? row[plan.net] * axis.mult : null)),
         hovertext: rows.map((row) => `Net: ${text(plan.net, row[plan.net])}`), hoverinfo: "text+y" }];
-    layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis) };
+    traces.forEach((trace) => { trace.showlegend = false; });
+    const inside = rows.map((row, i) => (roomy[i] ? { x: 0, y: names[i], text: names[i], showarrow: false,
+      xanchor: carrier[i] === plan.short ? "right" : "left", xshift: carrier[i] === plan.short ? -6 : 6,
+      font: { size: 13, color: token("--ink") } } : null)).filter(Boolean);
+    layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis), annotations: inside, insideLabels: true,
+      showlegend: false, margin: { r: 90 } };
     height = Math.max(180, rows.length * 44 + 80);
   } else {  // one bar per row, green above zero, red below, ordered by size
     const order = rows.map((row, index) => index).filter((index) => isNum(rows[index][plan.value]))
       .sort((a, b) => Math.abs(rows[b][plan.value]) - Math.abs(rows[a][plan.value]));
     const axis = chartAxis(formatOf(plan.value));
+    const biggest = Math.max(...order.map((i) => Math.abs(rows[i][plan.value]))) || 1;
+    const fits = (i) => Math.abs(rows[i][plan.value]) / biggest >= INSIDE_MIN_SHARE;   // room for the name inside the bar
+    const figures = (i) => [text(plan.value, rows[i][plan.value]), plan.text ? text(plan.text, rows[i][plan.text]) : ""]
+      .filter(Boolean).join(" · ");
     traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => rows[i][plan.value] * axis.mult),
       marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)) }, showlegend: false,
-      text: order.map((i) => [text(plan.value, rows[i][plan.value]), plan.text ? text(plan.text, rows[i][plan.text]) : ""]
-        .filter(Boolean).join(" · ")), textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(13),
+      // A short bar has no room for its name inside: the name joins the figures at its end instead of overlapping them.
+      text: order.map((i) => (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
+      textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(13),
       hovertext: order.map((i) => `${plan.value}: ${text(plan.value, rows[i][plan.value])}`
         + (plan.text ? `, ${plan.text}: ${text(plan.text, rows[i][plan.text])}` : "")), hoverinfo: "text+y" }];
     // The row's name sits inside its bar, from the zero line outwards (left of zero for a short), not on the axis.
-    const inside = order.map((i) => {
+    const inside = order.filter(fits).map((i) => {
       const value = rows[i][plan.value] * axis.mult;
       return { x: 0, y: names[i], text: names[i], showarrow: false, xanchor: value < 0 ? "right" : "left",
         xshift: value < 0 ? -6 : 6, font: { size: 13, color: token("--ink") } };
@@ -310,8 +327,8 @@ function renderTableChart(id, spec) {
     tickmode: "array", tickvals: shown, ticktext: shown, tickfont: { color: token("--ink-2"), size: plan.kind === "bars" ? 13 : 11 } });
   if (layout.insideLabels) {   // names are in the bars: no axis labels; the left margin only holds a short's end text
     base.yaxis.showticklabels = false;
-    const shorts = (traces[0].x || []).some((value) => value < 0);
-    base.margin = Object.assign({}, base.margin, { l: shorts && plan.text ? 70 : 12 });
+    const shorts = traces.some((trace) => trace.type === "bar" && (trace.x || []).some((value) => value < 0));
+    base.margin = Object.assign({}, base.margin, { l: shorts ? 150 : 12 });
     delete base.insideLabels;
   }
   Plotly.newPlot(node, traces, base, CONFIG);
