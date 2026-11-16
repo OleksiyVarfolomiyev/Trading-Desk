@@ -198,6 +198,95 @@ function applyView(id, spec, context) {
   return Object.assign({}, spec, { columns, rows, total });
 }
 
+
+// ---------------------------------------------------------------- tables drawn as charts
+// ?view=charts draws every table as a chart (?view=tables returns): the same builders, rows and formats, so the two
+// views always agree. Percent and money axes follow the cell format; hover carries the table's own text.
+const CHART_VIEWS = {
+  performance: { kind: "grouped", label: "Account", series: ["24h", "7d", "30d", "90d", "Since start"] },
+  accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
+  exposure: { kind: "exposure", label: "Asset class", long: "Long", short: "Short", net: "Net" },
+  positions: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
+  positions_stocks: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
+  wallets: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
+};
+const isChartView = () => document.documentElement.dataset.view === "charts";
+
+function chartAxis(format) {  // multiplier and axis look for a cell format
+  if (["pct", "spct", "vpct", "rpct"].includes(format)) return { mult: 100, ticksuffix: "%" };
+  if (["lev", "slev"].includes(format)) return { mult: 1, ticksuffix: "×", tickformat: ".1f" };
+  if (["usd", "susd", "vusd", "rusd"].includes(format)) return { mult: 1, tickformat: "$~s" };
+  return { mult: 1 };
+}
+
+function chartPlan(id, spec) {
+  const preset = CHART_VIEWS[id];
+  const formatOf = (key) => (spec.columns.find((column) => column.key === key) || {}).fmt;
+  if (preset) return Object.assign({ columns: spec.columns }, preset);
+  // Any other table: its first column names the bars, its key (or first) number column is the bar.
+  const numeric = spec.columns.filter((column) => (FORMATS[column.fmt] || FORMATS.text).num);
+  const key = numeric.find((column) => column.emphasis && column.emphasis !== "none") || numeric[0];
+  return key ? { kind: "bars", label: spec.columns[0].key, value: key.key, text: null } : null;
+}
+
+function renderTableChart(id, spec) {
+  const host = document.getElementById("t-" + id);
+  const plan = chartPlan(id, spec);
+  if (typeof Plotly === "undefined" || !plan) return false;
+  const rows = spec.rows.slice();
+  const formatOf = (key) => (spec.columns.find((column) => column.key === key) || {}).fmt;
+  const text = (key, value) => (FORMATS[formatOf(key)] || FORMATS.text).text(value);
+  const labels = rows.map((row) => String(row[plan.label] ?? ""));
+  // A symbol held in two accounts gets its account in the label.
+  const name = (row, index) => labels.filter((l) => l === labels[index]).length > 1 && row.Account
+    ? `${labels[index]} (${row.Account})` : labels[index];
+  const names = rows.map(name);
+  const colors = [1, 2, 3, 4, 5].map((i) => token("--series-" + i));
+  const good = token("--good-text") || token("--good"), bad = token("--bad-text") || token("--critical");
+  let traces = [], layout = {}, height = 0;
+  if (plan.kind === "grouped") {
+    const series = plan.series.filter((key) => rows.some((row) => isNum(row[key])));
+    const axis = chartAxis(formatOf(series[0]));
+    traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
+      x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
+      hovertext: rows.map((row) => `${key}: ${text(key, row[key])}`), hoverinfo: "text+y" }));
+    layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
+    height = Math.max(180, rows.length * (series.length * 14 + 14) + 80);
+  } else if (plan.kind === "exposure") {
+    const axis = chartAxis(formatOf(plan.long));
+    const bar = (key, color, title) => ({ type: "bar", orientation: "h", name: title, y: names, marker: { color },
+      x: rows.map((row) => (isNum(row[key]) ? Math.abs(row[key]) * axis.mult * (key === plan.short ? -1 : 1) : null)),
+      hovertext: rows.map((row) => `${title}: ${text(key, row[key])}`), hoverinfo: "text+y" });
+    traces = [bar(plan.long, good, "Long"), bar(plan.short, bad, "Short"),
+      { type: "scatter", mode: "markers", name: "Net", y: names, marker: { color: token("--ink"), symbol: "diamond", size: 10 },
+        x: rows.map((row) => (isNum(row[plan.net]) ? row[plan.net] * axis.mult : null)),
+        hovertext: rows.map((row) => `Net: ${text(plan.net, row[plan.net])}`), hoverinfo: "text+y" }];
+    layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis) };
+    height = Math.max(180, rows.length * 44 + 80);
+  } else {  // one bar per row, green above zero, red below, ordered by size
+    const order = rows.map((row, index) => index).filter((index) => isNum(rows[index][plan.value]))
+      .sort((a, b) => Math.abs(rows[b][plan.value]) - Math.abs(rows[a][plan.value]));
+    const axis = chartAxis(formatOf(plan.value));
+    traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => rows[i][plan.value] * axis.mult),
+      marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)) }, showlegend: false,
+      text: order.map((i) => (plan.text ? text(plan.text, rows[i][plan.text]) : "")), textposition: "outside", cliponaxis: false,
+      hovertext: order.map((i) => `${plan.value}: ${text(plan.value, rows[i][plan.value])}`
+        + (plan.text ? `, ${plan.text}: ${text(plan.text, rows[i][plan.text])}` : "")), hoverinfo: "text+y" }];
+    layout = { xaxis: Object.assign({ zeroline: true }, axis) };
+    height = Math.max(160, order.length * 26 + 70);
+    if (plan.text) layout.margin = { r: 90 };
+  }
+  host.replaceChildren();
+  const node = el("div", { class: "chart", id: "tc-" + id, style: `height:${height}px` });
+  host.append(node);
+  const base = baseLayout(Object.assign({ hovermode: "closest", margin: { l: 90, r: 72, t: 8, b: 36 } }, layout));
+  base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false });
+  base.yaxis = Object.assign({}, base.yaxis, { autorange: "reversed", automargin: true });
+  if (layout.margin) base.margin = Object.assign({}, base.margin, layout.margin);
+  Plotly.newPlot(node, traces, base, CONFIG);
+  return true;
+}
+
 // A displayed zero amount ($0.00, -$0.00, 0%, 0.00) is an empty cell; a whole-number 0 (a count) stays.
 const ZERO_TEXT = /^-?(\$0(\.0+)?|0(\.0+)?%|0\.0+)$/;
 function renderTable(id, spec) {
@@ -210,6 +299,7 @@ function renderTable(id, spec) {
   const empty = !spec || !spec.columns || !spec.columns.length || !(spec.rows || []).length;
   if (card) card.hidden = empty;
   if (empty) return;
+  if (isChartView() && renderTableChart(id, spec)) return;   // ?view=charts: the table drawn as a chart
   // A text column with the same value in every row is said once, above the table; an empty one is left out.
   const shared = [];
   const align = (VIEWS[id] || {}).align;

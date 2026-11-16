@@ -14,6 +14,12 @@
       document.documentElement.setAttribute("data-theme", theme);
       try { localStorage.setItem("desk-theme", theme); } catch (e) {}
     }
+    var view = null;   // ?view=charts draws the tables as charts; ?view=tables returns
+    try { view = new URLSearchParams(location.search).get("view") || localStorage.getItem("desk-view"); } catch (e) {}
+    if (view === "charts" || view === "tables") {
+      document.documentElement.setAttribute("data-view", view);
+      try { localStorage.setItem("desk-view", view); } catch (e) {}
+    }
   })();
 </script>
 <script defer src="/plotly.min.js"></script>
