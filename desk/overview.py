@@ -495,7 +495,7 @@ class DeskOverview:
             priced = group["uPnL (%)"].notna()
             cost = (group["Value"] - group["uPnL"]).abs()[priced].sum()
             group = group.drop(columns="Side", errors="ignore")   # Value is signed and coloured: it says the side
-            total = {"Account": "Total", "Symbol": "", "Quantity": float("nan"),
+            total = {"Symbol": "Total", "Account": "", "Quantity": float("nan"),
                      "Avg price": float("nan"), "Mark": float("nan"),
                      "Value": group["Value"].sum(), "uPnL": group["uPnL"].sum(),
                      "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
@@ -503,6 +503,9 @@ class DeskOverview:
                      "Funding (APR)": funding_total(group["Value"], group["Funding (APR)"]),
                      "Weight": float("nan"), "Exposure / desk value": group["Exposure / desk value"].sum()}
             group = pd.concat([group, pd.DataFrame([total])], ignore_index=True)
+            # Symbol and account name the row, so they lead; the asset class goes to the back.
+            lead = [c for c in ("Symbol", "Account") if c in group.columns]
+            group = group[lead + [c for c in group.columns if c not in lead and c != "Asset class"] + ["Asset class"]]
             group = group[emphasis.key_columns_first(list(group.columns), {"Weight"}, SIGNED_COLUMNS,
                                                      text={"Account", "Symbol"})]
             display_interactive_table(
