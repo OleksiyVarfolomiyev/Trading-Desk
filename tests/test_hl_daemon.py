@@ -1196,7 +1196,7 @@ class BuildUpTests(unittest.TestCase):
         self.assertFalse(self._step(80.0, alerts=("short_strength",)))
 
     def test_only_grows_the_position_it_was_set_for(self):
-        self.assertFalse(self._step(80.0, held=0.0))
+        self.assertTrue(self._step(80.0, held=0.0))      # not open yet: opens at the room there is
         self.assertFalse(self._step(80.0, held=100.0))   # flipped long: not the short build-up
 
 

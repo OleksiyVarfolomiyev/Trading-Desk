@@ -2853,7 +2853,7 @@ BUILDUP_MIN_ADD_USD = 25.0      # smaller adds are not worth a fill and a stop r
 
 
 class BuildUps:
-    """A position that starts small because the desk risk cap or margin has no room, grown to the full risk budget as
+    """A position (or one not yet open) that starts small because the desk risk cap or margin has no room, grown to the full risk budget as
     room appears. Every few minutes each listed position gets a "target" action (size to the per-position and desk
     caps, the same sizing as a fresh entry); only an add is sent, never a cut, and nothing while the kill switch is
     on or the short-strength alert is up (a bounce is the wrong time to add to shorts)."""
@@ -2903,12 +2903,12 @@ class BuildUps:
         wallet, coin, side = item["wallet"], item["coin"], item["side"]
         dex = coin.split(":")[0] if ":" in coin else ""
         held = daemon.state.position_quantity(wallet, coin, dex) or 0.0
-        if not held or (held > 0) != (side == "LONG"):
-            return   # not open (or flipped): a build-up only grows the position it was set for
+        if held and (held > 0) != (side == "LONG"):
+            return   # flipped: a build-up only grows the position it was set for
         if ht.kill_switch_engaged() or "short_strength" in daemon.alerts.items:
             return
         path = daemon_link.RUN_DIR / f"buildup_{wallet[-4:]}_{coin.replace(':', '_').lower()}.csv"
-        path.write_text(f"action,coin,side,dex\ntarget,{coin},{side},{dex}\n")
+        path.write_text(f"action,coin,side,dex\n{'target' if held else 'open_target'},{coin},{side},{dex}\n")
         request = {"cmd": "trade", "wallet": wallet, "live": False, "actions": str(path), "ignore_unreachable": True}
         _, plans, markets, _ = daemon._plan(request, wallet, [wallet] + [w for w in daemon.state.wallets if w != wallet])
         plan = plans[0] if plans else None
