@@ -270,10 +270,11 @@ function renderTableChart(id, spec) {
     traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => rows[i][plan.value] * axis.mult),
       marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)) }, showlegend: false,
       text: order.map((i) => (plan.text ? text(plan.text, rows[i][plan.text]) : "")), textposition: "outside", cliponaxis: false,
+      textfont: { size: 13, color: token("--ink-2") },
       hovertext: order.map((i) => `${plan.value}: ${text(plan.value, rows[i][plan.value])}`
         + (plan.text ? `, ${plan.text}: ${text(plan.text, rows[i][plan.text])}` : "")), hoverinfo: "text+y" }];
     layout = { xaxis: Object.assign({ zeroline: true }, axis) };
-    height = Math.max(160, order.length * 26 + 70);
+    height = Math.max(200, order.length * 34 + 80);   // positions read large: a tall row per bar
     if (plan.text) layout.margin = { r: 90 };
   }
   host.replaceChildren();
@@ -284,7 +285,7 @@ function renderTableChart(id, spec) {
   // Every row gets its label: a category axis with one tick per bar (Plotly would otherwise thin crowded labels).
   const shown = traces[0] && traces[0].y ? traces[0].y : names;
   base.yaxis = Object.assign({}, base.yaxis, { type: "category", autorange: "reversed", automargin: true,
-    tickmode: "array", tickvals: shown, ticktext: shown, tickfont: { color: token("--ink-2"), size: 11 } });
+    tickmode: "array", tickvals: shown, ticktext: shown, tickfont: { color: token("--ink-2"), size: plan.kind === "bars" ? 13 : 11 } });
   if (layout.margin) base.margin = Object.assign({}, base.margin, layout.margin);
   Plotly.newPlot(node, traces, base, CONFIG);
   return true;
