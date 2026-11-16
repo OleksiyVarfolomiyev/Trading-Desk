@@ -495,7 +495,8 @@ function renderTiles(k) {
 
 function renderAccountStatus(rows, now) {
   const host = document.getElementById("accounts-status");
-  host.replaceChildren(...(rows || []).map((row) => el("span", { class: "chip", title: row.problem || "" }, [
+  // Only an account that cannot be read gets a chip: a healthy connection says nothing.
+  host.replaceChildren(...(rows || []).filter((row) => !row.ok).map((row) => el("span", { class: "chip", title: row.problem || "" }, [
     el("span", { class: "icon " + (row.ok ? "good" : "bad"), "aria-hidden": "true", text: row.ok ? "✓" : "!" }),
     el("span", { text: `${row.name}: ${row.ok ? "read" : "unreadable" + (row.last_seen ? ", last read " + ago(row.last_seen, now) : "")}` }),
   ])));
