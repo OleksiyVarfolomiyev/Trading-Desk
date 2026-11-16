@@ -789,15 +789,14 @@ class DeskOverview:
         positions = [(snapshot.label, position) for snapshot in trading for position in snapshot.positions]
         if positions:
             ranked = sorted(positions, key=lambda item: item[1].unrealized_usd)
-            def ratio(group):  # uPnL over the group's entry cost, the basis of the uPnL (%) column in the positions table
-                cost = sum(abs(position.notional_usd - position.unrealized_usd) for _, position in group)
-                return sum(position.unrealized_usd for _, position in group) / cost if cost else float("nan")
+            def ratio(group):  # uPnL over the entry cost, as the positions table's uPnL (%) total: priced positions only
+                priced = [position for _, position in group if math.isfinite(position.avg_price) and position.avg_price]
+                cost = sum(abs(position.notional_usd - position.unrealized_usd) for position in priced)
+                return sum(position.unrealized_usd for position in priced) / cost if cost else float("nan")
 
-            # uPnL by venue: gains under what stands out, losses under needs attention; the desk total joins
-            # the side its sign falls on.
-            ib = [item for item in positions if item[0].startswith("IB")]
-            rest = [item for item in positions if not item[0].startswith("IB")]
-            venues = [(name, ratio(group)) for name, group in (("IB", ib), ("HL", rest)) if group]
+            # uPnL by book, the groups of the positions tables (stocks = IB plus the HL stock and tradfi perps): gains
+            # under what stands out, losses under needs attention; the total of all positions joins its sign's side.
+            venues = [(kind, ratio([item for item in positions if market_kind(item[1]) == kind])) for kind in MARKET_KINDS]
             venues = [(name, r) for name, r in venues if math.isfinite(r)]
             total = ratio(positions)
             for rows, side in ((well, lambda r: r >= 0), (attention, lambda r: r < 0)):

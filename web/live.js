@@ -930,14 +930,16 @@
     let fundingNow = [];  // positions paying adverse funding at the current rate, for the one "Funding" row
     // The desk return is in the TW return and Return 30D tiles and the performance table's bold row: no highlight.
     if (tradePositions.length) {
-      // uPnL by venue, each over its own entry cost (the basis of the uPnL (%) column): gains under what stands out,
-      // losses under needs attention; the desk total joins the side its sign falls on.
+      // uPnL by book, the groups of the positions tables (stocks = IB plus the HL stock and tradfi perps), each over its
+      // entry cost like the table's uPnL (%) total (priced positions only): gains under what stands out, losses under
+      // needs attention; the total of all positions joins the side its sign falls on.
       const ratio = (group) => {
-        const cost = sum(group.map((p) => Math.abs(value(p) - p.unrealized)));
-        return cost ? sum(group.map((p) => p.unrealized)) / cost : NaN;
+        const priced = group.filter((p) => fin(p.avg_price) && p.avg_price);
+        const cost = sum(priced.map((p) => Math.abs(value(p) - p.unrealized)));
+        return cost ? sum(priced.map((p) => p.unrealized)) / cost : NaN;
       };
-      const venues = [["IB", tradePositions.filter((p) => p.venue === "ib")], ["HL", tradePositions.filter((p) => p.venue !== "ib")]]
-        .filter(([, group]) => group.length).map(([name, group]) => [name, ratio(group)]).filter(([, r]) => fin(r));
+      const venues = ["Crypto", "Stocks"].map((kind) => [kind, ratio(tradePositions.filter((p) => marketKind(p) === kind))])
+        .filter(([, r]) => fin(r));
       const total = ratio(tradePositions);
       [[well, (r) => r >= 0], [attention, (r) => r < 0]].forEach(([list, side]) => {
         const parts = venues.filter(([, r]) => side(r)).map(([name, r]) => `${name} ${percent(r, true)}`);
