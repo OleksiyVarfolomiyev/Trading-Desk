@@ -2211,8 +2211,8 @@ class Ladders:
         spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
         ranging, efficiency = self._ranging(coin, dex)
         print(f"Neutral ladder for ...{wallet[-4:]} {coin}: ${neutral['level_usd']:g} quotes, {spacing:.6g} apart "
-              f"({1e4 * spacing / mid:.0f} bp), inventory within {neutral['max_levels']} levels either way; quotes only "
-              f"while the coin ranges (5-day efficiency under {NEUTRAL_RANGE_ER:g}; now {efficiency:.2f}: "
+              f"({1e4 * spacing / mid:.0f} bp), inventory within {neutral['max_levels']} levels either way; quotes "
+              f"{'through trends too (forced)' if neutral.get('force') else 'only while the coin ranges'} (5-day efficiency under {NEUTRAL_RANGE_ER:g}; now {efficiency:.2f}: "
               f"{'quoting' if ranging else 'waiting'}). Verdict after {config['verdict_fills']} fills.")
         if session.ask("Type START LADDER to quote these live: ") != "START LADDER":
             print("Confirmation did not match; no ladder started.")
@@ -2396,6 +2396,7 @@ class Ladders:
             return
         if ladder.get("ranging") is None or now - ladder.get("range_at", 0.0) >= 3600:
             ranging, efficiency = self._ranging(coin, dex)
+            ranging = ranging or bool(neutral.get("force"))   # forced: quote through a trend as well
             if ranging != ladder.get("ranging"):
                 log(f"ladder ...{wallet[-4:]} {coin} (neutral): {'quoting, the coin ranges' if ranging else 'waiting, the coin trends'} "
                     f"(5-day efficiency {efficiency:.2f})")
@@ -3186,7 +3187,7 @@ class Daemon:
             if request.get("stop"):
                 return self.ladders.stop(wallet, coin)
             if request.get("neutral"):
-                settings = {key: request[key] for key in ("level_usd", "max_levels") if request.get(key)}
+                settings = {key: request[key] for key in ("level_usd", "max_levels", "force") if request.get(key)}
                 return self.ladders.start_neutral(wallet, coin, session, settings)
             return self.ladders.start(wallet, coin, session)
         if command == "trail":
@@ -3694,6 +3695,7 @@ def main(argv: list[str] | None = None) -> int:
     ladder.add_argument("--stop", action="store_true", help="stop the ladder and cancel its orders")
     ladder.add_argument("--neutral", action="store_true",
                         help="no base position: quote both sides around the mid, only while the coin ranges")
+    ladder.add_argument("--force", action="store_true", help="neutral ladder: quote through a trend too (no range gate)")
     ladder.add_argument("--level-usd", type=float, help="neutral ladder: dollars per quote (default 11)")
     ladder.add_argument("--max-levels", type=int, help="neutral ladder: inventory cap in levels either way (default 5)")
     trail = commands.add_parser("trail", help="trailing stop on HL behind the best price (momentum plays), or --stop it")
@@ -3726,7 +3728,8 @@ def main(argv: list[str] | None = None) -> int:
         return call(request)
     if args.command == "ladder":
         return call({"cmd": "ladder", "wallet": args.wallet, "coin": args.coin, "stop": args.stop,
-                     "neutral": args.neutral, "level_usd": args.level_usd, "max_levels": args.max_levels})
+                     "neutral": args.neutral, "level_usd": args.level_usd, "max_levels": args.max_levels,
+                     "force": args.force})
     if args.command == "trail":
         return call({"cmd": "trail", "wallet": args.wallet, "coin": args.coin, "pct": args.pct / 100, "stop": args.stop})
     if args.command == "buildup":
