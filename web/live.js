@@ -844,8 +844,10 @@
       const [token, detail] = p.symbol.split(" (");
       const inner = (detail || "").replace(/\)$/, "");
       const chain = inner.split(", ").pop(), note = inner.includes(", ") ? inner.split(", ").slice(0, -1).join(", ") : "";
+      const context = contexts[riskCoin(p.symbol)];   // the 24h move of HL's perp on the same coin (VVV for sVVV)
+      const change = context && context.prevDay > 0 ? context.mark / context.prevDay - 1 : NaN;
       return { "Wallet": a.label.replace(/\s+wallet$/, ""), "Chain": chain, "Symbol": token, "Value": value(p),
-        "% of desk": value(p) / deskEquity, "Amount": p.quantity, "Price": p.mark_price, "Note": note };
+        "24h change (%)": change, "% of desk": value(p) / deskEquity, "Amount": p.quantity, "Price": p.mark_price, "Note": note };
     })).filter((r) => r["% of desk"] >= WALLET_MIN_SHARE)  // smaller holdings are dust for decisions (desk/overview.py)
       .sort((a, b) => b.Value - a.Value);
 
@@ -1140,8 +1142,8 @@
           { "Efficiency 30d": "num2", "Move 30d": "spct", "Range position 60d": "pct", "Daily range 30d": "pct", "Volume 24h": "usd", "Longs pay 7d (APR)": "spct", "Own ladder edge per $1k": "susd" },
           { key: { "Efficiency 30d": "min" } }) : { columns: [], rows: [], total: null };
       })(),
-      wallets: table(walletRows, ["Wallet", "Chain", "Symbol", "Value", "% of desk", "Amount", "Price", "Note"],
-        { "Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct" },
+      wallets: table(walletRows, ["Wallet", "Chain", "Symbol", "Value", "24h change (%)", "% of desk", "Amount", "Price", "Note"],
+        { "Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct", "24h change (%)": "spct" },
         { total: { "Wallet": "Total", "Value": sum(walletRows.map((r) => r.Value)), "% of desk": sum(walletRows.map((r) => r["% of desk"])) },
           key: { "Value": "max" } }),
     };

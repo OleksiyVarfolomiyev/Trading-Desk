@@ -354,7 +354,13 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         tables["mm_candidates"] = table(mm, screener.MM_FORMATS, key={"Efficiency 30d": "min"}) if len(mm) else table(mm, {})
     except Exception as exc:
         desk.notes.append(f"Research tables unavailable ({type(exc).__name__}: {exc}).")
-    holdings = overview.wallet_holdings_frame()
+    try:  # each token's 24-hour move (DefiLlama), as the positions tables show it
+        from desk.day_change import position_changes
+
+        wallet_moves = position_changes(overview._wallets())
+    except Exception:
+        wallet_moves = {}
+    holdings = overview.wallet_holdings_frame(moves=wallet_moves)
     if len(holdings):  # from WALLET_MIN_SHARE of the desk up: smaller holdings are dust for decisions
         from desk.overview import WALLET_MIN_SHARE
 
@@ -364,7 +370,8 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         holdings = holdings.assign(Wallet=holdings["Wallet"].str.replace(r"\s+wallet$", "", regex=True))
         holdings = holdings.rename(columns={"Token": "Symbol"})
         holdings = holdings[[column for column in holdings.columns if column != "Note"] + ["Note"]]
-        tables["wallets"] = table(holdings, {"Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct"},
+        tables["wallets"] = table(holdings, {"Amount": "num", "Price": "price", "Value": "vusd", "% of desk": "vpct",
+                                             "24h change (%)": "spct"},
                                   {"Wallet": "Total", "Value": holdings["Value"].sum(),
                                    "% of desk": holdings["% of desk"].sum()}, key={"Value": "max"})
 

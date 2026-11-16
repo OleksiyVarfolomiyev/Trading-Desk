@@ -647,8 +647,9 @@ class DeskOverview:
               "Unpriced (spam) tokens are left out. Wallet holdings count toward desk value but not toward "
               "trading risk equity.")
 
-    def wallet_holdings_frame(self, min_usd: float = 1.0) -> pd.DataFrame:
-        """Each HL wallet's tokens on other chains, largest first (no total row)."""
+    def wallet_holdings_frame(self, min_usd: float = 1.0, moves: dict | None = None) -> pd.DataFrame:
+        """Each HL wallet's tokens on other chains, largest first (no total row); ``moves`` ((label, symbol) ->
+        24-hour change, ``desk.day_change.position_changes``) adds a 24h change column."""
         rows = []
         for snapshot in self._wallets():
             for position in snapshot.positions:
@@ -661,6 +662,7 @@ class DeskOverview:
                 rows.append({"Wallet": snapshot.label, "Chain": chain_name, "Token": token, "Note": note,
                              "Amount": position.quantity, "Price": position.mark_price,
                              "Value": position.notional_usd,
+                             "24h change (%)": (moves or {}).get((snapshot.label, position.symbol), float("nan")),
                              "% of desk": position.notional_usd / self.desk_equity if self.desk_equity else float("nan")})
         frame = pd.DataFrame(rows)
         return frame.sort_values("Value", ascending=False).reset_index(drop=True) if len(frame) else frame

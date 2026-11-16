@@ -161,6 +161,15 @@ const VIEWS = {
   },
   positions: POSITION_VIEW,
   positions_stocks: POSITION_VIEW,
+  // Wallet tokens in the positions tables' layout: same columns, order and widths; their share of the desk where
+  // the positions show their weight (tokens have no cost basis or funding, so those cells stay empty).
+  wallets: {
+    derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol }),
+    hover: (r) => [r.Chain, r.Note].filter(Boolean).join(", "),
+    columns: [["Account"], ["Symbol"], ["Value"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"],
+      ["Funding (APR)"], ["% of desk"]],
+    align: { "Account": 15, "Symbol": 18, "Value": 15, "uPnL": 13, "24h": 12, "Funding (APR)": 15, "% of desk": 12 },
+  },
   candidates: { columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
   mm_candidates: { columns: [["Coin"], ["Daily range 30d"], ["Longs pay 7d (APR)"], ["Own ladder edge per $1k"], ["Volume 24h"], ["Notes"]] },
