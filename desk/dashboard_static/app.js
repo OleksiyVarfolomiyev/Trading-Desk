@@ -281,7 +281,10 @@ function renderTableChart(id, spec) {
   host.append(node);
   const base = baseLayout(Object.assign({ hovermode: "closest", margin: { l: 90, r: 72, t: 8, b: 36 } }, layout));
   base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false });
-  base.yaxis = Object.assign({}, base.yaxis, { autorange: "reversed", automargin: true });
+  // Every row gets its label: a category axis with one tick per bar (Plotly would otherwise thin crowded labels).
+  const shown = traces[0] && traces[0].y ? traces[0].y : names;
+  base.yaxis = Object.assign({}, base.yaxis, { type: "category", autorange: "reversed", automargin: true,
+    tickmode: "array", tickvals: shown, ticktext: shown, tickfont: { color: token("--ink-2"), size: 11 } });
   if (layout.margin) base.margin = Object.assign({}, base.margin, layout.margin);
   Plotly.newPlot(node, traces, base, CONFIG);
   return true;
