@@ -267,6 +267,7 @@ def ib_name_pnl(positions: list, fills: pd.DataFrame, days: pd.DatetimeIndex, cl
             notes.append(f"{symbol}: no daily closes, left in IB other")
             continue
         frame = coin_day_pnl(start, path, series, pd.Series(dtype=float), days)
+        frame.loc[frame["held"].abs() < 1e-9, "held"] = 0.0   # a fully sold position, not rounding dust (-4e-14 shares)
         frame["value"] = frame["held"] * series.reindex(days).ffill()
         frame["kind"], frame["asset"] = "stock", symbol
         rows.append(frame.rename_axis("day").reset_index())
@@ -963,17 +964,19 @@ Book.show_factor_model = show_factor_model
 # ----------------------------------------------------------------------------------------------------------------
 def versus_benchmark(book: "Book") -> pd.DataFrame:
     """What the book's markets earned against the same dollars in its benchmark: each day, the exposure held going in
-    (per leg, short and long) times the benchmark's move. The gap is what picking the names added or cost. HL markets
-    only (IB has no per-name exposure history before its saved fills); funding and fees stay with the picks."""
+    (per leg, short and long) times the benchmark's move. The gap is what picking the names added or cost; funding and
+    fees stay with the picks. A benchmark that does not trade that day (SPY at weekends) moves 0."""
     from research.factor_model import newey_west_mean
 
-    hl = book.coins[book.coins["venue"] == "hl"].copy()
+    # HL markets, and IB's stocks rebuilt from the activity statements and saved fills.
+    hl = book.coins.copy()
     closes = book.benchmark_closes.copy()
     closes.index = pd.to_datetime(closes.index, utc=True).normalize()
     bench = closes.pct_change(fill_method=None).reindex(book.days)
     hl["before"] = hl.groupby(["account", "kind", "asset"])["value"].shift(1).fillna(0.0)
     rows = []
-    for leg, mask in (("Short", hl["before"] < 0), ("Long", hl["before"] > 0), ("Net", hl["before"] != 0)):
+    dust = 0.01   # under a cent of exposure is flat
+    for leg, mask in (("Short", hl["before"] < -dust), ("Long", hl["before"] > dust), ("Net", hl["before"].abs() > dust)):
         part = hl[mask]
         actual = part.groupby("day")["pnl"].sum().reindex(book.days).fillna(0.0)
         exposure = part.groupby("day")["before"].sum().reindex(book.days).fillna(0.0)
