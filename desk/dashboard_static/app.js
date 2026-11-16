@@ -210,6 +210,7 @@ const CHART_VIEWS = {
   positions_stocks: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
   wallets: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
 };
+const LABEL_FONT = (size = 12) => ({ size, color: token("--ink-2") });   // the value next to each bar's end
 const isChartView = () => document.documentElement.dataset.view === "charts";
 
 function chartAxis(format) {  // multiplier and axis look for a cell format
@@ -249,6 +250,7 @@ function renderTableChart(id, spec) {
     const axis = chartAxis(formatOf(series[0]));
     traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
+      text: rows.map((row) => text(key, row[key])), textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(),
       hovertext: rows.map((row) => `${key}: ${text(key, row[key])}`), hoverinfo: "text+y" }));
     layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
     height = Math.max(180, rows.length * (series.length * 14 + 14) + 80);
@@ -256,9 +258,11 @@ function renderTableChart(id, spec) {
     const axis = chartAxis(formatOf(plan.long));
     const bar = (key, color, title) => ({ type: "bar", orientation: "h", name: title, y: names, marker: { color },
       x: rows.map((row) => (isNum(row[key]) ? Math.abs(row[key]) * axis.mult * (key === plan.short ? -1 : 1) : null)),
+      text: rows.map((row) => text(key, row[key])), textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(),
       hovertext: rows.map((row) => `${title}: ${text(key, row[key])}`), hoverinfo: "text+y" });
     traces = [bar(plan.long, good, "Long"), bar(plan.short, bad, "Short"),
-      { type: "scatter", mode: "markers", name: "Net", y: names, marker: { color: token("--ink"), symbol: "diamond", size: 10 },
+      { type: "scatter", mode: "markers+text", name: "Net", y: names, textposition: "middle right", textfont: LABEL_FONT(),
+        text: rows.map((row) => text(plan.net, row[plan.net])), marker: { color: token("--ink"), symbol: "diamond", size: 10 },
         x: rows.map((row) => (isNum(row[plan.net]) ? row[plan.net] * axis.mult : null)),
         hovertext: rows.map((row) => `Net: ${text(plan.net, row[plan.net])}`), hoverinfo: "text+y" }];
     layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis) };
@@ -269,8 +273,8 @@ function renderTableChart(id, spec) {
     const axis = chartAxis(formatOf(plan.value));
     traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => rows[i][plan.value] * axis.mult),
       marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)) }, showlegend: false,
-      text: order.map((i) => (plan.text ? text(plan.text, rows[i][plan.text]) : "")), textposition: "outside", cliponaxis: false,
-      textfont: { size: 13, color: token("--ink-2") },
+      text: order.map((i) => [text(plan.value, rows[i][plan.value]), plan.text ? text(plan.text, rows[i][plan.text]) : ""]
+        .filter(Boolean).join(" · ")), textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(13),
       hovertext: order.map((i) => `${plan.value}: ${text(plan.value, rows[i][plan.value])}`
         + (plan.text ? `, ${plan.text}: ${text(plan.text, rows[i][plan.text])}` : "")), hoverinfo: "text+y" }];
     // The row's name sits inside its bar, from the zero line outwards (left of zero for a short), not on the axis.
@@ -281,12 +285,12 @@ function renderTableChart(id, spec) {
     });
     layout = { xaxis: Object.assign({ zeroline: true }, axis), annotations: inside, insideLabels: true };
     height = Math.max(200, order.length * 34 + 80);   // positions read large: a tall row per bar
-    if (plan.text) layout.margin = { r: 90 };
+    layout.margin = { r: plan.text ? 130 : 90 };
   }
   host.replaceChildren();
   const node = el("div", { class: "chart", id: "tc-" + id, style: `height:${height}px` });
   host.append(node);
-  const margin = Object.assign({ l: 90, r: 72, t: 8, b: 36 }, layout.margin || {});
+  const margin = Object.assign({ l: 90, r: 90, t: 8, b: 36 }, layout.margin || {});
   const base = baseLayout(Object.assign({ hovermode: "closest" }, layout, { margin }));
   base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false });
   // Every row gets its label: a category axis with one tick per bar (Plotly would otherwise thin crowded labels).
