@@ -862,8 +862,11 @@ class Book:
     def plot_performance(self):
         import plotly.graph_objects as go
 
-        returns = self.returns[self.returns.index >= (self.returns[self.pnl.reindex(self.returns.index).abs() > 0].index.min()
-                                                      if (self.pnl.abs() > 0).any() else self.days[0])]
+        # From the day the book first held 10% of equity (the factor model's and picks chart's rule): before that
+        # a few dollars of positions make no book.
+        active = active_days(self)
+        start = active.min() if len(active) else self.days[0]
+        returns = self.returns[self.returns.index >= start]
         if returns.empty:
             return
         path = 100 * ((1 + returns).cumprod() - 1)
