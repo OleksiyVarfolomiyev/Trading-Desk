@@ -245,10 +245,15 @@ tr.total td.key { background: rgba(59, 130, 246, 0.12); }
   main { padding: 8px 16px 40px; }
 }
 
-/* Look switches: Numbers / Charts, and Dark (default) / Light / HL. */
-.modes { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+/* Look switches: view icons (table, chart) and the colour buttons, each in its own scheme. */
+.modes { display: inline-flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.switch button { background: transparent; color: var(--ink-2); border: 0; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+.switch button { border: 0; font: inherit; font-size: 12px; cursor: pointer; }
 .switch button + button { border-left: 1px solid var(--border); }
-.switch button[aria-pressed="true"] { background: var(--border); color: var(--ink); font-weight: 600; }
-.switch button:hover { color: var(--ink); }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; padding: 5px 9px; background: transparent; color: var(--muted); }
+.icon-button:hover { color: var(--ink); }
+.icon-button[aria-pressed="true"] { background: var(--border); color: var(--ink); }
+.theme-button { padding: 4px 12px; box-shadow: inset 0 -3px 0 transparent; }
+.theme-button[aria-pressed="true"] { font-weight: 600; box-shadow: inset 0 -3px 0 var(--accent); }
+.theme-button:not([aria-pressed="true"]) { opacity: 0.75; }
+.theme-button:hover { opacity: 1; }

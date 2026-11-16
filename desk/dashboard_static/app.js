@@ -714,8 +714,25 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 // ---------------------------------------------------------------- look switches
 // Two switches in the top bar: Numbers (the tables) or Charts (every table drawn as a chart), and the colours: Dark
 // (the default), Light or HL (Hyperliquid's). Both are remembered in the browser (?view= and ?theme= still work).
-const VIEW_CHOICES = [["tables", "Numbers"], ["charts", "Charts"]];
-const THEME_CHOICES = [["dark", "Dark"], ["light", "Light"], ["hl", "HL"]];
+// Each theme button wears its own colours (page, text, accent); the view buttons are icons: a table and a chart.
+const VIEW_CHOICES = [["tables", "Numbers (tables)", "table"], ["charts", "Charts", "chart"]];
+const THEME_CHOICES = [
+  ["dark", "Dark", { background: "#0d0d0f", color: "#f0efec", accent: "#1fa67d" }],
+  ["light", "Light", { background: "#f9f9f7", color: "#0b0b0b", accent: "#0ca30c" }],
+  ["hl", "HL", { background: "#0f1a1e", color: "#f6fefd", accent: "#50d2c1" }],
+];
+function icon(kind) {   // 16px line icons, drawn in the button's text colour
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16"); svg.setAttribute("width", "16"); svg.setAttribute("height", "16");
+  svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "1.5");
+  svg.setAttribute("aria-hidden", "true");
+  const paths = kind === "table"
+    ? ["M2 3.5h12v9H2z", "M2 7h12", "M2 10h12", "M6.5 3.5v9"]
+    : ["M3 13V8", "M7 13V4", "M11 13V9", "M14 13V6.5", "M2 13.5h13"];
+  paths.forEach((d) => { const p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.append(p); });
+  return svg;
+}
 function setLook(kind, value) {
   const root = document.documentElement;
   if (kind === "view") root.dataset.view = value; else root.dataset.theme = value;
@@ -727,17 +744,24 @@ function drawModes() {
   const host = document.getElementById("modes");
   if (!host) return;
   const root = document.documentElement.dataset;
-  const group = (kind, choices, active, label) => {
-    const box = el("div", { class: "switch", role: "group", "aria-label": label });
-    choices.forEach(([value, name]) => {
-      const button = el("button", { type: "button", "aria-pressed": value === active ? "true" : "false", text: name });
-      button.addEventListener("click", () => setLook(kind, value));
-      box.append(button);
-    });
-    return box;
-  };
-  host.replaceChildren(group("view", VIEW_CHOICES, root.view === "charts" ? "charts" : "tables", "Numbers or charts"),
-    group("theme", THEME_CHOICES, THEME_CHOICES.some(([v]) => v === root.theme) ? root.theme : "dark", "Colours"));
+  const views = el("div", { class: "switch", role: "group", "aria-label": "Numbers or charts" });
+  VIEW_CHOICES.forEach(([value, name, shape]) => {
+    const active = value === (root.view === "charts" ? "charts" : "tables");
+    const button = el("button", { type: "button", class: "icon-button", title: name, "aria-label": name,
+      "aria-pressed": active ? "true" : "false" }, [icon(shape)]);
+    button.addEventListener("click", () => setLook("view", value));
+    views.append(button);
+  });
+  const themes = el("div", { class: "switch", role: "group", "aria-label": "Colours" });
+  const current = THEME_CHOICES.some(([v]) => v === root.theme) ? root.theme : "dark";
+  THEME_CHOICES.forEach(([value, name, look]) => {
+    const button = el("button", { type: "button", class: "theme-button", title: name, "aria-label": name,
+      "aria-pressed": value === current ? "true" : "false", text: name,
+      style: `background:${look.background};color:${look.color};--accent:${look.accent}` });
+    button.addEventListener("click", () => setLook("theme", value));
+    themes.append(button);
+  });
+  host.replaceChildren(views, themes);
 }
 drawModes();
 
