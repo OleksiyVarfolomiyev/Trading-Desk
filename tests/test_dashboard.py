@@ -52,7 +52,7 @@ class PayloadTests(unittest.TestCase):
             "Account": ["HL 07f2", "HL c248 wallet"], "Symbol": ["AVAX", "VVV"], "Side": ["SHORT", "LONG"],
             "Quantity": [-100.0, 10.0], "Avg price": [10.0, float("nan")], "Mark": [9.0, 11.0],
             "Value": [-900.0, 110.0], "uPnL": [100.0, 0.0], "Weight": [0.9, 0.1],
-            "Exposure / desk value": [0.5, 0.1]})
+            "Exposure / equity": [0.5, 0.1]})
         frame = with_position_returns(positions, {("HL 07f2", "AVAX"): -0.05})
         self.assertNotIn("Venue", frame.columns)
         columns = list(frame.columns)

@@ -1254,7 +1254,7 @@ class LiveRiskTests(unittest.TestCase):
         self.assertAlmostEqual(row["Beta SPY (stocks)"], 1.0, delta=0.05)
         self.assertEqual(self.live_risk.holding_book("hl", "xyz:AMD"), "Stocks")
         self.assertEqual(self.live_risk.holding_book("hl", "PAXG"), "Stocks")
-        self.assertEqual(self.live_risk.holding_book("wallet", "sVVV"), "Crypto")
+        self.assertEqual(self.live_risk.holding_book("wallet", "sVVV"), "Wallet")
 
     def test_book_rows_show_beta_on_desk_value_and_per_dollar_held(self):
         rng = np.random.default_rng(7)
@@ -1265,7 +1265,7 @@ class LiveRiskTests(unittest.TestCase):
                                  "ref": ["", "1"], "value": [-500.0, 500.0]})
         rows = {row["Benchmark"]: row for row in self.live_risk.book_rows(holdings, returns, 1_000.0, benchmarks)}
         # Stocks: half the desk in a beta-2 stock is 1.0 on desk value and 2.0 per dollar held.
-        self.assertAlmostEqual(rows["SPY"]["Beta (on desk value)"], 1.0, delta=0.05)
+        self.assertAlmostEqual(rows["SPY"]["Beta"], 1.0, delta=0.05)
         self.assertAlmostEqual(rows["SPY"]["Beta per $ held"], 2.0, delta=0.1)
         self.assertAlmostEqual(rows["BTC"]["Beta per $ held"], -1.5, delta=0.15)
         self.assertEqual(self.live_risk.book_line(rows["SPY"]).split(",")[0], "stocks β 1.00 (2.00 per $)")

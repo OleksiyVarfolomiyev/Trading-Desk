@@ -411,7 +411,7 @@ class DeskOverview:
 
     def positions_frame(self, trading_only: bool = False) -> pd.DataFrame:
         """Every position; ``trading_only`` leaves out wallet tokens (crypto spot), which have their own table."""
-        equity = self.desk_equity
+        equity = self.trading_equity   # "equity" is HL and IB everywhere (desk policy: like with like)
         rows = []
         for snapshot in self.snapshots:
             for position in snapshot.positions:
@@ -424,7 +424,7 @@ class DeskOverview:
                     "Avg price": position.avg_price * position.fx_to_usd,
                     "Mark": position.mark_price * position.fx_to_usd,
                     "Value": position.notional_usd, "uPnL": position.unrealized_usd,
-                    "Exposure / desk value": abs(position.notional_usd) / equity if equity else float("nan"),
+                    "Exposure / equity": abs(position.notional_usd) / equity if equity else float("nan"),
                 })
         frame = pd.DataFrame(rows)
         if len(frame):
@@ -501,7 +501,7 @@ class DeskOverview:
                      "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
                      "24h change (%)": day_change_total(group["Value"], group["24h change (%)"]),
                      "Funding (APR)": funding_total(group["Value"], group["Funding (APR)"]),
-                     "Weight": float("nan"), "Exposure / desk value": group["Exposure / desk value"].sum()}
+                     "Weight": float("nan"), "Exposure / equity": group["Exposure / equity"].sum()}
             group = pd.concat([group, pd.DataFrame([total])], ignore_index=True)
             # Symbol and account name the row, so they lead; the asset class goes to the back.
             lead = [c for c in ("Symbol", "Account") if c in group.columns]
@@ -512,14 +512,14 @@ class DeskOverview:
                 group, formatters={"Quantity": number, "Avg price": usd_price, "Mark": usd_price,
                                    "Value": _money, "uPnL": _money, "uPnL (%)": _signed_percent,
                                    "24h change (%)": _signed_percent, "Funding (APR)": _signed_percent, "Weight": _percent,
-                                   "Exposure / desk value": _percent},
+                                   "Exposure / equity": _percent},
                 cell_style=_signed_style, bold_last=True, title=f"OPEN POSITIONS: {klass.upper()}",
                 key_columns={"Weight": "max"},
                 blank_missing_cells={(len(group) - 1, column)
                                      for column in ("Quantity", "Avg price", "Mark")},
             )
         frame = frame.assign(gross=frame["Value"].abs())
-        leverage = frame["gross"].sum() / self.desk_equity if self.desk_equity else float("nan")
+        leverage = frame["gross"].sum() / self.trading_equity if self.trading_equity else float("nan")
         if kind is not None:
             return   # the book notebooks: the table speaks for itself
         print("Value is signed (shorts negative). Weight is each position's share of gross exposure (absolute "
@@ -528,8 +528,9 @@ class DeskOverview:
               "above 100% because HL perps are traded on margin.")
 
     def exposure_frame(self) -> pd.DataFrame:
-        """Long, short, net and gross exposure by asset class, with a Total row last."""
-        frame = self.positions_frame()
+        """Long, short, net and gross exposure by asset class in the trading accounts (HL and IB), over trading
+        equity, with a Total row last. Wallet tokens have their own table, on desk value."""
+        frame = self.positions_frame(trading_only=True)
         if frame.empty:
             return frame
         value = frame["Value"]
@@ -540,8 +541,8 @@ class DeskOverview:
         summary["Net"] = summary["Long"] + summary["Short"]
         summary["Gross"] = summary["Long"] - summary["Short"]
         summary.loc["Total"] = summary.sum()
-        summary["Gross / equity"] = summary["Gross"] / self.desk_equity
-        summary["Net / equity"] = summary["Net"] / self.desk_equity
+        summary["Gross / equity"] = summary["Gross"] / self.trading_equity
+        summary["Net / equity"] = summary["Net"] / self.trading_equity
         return summary.reset_index(names="Asset class")
 
     def show_exposure(self):
@@ -611,6 +612,11 @@ class DeskOverview:
 
     def _trading(self):
         return [snapshot for snapshot in self.snapshots if snapshot.venue != "onchain"]
+
+    @property
+    def trading_equity(self) -> float:
+        """HL wallets and IB: the money the books trade with (the base of every book's beta and share)."""
+        return sum(snapshot.equity_usd for snapshot in self._trading())
 
     def show_wallet_holdings(self, min_usd: float = 1.0):
         """Each HL wallet's own tokens on other chains worth at least WALLET_MIN_SHARE of the desk (smaller ones are dust
@@ -810,9 +816,9 @@ class DeskOverview:
             if loser_parts:
                 attention.append(("Largest losers", "; ".join(loser_parts) + "."))
             label, largest = max(positions, key=lambda item: abs(item[1].notional_usd))
-            share = abs(largest.notional_usd) / self.desk_equity if self.desk_equity else float("nan")
+            share = abs(largest.notional_usd) / self.trading_equity if self.trading_equity else float("nan")
             if share > CONCENTRATION_PCT:
-                attention.append(("Concentration", f"{largest.symbol} {largest.side.lower()} ({label}) {share:.0%} of desk value."))
+                attention.append(("Concentration", f"{largest.symbol} {largest.side.lower()} ({label}) {share:.0%} of equity."))
             # Positions paying funding fast enough to matter (desk/funding_watch.py).
             from desk import funding_watch
 

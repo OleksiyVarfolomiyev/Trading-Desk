@@ -716,7 +716,7 @@
         "uPnL (%)": fin(p.avg_price) && cost > 0 ? p.unrealized / cost : NaN, "24h change (%)": change,
         // What the position earns (positive) or pays (negative) in funding, annualised; HL perps only.
         "Funding (APR)": p.venue === "hl" && context && fin(context.funding) ? (p.quantity > 0 ? -1 : 1) * context.funding * 24 * 365 : NaN,
-        "Weight": grossAll ? Math.abs(v) / grossAll : NaN, "Exposure / desk value": deskEquity ? Math.abs(v) / deskEquity : NaN,
+        "Weight": grossAll ? Math.abs(v) / grossAll : NaN, "Exposure / equity": tradingEquity ? Math.abs(v) / tradingEquity : NaN,
       };
     }).sort((a, b) => a["Asset class"].localeCompare(b["Asset class"]) || Math.abs(b.Value) - Math.abs(a.Value));
     // One table per kind: crypto perps, then stocks and tradfi (IB and HL equity perps). Wallet tokens
@@ -730,7 +730,7 @@
       const pricedCost = sum(priced.map((r) => Math.abs(r.Value - r["uPnL"])));
       return { "Asset class": "Total", "Value": sum(rows.map((r) => r.Value)),
         "uPnL": sum(rows.map((r) => r["uPnL"])), "Weight": NaN,  // a 100% total is not shown
-        "Exposure / desk value": sum(rows.map((r) => r["Exposure / desk value"])),
+        "Exposure / equity": sum(rows.map((r) => r["Exposure / equity"])),
         "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN,
         "24h change (%)": dayChangeTotal(rows), "Funding (APR)": fundingTotal(rows) };
     };
@@ -741,8 +741,8 @@
     };
 
     // -- exposure by asset class
-    const classes = {};
-    positionRows.forEach((r) => {
+    const classes = {};   // the trading accounts on trading equity; wallet tokens have their own table (desk value)
+    tableRows.forEach((r) => {
       const c = classes[r["Asset class"]] = classes[r["Asset class"]] || { Long: 0, Short: 0 };
       if (r.Value > 0) c.Long += r.Value; else c.Short += r.Value;
     });
@@ -750,7 +750,7 @@
     exposureRows.push({ "Asset class": "Total", Long: sum(exposureRows.map((r) => r.Long)), Short: sum(exposureRows.map((r) => r.Short)) });
     exposureRows.forEach((r) => {
       r.Net = r.Long + r.Short; r.Gross = r.Long - r.Short;
-      r["Gross / equity"] = r.Gross / deskEquity; r["Net / equity"] = r.Net / deskEquity;
+      r["Gross / equity"] = r.Gross / tradingEquity; r["Net / equity"] = r.Net / tradingEquity;
     });
 
     // -- movers (trading positions)
@@ -850,7 +850,7 @@
       .sort((a, b) => b.Value - a.Value);
 
     // -- ex-ante risk: today's holdings moved by each of the last 90 days' prices
-    const riskRow = exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value, ibs, ibCloses: (ibData && ibData.closes) || {} });
+    const riskRow = exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, tradingEquity, value, ibs, ibCloses: (ibData && ibData.closes) || {} });
 
     // -- charts
     const valueSeries = traders.map((a) => {
@@ -954,9 +954,9 @@
       if (winnerParts.length) well.push(["Largest winners", winnerParts.join("; ") + "."]);
       if (loserParts.length) attention.push(["Largest losers", loserParts.join("; ") + "."]);
       const largest = tradePositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
-      const concentration = deskEquity ? Math.abs(value(largest)) / deskEquity : NaN;
+      const concentration = tradingEquity ? Math.abs(value(largest)) / tradingEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {
-        attention.push(["Concentration", `${largest.symbol} ${largest.quantity > 0 ? "long" : "short"} (${largest.account}) ${percent(concentration, false, 0)} of desk value.`]);
+        attention.push(["Concentration", `${largest.symbol} ${largest.quantity > 0 ? "long" : "short"} (${largest.account}) ${percent(concentration, false, 0)} of equity.`]);
       }
       // Positions paying funding fast enough to matter (desk/funding_watch.py).
       const dailyCost = (r) => -r["Funding (APR)"] * Math.abs(r.Value) / 365;
@@ -989,7 +989,7 @@
       (riskRow.books || []).forEach((row) => {  // desk/live_risk.py book_line: terse, the reader knows the benchmarks
         const parts = [];
         if (fin(row.beta)) parts.push(`β ${row.beta.toFixed(2)}` + (fin(row.perHeld) ? ` (${row.perHeld.toFixed(2)} per $)` : ""));
-        parts.push(`net ${percent(row.net / deskEquity, false, 0)}`);
+        parts.push(`net ${percent(row.net / tradingEquity, false, 0)}`);
         if (fin(row.vol)) parts.push(`vol ${percent(row.vol, false, 0)}`);
         riskParts.push(`${row.name} ${parts.join(", ")}`);
       });
@@ -1084,14 +1084,14 @@
       movers_stocks: table(moverRows("Stocks"), ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
         { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
       positions: table(tableRows.filter(isCrypto), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
-        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / desk value"],
+        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
-        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
+        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct" }),
       { total: positionTotal(tableRows.filter(isCrypto)), key: { "Weight": "max" } }),
       positions_stocks: table(tableRows.filter((r) => !isCrypto(r)), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
-        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / desk value"],
+        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
-        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / desk value": "pct" }),
+        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct" }),
       { total: positionTotal(tableRows.filter((r) => !isCrypto(r))), key: { "Weight": "max" } }),
       market_making: (() => {  // the ladders, as the trading daemon last sent them (desk/market_making.py)
         const rows = (daemonAlerts && daemonAlerts.market_making) || [];
@@ -1216,15 +1216,15 @@
     return found;
   }
 
-  function exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, value, ibs, ibCloses }) {
+  function exAnteRisk({ hlPositions, trading, wallets, candleOf, deskEquity, tradingEquity, value, ibs, ibCloses }) {
     // Daily close-to-close returns for each holding; wallet tokens and HL spot use HL's perp of the same coin.
     // Each holding's book (desk/live_risk.py holding_book): HL stock, index and commodity perps and gold are stocks.
     const holdings = hlPositions.map((p) => ({ coin: p.coin, value: value(p),
       book: assetClass(p.coin) === "crypto perp" && !TRADFI_MAIN_DEX.has(p.coin) ? "crypto" : "stocks" }));
-    trading.forEach((a) => a.spot.forEach((s) => holdings.push({ coin: s.coin, value: s.value })));
+    trading.forEach((a) => a.spot.forEach((s) => holdings.push({ coin: s.coin, value: s.value, book: "crypto" })));
     wallets.forEach((a) => a.positions.forEach((p) => {
       const coin = riskCoin(p.symbol);
-      holdings.push({ coin, value: value(p), stable: STABLE_SYMBOLS.has(coin) });
+      holdings.push({ coin, value: value(p), stable: STABLE_SYMBOLS.has(coin), book: "wallet" });   // held, in no book
     }));
     // IB stocks: the Mac sends their daily closes; a closed day carries a zero return, as in desk/live_risk.py.
     const ibHoldings = ibs.flatMap((a) => a.positions.map((p) => ({ symbol: p.symbol, value: value(p) })));
@@ -1250,7 +1250,7 @@
     };
     let covered = 0, total = 0;
     const pnl = days.map(() => 0);
-    const bookPnl = { crypto: days.map(() => 0), stocks: days.map(() => 0) };
+    const bookPnl = { crypto: days.map(() => 0), stocks: days.map(() => 0), wallet: days.map(() => 0) };
     const add = (book, r, amount) => r.forEach((x, i) => {
       const change = fin(x) ? amount * x : 0;
       pnl[i] += change; bookPnl[book][i] += change;
@@ -1281,18 +1281,19 @@
       "VaR 95%": -quantile(pnl, 0.05), "VaR 99%": -quantile(pnl, 0.01), "Max drawdown": worst,
       "Beta BTC": btc ? beta(book, btc) : NaN, "Beta S&P 500": sp ? beta(book, sp) : NaN,
       // Each book against its own benchmark: one desk beta blends a short-alt book with a long-stock book.
-      "Beta BTC (crypto)": btc ? beta(bookPnl.crypto.map((x) => x / deskEquity), btc) : NaN,
-      "Beta S&P 500 (stocks)": sp ? beta(bookPnl.stocks.map((x) => x / deskEquity), sp) : NaN,
+      // Book betas on trading equity (HL and IB): wallet tokens are held, not traded with (desk/live_risk.py).
+      "Beta BTC (crypto)": btc ? beta(bookPnl.crypto.map((x) => x / tradingEquity), btc) : NaN,
+      "Beta S&P 500 (stocks)": sp ? beta(bookPnl.stocks.map((x) => x / tradingEquity), sp) : NaN,
       // Per book (desk/live_risk.py book_rows): net, gross, volatility on desk value, and beta per $ held.
       books: ["crypto", "stocks"].map((name) => {
         const parts = name === "stocks" ? ibHoldings.concat(holdings.filter((h) => h.book === "stocks"))
-          : holdings.filter((h) => (h.book || "crypto") === "crypto" && !h.stable);
+          : holdings.filter((h) => h.book === "crypto" && !h.stable);
         const gross = sum(parts.map((h) => Math.abs(h.value))), net = sum(parts.map((h) => h.value));
-        const series = bookPnl[name].map((x) => x / deskEquity), bench = name === "crypto" ? btc : sp;
+        const series = bookPnl[name].map((x) => x / tradingEquity), bench = name === "crypto" ? btc : sp;
         const b = bench ? beta(series, bench) : NaN;
         return { name, benchmark: name === "crypto" ? "BTC" : "S&P 500", gross, net, beta: b,
-          perHeld: gross > 0 && fin(b) ? b * deskEquity / gross : NaN, vol: std(series) * Math.sqrt(365) };
-      }).filter((row) => row.gross > 0),
+          perHeld: gross > 0 && fin(b) ? b * tradingEquity / gross : NaN, vol: std(series) * Math.sqrt(365) };
+      }).filter((row) => row.gross >= 0.01 * tradingEquity),   // under 1% of equity (spot dust) is no book
     };
   }
 

@@ -69,7 +69,7 @@ class Kinds(unittest.TestCase):
         self.assertEqual(books.holding_kind("hl", "xyz:AMD"), "Stocks")
         self.assertEqual(books.holding_kind("hl", "BTC"), "Crypto")
         self.assertEqual(books.holding_kind("hl", "PAXG"), "Stocks")     # gold on the main DEX is TradFi
-        self.assertEqual(books.holding_kind("wallet", "VVV"), "Crypto")
+        self.assertEqual(books.holding_kind("wallet", "VVV"), "Wallet")   # held, in no book
         self.assertEqual(books.position_kind("crypto perp"), "Crypto")
         self.assertEqual(books.position_kind("tradfi perp"), "Stocks")
 

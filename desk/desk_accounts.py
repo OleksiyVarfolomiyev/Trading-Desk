@@ -702,9 +702,10 @@ class DeskAccounts:
             if len(holdings):
                 returns, missing = live_risk.holding_returns(holdings, live_risk.EX_ANTE_DAYS, self._ib_closes)
                 # Tokens with no HL price at all have no value to weigh, so they are named, not covered.
-                rows.append(live_risk.ex_ante_row(holdings, returns, equity, self.benchmarks, missing + unpriced))
+                rows.append(live_risk.ex_ante_row(holdings, returns, equity, self.benchmarks, missing + unpriced,
+                                                  book_equity=self.overview.trading_equity))
                 # Crypto and stocks are different worlds: each book against its own benchmark, on the same returns.
-                self.book_risk = live_risk.book_rows(holdings, returns, equity, self.benchmarks)
+                self.book_risk = live_risk.book_rows(holdings, returns, self.overview.trading_equity, self.benchmarks)
         except Exception as exc:
             self.notes.append(f"Ex-ante risk unavailable ({type(exc).__name__}: {exc}).")
         daily = period_returns(self.index, "1D", self.daily_days)
@@ -774,17 +775,16 @@ class DeskAccounts:
         if not books:
             return
         frame = pd.DataFrame(books).set_index("Basis")
-        columns = [c for c in ["Benchmark", "Net", "Gross", "Net / desk", "Gross / desk", "Beta (on desk value)",
+        columns = [c for c in ["Benchmark", "Net", "Gross", "Net / equity", "Gross / equity", "Beta",
                                "Beta per $ held", "Benchmark-equivalent", "Volatility (/yr)", "VaR 95%", "Coverage"]
                    if c in frame]
-        formats = {"Net": _usd, "Gross": _usd, "Net / desk": "{:.0%}", "Gross / desk": "{:.0%}",
-                   "Beta (on desk value)": "{:.2f}", "Beta per $ held": "{:.2f}", "Benchmark-equivalent": _usd,
+        formats = {"Net": _usd, "Gross": _usd, "Net / equity": "{:.0%}", "Gross / equity": "{:.0%}",
+                   "Beta": "{:.2f}", "Beta per $ held": "{:.2f}", "Benchmark-equivalent": _usd,
                    "Volatility (/yr)": "{:.1%}", "VaR 95%": _usd, "Coverage": "{:.0%}"}
         styler = frame[columns].style.format({k: v for k, v in formats.items() if k in columns}, na_rep="")
-        display(emphasis.style_frame(styler, frame[columns], {"Beta (on desk value)": None}, title="RISK BY BOOK"))
-        print("Each book against its own benchmark, on today's holdings over the last 90 days. Beta on desk value adds "
-              "up across books; per $ held is the same benchmark-equivalent over the book's gross, how aggressive "
-              "the holdings themselves are.")
+        display(emphasis.style_frame(styler, frame[columns], {"Beta": None}, title="RISK BY BOOK"))
+        print("Each book against its own benchmark, on today's holdings over the last 90 days, on trading equity "
+              "(HL and IB). Per $ held: the benchmark-equivalent over the book's gross.")
 
     def plot_value(self):
         """Desk value stacked by account, and the desk return against BTC and SPY."""

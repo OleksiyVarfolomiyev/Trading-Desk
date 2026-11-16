@@ -377,6 +377,9 @@ class Book:
         # Returns and shares use trading equity (HL wallets and IB): the value whose PnL is recorded. Wallet tokens on
         # other chains are in desk value but have no PnL record, so dividing by them would understate every return.
         self.capital = float(self.equity.iloc[-1]) if len(self.equity) else float("nan")
+        live = self.overview.trading_equity   # today's shares on today's trading equity (HL and IB)
+        if live > 0:
+            self.capital = live
         hl_book = self.coins[self.coins["venue"] == "hl"].groupby("day")["pnl"].sum().reindex(self.days).fillna(0.0)
         self.pnl = hl_book + (ib if self.kind == "Stocks" else 0.0)
         before = self.equity.shift(1)
@@ -429,14 +432,8 @@ class Book:
         frame = self.overview.positions_frame()
         if frame.empty:
             return frame
-        frame = frame[frame["Asset class"].map(position_kind) == self.kind].copy()
-        if self.kind == "Crypto":
-            # Wallet dust stays out of decisions (same cut as the dashboards).
-            from desk.overview import WALLET_MIN_SHARE
-
-            dust = (frame["Asset class"] == "crypto spot") & (
-                frame["Value"].abs() < WALLET_MIN_SHARE * self.overview.desk_equity)
-            frame = frame[~dust]
+        # The trading accounts only (HL and IB): wallet tokens are held, not traded, and have their own section.
+        frame = frame[(frame["Asset class"].map(position_kind) == self.kind) & (frame["Venue"] != "onchain")].copy()
         return frame
 
     def _remember(self, key, make):
@@ -470,9 +467,7 @@ class Book:
         spot: list[dict] = []
         if self.kind == "Crypto":
             wallets = [a.id for a in accounts_for("hl", self.desk.accounts) if a.name not in self.desk.excluded]
-            spot, unpriced = live_risk.hl_spot_values(wallets)
-            mids, pairs = live_risk.hl_markets()
-            spot += live_risk.wallet_token_holdings(self.overview._wallets(), mids, pairs)
+            spot, unpriced = live_risk.hl_spot_values(wallets)   # HL spot is in a trading account; wallet tokens are not
         holdings = live_risk.position_values(self.overview._trading(), spot)
         holdings = holdings[[holding_kind(v, s) == self.kind for v, s in zip(holdings["venue"], holdings["symbol"])]]
         return holdings.reset_index(drop=True), unpriced
@@ -607,8 +602,8 @@ class Book:
         try:
             holdings, unpriced, returns, missing = self.holding_returns()
             if len(holdings):
-                # On desk value, like the desk's risk row and dashboards: today's holdings include wallet tokens.
-                row = live_risk.ex_ante_row(holdings, returns, self.overview.desk_equity,
+                # On trading equity (HL and IB), the base of the realized rows and of the dashboards' book betas.
+                row = live_risk.ex_ante_row(holdings, returns, self.capital,
                                             self.desk.benchmarks[[self.benchmark]], missing + unpriced)
                 row["Basis"] = "Today's holdings (ex-ante, 90d)"
                 rows.append(row)
@@ -743,7 +738,7 @@ class Book:
             eq = exposure.iloc[-1].get(f"{self.benchmark}-eq 90d", np.nan) if len(exposure) else np.nan
             beta = today.iloc[0][f'Beta {self.benchmark}']
             gross = abs(summary["Gross"])
-            held = beta * self.overview.desk_equity / gross if gross else np.nan
+            held = beta * self.capital / gross if gross else np.nan
             attention.append(("Beta now", f"{beta:.2f} ({held:.2f} per $), net {_pct(summary['Net / equity'])}, "
                               f"gross {_pct(summary['Gross / equity'])}"))
         realized = risk[risk["Basis"].str.startswith("Last 90")] if len(risk) else risk

@@ -298,7 +298,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         total = {column: None for column in ordered.columns}
         total.update({"Asset class": "Total", "Value": ordered["Value"].sum(),
                       "uPnL": ordered["uPnL"].sum(), "Weight": None,   # a 100% total is not shown
-                      "Exposure / desk value": ordered["Exposure / desk value"].sum()})
+                      "Exposure / equity": ordered["Exposure / equity"].sum()})
         priced = ordered["uPnL (%)"].notna()
         cost = (ordered["Value"] - ordered["uPnL"]).abs()[priced].sum()
         total["uPnL (%)"] = ordered["uPnL"][priced].sum() / cost if cost else None
@@ -306,7 +306,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         total["Funding (APR)"] = funding_total(ordered["Value"], ordered["Funding (APR)"])
         return table(ordered, {"Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
                                "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct",
-                               "Weight": "pct", "Exposure / desk value": "pct"}, total,
+                               "Weight": "pct", "Exposure / equity": "pct"}, total,
                      key={"Weight": "max"})
 
     if len(positions):

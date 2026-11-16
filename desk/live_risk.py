@@ -218,8 +218,8 @@ BOOK_BENCHMARKS = {"Crypto": "BTC", "Stocks": "SPY"}
 
 
 def holding_book(venue: str, symbol: str) -> str:
-    """"Crypto" or "Stocks" for a ``position_values`` row: IB is stocks; an HL perp by its market (HIP-3 stock,
-    index and commodity perps and gold are stocks); HL spot and wallet tokens are crypto."""
+    """"Crypto", "Stocks" or "Wallet" for a ``position_values`` row: IB is stocks; an HL perp by its market (HIP-3
+    stock, index and commodity perps and gold are stocks); HL spot is crypto; on-chain wallet tokens are "Wallet"."""
     if venue == "ib":
         return "Stocks"
     if venue == "hl":
@@ -227,12 +227,15 @@ def holding_book(venue: str, symbol: str) -> str:
         from desk.hl.book_exposure import TRADFI_MAIN_DEX
 
         return "Stocks" if symbol in TRADFI_MAIN_DEX or perp_market_group(symbol) != "Perp Crypto" else "Crypto"
+    if venue == "wallet":
+        return "Wallet"   # held, not traded: in desk-wide risk on desk value, in no book
     return "Crypto"
 
 
 def book_rows(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benchmarks: pd.DataFrame) -> list[dict]:
     """One risk row per book (crypto against BTC, stocks against SPY): today's holdings in that book run through the
-    same daily returns as the desk row. Beta and volatility are on desk value (so the books add up to the desk); the
+    same daily returns as the desk row. Beta, volatility and shares are on ``equity``, trading equity (HL and IB, the
+    money the books trade with; both books on the same base, so they add up); the
     benchmark-equivalent is that beta in dollars, and "per $ held" divides it by the book's gross, which shows how
     aggressive the holdings themselves are (a long book of high-beta stocks reads 1.5+ there even when it is half
     the desk)."""
@@ -246,8 +249,10 @@ def book_rows(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benc
             continue
         priced = part[part["key"].isin(returns.columns)]
         gross, net = float(part["value"].abs().sum()), float(part["value"].sum())
+        if gross < 0.01 * equity:
+            continue   # under 1% of equity (spot dust) is no book
         row = {"Basis": f"{book} book (today's holdings)", "Benchmark": name, "Net": net, "Gross": gross,
-               "Net / desk": net / equity, "Gross / desk": gross / equity,
+               "Net / equity": net / equity, "Gross / equity": gross / equity,
                "Coverage": priced["value"].abs().sum() / gross if gross else np.nan}
         if len(priced) and len(returns) >= 20:
             weights = priced.set_index("key")["value"] / equity
@@ -258,7 +263,7 @@ def book_rows(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benc
                 pair = paired_returns(series, benchmarks[name])
                 if len(pair) >= 20 and pair["bench"].var() > 0:
                     beta = float(pair["book"].cov(pair["bench"]) / pair["bench"].var())
-                    row["Beta (on desk value)"] = beta
+                    row["Beta"] = beta
                     row[f"Benchmark-equivalent"] = beta * equity
                     row["Beta per $ held"] = beta * equity / gross if gross else np.nan
         rows.append(row)
@@ -271,10 +276,10 @@ def book_line(row: dict) -> str:
 
     name = row["Basis"].split(" book")[0].lower()
     parts = []
-    if np.isfinite(row.get("Beta (on desk value)", np.nan)):
+    if np.isfinite(row.get("Beta", np.nan)):
         held = row.get("Beta per $ held", np.nan)
-        parts.append(f"β {row['Beta (on desk value)']:.2f}" + (f" ({held:.2f} per $)" if np.isfinite(held) else ""))
-    parts.append(f"net {pct(row['Net / desk'])}")
+        parts.append(f"β {row['Beta']:.2f}" + (f" ({held:.2f} per $)" if np.isfinite(held) else ""))
+    parts.append(f"net {pct(row['Net / equity'])}")
     if np.isfinite(row.get("Volatility (/yr)", np.nan)):
         parts.append(f"vol {pct(row['Volatility (/yr)'])}")
     return f"{name} " + ", ".join(parts)
@@ -301,6 +306,7 @@ def book_betas(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, ben
 
 def ex_ante_row(
     holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benchmarks: pd.DataFrame, missing: list[str],
+    book_equity: float | None = None,
 ) -> dict:
     """Risk-table row for the current book: today's values times each day's return."""
     covered = holdings[holdings["key"].isin(returns.columns)]
@@ -326,7 +332,8 @@ def ex_ante_row(
                 row[f"Beta {name}"] = stats["beta"]
                 row[f"Beta {name} 90% range"] = (f"{stats['beta_low']:.2f} to {stats['beta_high']:.2f}"
                                                  if np.isfinite(stats.get("beta_low", np.nan)) else "n/a")
-    row.update(book_betas(covered, returns, equity, benchmarks))
+    # Each book's beta on trading equity (HL and IB): wallet tokens are held, not traded with.
+    row.update(book_betas(covered, returns, book_equity or equity, benchmarks))
     if missing:
         row["Not priced"] = ", ".join(sorted(set(missing)))
     return row
