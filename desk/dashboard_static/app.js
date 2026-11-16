@@ -210,7 +210,8 @@ const CHART_VIEWS = {
   positions_stocks: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
   wallets: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
 };
-const LABEL_FONT = (size = 12) => ({ size, color: token("--ink-2") });   // the value next to each bar's end
+const LABEL_FONT = (size = 12, color) => ({ size, color: color || token("--ink-2") });   // the value next to each bar's end
+const INSIDE_INK = () => (document.documentElement.dataset.theme === "light" ? "#ffffff" : token("--ink"));   // names inside bars: white on the light page
 const INSIDE_MIN_SHARE = 0.28;   // a bar shorter than this share of the longest has no room for its name inside
 const isChartView = () => document.documentElement.dataset.view === "charts";
 
@@ -252,13 +253,15 @@ function renderTableChart(id, spec) {
     if (plan.by === "window") {   // one group per window, one bar per account inside it
       traces = rows.map((row, i) => ({ type: "bar", orientation: "h", name: names[i], y: series,
         x: series.map((key) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
-        text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(),
+        text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false,
+        textfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
         hovertext: series.map((key) => `${names[i]}, ${key}: ${text(key, row[key])}`), hoverinfo: "text+y" }));
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
     } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
-      text: rows.map((row) => text(key, row[key])), textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(),
+      text: rows.map((row) => text(key, row[key])), textposition: "outside", cliponaxis: false,
+      textfont: LABEL_FONT(12, rows.map((row) => (row[key] < 0 ? bad : good))),
       hovertext: rows.map((row) => `${key}: ${text(key, row[key])}`), hoverinfo: "text+y" }));
     if (plan.by !== "window") {
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
@@ -274,17 +277,18 @@ function renderTableChart(id, spec) {
     const bar = (key, color, title) => ({ type: "bar", orientation: "h", name: title, y: names, marker: { color },
       x: rows.map((row) => (isNum(row[key]) ? Math.abs(row[key]) * axis.mult * (key === plan.short ? -1 : 1) : null)),
       text: rows.map((row, i) => (carrier[i] === key && !roomy[i] ? `${names[i]} · ` : "") + text(key, row[key])),
-      textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(),
+      textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(12, color),
       hovertext: rows.map((row) => `${title}: ${text(key, row[key])}`), hoverinfo: "text+y" });
     traces = [bar(plan.long, good, "Long"), bar(plan.short, bad, "Short"),
-      { type: "scatter", mode: "markers+text", name: "Net", y: names, textposition: "middle right", textfont: LABEL_FONT(),
+      { type: "scatter", mode: "markers+text", name: "Net", y: names, textposition: "middle right",
+        textfont: LABEL_FONT(12, rows.map((row) => (row[plan.net] < 0 ? bad : good))),
         text: rows.map((row) => text(plan.net, row[plan.net])), marker: { color: token("--ink"), symbol: "diamond", size: 10 },
         x: rows.map((row) => (isNum(row[plan.net]) ? row[plan.net] * axis.mult : null)),
         hovertext: rows.map((row) => `Net: ${text(plan.net, row[plan.net])}`), hoverinfo: "text+y" }];
     traces.forEach((trace) => { trace.showlegend = false; });
     const inside = rows.map((row, i) => (roomy[i] ? { x: 0, y: names[i], text: names[i], showarrow: false,
       xanchor: carrier[i] === plan.short ? "right" : "left", xshift: carrier[i] === plan.short ? -6 : 6,
-      font: { size: 13, color: token("--ink") } } : null)).filter(Boolean);
+      font: { size: 13, color: INSIDE_INK() } } : null)).filter(Boolean);
     layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis), annotations: inside, insideLabels: true,
       showlegend: false, margin: { r: 90 } };
     height = Math.max(180, rows.length * 44 + 80);
@@ -300,14 +304,15 @@ function renderTableChart(id, spec) {
       marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)) }, showlegend: false,
       // A short bar has no room for its name inside: the name joins the figures at its end instead of overlapping them.
       text: order.map((i) => (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
-      textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(13),
+      textposition: "outside", cliponaxis: false,
+      textfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
       hovertext: order.map((i) => `${plan.value}: ${text(plan.value, rows[i][plan.value])}`
         + (plan.text ? `, ${plan.text}: ${text(plan.text, rows[i][plan.text])}` : "")), hoverinfo: "text+y" }];
     // The row's name sits inside its bar, from the zero line outwards (left of zero for a short), not on the axis.
     const inside = order.filter(fits).map((i) => {
       const value = rows[i][plan.value] * axis.mult;
       return { x: 0, y: names[i], text: names[i], showarrow: false, xanchor: value < 0 ? "right" : "left",
-        xshift: value < 0 ? -6 : 6, font: { size: 13, color: token("--ink") } };
+        xshift: value < 0 ? -6 : 6, font: { size: 13, color: INSIDE_INK() } };
     });
     layout = { xaxis: Object.assign({ zeroline: true }, axis), annotations: inside, insideLabels: true };
     height = Math.max(200, order.length * 34 + 80);   // positions read large: a tall row per bar
