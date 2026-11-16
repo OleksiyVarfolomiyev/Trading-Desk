@@ -612,8 +612,27 @@ class Book:
             if len(closes):
                 start = closes[closes.index <= cut]
                 row[self.benchmark] = float(closes.iloc[-1] / start.iloc[-1] - 1) if len(start) else np.nan
+            # Like with like: the same dollars the book held each day, in the benchmark, also as a return on equity.
+            same = self._same_in_benchmark()
+            same_window = same[same.index > cut]
+            row[f"Same $ in {self.benchmark}"] = float((1 + same_window).prod() - 1) if len(same_window) else np.nan
             rows.append(row)
         return pd.DataFrame(rows)
+
+    def _same_in_benchmark(self) -> pd.Series:
+        """Daily return on trading equity of holding the book's exposure (each market's value going into the day)
+        in the benchmark instead: what the same dollars, long or short, would have made."""
+        def make():
+            closes = self.benchmark_closes.copy()
+            closes.index = pd.to_datetime(closes.index, utc=True).normalize()
+            bench = closes.pct_change(fill_method=None).reindex(self.days).fillna(0.0)
+            coins = self.coins.copy()
+            coins["before"] = coins.groupby(["account", "kind", "asset"])["value"].shift(1).fillna(0.0)
+            exposure = coins.groupby("day")["before"].sum().reindex(self.days).fillna(0.0)
+            before = self.equity.shift(1)
+            return (exposure * bench / before).where(before > 0).dropna()
+
+        return self._remember("same_in_benchmark", make)
 
     def realized_risk(self) -> pd.DataFrame:
         """Realized and ex-ante risk with bootstrap ranges (computed once per fetch; see ``_realized_risk``)."""
@@ -755,8 +774,8 @@ class Book:
         for window in ("7D", "30D"):
             if window in perf.index:
                 r = perf.at[window, "Return (on equity)"]
-                b = perf.at[window, self.benchmark] if self.benchmark in perf else np.nan
-                text = f"{_pct(r)}; {self.benchmark} {_pct(b)}"
+                same = perf.at[window, f"Same $ in {self.benchmark}"] if f"Same $ in {self.benchmark}" in perf else np.nan
+                text = f"{_pct(r)}; same $ in {self.benchmark} {_pct(same)}"
                 (good if r > 0 else attention).append((f"Return {window}", text))
         summary = self.summary()
         exposure = self.exposure()
@@ -818,7 +837,8 @@ class Book:
     def show_performance(self):
         table = self.performance()
         formats = {c: _usd for c in table if "PnL" in c}
-        formats.update({"Return (on equity)": _signed_pct, self.benchmark: _signed_pct})
+        formats.update({"Return (on equity)": _signed_pct, self.benchmark: _signed_pct,
+                        f"Same $ in {self.benchmark}": _signed_pct})
         self._table(table, "PERFORMANCE", formats, key={"Return (on equity)": None})
         self.plot_performance()
 
@@ -1005,9 +1025,13 @@ def versus_benchmark(book: "Book") -> pd.DataFrame:
     closes.index = pd.to_datetime(closes.index, utc=True).normalize()
     bench = closes.pct_change(fill_method=None).reindex(book.days)
     hl["before"] = hl.groupby(["account", "kind", "asset"])["value"].shift(1).fillna(0.0)
-    rows = []
+    # A day opened from flat belongs to the leg it opened (the position at the day's close): what the entry made
+    # against the close is part of the picks, and the same dollars in the benchmark earned nothing that day.
+    # So the table's PnL ties out to the book's.
     dust = 0.01   # under a cent of exposure is flat
-    for leg, mask in (("Short", hl["before"] < -dust), ("Long", hl["before"] > dust), ("Net", hl["before"].abs() > dust)):
+    side = hl["before"].where(hl["before"].abs() > dust, hl["value"])
+    rows = []
+    for leg, mask in (("Short", side < -dust), ("Long", side > dust), ("Net", (side.abs() > dust) | (hl["pnl"] != 0))):
         part = hl[mask]
         actual = part.groupby("day")["pnl"].sum().reindex(book.days).fillna(0.0)
         exposure = part.groupby("day")["before"].sum().reindex(book.days).fillna(0.0)
