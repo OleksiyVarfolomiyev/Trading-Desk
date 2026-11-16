@@ -1038,7 +1038,8 @@ def versus_benchmark(book: "Book") -> pd.DataFrame:
         same = (exposure * bench).fillna(0.0)
         gap = actual - same
         gross = part.assign(g=part["before"].abs()).groupby("day")["g"].sum().reindex(book.days).fillna(0.0)
-        active = gross >= PICKS_MIN_HELD * book.equity.shift(1).fillna(0.0).clip(lower=1.0)
+        before_equity = book.equity.shift(1).where(lambda e: e > 0)   # no equity yet: no day to judge
+        active = gross >= PICKS_MIN_HELD * before_equity
         def row(label, window, **extra):
             # Picks added (%): the gap over the average dollars held on those days, the picks' return less the
             # benchmark's on the money actually invested.
@@ -1076,8 +1077,8 @@ Book.show_versus_benchmark = show_versus_benchmark
 
 
 def plot_picks(book: "Book"):
-    """Cumulative return of the names held against the same dollars in the benchmark, on the days money was held,
-    and the gap between them (picks added), over the book's whole history."""
+    """Cumulative return per dollar at work against the same dollars in the benchmark, and the gap between them
+    (picks added), from the day the book first held 10% of equity; days a position was opened from flat count."""
     import plotly.graph_objects as go
 
     closes = book.benchmark_closes.copy()
@@ -1085,11 +1086,16 @@ def plot_picks(book: "Book"):
     bench = closes.pct_change(fill_method=None).reindex(book.days).fillna(0.0)
     coins = book.coins.copy()
     coins["before"] = coins.groupby(["account", "kind", "asset"])["value"].shift(1).fillna(0.0)
-    held = coins[coins["before"].abs() > 0.01]
-    actual = held.groupby("day")["pnl"].sum().reindex(book.days).fillna(0.0)
-    exposure = held.groupby("day")["before"].sum().reindex(book.days).fillna(0.0)
-    gross = held.assign(g=held["before"].abs()).groupby("day")["g"].sum().reindex(book.days).fillna(0.0)
-    active = gross >= PICKS_MIN_HELD * book.equity.shift(1).fillna(0.0).clip(lower=1.0)   # dust (0.01 HYPE) is not a book
+    # The dollars at work each day: what was held going in, and for a position opened from flat, its size at the
+    # close (its entry against the close is part of the picks; the benchmark earned nothing on it that day).
+    fresh = coins["before"].abs() <= 0.01
+    coins["base"] = np.where(fresh, coins["value"].abs(), coins["before"].abs())
+    actual = coins.groupby("day")["pnl"].sum().reindex(book.days).fillna(0.0)
+    exposure = coins.groupby("day")["before"].sum().reindex(book.days).fillna(0.0)
+    gross = coins.groupby("day")["base"].sum().reindex(book.days).fillna(0.0)
+    # From the day the book is meaningful (10% of equity, the factor model's rule): tiny early days are noise.
+    before_equity = book.equity.shift(1).where(lambda e: e > 0)   # no equity yet: no day to judge
+    active = gross >= ACTIVE_GROSS * before_equity
     if active.sum() < 5:
         return
     first = active.idxmax()
