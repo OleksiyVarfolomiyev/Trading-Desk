@@ -86,6 +86,31 @@
   --series-5: #b69bff;
 }
 
+/* Viridis: the perceptually uniform palette (purple to yellow), colour-blind safe. Gains are viridis green, losses
+   its purple end (lifted to read on the dark page); series run yellow, green, teal, blue, violet. ?theme=viridis */
+:root[data-theme="viridis"] {
+  color-scheme: dark;
+  --page: #0d0d0f;
+  --surface: #18181c;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2a2a30;
+  --axis: #3a3a42;
+  --border: rgba(255, 255, 255, 0.10);
+  --good-text: #7ad151;
+  --bad-text: #9a7fe0;
+  --good: #5ec962;
+  --warning: #fde725;
+  --critical: #9a7fe0;
+  --wash-warning: rgba(253, 231, 37, 0.14);
+  --series-1: #fde725;
+  --series-2: #7ad151;
+  --series-3: #22a884;
+  --series-4: #2a788e;
+  --series-5: #7e6fd8;
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body {

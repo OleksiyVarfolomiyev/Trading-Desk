@@ -7,11 +7,11 @@
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="app.css">
 <script>
-  // ?theme=hl switches the look (remembered); ?theme=dark returns to the default.
+  // ?theme=hl or ?theme=viridis switches the look (remembered); ?theme=dark returns to the default.
   (function () {
     var theme = null;
     try { theme = new URLSearchParams(location.search).get("theme") || localStorage.getItem("desk-theme"); } catch (e) {}
-    if (theme === "hl" || theme === "dark") {
+    if (theme === "hl" || theme === "viridis" || theme === "dark") {
       document.documentElement.setAttribute("data-theme", theme);
       try { localStorage.setItem("desk-theme", theme); } catch (e) {}
     }
