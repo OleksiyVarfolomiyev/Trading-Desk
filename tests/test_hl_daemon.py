@@ -1163,6 +1163,43 @@ class TrimRuleTests(unittest.TestCase):
         self.assertFalse(hl_daemon.AUTO_DEFAULTS["momentum_flip"])
 
 
+class BuildUpTests(unittest.TestCase):
+    def _step(self, delta, held=-100.0, alerts=(), block=""):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        hl_daemon.load_trading()
+        plan = SimpleNamespace(quantity_delta=delta, mark_price=1.0, block_reason=block)
+        with tempfile.TemporaryDirectory() as folder, patch.object(hl_daemon, "AUTO_STATE", Path(folder) / "s.json"), \
+                patch.object(hl_daemon.daemon_link, "RUN_DIR", Path(folder)), \
+                patch.object(hl_daemon.ht, "KILL_SWITCH_FILE", Path(folder) / "KILL_SWITCH"):
+            daemon = MagicMock()
+            daemon.state.position_quantity.return_value = held
+            daemon.alerts.items = {name: {} for name in alerts}
+            daemon._plan.return_value = ("actions", [plan], {}, None)
+            daemon.trade.return_value = 0
+            builder = hl_daemon.BuildUps(daemon, None)
+            builder.step({"wallet": "0xa", "coin": "TRUMP", "side": "SHORT"})
+            return daemon.trade.called
+
+    def test_adds_when_the_plan_has_room(self):
+        self.assertTrue(self._step(80.0))
+
+    def test_never_cuts_and_ignores_dust_adds(self):
+        self.assertFalse(self._step(-40.0))
+        self.assertFalse(self._step(5.0))
+
+    def test_waits_while_blocked_or_a_short_squeeze_alert_is_up(self):
+        self.assertFalse(self._step(80.0, block="cap"))
+        self.assertFalse(self._step(80.0, alerts=("short_strength",)))
+
+    def test_only_grows_the_position_it_was_set_for(self):
+        self.assertFalse(self._step(80.0, held=0.0))
+        self.assertFalse(self._step(80.0, held=100.0))   # flipped long: not the short build-up
+
+
 class FlattenTests(unittest.TestCase):
     def test_flatten_closes_all_crypto_and_engages_the_kill_switch(self):
         import tempfile

@@ -2847,6 +2847,97 @@ class Trails:
                     log(f"trail ...{record['wallet'][-4:]} {record['coin']} failed ({type(exc).__name__}: {exc}); retrying")
 
 
+BUILDUPS_FILE = daemon_link.RUN_DIR / "buildups.json"
+BUILDUP_CHECK_SECONDS = 300
+BUILDUP_MIN_ADD_USD = 25.0      # smaller adds are not worth a fill and a stop re-attachment
+
+
+class BuildUps:
+    """A position that starts small because the desk risk cap or margin has no room, grown to the full risk budget as
+    room appears. Every few minutes each listed position gets a "target" action (size to the per-position and desk
+    caps, the same sizing as a fresh entry); only an add is sent, never a cut, and nothing while the kill switch is
+    on or the short-strength alert is up (a bounce is the wrong time to add to shorts)."""
+
+    def __init__(self, daemon: "Daemon", path: Path | None = BUILDUPS_FILE):
+        self.daemon, self.path = daemon, path
+        self.items: list[dict] = []
+        self.lock = threading.Lock()
+
+    def save(self) -> None:
+        if self.path is not None:
+            self.path.write_text(json.dumps(self.items, indent=1))
+
+    def resume(self) -> None:
+        try:
+            self.items = json.loads(self.path.read_text()) if self.path is not None else []
+        except (OSError, ValueError):
+            self.items = []
+        for item in self.items:
+            log(f"build-up resumed: ...{item['wallet'][-4:]} {item['coin']} {item['side']}")
+
+    def start(self, wallet: str, coin: str, side: str) -> int:
+        side = side.upper()
+        if side not in ("LONG", "SHORT"):
+            print("Side must be LONG or SHORT.")
+            return 2
+        with self.lock:
+            self.items = [item for item in self.items if (item["wallet"], item["coin"]) != (wallet, coin)]
+            self.items.append({"wallet": wallet, "coin": coin, "side": side,
+                               "started": time.strftime("%Y-%m-%d %H:%M", time.gmtime())})
+            self.save()
+        print(f"Build-up for ...{wallet[-4:]} {coin} {side}: added to the full risk budget whenever the desk caps "
+              f"allow (checked every {BUILDUP_CHECK_SECONDS // 60} minutes).")
+        return 0
+
+    def stop(self, wallet: str, coin: str) -> int:
+        with self.lock:
+            before = len(self.items)
+            self.items = [item for item in self.items if (item["wallet"], item["coin"]) != (wallet, coin)]
+            self.save()
+        print(f"Build-up removed for ...{wallet[-4:]} {coin}; the position stays." if len(self.items) < before
+              else f"No build-up for ...{wallet[-4:]} {coin}.")
+        return 0
+
+    def step(self, item: dict) -> None:
+        daemon = self.daemon
+        wallet, coin, side = item["wallet"], item["coin"], item["side"]
+        dex = coin.split(":")[0] if ":" in coin else ""
+        held = daemon.state.position_quantity(wallet, coin, dex) or 0.0
+        if not held or (held > 0) != (side == "LONG"):
+            return   # not open (or flipped): a build-up only grows the position it was set for
+        if ht.kill_switch_engaged() or "short_strength" in daemon.alerts.items:
+            return
+        path = daemon_link.RUN_DIR / f"buildup_{wallet[-4:]}_{coin.replace(':', '_').lower()}.csv"
+        path.write_text(f"action,coin,side,dex\ntarget,{coin},{side},{dex}\n")
+        request = {"cmd": "trade", "wallet": wallet, "live": False, "actions": str(path), "ignore_unreachable": True}
+        _, plans, markets, _ = daemon._plan(request, wallet, [wallet] + [w for w in daemon.state.wallets if w != wallet])
+        plan = plans[0] if plans else None
+        if plan is None or plan.block_reason or plan.quantity_delta <= 0 \
+                or plan.quantity_delta * plan.mark_price < BUILDUP_MIN_ADD_USD:
+            return
+        if not daemon.trade_lock.acquire(timeout=60):
+            return
+        try:
+            request["live"] = True
+            code = daemon.trade(request, AutoSession())
+        finally:
+            daemon.trade_lock.release()
+        note = (f"added {plan.quantity_delta:g} {coin} {side.lower()} (about ${plan.quantity_delta * plan.mark_price:,.0f}) "
+                f"on ...{wallet[-4:]}" if code == 0 else f"add to {coin} did not complete (code {code}); see the log")
+        log(f"build-up: {note}")
+        daemon.alerts.set(f"buildup:{coin}:{int(time.time())}", f"Build-up: {coin}", note, ttl=86400)
+
+    def run(self) -> None:
+        while not self.daemon.stopped.wait(BUILDUP_CHECK_SECONDS):
+            with self.lock:
+                items = list(self.items)
+            for item in items:
+                try:
+                    self.step(item)
+                except Exception as exc:
+                    log(f"build-up ...{item['wallet'][-4:]} {item['coin']} failed ({type(exc).__name__}: {exc}); retrying")
+
+
 RESEARCH_FILE = Path(__file__).resolve().parents[1] / "data" / "research_state.json"
 RESEARCH_EVERY_SECONDS = 3600
 
@@ -2958,6 +3049,7 @@ class Daemon:
         self.regime_guard = RegimeGuard(self)
         self.ladders = Ladders(self, None if paper else LADDERS_FILE)
         self.trails = Trails(self, None if paper else TRAILS_FILE)
+        self.buildups = BuildUps(self, None if paper else BUILDUPS_FILE)
         self.auto = AutoTrader(self) if not paper else None
         self.held = HeldTargets(self, None if paper else HELD_TARGETS_FILE)
         self.research = ResearchFeed(self, None if paper else RESEARCH_FILE)
@@ -3102,6 +3194,12 @@ class Daemon:
             coin = str(request.get("coin", "")).strip()
             coin = coin if ":" in coin else coin.upper()
             return self.trails.stop(wallet, coin) if request.get("stop") else self.trails.start(wallet, coin, float(request["pct"]))
+        if command == "buildup":
+            wallet = self.wallet(str(request.get("wallet", "")))
+            coin = str(request.get("coin", "")).strip()
+            coin = coin if ":" in coin else coin.upper()
+            return (self.buildups.stop(wallet, coin) if request.get("stop")
+                    else self.buildups.start(wallet, coin, str(request.get("side", ""))))
         if command == "stop":
             return self.stop_request(session)
         print(f"Unknown command {command!r}.")
@@ -3444,6 +3542,8 @@ def serve(args: argparse.Namespace) -> int:
     threading.Thread(target=daemon.ladders.run, name="ladders", daemon=True).start()
     daemon.trails.resume()
     threading.Thread(target=daemon.trails.run, name="trails", daemon=True).start()
+    daemon.buildups.resume()
+    threading.Thread(target=daemon.buildups.run, name="buildups", daemon=True).start()
     daemon.held.resume()
     threading.Thread(target=daemon.held.run, name="held-targets", daemon=True).start()
     threading.Thread(target=daemon.research.run, name="research", daemon=True).start()
@@ -3601,6 +3701,11 @@ def main(argv: list[str] | None = None) -> int:
     trail.add_argument("--coin", required=True)
     trail.add_argument("--pct", type=float, default=TRAIL_DEFAULT_PCT * 100, help="percent behind the best price (default 1.5)")
     trail.add_argument("--stop", action="store_true", help="remove the trailing stop (the position stays)")
+    buildup = commands.add_parser("buildup", help="grow a small position to its full risk budget as the desk caps allow, or --stop it")
+    buildup.add_argument("--wallet", required=True)
+    buildup.add_argument("--coin", required=True)
+    buildup.add_argument("--side", default="SHORT", help="LONG or SHORT (default SHORT)")
+    buildup.add_argument("--stop", action="store_true", help="remove the build-up (the position stays)")
     commands.add_parser("stop", help="stop the daemon (guards resume on the next start)")
     args = parser.parse_args(argv)
 
@@ -3624,6 +3729,8 @@ def main(argv: list[str] | None = None) -> int:
                      "neutral": args.neutral, "level_usd": args.level_usd, "max_levels": args.max_levels})
     if args.command == "trail":
         return call({"cmd": "trail", "wallet": args.wallet, "coin": args.coin, "pct": args.pct / 100, "stop": args.stop})
+    if args.command == "buildup":
+        return call({"cmd": "buildup", "wallet": args.wallet, "coin": args.coin, "side": args.side, "stop": args.stop})
     if args.command == "reattach":
         return call({"cmd": "reattach", "wallet": args.wallet, "live": args.live,
                      "coins": [item for item in (args.coins or "").split(",") if item.strip()]})
