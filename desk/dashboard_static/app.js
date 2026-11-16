@@ -211,6 +211,7 @@ const CHART_VIEWS = {
   wallets: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
 };
 const LABEL_FONT = (size = 12, color) => ({ size, color: color || token("--ink-2") });   // the value next to each bar's end
+const BAR_CAP = 3;   // the longest a bar is drawn, in times the second largest
 const INSIDE_INK = () => (document.documentElement.dataset.theme === "light" ? "#ffffff" : token("--ink"));   // names inside bars: white on the light page
 // A name goes inside its bar only when the bar is long enough, in pixels, to hold it (13px text, about 7.5px a character).
 function nameFits(share, name, host, rightMargin) {
@@ -300,14 +301,20 @@ function renderTableChart(id, spec) {
     const order = rows.map((row, index) => index).filter((index) => isNum(rows[index][plan.value]))
       .sort((a, b) => Math.abs(rows[b][plan.value]) - Math.abs(rows[a][plan.value]));
     const axis = chartAxis(formatOf(plan.value));
-    const biggest = Math.max(...order.map((i) => Math.abs(rows[i][plan.value]))) || 1;
-    const fits = (i) => nameFits(Math.abs(rows[i][plan.value]) / biggest, names[i], host, plan.text ? 130 : 90);
+    // One holding can dwarf the rest (a $2K token among dust): a bar is drawn at most BAR_CAP times the second largest,
+    // marked "»" with its true value in the label, so the small ones stay readable.
+    const sizes = order.map((i) => Math.abs(rows[i][plan.value]));
+    const cap = sizes.length > 2 ? sizes[1] * BAR_CAP : Infinity;
+    const drawn = (i) => Math.sign(rows[i][plan.value]) * Math.min(Math.abs(rows[i][plan.value]), cap);
+    const clipped = (i) => Math.abs(rows[i][plan.value]) > cap;
+    const biggest = Math.max(...order.map((i) => Math.abs(drawn(i)))) || 1;
+    const fits = (i) => nameFits(Math.abs(drawn(i)) / biggest, names[i], host, plan.text ? 130 : 90);
     const figures = (i) => [text(plan.value, rows[i][plan.value]), plan.text ? text(plan.text, rows[i][plan.text]) : ""]
       .filter(Boolean).join(" · ");
-    traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => rows[i][plan.value] * axis.mult),
+    traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => drawn(i) * axis.mult),
       marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)) }, showlegend: false,
       // A short bar has no room for its name inside: the name joins the figures at its end instead of overlapping them.
-      text: order.map((i) => (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
+      text: order.map((i) => (clipped(i) ? "» " : "") + (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
       textposition: "outside", cliponaxis: false,
       textfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
       hovertext: order.map((i) => `${plan.value}: ${text(plan.value, rows[i][plan.value])}`
