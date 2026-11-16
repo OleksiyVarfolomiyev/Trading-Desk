@@ -209,6 +209,7 @@ const CHART_VIEWS = {
   positions: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
   positions_stocks: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
   wallets: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
+  market_making: { kind: "bars", label: "Coin", value: "Ladder PnL", text: "Fills" },
 };
 const LABEL_FONT = (size = 12, color) => ({ size, color: color || token("--ink-2") });   // the value next to each bar's end
 const BAR_CAP = 3;   // the longest a bar is drawn, in times the second largest
@@ -248,7 +249,10 @@ function renderTableChart(id, spec) {
   // A symbol held in two accounts gets its account in the label.
   const name = (row, index) => labels.filter((l) => l === labels[index]).length > 1 && row.Account
     ? `${labels[index]} (${row.Account})` : labels[index];
+  // A category axis merges equal names onto one row (bars and labels would pile up): every row gets its own name.
   const names = rows.map(name);
+  const seen = {};
+  names.forEach((n, i) => { seen[n] = (seen[n] || 0) + 1; if (seen[n] > 1) names[i] = `${n} #${seen[n]}`; });
   const colors = [1, 2, 3, 4, 5].map((i) => token("--series-" + i));
   const good = token("--good-text") || token("--good"), bad = token("--bad-text") || token("--critical");
   let traces = [], layout = {}, height = 0;
