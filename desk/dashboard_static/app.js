@@ -235,6 +235,14 @@ function columnsFor(view) {   // the uPnL column in dollars when the $ switch is
   if (view.columnsNow) return view.columnsNow();
   return pnlUnit === "usd" ? view.columns.map((column) => (column[0] === "uPnL (%)" ? ["uPnL", "uPnL"] : column)) : view.columns;
 }
+// Wallet tokens sit in the crypto positions table (the wallet is where the money sits, not a separate book).
+function withWallets(id, tables) {
+  const spec = tables[id];
+  if (id !== "positions" || !spec || !tables.wallets || !(tables.wallets.rows || []).length) return spec;
+  const extra = tables.wallets.rows.map((row) => ({ Symbol: row.Symbol, Value: row.Value, "24h change (%)": row["24h change (%)"],
+    "uPnL (%)": row["uPnL (%)"], uPnL: row.uPnL, Account: row.Wallet || row.Account, _wallet: true }));
+  return Object.assign({}, spec, { rows: spec.rows.concat(extra) });
+}
 function applyView(id, spec, context) {
   const view = VIEWS[id];
   if (!view || !spec || !spec.columns || !spec.columns.length) return spec;
@@ -358,12 +366,7 @@ function renderTableChart(id, spec) {
       text: rows.map((row, i) => (carrier[i] === key && !roomy[i] ? `${names[i]} · ` : "") + text(key, row[key])),
       textposition: "auto", insidetextanchor: "end", cliponaxis: false, insidetextfont: { size: 12, color: "#ffffff" }, outsidetextfont: LABEL_FONT(12, color),
       hoverinfo: "skip" });   // the value is on the bar
-    traces = [bar(plan.long, good, "Long"), bar(plan.short, bad, "Short"),
-      { type: "scatter", mode: "markers+text", name: "Net", y: names, textposition: "middle right",
-        textfont: LABEL_FONT(12, rows.map((row) => (row[plan.net] < 0 ? bad : good))),
-        text: rows.map((row) => text(plan.net, row[plan.net])), marker: { color: token("--ink"), symbol: "diamond", size: 10 },
-        x: rows.map((row) => (isNum(row[plan.net]) ? row[plan.net] * axis.mult : null)),
-        hoverinfo: "skip" }];
+    traces = [bar(plan.long, good, "Long"), bar(plan.short, bad, "Short")];
     traces.forEach((trace) => { trace.showlegend = false; });
     const inside = rows.map((row, i) => (roomy[i] ? { x: 0, y: names[i], text: names[i], showarrow: false,
       xanchor: carrier[i] === plan.short ? "right" : "left", xshift: carrier[i] === plan.short ? -6 : 6,
@@ -991,7 +994,7 @@ function render(doc) {
   renderHighlights("hl-well", data.highlights && data.highlights.well, hover);
   renderHighlights("hl-attention", data.highlights && data.highlights.attention, hover);
   const context = { deskValue: (data.kpis || {}).desk_value };
-  for (const id of TABLES) renderTable(id, applyView(id, data.tables && data.tables[id], context));
+  for (const id of TABLES) renderTable(id, applyView(id, withWallets(id, data.tables || {}), context));
   balanceColumns();
   renderCharts(data.charts);
   renderPublished(data.tiles || []);
@@ -1177,7 +1180,7 @@ function redrawLook(kind) {
   if (!latest || !latest.data) return;
   const data = latest.data, context = { deskValue: (data.kpis || {}).desk_value };
   if (kind === "view" || isChartView()) {
-    for (const id of TABLES) renderTable(id, applyView(id, data.tables && data.tables[id], context));
+    for (const id of TABLES) renderTable(id, applyView(id, withWallets(id, data.tables || {}), context));
     if (kind === "view") balanceColumns();
   }
   if (kind !== "view") { renderCharts(data.charts); renderPublished(data.tiles || []); }
@@ -1223,7 +1226,6 @@ function adoptCard(card) {
     CARDS[cardId(card)] = card;
     const title = card.querySelector("h2");
     if (!title || card.dataset.adopted) return;
-    markKinds(title);
     card.dataset.adopted = "1";
     // The name shows on hover: most cards say what they are by what they hold (and the dots by their colour).
     [...title.childNodes].forEach((node) => {
