@@ -604,7 +604,6 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     return {
         "kpis": kpis,
         "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,
-        "execution": (research.get("execution") if isinstance(research, dict) else None) or {},
         "theses": (research.get("theses") if isinstance(research, dict) else None) or [],   # the thesis clock   # the open trades' median age
         "intraday": intraday_series(desk),   # the day and week at hourly resolution (the return chart's D and W)
         "moves": position_moves(overview),   # the held positions' price moves over 7 and 30 days

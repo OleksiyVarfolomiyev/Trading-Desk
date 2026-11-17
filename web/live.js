@@ -1241,7 +1241,6 @@
       })(),
       horizon_days: research && research.horizon_days,
       theses: (research && research.theses) || [],
-      execution: (research && research.execution) || {},
       usage_model: usageModel,
       tiles: ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now()),
       charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [] },

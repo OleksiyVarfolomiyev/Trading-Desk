@@ -3072,12 +3072,6 @@ class ResearchFeed:
         overdue = [{"wallet": item["wallet"], "coin": item["coin"], "side": item["side"], "days": round(item["days"], 1)}
                    for item in journal.overdue(journal.load(), open_pairs)]
         theses = journal.thesis_rows(journal.load(), open_pairs)
-        try:
-            from desk import execution_quality
-            quality = execution_quality.desk_summary()
-        except Exception as exc:
-            log(f"execution quality failed ({type(exc).__name__}: {exc})")
-            quality = {}
         exposures = [(("tradfi perp" if position.dex and position.dex != "hyna" else "crypto perp"), position.coin,
                       position.quantity * position.mark_price) for position in snapshot.positions]
         exposures += stress.desk_exposures(book) if book is not None else []
@@ -3095,7 +3089,7 @@ class ResearchFeed:
             log(f"screener not refreshed ({type(exc).__name__}: {exc})")
             screen = screener.load()
         payload = {"as_of": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), "strategies": strategies,
-                   "overdue": overdue, "theses": theses, "execution": quality, "screener": screen, "horizon_days": journal.horizon_days()}
+                   "overdue": overdue, "theses": theses, "screener": screen, "horizon_days": journal.horizon_days()}
         if self.path is not None:
             self.path.write_text(json.dumps(payload, indent=1))
         try:
