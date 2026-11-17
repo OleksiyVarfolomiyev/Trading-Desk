@@ -405,8 +405,11 @@ function renderTableChart(id, spec) {
 
 // A displayed zero amount ($0.00, -$0.00, 0%, 0.00) is an empty cell; a whole-number 0 (a count) stays.
 const ZERO_TEXT = /^-?(\$0(\.0+)?|0(\.0+)?%|0\.0+)$/;
+const filterState = {};   // table id -> text: only rows that contain it are shown
+const lastSpecs = {};     // table id -> the last spec drawn, so a filter redraws without new data
 function renderTable(id, spec) {
   const original = spec;
+  lastSpecs[id] = spec;
   const host = document.getElementById("t-" + id);
   if (!host) return;
   host.replaceChildren();
@@ -435,6 +438,8 @@ function renderTable(id, spec) {
   }
   const state = sortState[id];
   let rows = spec.rows.slice();
+  const query = (filterState[id] || "").trim().toLowerCase();
+  if (query) rows = rows.filter((row) => Object.entries(row).some(([key, value]) => !key.startsWith("__") && String(value ?? "").toLowerCase().includes(query)));
   if (state) {
     rows.sort((a, b) => {
       const x = a[state.key], y = b[state.key];
@@ -730,7 +735,9 @@ function baseLayout(extra) {
   }, extra);
 }
 
-const CONFIG = { displayModeBar: false, responsive: true };
+// Chart tools on hover (zoom, pan, reset, save), as Plotly's own bar; a click on a legend item hides or shows that series.
+const CONFIG = { displayModeBar: "hover", displaylogo: false, responsive: true,
+  modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d", "toggleSpikelines", "hoverCompareCartesian", "hoverClosestCartesian"] };
 
 function endLabels(series, format) {
   return series.filter((s) => s.y.length).map((s) => ({
@@ -1111,7 +1118,20 @@ function adoptCard(card) {
       button.addEventListener("click", action);
       return button;
     };
+    const table = card.querySelector(".table-wrap[id^='t-']");
+    const filter = table ? tool("card-filter", "Filter rows", "⌕", () => {
+      const id = table.id.slice(2);
+      let box = title.querySelector(".card-filter-box");
+      if (box) { box.remove(); filterState[id] = ""; if (lastSpecs[id]) renderTable(id, lastSpecs[id]); return; }
+      box = el("input", { type: "search", class: "card-filter-box", placeholder: "filter", "aria-label": "Filter rows" });
+      box.addEventListener("input", () => { filterState[id] = box.value; if (lastSpecs[id]) renderTable(id, lastSpecs[id]); });
+      box.addEventListener("keydown", (event) => { if (event.key === "Escape") { box.value = ""; filterState[id] = ""; box.remove(); if (lastSpecs[id]) renderTable(id, lastSpecs[id]); } });
+      title.querySelector(".card-tools").before(box);
+      box.focus();
+      feedback("section", "filter", cardTitle(card));
+    }) : null;
     const tools = el("span", { class: "card-tools" }, [
+      ...(filter ? [filter] : []),
       tool("card-minimize", "Minimize", "–", () => setMinimized(cardId(card), !card.classList.contains("card-min"))),
       tool("card-save", "Save as image", "⤓", () => saveTile(card)),
       tool("card-fullscreen", "Full screen", "⤢", () => setFull(cardId(card), !card.classList.contains("card-full"))),

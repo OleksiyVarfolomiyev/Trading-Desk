@@ -473,3 +473,8 @@ html.private td.digits { cursor: pointer; }
 .ticker:hover .tick-hide { opacity: 1; }
 .unit-button.auto { position: relative; }
 .unit-button.auto::after { content: ""; position: absolute; top: 3px; right: 3px; width: 4px; height: 4px; border-radius: 50%; background: var(--series-1); }
+.card-filter-box { margin-left: auto; width: 140px; background: transparent; color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font: inherit; font-size: 12px; }
+.card-filter-box + .card-tools { margin-left: 6px; }
+.js-plotly-plot .modebar { background: transparent !important; }
+.js-plotly-plot .modebar-btn path { fill: var(--muted) !important; }
+.js-plotly-plot .modebar-btn:hover path { fill: var(--ink) !important; }
