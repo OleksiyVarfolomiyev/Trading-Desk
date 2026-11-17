@@ -1385,6 +1385,50 @@ function thumbs(name, kind) {
   return [make("👍", "useful"), make("👎", "not useful")];
 }
 let draggingCard = null;
+
+// Resize: hovering the bottom edge of a tile shows a grip; dragging it sets the tile's height (kept per tile, a double click
+// returns it to its natural height). Charts inside follow; a table scrolls inside.
+function applyCardHeight(card, height) {
+  if (height) { card.dataset.sized = "1"; card.style.setProperty("--card-h", height + "px"); }
+  else { delete card.dataset.sized; card.style.removeProperty("--card-h"); }
+  if (typeof Plotly !== "undefined") card.querySelectorAll(".js-plotly-plot").forEach((node) => { try { Plotly.Plots.resize(node); } catch (e) {} });
+}
+function addResizeHandle(card) {
+  const handle = el("div", { class: "card-resize", title: "Drag to resize" });
+  handle.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startY = event.clientY, startHeight = card.getBoundingClientRect().height;
+    let frame = null;
+    const move = (e) => {
+      const height = Math.max(70, Math.round(startHeight + e.clientY - startY));
+      card.dataset.sized = "1";
+      card.style.setProperty("--card-h", height + "px");
+      if (!frame) frame = requestAnimationFrame(() => { frame = null; card.querySelectorAll(".js-plotly-plot").forEach((node) => { try { Plotly.Plots.resize(node); } catch (x) {} }); });
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      const height = Math.round(card.getBoundingClientRect().height), state = layoutState();
+      state.heights = Object.assign({}, state.heights, { [cardId(card)]: height });
+      saveLayout(state);
+      applyCardHeight(card, height);
+      feedback("section", "resize", cardTitle(card), String(height));
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+  handle.addEventListener("dblclick", () => {
+    const state = layoutState();
+    if (state.heights) delete state.heights[cardId(card)];
+    saveLayout(state);
+    applyCardHeight(card, 0);
+  });
+  card.append(handle);
+  const saved = (layoutState().heights || {})[cardId(card)];
+  if (saved) applyCardHeight(card, saved);
+}
+
 const CARDS = {};   // card id -> its element
 // A card becomes a window: it sits in a slot, drags by its body, and has minimize, save, full screen and hide.
 function adoptCard(card) {
@@ -1410,7 +1454,7 @@ function adoptCard(card) {
     const grip = el("span", { class: "card-grip", title: "Drag anywhere on the tile (outside the chart) to move it", "aria-label": "Move " + cardTitle(card), text: "⠿" });
     // The whole tile drags, except from a chart, a field, a button or a link (those keep their own mouse behaviour).
     card.addEventListener("mousedown", (event) => {
-      card.draggable = !event.target.closest(".js-plotly-plot, input, textarea, select, button, a, .card-full");
+      card.draggable = !event.target.closest(".js-plotly-plot, input, textarea, select, button, a, .card-full, .card-resize");
     });
     card.addEventListener("dragstart", (event) => {
       if (!card.draggable || card.classList.contains("card-full")) { event.preventDefault(); return; }
@@ -1457,6 +1501,7 @@ function adoptCard(card) {
       return [reset, pan];
     };
     const more = tool("card-more", "Add a layer: more on this", "+", () => openMoreMenu(card, more));
+    addResizeHandle(card);
     card.append(el("div", { class: "card-foot" }, thumbs(cardTitle(card), "section")));   // bottom right, on hover: clear of the heading
     const tools = el("span", { class: "card-tools" }, [
       more,

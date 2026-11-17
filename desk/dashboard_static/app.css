@@ -613,3 +613,10 @@ th, td { padding: 0 4px !important; line-height: 1.3; }
 .feed[hidden] { display: none !important; }
 .col.drop-end::after { content: ""; display: block; height: 3px; background: var(--series-1); border-radius: 2px; }
 @media (max-width: 640px) { #columns { flex-direction: column; } }
+/* Resize grip on a tile's bottom edge. */
+.card-resize { position: absolute; left: 0; right: 0; bottom: -2px; height: 8px; cursor: ns-resize; z-index: 4; }
+.card-resize::after { content: ""; position: absolute; left: 50%; bottom: 3px; width: 36px; height: 3px; margin-left: -18px; border-radius: 2px; background: var(--muted); opacity: 0; transition: opacity .12s; }
+.card-resize:hover::after { opacity: .8; }
+.card[data-sized] { height: var(--card-h); display: flex !important; flex-direction: column; overflow: hidden; }
+.card[data-sized] .table-wrap, .card[data-sized] .highlights { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.card[data-sized] .chart, .card[data-sized] #chart-value, .card[data-sized] #chart-twr { height: auto !important; flex: 1 1 auto; min-height: 60px; }
