@@ -3308,7 +3308,7 @@ class Daemon:
         live = bool(request.get("live"))
         coins = {coin if ":" in coin else coin.upper() for coin in (request.get("coins") or []) if coin}
         wallets = [self.wallet(item) for item in (request.get("wallets") or []) if item] or list(self.exchanges)
-        laddered = set(self.ladders.ladders)
+        laddered = {(str(key[0]).lower(), key[1]) for key in self.ladders.ladders}   # wallet case differs between sources
         done: list[str] = []
         for wallet in wallets:
             with self.state.lock:
@@ -3316,7 +3316,7 @@ class Daemon:
             dexes = [dex for dex, state in states.items() if state.get("assetPositions")]
             held = {item["position"]["coin"] for state in states.values() for item in state.get("assetPositions", [])
                     if float(item.get("position", {}).get("szi") or 0)}
-            targets = {coin for coin in held if (wallet, coin) not in laddered and (not coins or coin in coins)}
+            targets = {coin for coin in held if (wallet.lower(), coin) not in laddered and (not coins or coin in coins)}
             for order in ht.fetch_open_orders(wallet, dexes or [""]):
                 coin = order["coin"]
                 if coin not in targets or not order.get("reduceOnly") or str(order.get("cloid") or "").startswith(LADDER_CLOID_PREFIX):
