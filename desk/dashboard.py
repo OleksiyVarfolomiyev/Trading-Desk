@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as dt
 import faulthandler
 import json
 import math
@@ -53,6 +54,27 @@ STATIC_FILES = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/app.css": ("app.css", "text/css; charset=utf-8"),
 }
+
+
+FEEDBACK_FILE = Path(__file__).resolve().parents[1] / "data" / "feedback.jsonl"
+
+
+def save_feedback(raw: bytes, path: Path | None = None) -> int:
+    """Append the reader's events (a highlight marked read or not important, a section hidden or moved, the look
+    changed) to ``data/feedback.jsonl``, one JSON line each; research/feedback_summary.py reads them back."""
+    path = path or FEEDBACK_FILE
+    try:
+        events = json.loads(raw.decode("utf-8")).get("events", [])
+    except (ValueError, AttributeError):
+        return 0
+    lines = [json.dumps({"received": dt.datetime.now(dt.timezone.utc).isoformat(), "source": "local", **event})
+             for event in events[:200] if isinstance(event, dict) and isinstance(event.get("kind"), str)
+             and isinstance(event.get("action"), str)]
+    if lines:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as file:
+            file.write("\n".join(lines) + "\n")
+    return len(lines)
 
 
 # ----------------------------------------------------------------------------------------------
@@ -623,6 +645,9 @@ def make_handler(dashboard: Dashboard, port: int):
             if self.path == "/api/refresh":
                 dashboard.wake.set()
                 self._send(b'{"ok": true}', "application/json")
+            elif self.path == "/api/feedback":
+                self._send(json.dumps({"ok": True, "saved": save_feedback(self.rfile.read(
+                    min(int(self.headers.get("Content-Length") or 0), 64_000)))}).encode(), "application/json")
             else:
                 self.send_error(404)
 

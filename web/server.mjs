@@ -213,6 +213,21 @@ async function readBody(request) {
   return Buffer.concat(chunks);
 }
 
+// What the reader does with the dashboard (marking a highlight read or not important, hiding or moving a section, the
+// look): one JSON line per event in DESK_FEEDBACK (default ~/.trading-desk/feedback.jsonl), read back by
+// research/feedback_summary.py. The browser sends a small batch; anything malformed is dropped.
+const FEEDBACK_FILE = process.env.DESK_FEEDBACK || path.join(HOME, ".trading-desk", "feedback.jsonl");
+async function saveFeedback(request, response) {
+  const raw = await readBody(request);
+  let events = [];
+  try { events = raw.length < 64_000 ? (JSON.parse(raw.toString("utf8")).events || []) : []; } catch (error) { events = []; }
+  const clean = events.slice(0, 200).filter((event) => event && typeof event.kind === "string" && typeof event.action === "string")
+    .map((event) => JSON.stringify({ received: new Date().toISOString(), source: "web", ...event }));
+  if (clean.length) await fsp.appendFile(FEEDBACK_FILE, clean.join("\n") + "\n");
+  response.writeHead(200, { "Content-Type": "application/json" });
+  response.end(JSON.stringify({ ok: true, saved: clean.length }));
+}
+
 async function handle(request, response) {
   const url = new URL(request.url, "http://localhost");
   if (url.pathname === "/login" && request.method === "POST") return signIn(request, response);
@@ -229,6 +244,7 @@ async function handle(request, response) {
     response.end(page ? loginPage() : "Sign in to see the desk.");
     return;
   }
+  if (url.pathname === "/feedback" && request.method === "POST") return saveFeedback(request, response);
   if (request.method === "GET") {
     const file = await staticFile(url.pathname);
     if (file) {

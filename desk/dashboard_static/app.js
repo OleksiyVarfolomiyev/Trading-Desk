@@ -124,6 +124,41 @@ function sinceLabel(when) {
   return Date.now() - t > 60 * 86400000 ? `${month}'${String(d.getUTCFullYear()).slice(2)}` : `${month} ${d.getUTCDate()}`;
 }
 
+
+// ---------------------------------------------------------------- feedback: what the reader does with the dashboard
+// Every deliberate action (marking a highlight read or not important, hiding, minimizing or moving a section, changing
+// the look) is a small event sent to the desk, so what is useful and what is noise can be read back later and the
+// dashboard and the alerts improved from it (research/feedback_summary.py). Events wait in the browser until sent.
+const FEEDBACK_QUEUE_KEY = "desk-feedback-queue";
+const FEEDBACK_URL = window.DESK_SOURCE ? "/feedback" : "/api/feedback";
+function feedback(kind, action, target, detail) {
+  let queue = [];
+  try { queue = JSON.parse(localStorage.getItem(FEEDBACK_QUEUE_KEY)) || []; } catch (e) {}
+  queue.push({ at: new Date().toISOString(), kind, action, target: String(target || "").slice(0, 120),
+    detail: detail ? String(detail).slice(0, 300) : undefined, view: document.documentElement.dataset.view || "tables",
+    style: document.documentElement.dataset.style, mode: document.documentElement.dataset.mode });
+  try { localStorage.setItem(FEEDBACK_QUEUE_KEY, JSON.stringify(queue.slice(-200))); } catch (e) {}
+  flushFeedback();
+}
+let flushing = false;
+async function flushFeedback() {
+  if (flushing) return;
+  let queue = [];
+  try { queue = JSON.parse(localStorage.getItem(FEEDBACK_QUEUE_KEY)) || []; } catch (e) {}
+  if (!queue.length) return;
+  flushing = true;
+  try {
+    const response = await fetch(FEEDBACK_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: queue }), credentials: "same-origin" });
+    if (response.ok) {
+      let rest = [];
+      try { rest = (JSON.parse(localStorage.getItem(FEEDBACK_QUEUE_KEY)) || []).slice(queue.length); } catch (e) {}
+      try { localStorage.setItem(FEEDBACK_QUEUE_KEY, JSON.stringify(rest)); } catch (e) {}
+    }
+  } catch (e) { /* offline or the endpoint is missing: kept for the next try */ }
+  flushing = false;
+}
+
 // ---------------------------------------------------------------- tables
 // ---------------------------------------------------------------- what the reader sees
 // The builders (desk/dashboard.py, web/live.js) send complete tables; each view picks the columns a reader acts on,
@@ -516,19 +551,48 @@ function severity(title, text) {
   return "";
 }
 
+// Highlights can be answered: "✓" marks one read (it disappears until its text changes), "×" says it is not important (that
+// area is not shown again). Both are remembered in the browser; the Sections menu restores them.
+const HIGHLIGHTS_KEY = "desk-highlights";
+function highlightState() {
+  try { return Object.assign({ read: {}, deleted: [] }, JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY)) || {}); }
+  catch (e) { return { read: {}, deleted: [] }; }
+}
+function saveHighlightState(state) {
+  try { localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(state)); } catch (e) {}
+}
+function redrawHighlights() {
+  if (!latest || !latest.data) return;
+  const hl = latest.data.highlights || {}, hover = hl.hover || {};
+  renderHighlights("hl-well", hl.well, hover);
+  renderHighlights("hl-attention", hl.attention, hover);
+  if (typeof drawSectionsMenu === "function") drawSectionsMenu();
+}
 function renderHighlights(id, rows, hover = {}) {
   const host = document.getElementById(id);
-  if (!rows || !rows.length) {
+  const state = highlightState();
+  const shown = (rows || []).filter(([area, text]) => !state.deleted.includes(area) && !state.read[area + "|" + text]);
+  if (!shown.length) {
     host.replaceChildren(el("li", {}, el("span", { class: "empty", text: "Nothing to report." })));
     return;
   }
   const rank = { critical: 0, watch: 1, "": 2 };
-  const ordered = rows.map(([area, text]) => [area, text, severity(area, text)])
+  const ordered = shown.map(([area, text]) => [area, text, severity(area, text)])
     .sort((a, b) => rank[a[2]] - rank[b[2]]);  // stable: same-level rows keep their order
-  host.replaceChildren(...ordered.map(([area, text, level]) => el("li", Object.assign(level ? { class: level } : {},
-    hover[area] ? { title: hover[area] } : {}), [
-    el("span", { class: "area", text: (level === "critical" ? "⚠ " : "") + area }), el("span", { class: "text", text }),
-  ])));
+  host.replaceChildren(...ordered.map(([area, text, level]) => {
+    const act = (label, symbol, change) => {
+      const button = el("button", { type: "button", class: "hl-act", title: label, "aria-label": `${label}: ${area}`, text: symbol });
+      button.addEventListener("click", () => { const s = highlightState(); change(s); saveHighlightState(s); redrawHighlights(); });
+      return button;
+    };
+    return el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [
+      el("span", { class: "area", text: (level === "critical" ? "⚠ " : "") + area }), el("span", { class: "text", text }),
+      el("span", { class: "hl-actions" }, [
+        act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + text] = Date.now(); feedback("highlight", "read", area, text); }),
+        act("Not important: stop showing this", "×", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
+      ]),
+    ]);
+  }));
 }
 
 // ---------------------------------------------------------------- charts
@@ -676,9 +740,10 @@ function balanceColumns() {
   const card = wallets && wallets.closest(".card");
   if (!grid || !card) return;
   const [left, right] = grid.querySelectorAll(":scope > .stack");
-  if (!left || !right) return;
-  card.remove();
-  (right.offsetHeight < left.offsetHeight ? right : left).appendChild(card);
+  if (!left || !right || layoutState().order) return;   // a layout the reader arranged is left as arranged
+  const piece = card.parentElement && card.parentElement.classList.contains("slot") ? card.parentElement : card;
+  piece.remove();
+  (right.offsetHeight < left.offsetHeight ? right : left).appendChild(piece);
 }
 
 function render(doc) {
@@ -763,6 +828,7 @@ function setLook(kind, value) {
   root.dataset[kind] = value;
   root.dataset.theme = lookTheme(root.dataset.mode || "dark", root.dataset.style || "indie");
   try { localStorage.setItem("desk-" + kind, value); } catch (e) {}
+  feedback("look", kind, value);
   drawModes();
   redrawLook(kind);
 }
@@ -805,5 +871,168 @@ function redrawLook(kind) {
   if (kind !== "view") renderCharts(data.charts);
 }
 drawModes();
+
+// ---------------------------------------------------------------- sections: drag to reorder, hide and show
+// Every card sits in a "slot" (a wrapper that takes no space); dragging a card by its grip onto another swaps the two
+// places. A card is hidden with its eye button and brought back from the Sections menu. Order and hidden cards are
+// remembered in the browser (touch screens have no drag: use the menu there).
+const LAYOUT_KEY = "desk-layout";
+function layoutState() {
+  try { return JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (e) { return {}; }
+}
+function saveLayout(state) {
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(state)); } catch (e) {}
+}
+const cardId = (card) => { const inner = card.querySelector("[id]"); return inner ? inner.id : ""; };
+const cardTitle = (card) => {   // the heading without its icon, grip and buttons
+  const h = card.querySelector("h2");
+  if (!h) return "";
+  const copy = h.cloneNode(true);
+  copy.querySelectorAll(".card-grip, .card-tools, .icon").forEach((node) => node.remove());
+  return copy.textContent.trim();
+};
+
+function setupSections() {
+  const content = document.getElementById("content");
+  if (!content) return;
+  const cards = [...content.querySelectorAll(".card")];
+  const byId = {};
+  cards.forEach((card) => {
+    const slot = el("div", { class: "slot" });
+    card.replaceWith(slot);
+    slot.append(card);
+    byId[cardId(card)] = card;
+    const title = card.querySelector("h2");
+    if (!title) return;
+    const grip = el("span", { class: "card-grip", draggable: "true", title: "Drag to move", "aria-label": "Move " + cardTitle(card), text: "⠿" });
+    grip.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData("text/plain", cardId(card));
+      event.dataTransfer.effectAllowed = "move";
+      try { event.dataTransfer.setDragImage(card, 24, 14); } catch (e) {}
+      card.classList.add("dragging");
+    });
+    grip.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+      content.querySelectorAll(".drop-target").forEach((node) => node.classList.remove("drop-target"));
+    });
+    // Window buttons: minimize to the title bar, full screen, close (hide; the Sections menu brings it back).
+    const tool = (cls, label, text, action) => {
+      const button = el("button", { type: "button", class: "card-tool " + cls, title: label, "aria-label": label + ": " + cardTitle(card), text });
+      button.addEventListener("click", action);
+      return button;
+    };
+    const tools = el("span", { class: "card-tools" }, [
+      tool("card-minimize", "Minimize", "–", () => setMinimized(cardId(card), !card.classList.contains("card-min"))),
+      tool("card-fullscreen", "Full screen", "⤢", () => setFull(cardId(card), !card.classList.contains("card-full"))),
+      tool("card-hide", "Hide", "×", () => setHidden(cardId(card), true)),
+    ]);
+    title.prepend(grip);
+    title.append(tools);
+    card.addEventListener("dragover", (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; card.classList.add("drop-target"); });
+    card.addEventListener("dragleave", () => card.classList.remove("drop-target"));
+    card.addEventListener("drop", (event) => {
+      event.preventDefault();
+      card.classList.remove("drop-target");
+      const moving = byId[event.dataTransfer.getData("text/plain")];
+      if (!moving || moving === card) return;
+      const from = moving.parentElement, to = card.parentElement;
+      to.append(moving);
+      from.append(card);
+      saveOrder();
+      feedback("section", "move", cardTitle(moving), "swapped with " + cardTitle(card));
+      if (latest && latest.data) renderCharts(latest.data.charts);   // a chart that changed width is redrawn to fit
+    });
+  });
+  const state = layoutState();
+  const slots = [...content.querySelectorAll(".slot")];
+  if (state.order) state.order.forEach((id, i) => { if (byId[id] && slots[i]) slots[i].append(byId[id]); });
+  (state.hidden || []).forEach((id) => { if (byId[id]) byId[id].classList.add("card-off"); });
+  (state.minimized || []).forEach((id) => { if (byId[id]) byId[id].classList.add("card-min"); });
+  document.addEventListener("keydown", (event) => {
+    const open = content.querySelector(".card-full");
+    if (event.key === "Escape" && open) setFull(cardId(open), false);
+  });
+  buildSectionsMenu(byId);
+}
+function saveOrder() {
+  const state = layoutState();
+  state.order = [...document.querySelectorAll("#content .slot")].map((slot) => cardId(slot.firstElementChild));
+  saveLayout(state);
+}
+function setHidden(id, hidden) {
+  const card = document.getElementById(id) && document.getElementById(id).closest(".card");
+  if (!card) return;
+  card.classList.toggle("card-off", hidden);
+  feedback("section", hidden ? "hide" : "show", cardTitle(card));
+  const state = layoutState();
+  state.hidden = [...document.querySelectorAll("#content .card-off")].map(cardId);
+  saveLayout(state);
+  drawSectionsMenu();
+  if (!hidden && latest && latest.data) renderCharts(latest.data.charts);   // a chart drawn while hidden has no size
+}
+function setMinimized(id, minimized) {
+  const card = document.getElementById(id) && document.getElementById(id).closest(".card");
+  if (!card) return;
+  card.classList.toggle("card-min", minimized);
+  feedback("section", minimized ? "minimize" : "restore", cardTitle(card));
+  const state = layoutState();
+  state.minimized = [...document.querySelectorAll("#content .card-min")].map(cardId);
+  saveLayout(state);
+  if (!minimized && latest && latest.data) renderCharts(latest.data.charts);   // a chart drawn while collapsed has no size
+}
+function setFull(id, full) {   // full screen: the card fills the window above the page (Esc or the button returns it)
+  const card = document.getElementById(id) && document.getElementById(id).closest(".card");
+  if (!card) return;
+  document.querySelectorAll("#content .card-full").forEach((other) => { if (other !== card) other.classList.remove("card-full"); });
+  card.classList.toggle("card-full", full);
+  feedback("section", full ? "full screen" : "leave full screen", cardTitle(card));
+  card.classList.remove("card-min");   // a full screen card is open
+  document.documentElement.classList.toggle("has-full", full);
+  if (typeof Plotly !== "undefined") {   // charts inside change size
+    card.querySelectorAll(".js-plotly-plot").forEach((node) => { try { Plotly.Plots.resize(node); } catch (e) {} });
+  }
+  if (latest && latest.data) setTimeout(() => renderCharts(latest.data.charts), 0);
+}
+function buildSectionsMenu(byId) {
+  const bar = document.querySelector(".topbar");
+  if (!bar) return;
+  const wrap = el("div", { class: "sections", id: "sections" });
+  const button = el("button", { type: "button", class: "icon-button sections-button", id: "sections-button", title: "Sections: show or hide",
+    "aria-label": "Sections: show or hide", "aria-expanded": "false" });
+  const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+  ["viewBox:0 0 16 16", "width:16", "height:16", "fill:none", "stroke:currentColor", "stroke-width:1.5", "stroke-linecap:round"]
+    .forEach((pair) => { const [k, v] = pair.split(":"); svg.setAttribute(k, v); });
+  ["M2.5 4h11", "M2.5 8h11", "M2.5 12h11"].forEach((d) => { const p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.append(p); });
+  button.append(svg);
+  const menu = el("div", { class: "sections-menu", id: "sections-menu", hidden: true });
+  wrap.append(button, menu);
+  bar.append(wrap);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    menu.hidden = !menu.hidden;
+    button.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
+  });
+  document.addEventListener("click", (event) => {
+    if (!wrap.contains(event.target)) { menu.hidden = true; button.setAttribute("aria-expanded", "false"); }
+  });
+  drawSectionsMenu();
+}
+function drawSectionsMenu() {
+  const menu = document.getElementById("sections-menu");
+  if (!menu) return;
+  const rows = [...document.querySelectorAll("#content .slot")].map((slot) => slot.firstElementChild).filter(Boolean).map((card) => {
+    const box = el("input", { type: "checkbox", id: "show-" + cardId(card) });
+    box.checked = !card.classList.contains("card-off");
+    box.addEventListener("change", () => setHidden(cardId(card), !box.checked));
+    return el("label", { class: "sections-row" }, [box, el("span", { text: cardTitle(card).trim() })]);
+  });
+  const state = highlightState(), hidden = state.deleted.length + Object.keys(state.read).length;
+  const restore = hidden ? el("button", { type: "button", class: "sections-reset", text: `Restore ${hidden} hidden highlight${hidden === 1 ? "" : "s"}` }) : null;
+  if (restore) restore.addEventListener("click", () => { saveHighlightState({ read: {}, deleted: [] }); feedback("highlight", "restore", "all"); redrawHighlights(); });
+  const reset = el("button", { type: "button", class: "sections-reset", text: "Reset layout" });
+  reset.addEventListener("click", () => { try { localStorage.removeItem(LAYOUT_KEY); } catch (e) {} location.reload(); });
+  menu.replaceChildren(...rows, ...(restore ? [restore] : []), reset);
+}
+setupSections();
 
 poll();
