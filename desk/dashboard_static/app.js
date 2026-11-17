@@ -820,12 +820,12 @@ function renderTiles(k) {
         title: isNum(risk) ? `Open risk ${pct(risk)} of equity against the 33% cap` : "" });
     })(),
     tile("gross", times(k.gross_leverage), isNum(k.net_leverage) ? `${times(k.net_leverage)} net` : "",
-      { key: "Gross leverage", title: "Of trading equity" }),
+      { key: "Gross leverage" }),
     tile("", wholeUsd(k.desk_value), "", { key: "Desk value" }),
     // Extra key numbers, off until added with the row's "+": history and counts, for when they are wanted on top.
     tile("30D", pct((k.returns || {})["30D"], 1, true), "", { key: "Return 30D", valueClass: signClass((k.returns || {})["30D"]) }),
-    tile("MW", pct(mw.return, 1, true) || "n/a", "", { key: "MW return", valueClass: signClass(mw.return), title: "Money-weighted return since start" }),
-    tile("TW", pct((k.returns || {}).since_start, 1, true), "", { key: "TW return", valueClass: signClass((k.returns || {}).since_start), title: "Time-weighted return since start" }),
+    tile("MW", pct(mw.return, 1, true) || "n/a", "", { key: "MW return", valueClass: signClass(mw.return) }),
+    tile("TW", pct((k.returns || {}).since_start, 1, true), "", { key: "TW return", valueClass: signClass((k.returns || {}).since_start) }),
     tile("positions", isNum(k.positions) ? String(k.positions) : "n/a", "", { key: "Positions" }),
     tile("DD", isNum(drawdown) ? pct(drawdown, 1) : "n/a", "",
       { key: "DD", valueClass: drawdown <= -0.10 ? "neg" : "", title: isNum(invested) ? `From the ${usd(invested)} put in, net of withdrawals` : "" }),
@@ -999,8 +999,6 @@ function gestures(node, { dislike, like }) {
     if (event.target.closest("button, a, input")) return;
     event.preventDefault();
     like();
-    node.classList.add("liked");
-    setTimeout(() => node.classList.remove("liked"), 700);
   });
 }
 
@@ -1036,7 +1034,7 @@ function renderHighlights(id, rows, hover = {}) {
       return button;
     };
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
-    const item = el("li", Object.assign(level ? { class: level } : {}, { title: [area, hover[area]].filter(Boolean).join(": ") }), [
+    const item = el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [   // a pop-up only for the headlines around a big move
       el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),   // the uPnL lines carry no background
       el("span", { class: "hl-actions" }, [
         ...(window.DESK_SOURCE ? symbolActions(text) : []),   // run it: plan, then confirm
@@ -2688,7 +2686,7 @@ async function refreshTicker() {
     if (!context || !isFinite(context.price)) return el("a", { class: "tick", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
       [el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
     const change = context.previous ? context.price / context.previous - 1 : NaN;
-    const direction = lastPrices[asset] === undefined || lastPrices[asset] === context.price ? "" : context.price > lastPrices[asset] ? "up" : "down";
+    const direction = "";   // no flashing on a price tick
     lastPrices[asset] = context.price;
     return el("a", { class: "tick " + direction + (auto.includes(asset) ? " auto-asset" : ""), href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
       el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }),

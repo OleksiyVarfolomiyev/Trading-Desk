@@ -370,10 +370,6 @@ html.private .js-plotly-plot .numeric-note { filter: blur(7px); user-select: non
 .tick .price { font-variant-numeric: tabular-nums; }
 .tick .change { font-variant-numeric: tabular-nums; }
 .tick .muted { color: var(--muted); }
-.tick.up .price { animation: tick-up .6s; }
-.tick.down .price { animation: tick-down .6s; }
-@keyframes tick-up { from { color: var(--good-text); } to { color: inherit; } }
-@keyframes tick-down { from { color: var(--bad-text); } to { color: inherit; } }
 .ticker-edit { padding: 4px 8px 6px; }
 .ticker-input { width: 100%; background: transparent; color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12px; }
 .ticker-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
@@ -661,5 +657,5 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .card-tool.kind-btn-stocks { color: var(--kind-stocks); }
 .sections-remove { color: var(--bad-text); }
 .sections-menu .sections-row span:first-child { flex: 1 1 auto; }
-.highlights li, .brow { transition: background .2s; }
-.liked { background: color-mix(in srgb, var(--good) 22%, transparent) !important; }
+/* Nothing blinks or flashes: no tick animations, no like flash, no transitions on data. */
+.tick .price, .liked { animation: none !important; transition: none !important; }

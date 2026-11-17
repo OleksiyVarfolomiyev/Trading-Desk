@@ -76,13 +76,13 @@
     <section class="grid two" id="positions-grid">
       <div class="stack">
         <div class="card">
-          <h2 title="Value is signed (shorts negative). Weight is the share of gross exposure across both tables (together they sum to 100%); exposure / desk value sums to gross leverage. Funding (APR) is what the position earns (green) or pays (red) per year at the current rate.">Open positions: crypto</h2>
+          <h2>Open positions: crypto</h2>
           <div class="table-wrap" id="t-positions"></div>
         </div>
       </div>
       <div class="stack">
         <div class="card">
-          <h2 title="IB holdings and Hyperliquid equity, index and commodity perps. Wallet tokens are in the wallets holdings table; weights here are shares of the trading positions.">Open positions: stocks and tradfi</h2>
+          <h2>Open positions: stocks and tradfi</h2>
           <div class="table-wrap" id="t-positions_stocks"></div>
         </div>
       </div>
@@ -94,29 +94,29 @@
         <div class="table-wrap" id="t-exposure"></div>
       </div>
       <div class="card">
-        <h2 title="HL PnL by the journal's tag, as a share of desk value: realized over 30 days (net of fees, with funding) and unrealized now. Market making counts only the ladders' own result; fills from before the journal are untagged.">Performance by strategy</h2>
+        <h2>Performance by strategy</h2>
         <div class="table-wrap" id="t-strategies"></div>
       </div>
     </section>
 
     <section class="grid two">
       <div class="card">
-        <h2 title="The 40 most liquid HL perps ranked by the signals the research harness validated (or the desk's own record until one is). Size at budget is what the 5% risk budget buys at the 3 × ATR stop; nothing trades until you run it.">Short candidates (screener)</h2>
+        <h2>Short candidates (screener)</h2>
         <div class="table-wrap" id="t-candidates"></div>
       </div>
       <div class="card">
-        <h2 title="The ladders' own trading since market making began, one row per coin: everything since its ladder first quoted it, and a restart does not reset it; stopped ladders stay. Ladder PnL is their result against simply holding the position you opened: spread captured (round trips) plus inventory drift (what the unmatched buys or sells made as the price moved), less fees, plus funding on the ladder's own inventory (the position above or below its base). Markouts: the move 1 and 15 minutes after each fill, for (+) or against (−) it, in bps over the last 3 days; negative means the price runs through the quotes. Status says when the trims pause because the price trends the position's way. Position vs base: the band is in ladder.json (±25%). Quotes rest on HL's book; Queued are held in memory until the price nears them.">Market making (ladders)</h2>
+        <h2>Market making (ladders)</h2>
         <div class="table-wrap" id="t-market_making"></div>
       </div>
     </section>
 
     <section class="grid two">
       <div class="card">
-        <h2 title="Liquid coins that have gone nowhere over 30 days (low efficiency: net move against the sum of daily moves), so ladder quotes on both sides keep filling.">Market-making candidates</h2>
+        <h2>Market-making candidates</h2>
         <div class="table-wrap" id="t-mm_candidates"></div>
       </div>
       <div class="card">
-        <h2 title="% since the desk's start, time-weighted (net of deposits and withdrawals), wallets included; the desk line ends at the TW return tile.">Desk vs benchmarks</h2>
+        <h2>Desk vs benchmarks</h2>
         <div class="chart" id="chart-twr"></div>
       </div>
     </section>
@@ -126,7 +126,7 @@
 
     <section class="grid two">
       <div class="card" data-default-off="1">
-        <h2 title="USD, daily; wallet tokens on other chains have no history and are not included.">Desk value by account</h2>
+        <h2>Desk value by account</h2>
         <div class="chart" id="chart-value"></div>
       </div>
     </section>
