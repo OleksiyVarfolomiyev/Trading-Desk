@@ -2487,8 +2487,9 @@ async function refreshTicker() {
     const direction = lastPrices[asset] === undefined || lastPrices[asset] === context.price ? "" : context.price > lastPrices[asset] ? "up" : "down";
     lastPrices[asset] = context.price;
     return el("a", { class: "tick " + direction, href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
-      el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }), el("span", { class: "price", text: priceText(context.price) }),
-      el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }), dropper(asset)]);
+      el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }),
+      el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }),   // the move first, the price after
+      el("span", { class: "price", text: priceText(context.price) }), dropper(asset)]);
   })(), asset)).concat([addBox, hideStrip]));
 }
 setInterval(refreshTicker, 5000);
