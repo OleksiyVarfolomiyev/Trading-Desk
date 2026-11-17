@@ -2341,8 +2341,8 @@ async function runAction(label, change, fraction, target) {
     return;
   }
   const { notices, mine } = planLines(plan.plan, coin);
-  const confirm = el("button", { type: "button", class: "asset-action lead", text: `Confirm: ${label.toLowerCase()} ${marketName(coin)}` });
-  const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
+  const confirm = el("button", { type: "button", class: "asset-action lead", text: "✓", title: `${label} ${marketName(coin)}`, "aria-label": `Confirm: ${label} ${marketName(coin)}` });
+  const cancel = el("button", { type: "button", class: "asset-action", text: "✗", title: "Cancel", "aria-label": "Cancel" });
   cancel.addEventListener("click", () => { feedback("action", "cancel", marketName(coin), label); overlay.remove(); });
   confirm.addEventListener("click", async () => {
     overlay.remove();   // gone at once; if something goes wrong a notice appears
@@ -2382,8 +2382,8 @@ async function runClassAction(kind, change, fraction) {
   for (const row of rows) { try { plans.push([row, await post(row, { stage: "plan" })]); } catch (e) { plans.push([row, { error: String(e) }]); } }
   const ready = plans.filter(([, plan]) => plan.token);
   const lines = plans.flatMap(([row, plan]) => { const l = planLines(plan.plan || plan.error || "", row.Symbol); return [...l.notices.map((t) => ["notice", t]), ...l.mine.slice(-1).map((t) => ["", t])]; });
-  const confirm = el("button", { type: "button", class: "asset-action lead", text: `Confirm: ${ready.length} position${ready.length === 1 ? "" : "s"}` });
-  const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
+  const confirm = el("button", { type: "button", class: "asset-action lead", text: "✓", title: `${ready.length} position${ready.length === 1 ? "" : "s"}`, "aria-label": "Confirm" });
+  const cancel = el("button", { type: "button", class: "asset-action", text: "✗", title: "Cancel", "aria-label": "Cancel" });
   cancel.addEventListener("click", () => { feedback("action", "cancel class", kind, title); overlay.remove(); });
   confirm.addEventListener("click", async () => {
     overlay.remove();   // gone at once; a notice only for the positions that did not go through
@@ -2404,8 +2404,8 @@ function runLadder(mode, coin, wallet) {
   const name = marketName(coin), title = mode === "stop" ? `Stop the ${name} ladder` : `Start a neutral ladder on ${name}`;
   feedback("action", "plan ladder", name, mode);
   const { overlay, box } = actionDialog(title);
-  const go = el("button", { type: "button", class: "asset-action lead", text: mode === "stop" ? "Confirm: stop" : "Confirm: start" });
-  const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
+  const go = el("button", { type: "button", class: "asset-action lead", text: "✓", title: mode === "stop" ? "Stop" : "Start", "aria-label": "Confirm" });
+  const cancel = el("button", { type: "button", class: "asset-action", text: "✗", title: "Cancel", "aria-label": "Cancel" });
   cancel.addEventListener("click", () => overlay.remove());
   go.addEventListener("click", async () => {
     overlay.remove();

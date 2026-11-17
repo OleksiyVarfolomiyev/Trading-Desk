@@ -692,3 +692,6 @@ html:not([data-screen="research"]) .alert-strip { display: none; }
 
 /* Highlights: the grouping is enough, no background behind the crypto and stocks parts. */
 .highlights .kind-run, .highlights .kind-run.kind-crypto, .highlights .kind-run.kind-stocks { background: none; padding: 0; }
+
+.asset-actions .asset-action.lead, .asset-actions .asset-action { min-width: 56px; font-size: 20px; line-height: 1; padding: 8px 16px; }
+.asset-actions .asset-action.lead { color: var(--good-text); }
