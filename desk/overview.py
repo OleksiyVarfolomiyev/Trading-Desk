@@ -66,7 +66,7 @@ def _percent(value):
 
 
 # Columns coloured by sign (green up, red down) and the Side column (LONG green, SHORT red).
-SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "Amount", "ROE (%)", "uPnL (%)", "24h change (%)", "Funding (APR)", "% of position"}
+SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "Amount", "uPnL (%)", "24h change (%)", "Funding (APR)", "% of position"}
 
 
 def _signed_style(row_index, column, value, row):
@@ -95,13 +95,8 @@ def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], 
     day = [(moves or {}).get((account, symbol), float("nan"))
            for account, symbol in zip(frame["Account"], frame["Symbol"])]
     at = frame.columns.get_loc("uPnL") + 1
-    # ROE (%), as HL shows it: the position's uPnL over the margin it uses; over its cost where there is no margin (stocks at IB).
-    margin = frame["Margin"] if "Margin" in frame else pd.Series(float("nan"), index=frame.index)
-    roe = (frame["uPnL"] / margin).where(margin > 0, upnl_pct)
-    frame.insert(at, "ROE (%)", roe)
-    frame.insert(at + 1, "uPnL (%)", upnl_pct)
-    frame = frame.drop(columns="Margin", errors="ignore")
-    day_at = at + 1
+    frame.insert(at, "uPnL (%)", upnl_pct)   # the price move on the entry (the desk reads moves, not return on margin)
+    day_at = at
     frame.insert(day_at + 1, "24h change (%)", day)
     # What the position earns (positive) or pays (negative) in funding, annualised; blank off HL.
     frame.insert(day_at + 2, "Funding (APR)", [(funding or {}).get((account, symbol), float("nan"))
@@ -436,7 +431,7 @@ class DeskOverview:
                     # Prices in USD like every other desk value, so no currency column is needed.
                     "Avg price": position.avg_price * position.fx_to_usd,
                     "Mark": position.mark_price * position.fx_to_usd,
-                    "Value": position.notional_usd, "uPnL": position.unrealized_usd, "Margin": position.margin_usd,
+                    "Value": position.notional_usd, "uPnL": position.unrealized_usd,
                     "Exposure / equity": abs(position.notional_usd) / equity if equity else float("nan"),
                 })
         frame = pd.DataFrame(rows)
@@ -511,7 +506,7 @@ class DeskOverview:
             total = {"Symbol": "Total", "Account": "", "Quantity": float("nan"),
                      "Avg price": float("nan"), "Mark": float("nan"),
                      "Value": group["Value"].sum(), "uPnL": group["uPnL"].sum(),
-                     "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"), "ROE (%)": float("nan"),
+                     "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
                      "24h change (%)": day_change_total(group["Value"], group["24h change (%)"]),
                      "Funding (APR)": funding_total(group["Value"], group["Funding (APR)"]),
                      "Weight": float("nan"), "Exposure / equity": group["Exposure / equity"].sum()}
@@ -523,7 +518,7 @@ class DeskOverview:
                                                      text={"Account", "Symbol"})]
             display_interactive_table(
                 group, formatters={"Quantity": number, "Avg price": usd_price, "Mark": usd_price,
-                                   "Value": _money, "uPnL": _money, "ROE (%)": _signed_percent, "uPnL (%)": _signed_percent,
+                                   "Value": _money, "uPnL": _money, "uPnL (%)": _signed_percent,
                                    "24h change (%)": _signed_percent, "Funding (APR)": _signed_percent, "Weight": _percent,
                                    "Exposure / equity": _percent},
                 cell_style=_signed_style, bold_last=True, title=f"OPEN POSITIONS: {klass.upper()}",
