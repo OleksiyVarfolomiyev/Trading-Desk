@@ -502,7 +502,7 @@ function renderTable(id, spec) {
 
 // ---------------------------------------------------------------- tiles
 function tile(label, value, sub, extra) {  // extra.title: the definition, on hover only
-  return el("div", { class: "tile", title: (extra && extra.title) || "" }, [
+  return el("div", { class: "tile", "data-label": label, title: (extra && extra.title) || "" }, [
     el("div", { class: "label", text: label }),
     el("div", { class: "value " + (extra && extra.valueClass ? extra.valueClass : ""), text: value }),
     extra && extra.line && extra.line.text ? el("div", { class: "line " + (extra.line.cls || ""), text: extra.line.text,
@@ -545,7 +545,62 @@ function renderTiles(k) {
     tile("Gross leverage", isNum(k.gross_leverage) ? k.gross_leverage.toFixed(2) + "×" : "n/a",
       isNum(k.net_leverage) ? `net ${k.net_leverage.toFixed(2)}×` : "", { title: "Of trading equity." }),
   ];
-  document.getElementById("tiles").replaceChildren(...tiles);
+  arrangeTiles(document.getElementById("tiles"), tiles);
+}
+// The key-number tiles are windows too: drag one onto another to swap, minimize to label and value, save as an image, hide
+// (the Sections menu brings hidden ones back). Order, minimized and hidden are remembered with the layout.
+function arrangeTiles(host, tiles) {
+  const state = layoutState();
+  const hidden = new Set(state.tileHidden || []), minimized = new Set(state.tileMin || []), order = state.tileOrder || [];
+  const rank = (tile) => { const i = order.indexOf(tile.dataset.label); return i < 0 ? 1e6 : i; };
+  const shown = tiles.filter((tile) => !hidden.has(tile.dataset.label)).sort((a, b) => rank(a) - rank(b));
+  const remember = (change) => { const s = layoutState(); change(s); saveLayout(s); };
+  shown.forEach((tile) => {
+    const label = tile.dataset.label;
+    tile.classList.toggle("tile-min", minimized.has(label));
+    const tool = (cls, title, text, action) => {
+      const button = el("button", { type: "button", class: "card-tool " + cls, title, "aria-label": title + ": " + label, text });
+      button.addEventListener("click", (event) => { event.stopPropagation(); action(); });
+      return button;
+    };
+    tile.append(el("span", { class: "card-tools tile-tools" }, [
+      tool("card-minimize", "Minimize", "–", () => {
+        const on = !tile.classList.contains("tile-min");
+        tile.classList.toggle("tile-min", on);
+        remember((s) => { s.tileMin = (s.tileMin || []).filter((x) => x !== label).concat(on ? [label] : []); });
+        feedback("tile", on ? "minimize" : "restore", label);
+      }),
+      tool("card-save", "Save as image", "⤓", () => saveTile(tile, label)),
+      tool("card-hide", "Hide", "×", () => {
+        remember((s) => { s.tileHidden = (s.tileHidden || []).concat([label]); });
+        feedback("tile", "hide", label);
+        tile.remove();
+        drawSectionsMenu();
+      }),
+    ]));
+    tile.addEventListener("mousedown", (event) => { tile.draggable = !event.target.closest("button, a, input"); });
+    tile.addEventListener("dragstart", (event) => {
+      if (!tile.draggable) { event.preventDefault(); return; }
+      event.dataTransfer.setData("text/plain", "tile:" + label);
+      event.dataTransfer.effectAllowed = "move";
+      tile.classList.add("dragging");
+    });
+    tile.addEventListener("dragend", () => { tile.draggable = false; tile.classList.remove("dragging"); host.querySelectorAll(".drop-target").forEach((n) => n.classList.remove("drop-target")); });
+    tile.addEventListener("dragover", (event) => { event.preventDefault(); tile.classList.add("drop-target"); });
+    tile.addEventListener("dragleave", () => tile.classList.remove("drop-target"));
+    tile.addEventListener("drop", (event) => {
+      event.preventDefault();
+      tile.classList.remove("drop-target");
+      const [kind, from] = event.dataTransfer.getData("text/plain").split(/:(.*)/s);
+      const moving = kind === "tile" && [...host.children].find((node) => node.dataset.label === from);
+      if (!moving || moving === tile) return;
+      const mine = [...host.children], a = mine.indexOf(moving), b = mine.indexOf(tile);
+      if (a < b) tile.after(moving); else tile.before(moving);   // the dragged tile takes the target's place
+      remember((s) => { s.tileOrder = [...host.children].map((node) => node.dataset.label); });
+      feedback("tile", "move", from, "before " + label);
+    });
+  });
+  host.replaceChildren(...shown);
 }
 
 function renderAccountStatus(rows, now) {
@@ -1017,8 +1072,8 @@ function setHidden(id, hidden) {
 }
 // Save a tile as a PNG (as Plotly's camera does): a tile with a chart is saved through Plotly, on the card's own colour;
 // a table or highlight list is drawn from its page styles into an image (an SVG with the card's HTML inside).
-async function saveTile(card) {
-  const title = cardTitle(card) || "tile";
+async function saveTile(card, titleOverride) {
+  const title = titleOverride || cardTitle(card) || "tile";
   const name = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${new Date().toISOString().slice(0, 10)}`;
   feedback("section", "save image", title);
   const chart = card.querySelector(".js-plotly-plot");
@@ -1123,9 +1178,12 @@ function drawSectionsMenu() {
   const state = highlightState(), hidden = state.deleted.length + Object.keys(state.read).length;
   const restore = hidden ? el("button", { type: "button", class: "sections-reset", text: `Restore ${hidden} hidden highlight${hidden === 1 ? "" : "s"}` }) : null;
   if (restore) restore.addEventListener("click", () => { saveHighlightState({ read: {}, deleted: [] }); feedback("highlight", "restore", "all"); redrawHighlights(); });
+  const tilesHidden = (layoutState().tileHidden || []).length;
+  const restoreTiles = tilesHidden ? el("button", { type: "button", class: "sections-reset", text: `Restore ${tilesHidden} hidden tile${tilesHidden === 1 ? "" : "s"}` }) : null;
+  if (restoreTiles) restoreTiles.addEventListener("click", () => { const s = layoutState(); delete s.tileHidden; saveLayout(s); feedback("tile", "restore all", "hidden"); if (latest && latest.data) renderTiles(latest.data.kpis || {}); drawSectionsMenu(); });
   const reset = el("button", { type: "button", class: "sections-reset", text: "Reset layout" });
   reset.addEventListener("click", () => { try { localStorage.removeItem(LAYOUT_KEY); } catch (e) {} location.reload(); });
-  menu.replaceChildren(...rows, ...(restore ? [restore] : []), reset);
+  menu.replaceChildren(...rows, ...(restore ? [restore] : []), ...(restoreTiles ? [restoreTiles] : []), reset);
 }
 
 

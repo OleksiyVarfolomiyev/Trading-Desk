@@ -393,3 +393,10 @@ html.private .js-plotly-plot .numeric-note { filter: blur(7px); user-select: non
 .card .chart, .card .js-plotly-plot, .card a, .card button, .card input, .card td, .card th, .card .highlights li { cursor: auto; }
 .card th { cursor: pointer; }
 .card.dragging { cursor: grabbing; }
+/* Key-number tiles as windows: tools on hover, minimized to label and value. */
+.tile { position: relative; cursor: grab; }
+.tile.dragging { opacity: 0.45; cursor: grabbing; }
+.tile.drop-target { outline: 2px dashed var(--series-1); outline-offset: -2px; }
+.tile-tools { position: absolute; top: 2px; right: 2px; opacity: 0; transition: opacity .12s; background: var(--surface); border-radius: 6px; }
+.tile:hover .tile-tools, .tile:focus-within .tile-tools { opacity: 1; }
+.tile.tile-min .sub, .tile.tile-min .line { display: none; }
