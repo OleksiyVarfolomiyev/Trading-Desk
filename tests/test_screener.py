@@ -116,3 +116,23 @@ class CorrelationTilt(unittest.TestCase):
         self.assertEqual(list(picks["Coin"])[-1], "E")
         self.assertIn("low correlation", picks.set_index("Coin").loc["E", "Notes"])
         self.assertNotIn("low correlation", picks.set_index("Coin").loc["A", "Notes"])
+
+
+class KellyFlag(unittest.TestCase):
+    def test_a_coin_the_kelly_portfolio_holds_long_is_flagged_without_moving_the_ranking(self):
+        import pandas as pd
+
+        from desk import screener
+
+        coins = ["A", "B", "C"]
+        signals = pd.DataFrame({"rel30": [0.0, 0.05, 0.10], "atr_pct": [0.05] * 3, "corr_btc": [0.8, 0.8, 0.8]}, index=coins)
+        live = pd.DataFrame({"volume24h": 1e7, "open_interest": 1e6, "mark": 1.0, "prev": 1.0}, index=coins + ["BTC"])
+        flagged = screener.short_candidates(signals, live, coins, {"rel30": 1.0}, "t", 0.0, [], set(), top=3,
+                                            funding_history=lambda coin: [], kelly={"A": 0.15, "B": -0.15})
+        plain = screener.short_candidates(signals, live, coins, {"rel30": 1.0}, "t", 0.0, [], set(), top=3,
+                                          funding_history=lambda coin: [])
+        self.assertEqual(list(flagged["Coin"]), list(plain["Coin"]))
+        notes = flagged.set_index("Coin")["Notes"]
+        self.assertIn("Kelly long", notes["A"])
+        self.assertNotIn("Kelly long", notes["B"])
+        self.assertNotIn("Kelly long", notes["C"])

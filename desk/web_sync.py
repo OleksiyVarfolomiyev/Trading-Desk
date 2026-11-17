@@ -342,6 +342,7 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
     except Exception as exc:
         report.append(f"market caps: not refreshed ({type(exc).__name__}: {exc})")
     report.append(sync_ib_data())
+    report.append(sync_kelly_weights())
     report.append(backup_server_state())
     return report
 
@@ -364,6 +365,17 @@ def sync_ib_data(folder: Path | None = None) -> str:
     result = subprocess.run(["rsync", "-a", "-e", "ssh -o ConnectTimeout=15", f"{folder}/", f"{SERVER}:trading-desk-data/ib/"],
                             capture_output=True, text=True)
     return "IB data: sent to the server" if not result.returncode else f"IB data: not sent ({result.stderr.strip()[:120] or result.returncode})"
+
+
+def sync_kelly_weights() -> str:
+    """Send the portfolio notebook's Kelly weights to the server, where the screener flags short candidates the Kelly
+    portfolio would hold long."""
+    source = REPO / "research" / "data" / "kelly_weights.csv"
+    if Path("/home/desk").exists() or not source.exists():
+        return "Kelly weights: nothing to send"
+    result = subprocess.run(["scp", "-q", "-o", "ConnectTimeout=15", str(source), f"{SERVER}:trading-desk/data/kelly_weights.csv"],
+                            capture_output=True, text=True)
+    return "Kelly weights: sent to the server" if not result.returncode else f"Kelly weights: not sent ({result.stderr.strip()[:120] or result.returncode})"
 
 
 def backup_server_state(target: Path = STATE_BACKUP_DIR, today: str | None = None) -> str:

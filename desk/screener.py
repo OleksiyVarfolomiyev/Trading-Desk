@@ -137,9 +137,22 @@ def _stress_note(note: str) -> str:
     return "stress warning"
 
 
+KELLY_FILE = Path(__file__).resolve().parents[1] / "data" / "kelly_weights.csv"   # the portfolio notebook's weights, sent by the Mac's daily job
+
+
+def kelly_weights(path: Path = KELLY_FILE) -> dict[str, float]:
+    """The hypothetical Kelly portfolio's weight per coin (positive: it would hold the coin long); empty when not saved."""
+    try:
+        frame = pd.read_csv(path, index_col=0)["weight"]
+    except (OSError, ValueError, KeyError):
+        return {}
+    return {str(coin): float(weight) for coin, weight in frame.items() if coin != "Cash" and weight == weight}
+
+
 def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[str], weights: dict[str, float],
                      basis: str, desk_equity: float, exposures: list, held: set[str], top: int = TOP_N,
-                     free_margin: dict[str, float] | None = None, funding_history=recent_funding) -> pd.DataFrame:
+                     free_margin: dict[str, float] | None = None, funding_history=recent_funding,
+                     kelly: dict[str, float] | None = None) -> pd.DataFrame:
     """The ``top`` short candidates: lowest score first (a high score is what the long side of a signal buys), each with
     how crowded the short is (``funding_history``: coin -> its last 7 days of hourly funding rates)."""
     from desk import stress, trade_rules
@@ -167,7 +180,10 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
         crowded = ["crowded"] if paid == paid and paid > CROWDED_SHARE else []   # shorts paid in most hours this week
         corr = row.get("corr_btc")
         low = ["low correlation"] if corr is not None and corr == corr and corr < LOW_CORRELATION else []
-        notes = low + crowded + trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else [])
+        # The Kelly portfolio would hold this coin long: less confidence in a short. A flag only: in a walk-forward test the
+        # Kelly long-minus-short spread was +1.7% over 14 days, t 1.25 (not significant), so it does not move the score.
+        kelly_long = ["Kelly long"] if (kelly or {}).get(coin, 0.0) > 0 else []
+        notes = kelly_long + low + crowded + trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else [])
         volume = live.loc[coin, "volume24h"]
         open_interest = live.loc[coin, "open_interest"] if "open_interest" in live.columns else float("nan")
         day = (live.loc[coin, "mark"] / live.loc[coin, "prev"] - 1) if "prev" in live.columns and live.loc[coin, "prev"] else float("nan")
@@ -242,7 +258,8 @@ def run(desk_equity: float | None = None, exposures: list | None = None, held: s
     from desk import journal
 
     used = set(held) | set(laddered) | journal.recently_traded()
-    shorts = short_candidates(signals, live, tradable, weights, basis, desk_equity, exposures, used, free_margin=free_margin)
+    shorts = short_candidates(signals, live, tradable, weights, basis, desk_equity, exposures, used, free_margin=free_margin,
+                              kelly=kelly_weights())
     mm = market_making_candidates(signals, live, tradable, used, edges=ladder_edges())
     state = {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "candles_to": f"{data['close'].index[-1]:%Y-%m-%d}",
              "basis": basis, "universe": len(tradable), "desk_equity": desk_equity,
