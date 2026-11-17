@@ -34,6 +34,7 @@ from desk.numbers import clock, pct as _pct
 OVERVIEW_HIGHLIGHTS_STATE = "desk_overview_highlights_state.json"
 HIGHLIGHT_MOVERS = 3
 MARKET_KINDS = ("Crypto", "Stocks")
+SYMBOLIC_HOLDINGS = {"KYIV", "SWMR"}   # held to symbolize Ukraine, not on a thesis: never a winner or a loser to act on
 
 
 def market_kind(position) -> str:
@@ -817,7 +818,7 @@ class DeskOverview:
                 return f"{position.symbol} {_pct(share)}" if math.isfinite(share) else f"{position.symbol} n/a"
             winner_parts, loser_parts = [], []
             for kind in MARKET_KINDS:  # crypto and stocks ranked apart, shown in one row per side
-                group = [item for item in ranked if market_kind(item[1]) == kind]
+                group = [item for item in ranked if market_kind(item[1]) == kind and item[1].symbol not in SYMBOLIC_HOLDINGS]
                 winners = [item for item in group[::-1] if item[1].unrealized_usd > 0][:HIGHLIGHT_MOVERS]
                 losers = [item for item in group if item[1].unrealized_usd < 0][:HIGHLIGHT_MOVERS]
                 if winners:

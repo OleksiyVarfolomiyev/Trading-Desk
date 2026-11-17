@@ -57,7 +57,7 @@ class StockDipTests(unittest.TestCase):
         self.assertAlmostEqual(alt_rally.index_move(meta, contexts), 6700 / 6850 - 1)
         title, text = alt_rally.stock_alert("watch", -0.022, -0.004)
         self.assertEqual(title, "Stock dip")
-        self.assertTrue(text.startswith("S&P 500 -2.2% in 24h; the stock book -0.4% of trading equity on it."))
+        self.assertTrue(text.startswith("S&P 500 -2.2% in D, stocks -0.4% of equity."))
 
     def test_ib_positions_are_priced_by_hl_where_listed_else_by_their_own_change(self):
         by_coin = {"xyz:NVDA": {"markPx": "95", "prevDayPx": "100"}}                     # HL: NVDA -5%

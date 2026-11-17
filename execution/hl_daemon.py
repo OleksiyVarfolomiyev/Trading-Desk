@@ -1342,8 +1342,7 @@ class Alerts:
                 self.clear(key)
                 continue
             side = "longs" if move > 0 else "shorts"
-            text = (f"{name} {_pct(abs(move))} {'up' if move > 0 else 'down'} in 24h ({abs(score):.1f}x its daily volatility); "
-                    f"take part of the {side}' profit: 1/3 to 2/3 of a big move is the take")
+            text = f"{name} {_pct(move)} in D, {abs(score):.1f}x its volatility: trim {side}"
             auto = getattr(daemon, "auto", None)
             if auto and coin != "ETH":   # BTC speaks for crypto, the S&P perp for stocks
                 auto.trim_favoured(coin, move > 0, text)
@@ -2693,7 +2692,7 @@ class AutoTrader:
                 continue
             response = self.daemon.exchanges[wallet].market_close(coin, size)
             status = response.get("status", response) if isinstance(response, dict) else response
-            done.append(f"{coin} {size:g}" + ("" if status == "ok" else f" ({status})"))   # the account is the desk's business
+            done.append(coin.split(":")[-1] + ("" if status == "ok" else f" {status}"))   # the symbol; the size is the note's percentage
         return "; ".join(done) or "nothing to reduce"
 
     def bank_shorts(self, coin: str, text: str) -> None:
@@ -2701,8 +2700,8 @@ class AutoTrader:
         if not config["bank_shorts_on_bounce"] or ht.kill_switch_engaged() or not self._claim("bank", config["episode_hours"]):
             return
         picks = [item for item in self._positions("") if item[2] < 0 and item[3] > 0]
-        self._spawn("banked short profit", lambda: f"{text}. Closed {config['bank_share']:.0%} of each crypto short in "
-                    f"profit: {self._reduce(picks, config['bank_share'])}", [item[1] for item in picks if ":" not in item[1]])
+        self._spawn("banked short profit", lambda: f"{text}. Banked {config['bank_share']:.0%} of the shorts in profit: "
+                    f"{self._reduce(picks, config['bank_share'])}", [item[1] for item in picks if ":" not in item[1]])
 
     def trim_favoured(self, coin: str, up: bool, text: str) -> None:
         config = auto_config()
@@ -2715,7 +2714,7 @@ class AutoTrader:
         dex = "xyz" if coin.startswith("xyz:") else ""
         picks = [item for item in self._positions(dex) if (item[2] > 0) == up]
         side = "longs" if up else "shorts"
-        self._spawn(f"trimmed {side}", lambda: f"{text}. Trimmed {config['trim_share']:.0%} of the {side}: "
+        self._spawn(f"trimmed {side}", lambda: f"{text}. Trimmed {side} by {config['trim_share']:.0%}: "
                     f"{self._reduce(picks, config['trim_share'])}", [item[1] for item in picks if ":" not in item[1]])
 
     def net_crypto(self) -> float:
@@ -2974,8 +2973,9 @@ class BuildUps:
             code = daemon.trade(request, AutoSession())
         finally:
             daemon.trade_lock.release()
-        note = (f"added {plan.quantity_delta:g} {coin} {side.lower()} (about ${plan.quantity_delta * plan.mark_price:,.0f}) "
-                f"on ...{wallet[-4:]}" if code == 0 else f"add to {coin} did not complete (code {code}); see the log")
+        grown = plan.quantity_delta / abs(held) if held else 0.0
+        note = (f"{coin.split(':')[-1]} raised {grown:.0%}, ${plan.quantity_delta * plan.mark_price:,.0f}"
+                if code == 0 else f"{coin.split(':')[-1]} raise did not complete, code {code}")
         log(f"build-up: {note}")
         daemon.alerts.set(f"buildup:{coin}:{int(time.time())}", f"Build-up: {coin}", note, ttl=86400)
 

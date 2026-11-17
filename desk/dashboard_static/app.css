@@ -682,3 +682,5 @@ html[data-screen="research"] .tiles { display: none !important; }
 html[data-screen="research"] #chart-value, html[data-screen="research"] #chart-twr { height: 460px !important; }
 html[data-screen="research"] #columns > .col { min-width: 520px; }
 #columns > .col[hidden] { display: none !important; }
+.name-long { color: var(--good-text) !important; }
+.name-short { color: var(--bad-text) !important; }

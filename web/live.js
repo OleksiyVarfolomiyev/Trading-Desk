@@ -39,6 +39,7 @@
   const STAKED_LABELS = { "base:0x321b7ff75154472b18edb199033ff4d116f340ff": "VVV staked on Venice" };
   const MIN_PRICE_CONFIDENCE = 0.8, DUST_USD = 1.0, MAX_PLAUSIBLE_HOLDING_USD = 1e7;
   const BTC = "BTC", SP500 = "xyz:SP500";
+  const SYMBOLIC = new Set(["KYIV", "SWMR"]);   // held to symbolize Ukraine, not on a thesis: never a winner or loser to act on
   const STABLE_SYMBOLS = new Set(["USDC", "USDT", "DAI", "USDbC", "USDE", "USDH", "EURC"]);
   // The HL market whose price moves a wallet token: sVVV follows VVV, WETH and cbETH follow ETH.
   const riskCoin = (symbol) => symbol.split(" (")[0].replace(/^s(?=[A-Z]{2})/, "").replace(/^(W|cb)(?=ETH|BTC)/, "");
@@ -980,7 +981,7 @@
       const mover = (p) => `${p.symbol} ${fin(share(p)) ? percent(share(p), true) : "n/a"}`;
       const winnerParts = [], loserParts = [];
       KINDS.forEach((kind) => {  // crypto and stocks ranked apart, shown in one row per side
-        const group = ranked.filter((p) => marketKind(p) === kind);
+        const group = ranked.filter((p) => marketKind(p) === kind && !SYMBOLIC.has(String(p.symbol)));
         const winners = group.slice().reverse().filter((p) => p.unrealized > 0).slice(0, HIGHLIGHT_MOVERS);
         const losers = group.filter((p) => p.unrealized < 0).slice(0, HIGHLIGHT_MOVERS);
         if (winners.length) winnerParts.push(`${kind.toLowerCase()}: ${winners.map(mover).join(", ")}`);

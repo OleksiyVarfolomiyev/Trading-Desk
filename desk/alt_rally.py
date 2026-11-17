@@ -133,9 +133,9 @@ def stock_alert(level_name: str, move: float, book_move: float | None) -> tuple[
     stock book's 24-hour change (HL stocks and IB) over trading equity (HL and IB)."""
     if level_name == "none":
         return None
-    book = (f"; the stock book {_pct(book_move)} of trading equity on it"
+    book = (f", stocks {_pct(book_move)} of equity"
             if book_move is not None and math.isfinite(book_move) else "")
-    detail = f"S&P 500 {_pct(move)} in 24h{book}"
+    detail = f"S&P 500 {_pct(move)} in D{book}"
     if level_name == "cut":
         return "Stock sell-off: cut gross", f"{detail}. Cut the stock longs by {CUT_SHARE:.0%}?"
     return "Stock dip", f"{detail}. Dips mostly bounce: add on red, or hold."

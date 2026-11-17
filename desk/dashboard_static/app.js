@@ -366,7 +366,8 @@ function renderBarList(id, spec, plan, host) {
     const width = Math.max(2, share * (mixed ? 50 : 100));
     const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
     const fig = el("span", { class: "bfig " + (value < 0 ? "neg" : "pos"), style: mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)` }, [(Math.abs(value) > cap ? "» " : "") + figure]);
-    const name = el("button", { type: "button", class: "bname name-" + kind, text: friendlyName(label) });
+    const heldSide = (row.__raw && isNum(row.__raw.Value)) ? (row.__raw.Value < 0 ? "short" : "long") : null;   // colour by side, so no long or short word
+    const name = el("button", { type: "button", class: "bname name-" + (heldSide || kind), text: friendlyName(label) });
     name.addEventListener("click", () => openAsset(label));
     const notable = [isNum(row["D"]) && Math.abs(row["D"]) >= 0.05 ? `${text("D", row["D"])} D` : "", isNum(row["Funding (APR)"]) && Math.abs(row["Funding (APR)"]) >= 0.5 ? `${text("Funding (APR)", row["Funding (APR)"])} funding` : ""].filter(Boolean).join(" · ");
     const acts = el("span", { class: "bacts" }, []);
@@ -991,7 +992,9 @@ function redrawHighlights() {
   if (typeof drawSectionsMenu === "function") drawSectionsMenu();
 }
 const VENUES = /\b(xyz|flx|vntl|hyna|km|abcd|cash|para|mkts|io):/gi;
-const cleanLine = (text) => String(text).replace(VENUES, "").replace(/\bSP500\b/g, "S&P500");   // the venue is the desk's business
+const cleanLine = (text) => String(text).replace(VENUES, "").replace(/\bSP500\b/g, "S&P500")   // the venue is the desk's business
+  .replace(/\s*\([^)]*\)/g, "")                                                          // no parentheses: that is explanation
+  .replace(/(\d+(?:\.\d+)?%)\s+down\b/g, "-$1").replace(/(\d+(?:\.\d+)?%)\s+up\b/g, "$1")   // "1.9% down" is a red 1.9%
 const sentences = (text) => String(text).split(/(?<=[.;?])\s+(?=[A-Z])/).map((part) => part.trim()).filter(Boolean);   // each thought its own line
 
 // Gestures on a line or a row: swipe left = hide it / dislike it, double tap (or double click) = like it. The swipe is for touch
@@ -1058,7 +1061,7 @@ function renderHighlights(id, rows, hover = {}) {
     const item = el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [   // a pop-up only for the headlines around a big move
       el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),   // the uPnL lines carry no background
       el("span", { class: "hl-actions" }, [
-        ...(window.DESK_SOURCE ? symbolActions(text) : []),   // run it: plan, then confirm
+        ...symbolActions(whole),   // act on the symbols it names: run it (plan, then confirm) or copy the order
         act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + whole] = { at: Date.now(), shape: lineShape(whole), nums: lineNumbers(whole) }; feedback("highlight", "read", area, text); }),
         act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),   // stays; tells the model this area earns its place
         act("Not important: stop showing this", "👎", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
@@ -2036,19 +2039,20 @@ function markKinds(node) {   // replace the words in a heading's text nodes, kee
 // Executable lines: a highlight that names held symbols offers to act on them: trim a third or close, each planned with the
 // daemon (its notices on top) and confirmed in one dialog. Only held HL positions; the web page runs them.
 function symbolActions(text) {
-  const found = [...knownSymbols()].filter((s) => new RegExp("(^|[^A-Za-z0-9])" + s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![A-Za-z0-9])").test(text));
-  const targets = found.map((symbol) => ({ symbol, rows: assetRows(symbol) })).filter(({ rows }) => rows.some((r) => /^HL /.test(String(r.Account || "")) && isNum(r.Value)));
+  const found = [...knownSymbols()].filter((s) => new RegExp("(^|[^A-Za-z0-9])" + s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![A-Za-z0-9])", "i").test(text));
+  const targets = found.map((symbol) => ({ symbol, rows: assetRows(symbol).filter((r) => isNum(r.Value) && r._table !== "wallets") })).filter(({ rows }) => rows.length);
   if (!targets.length) return [];
-  const button = el("button", { type: "button", class: "hl-act", title: "Act on these", "aria-label": "Act on " + targets.map((t) => t.symbol).join(", "), text: "▶" });
+  const button = el("button", { type: "button", class: "hl-act", title: "Act", "aria-label": "Act on " + targets.map((t) => t.symbol).join(", "), text: "▶" });
   button.addEventListener("click", (event) => {
     event.stopPropagation();
     document.querySelectorAll(".more-menu").forEach((node) => node.remove());
     const menu = el("div", { class: "more-menu" }, targets.flatMap(({ symbol, rows }) => {
       const hl = rows.find((r) => /^HL /.test(String(r.Account || "")));
-      const target = { coin: hl.Symbol, wallet: String(hl.Account).slice(-4) };
-      return [["Trim ⅓", "reduce", 1 / 3], ["Raise ⅓", "add", 1 / 3], ["Close", "close", 1]].map(([label, change, fraction]) => {
-        const row = el("button", { type: "button", class: "sections-row tile-pick" }, [el("b", { text: symbol }), el("span", { text: label })]);
-        row.addEventListener("click", () => { menu.remove(); runAction(label, change, fraction, target); });
+      const target = hl ? { coin: hl.Symbol, wallet: String(hl.Account).slice(-4) } : null;
+      return [["Trim ⅓", "reduce", 1 / 3, `trim ${symbol} by a third`], ["Raise ⅓", "add", 1 / 3, `raise ${symbol} by a third`], ["Close", "close", 1, `close ${symbol}`]].map(([label, change, fraction, sentence]) => {
+        const side = symbolSide(symbol);
+        const row = el("button", { type: "button", class: "sections-row tile-pick" }, [el("b", { class: "name-" + (side || symbolKind(symbol)), text: symbol }), el("span", { text: label })]);
+        row.addEventListener("click", () => { menu.remove(); if (target && window.DESK_SOURCE) runAction(label, change, fraction, target); else copyOrder(row, sentence); });
         return row;
       });
     }));
@@ -2088,21 +2092,26 @@ function lineNodes(text, tint = true) {
   return nodes;
 }
 
-function linkSymbols(text) {   // the text with each known symbol as a button that opens its tile
+function symbolSide(symbol) {   // long or short by what is held (the sign of the position's value), else null
+  const held = assetRows(symbol).filter((row) => isNum(row.Value) && row._table !== "wallets");
+  const net = held.reduce((sum, row) => sum + row.Value, 0);
+  return held.length ? (net < 0 ? "short" : "long") : null;
+}
+function linkSymbols(text) {   // the text with each known symbol as a button that opens its tile, coloured by its side
   const symbols = [...knownSymbols()].filter((s) => s.length >= 2).sort((a, b) => b.length - a.length);
   if (!symbols.length) return [text];
   const escaped = symbols.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const pattern = new RegExp("(^|[^A-Za-z0-9])(" + escaped.join("|") + ")(?![A-Za-z0-9])", "g");
+  const pattern = new RegExp("(^|[^A-Za-z0-9])(" + escaped.join("|") + ")(?![A-Za-z0-9])(?:\\s+(long|short)\\b)?", "gi");
   const parts = [];
   let last = 0, match;
   while ((match = pattern.exec(text)) !== null) {
     const start = match.index + match[1].length;
     if (start > last) parts.push(text.slice(last, start));
-    const symbol = match[2];
-    const button = el("button", { type: "button", class: "symbol-chip name-" + symbolKind(symbol), text: symbol });
+    const symbol = match[2], side = (match[3] || symbolSide(symbol) || "").toLowerCase();
+    const button = el("button", { type: "button", class: "symbol-chip " + (side ? "name-" + side : "name-" + symbolKind(symbol)), text: symbol });
     button.addEventListener("click", (event) => { event.stopPropagation(); openAsset(symbol); });
     parts.push(button);
-    last = start + symbol.length;
+    last = match.index + match[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));
   return parts;
@@ -2809,7 +2818,7 @@ async function refreshTicker() {
     const direction = "";   // no flashing on a price tick
     lastPrices[asset] = context.price;
     return el("a", { class: "tick " + direction + (auto.includes(asset) ? " auto-asset" : ""), href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
-      el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }),
+      el("b", { class: "name-" + (symbolSide(asset) || symbolKind(asset)), text: friendlyName(asset) }),
       el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }),   // the move first, the price after
       el("span", { class: "price", text: priceText(context.price) }), ...(auto.includes(asset) ? [] : [dropper(asset)]), chipActions(asset)]);
   })(), asset)).concat([addBox, hideStrip]));
