@@ -594,6 +594,7 @@
     const regime = await every("regime", 30 * 60000, () => relay("/regime")).catch(() => null);
     const daemonAlerts = await every("alerts", 60000, () => relay("/alerts")).catch(() => null);
     const tileFeed = await every("tiles", 60000, () => relay("/tiles")).catch(() => null);
+    const bookPerf = await every("books", 15 * 60000, () => relay("/books")).catch(() => null);   // each book's performance (the Mac, hourly)
     const usageModel = await every("usage_model", 600000, () => fetch("/usage_model").then((r) => r.json())).catch(() => ({}));
     const catalogEntries = await every("catalog", 3600000, () => fetch("/catalog.json").then((r) => r.json()).then((c) => c.entries || [])).catch(() => []);   // published from the notebooks (desk/tile_feed.py)
     const syncRun = await every("sync", 30 * 60000, () => relay("/sync")).catch(() => null);
@@ -1076,7 +1077,9 @@
       "Risk equity": "usd", "Open risk": "usd", "Long": "usd", "Short": "usd", "VaR 95%": "usd", "VaR 99%": "usd" };
     const signed = { "uPnL": "susd", "Net": "susd", "Value": "susd" };
     const tables = {
-      performance: table(performanceRows, ["Account", "Return 24h", "Return 7D", "Return 30D", "Return 90D", "Return 1Y", "Return since inception", "Since"],
+      // By book (crypto, stocks), not by account, when the Mac's hourly figures are fresh; the desk's total row stays.
+      performance: table(bookPerf && bookPerf.rows && Date.now() - Date.parse(bookPerf.as_of) < 3 * 3600000
+        ? bookPerf.rows.concat(performanceRows.filter((row) => /total|desk/i.test(String(row.Account)))) : performanceRows, ["Account", "Return 24h", "Return 7D", "Return 30D", "Return 90D", "Return 1Y", "Return since inception", "Since"],
         { "Return 24h": "spct", "Return 7D": "spct", "Return 30D": "spct", "Return 90D": "spct", "Return 1Y": "spct", "Return since inception": "spct" },
         { totalLast: true, key: { "Return 30D": "abs" } }),
       accounts: table(accountRows, ["Account", "% of desk", "Cash / equity", "Margin used / equity", "Available / equity",

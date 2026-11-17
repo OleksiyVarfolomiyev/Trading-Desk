@@ -39,11 +39,11 @@ UNTAGGED = "untagged"  # fills from before the journal began
 LADDER_CLOID_PREFIX = "0x1add"
 REVIEW_AFTER_DAYS = 7  # directional trades held longer lost money in the desk's history (desk/trade_rules.py)
 COLUMNS = ["Strategy", "Open positions", "Unrealized PnL", "Realized PnL 30d", "Fees 30d", "Funding 30d", "Volume 30d",
-           "Fills 30d"]
+           "Fills 30d", "Crypto PnL", "Stocks PnL"]
 # What the front end shows: each strategy's result as a share of desk value, as the Performance table shows returns.
 # Realized 30d is net of fees and includes funding; activity (positions, volume, fills) stays in the data.
-VIEW_COLUMNS = ["Strategy", "Realized 30d", "uPnL", "Total"]   # "uPnL", as the accounts and positions tables
-VIEW_FORMATS = {"Realized 30d": "spct", "uPnL": "spct", "Total": "spct"}
+VIEW_COLUMNS = ["Strategy", "Crypto", "Stocks", "Realized 30d", "uPnL", "Total"]   # the books first; "uPnL" as elsewhere
+VIEW_FORMATS = {"Crypto": "spct", "Stocks": "spct", "Realized 30d": "spct", "uPnL": "spct", "Total": "spct"}
 
 
 def performance_view(frame: pd.DataFrame, desk_value: float) -> pd.DataFrame:
@@ -52,8 +52,9 @@ def performance_view(frame: pd.DataFrame, desk_value: float) -> pd.DataFrame:
         return pd.DataFrame(columns=VIEW_COLUMNS)
     realized = (frame["Realized PnL 30d"] + frame["Funding 30d"]) / desk_value
     unrealized = frame["Unrealized PnL"] / desk_value
-    return pd.DataFrame({"Strategy": frame["Strategy"], "Realized 30d": realized, "uPnL": unrealized,
-                         "Total": realized + unrealized})[VIEW_COLUMNS]
+    book = lambda column: (frame[column] if column in frame else pd.Series(0.0, index=frame.index)).fillna(0.0) / desk_value
+    return pd.DataFrame({"Strategy": frame["Strategy"], "Crypto": book("Crypto PnL"), "Stocks": book("Stocks PnL"),
+                         "Realized 30d": realized, "uPnL": unrealized, "Total": realized + unrealized})[VIEW_COLUMNS]
 
 
 FORMATS = {"Open positions": "int", "Unrealized PnL": "susd", "Realized PnL 30d": "susd", "Fees 30d": "susd",
@@ -263,7 +264,31 @@ def strategy_frame(days: int = 30) -> pd.DataFrame:
             state = post({"type": "clearinghouseState", "user": account.id, **({"dex": dex} if dex else {})}) or {}
             positions_by_wallet[account.id] += [item["position"] for item in state.get("assetPositions", [])]
         funding_by_wallet[account.id] = market_making.funding_events(account.id, since)
-    return split_by_strategy(entries, fills_by_wallet, positions_by_wallet, funding_by_wallet, ib_positions())
+    ib = ib_positions()
+    frame = split_by_strategy(entries, fills_by_wallet, positions_by_wallet, funding_by_wallet, ib)
+    return with_books(frame, entries, fills_by_wallet, positions_by_wallet, funding_by_wallet, ib)
+
+
+def with_books(frame: pd.DataFrame, entries: list[dict], fills_by_wallet: dict, positions_by_wallet: dict,
+               funding_by_wallet: dict, ib: dict) -> pd.DataFrame:
+    """Add each strategy's PnL by book (Crypto PnL, Stocks PnL: unrealized + realized + funding), so the table and its
+    chart can show a strategy's result as crypto and stocks stacked. IB's positions are stocks."""
+    from desk.books import holding_kind
+
+    def kept(kind):
+        is_kind = lambda coin: holding_kind("hl", str(coin)) == kind
+        fills = {w: [f for f in rows if is_kind(f.get("coin"))] for w, rows in fills_by_wallet.items()}
+        positions = {w: [p for p in rows if is_kind(p.get("coin"))] for w, rows in positions_by_wallet.items()}
+        funding = {w: [e for e in rows if is_kind((e.get("delta") or {}).get("coin"))] for w, rows in (funding_by_wallet or {}).items()}
+        part = split_by_strategy(entries, fills, positions, funding, ib if kind == "Stocks" else None)
+        total = part.set_index("Strategy")[["Unrealized PnL", "Realized PnL 30d", "Funding 30d"]].sum(axis=1) if len(part) else pd.Series(dtype=float)
+        return total
+
+    crypto, stocks = kept("Crypto"), kept("Stocks")
+    frame = frame.copy()
+    frame["Crypto PnL"] = frame["Strategy"].map(crypto).fillna(0.0)
+    frame["Stocks PnL"] = frame["Strategy"].map(stocks).fillna(0.0)
+    return frame
 
 
 def ib_positions() -> dict[str, list[dict]]:

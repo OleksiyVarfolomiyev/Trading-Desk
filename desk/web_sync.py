@@ -181,6 +181,38 @@ def push_wallets(data_dir: Path | str = REPO / "data") -> dict:
     return _post("/ingest/wallets", wallet_payload(data_dir))
 
 
+BOOKS_FILE = REPO / "data" / "books_performance.json"
+BOOKS_EVERY_SECONDS = 3600
+
+
+def books_payload() -> dict:
+    """Each book's return on trading equity over 1, 7, 30 and 90 days (desk/books.py, the notebooks' numbers), for the
+    dashboards' performance table: the books, not the accounts."""
+    from desk.books import Book
+
+    rows = []
+    for kind, options in (("Crypto", {}), ("Stocks", {"since": "2025-01-13"})):
+        book = Book(kind, **options).fetch_data()
+        table = book.performance().set_index("Window")
+        last = book.returns.iloc[-1] if len(book.returns) else float("nan")
+        rows.append({"Account": kind.lower(), "Return 24h": _clean(float(last)),
+                     **{f"Return {w}": _clean(float(table.at[w, "Return (on equity)"])) for w in table.index}})
+    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows}
+
+
+def push_books(force: bool = False) -> dict | None:
+    """Hourly: the books' performance, saved for the local dashboard and sent to the relay for the web one."""
+    import json
+    import time
+
+    if not force and BOOKS_FILE.exists() and time.time() - BOOKS_FILE.stat().st_mtime < BOOKS_EVERY_SECONDS:
+        return None
+    payload = books_payload()
+    BOOKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    BOOKS_FILE.write_text(json.dumps(payload))
+    return _post("/ingest/books", payload)
+
+
 def push_ib(snapshot, book_entry=None, moves: dict | None = None) -> dict:
     return _post("/ingest/ib", ib_payload(snapshot, book_entry, moves))
 
@@ -419,6 +451,12 @@ def main(argv: list[str] | None = None) -> int:
             entry, snapshot = read_ib(account)
             answer = push_ib(snapshot, entry, position_changes([snapshot]))
             print(f"Sent {snapshot.label} ({len(snapshot.positions)} positions, NAV history included): {answer}")
+        try:   # the books' performance, at most hourly
+            sent = push_books()
+            if sent:
+                print(f"Sent the books' performance: {sent}")
+        except Exception as exc:
+            print(f"Books' performance not sent ({type(exc).__name__}: {exc})")
     if not any((args.seed_history, args.push_ib, args.push_wallets, args.daily, args.install_daily, args.uninstall_daily,
                 args.install_ib_push, args.uninstall_ib_push)):
         parser.print_help()

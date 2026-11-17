@@ -186,7 +186,7 @@ const POSITION_VIEW = {
   align: { "Account": 15, "Symbol": 18, "Value": 15, "uPnL": 13, "24h": 12, "Funding (APR)": 15, "Weight": 12 },
 };
 const VIEWS = {
-  performance: { columns: [["Account"], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
+  performance: { columns: [["Account", "Book"], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
     ["Return 90D", "90d"], ["Return 1Y", "1y"], ["Return since inception", "Since start"], ["Since", "Start"]] },
   accounts: {
     keep: (r) => !/wallet$/i.test(String(r.Account || "")),  // margin and leverage mean nothing for a wallet
@@ -257,6 +257,7 @@ const CHART_VIEWS = {
   positions_stocks: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
   wallets: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
   market_making: { kind: "bars", label: "Coin", value: "Ladder PnL", text: "Fills" },
+  strategies: { kind: "stacked", label: "Strategy", series: ["Crypto", "Stocks"] },   // each strategy's result, crypto and stocks stacked
 };
 const LABEL_FONT = (size = 12, color) => ({ size, color: color || token("--ink-2") });   // the value next to each bar's end
 const BAR_CAP = 3;   // the longest a bar is drawn, in times the second largest
@@ -323,6 +324,16 @@ function renderTableChart(id, spec) {
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
       height = Math.max(180, rows.length * (series.length * 14 + 14) + 80);
     }
+  } else if (plan.kind === "stacked") {   // one bar per row, its parts stacked in the book colours
+    const series = plan.series.filter((key) => rows.some((row) => isNum(row[key]) && row[key] !== 0));
+    const axis = chartAxis(formatOf(series[0] || plan.series[0]));
+    const colour = (key) => (/crypto/i.test(key) ? token("--kind-crypto") : token("--kind-stocks"));
+    traces = series.map((key) => ({ type: "bar", orientation: "h", name: key, y: names, marker: { color: colour(key) },
+      x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)),
+      text: rows.map((row) => (isNum(row[key]) && row[key] !== 0 ? text(key, row[key]) : "")), textposition: "inside", insidetextanchor: "middle",
+      textfont: LABEL_FONT(11, "#ffffff"), hoverinfo: "skip", showlegend: false }));
+    layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis) };
+    height = Math.max(160, rows.length * 34 + 70);
   } else if (plan.kind === "exposure") {
     const axis = chartAxis(formatOf(plan.long));
     const size = (row, key) => (isNum(row[key]) ? Math.abs(row[key]) : 0);

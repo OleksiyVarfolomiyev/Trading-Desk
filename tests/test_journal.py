@@ -163,8 +163,8 @@ class LiveUnrealizedTests(unittest.TestCase):
         self.assertAlmostEqual(sum(live.values()), 1.0 + 100.0 - 7.0 - 20.0)       # all of HL plus all of IB
 
     def test_a_table_takes_the_live_figures_and_recomputes_its_total(self):
-        frame = pd.DataFrame([["directional", 1, 50.0, 0, 0, 0, 0, 0], ["conviction", 1, -30.0, 0, 0, 0, 0, 0],
-                              ["Total", 2, 20.0, 0, 0, 0, 0, 0]], columns=journal.COLUMNS)
+        frame = pd.DataFrame([["directional", 1, 50.0, 0, 0, 0, 0, 0, 0, 0], ["conviction", 1, -30.0, 0, 0, 0, 0, 0, 0, 0],
+                              ["Total", 2, 20.0, 0, 0, 0, 0, 0, 0, 0]], columns=journal.COLUMNS)
         shown = journal.with_live_unrealized(frame, {"directional": 80.0, "conviction": -10.0}).set_index("Strategy")
         self.assertEqual(list(shown["Unrealized PnL"]), [80.0, -10.0, 70.0])
         self.assertIs(journal.with_live_unrealized(frame, None), frame)             # no live figure: unchanged

@@ -56,6 +56,25 @@ STATIC_FILES = {
 }
 
 
+def books_by_kind(tables: dict, max_age: float = 3 * 3600) -> None:
+    """The performance table by book (crypto, stocks) instead of by account, from the Mac's hourly computation
+    (desk/web_sync.py push_books); the desk's total row stays. Left as it is when that file is missing or stale."""
+    import json as _json
+    import time as _time
+
+    from desk.web_sync import BOOKS_FILE
+
+    try:
+        if _time.time() - BOOKS_FILE.stat().st_mtime > max_age:
+            return
+        rows = _json.loads(BOOKS_FILE.read_text())["rows"]
+    except (OSError, ValueError, KeyError):
+        return
+    performance = tables.get("performance")
+    if performance and rows:
+        performance["rows"] = rows
+
+
 def usage_model_now() -> dict:
     try:
         from desk import usage_model
@@ -470,6 +489,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     attention = reconcile.checks(tables) + attention   # tables that should tie out and don't: first
     notes = list(desk.notes)
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
+    books_by_kind(tables)
     return {
         "kpis": kpis,
         "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,   # the open trades' median age
