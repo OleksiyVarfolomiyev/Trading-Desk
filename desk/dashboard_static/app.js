@@ -778,10 +778,10 @@ function drawModes() {
     button.addEventListener("click", () => setLook("view", value));
     views.append(button);
   });
-  const next = mode === "dark" ? "light" : "dark";   // the sun shows in light mode, the moon in dark; a click flips it
+  const next = mode === "dark" ? "light" : "dark";   // the icon shows where a click goes: the sun in dark mode, the moon in light
   const toggle = el("div", { class: "switch", role: "group", "aria-label": "Light or dark" }, [
     el("button", { type: "button", class: "icon-button", title: `Switch to ${next} mode`, "aria-label": `Switch to ${next} mode`,
-      "aria-pressed": "false" }, [icon(mode === "light" ? "sun" : "moon")])]);
+      "aria-pressed": "false" }, [icon(next === "light" ? "sun" : "moon")])]);
   toggle.firstChild.addEventListener("click", () => setLook("mode", next));
   const styles = el("div", { class: "switch", role: "group", "aria-label": "Style" });
   STYLE_CHOICES.forEach(([value, name, dot]) => {
