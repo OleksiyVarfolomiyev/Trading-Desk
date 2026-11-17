@@ -708,3 +708,13 @@ th { text-align: center; }
 }
 
 .period-chips { opacity: 1; display: flex; justify-content: flex-end; margin: 0 0 2px; }
+
+/* Trade bar: asset, side, label, plan */
+.trade-bar { display: inline-flex; gap: 4px; align-items: center; }
+.trade-input { width: 84px; font: inherit; padding: 3px 6px; border: 1px solid var(--line, #8884); border-radius: 6px; background: transparent; color: inherit; }
+.trade-input[type="text"] { text-transform: uppercase; }
+select.trade-input { width: auto; }
+.trade-side, .trade-go { font: inherit; line-height: 1; padding: 4px 7px; border: 1px solid var(--line, #8884); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; opacity: 0.55; }
+.trade-side.long[aria-pressed="true"] { color: #16a34a; border-color: #16a34a; opacity: 1; }
+.trade-side.short[aria-pressed="true"] { color: #dc2626; border-color: #dc2626; opacity: 1; }
+.trade-go { opacity: 1; }

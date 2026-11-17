@@ -3315,7 +3315,7 @@ class Daemon:
                 return 2
             try:   # thesis trades go in without a stop or take-profit (the desk's rule since 2026-11-17)
                 return self.trade({"cmd": "trade", "wallet": wallet, "live": bool(request.get("live")), "signals": str(path),
-                                   "fast": True, "conviction": True, "ignore_unreachable": True,
+                                   "fast": True, "conviction": True, "ignore_unreachable": True, "label": request.get("label"),
                                    "strategy": "fade" if str(request["change"]).lower() == "short" else "directional"}, session)
             finally:
                 self.trade_lock.release()
@@ -3476,7 +3476,7 @@ class Daemon:
             stops = ht.resting_stops(risk_wallets, sorted({position.dex for position in snapshot.positions}))
             plans, risk = ht.plan_trades(signals, markets, snapshot, stops=stops,
                                          conviction=bool(request.get("conviction")),
-                                         strategy=request.get("strategy") or "directional",
+                                         strategy=request.get("strategy") or "directional", label=request.get("label"),
                                          conviction_pct=float(request.get("conviction_pct") or ht.CONVICTION_NOTIONAL_PCT * 100) / 100)
             ht.print_plan(snapshot, plans, risk)
             return "signals", plans, markets, snapshot

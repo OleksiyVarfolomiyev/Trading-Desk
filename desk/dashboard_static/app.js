@@ -1496,6 +1496,43 @@ function setLook(kind, value) {
   drawModes();
   redrawLook(kind);
 }
+// Trade bar: asset, side, an optional journal label, then ▶ plans the entry and asks ✓ / ✗ (runAction). On the local page
+// the order is copied for Claude, as everywhere else the dashboard cannot trade.
+let tradeBarNode = null, tradeSide = "long";
+function tradeAssets() {
+  const tables = (latest && latest.data && latest.data.tables) || {};
+  const names = new Set();
+  for (const id of ["positions", "positions_stocks", "candidates", "mm_candidates"])
+    for (const row of ((tables[id] || {}).rows || [])) { const n = row.Symbol || row.Coin; if (n) names.add(String(n)); }
+  return [...names].sort();
+}
+function tradeBar() {
+  if (tradeBarNode) { tradeBarNode.querySelector("datalist").replaceChildren(...tradeAssets().map((n) => el("option", { value: n }))); return tradeBarNode; }
+  const asset = el("input", { class: "trade-input", type: "text", list: "trade-assets", placeholder: "asset", autocomplete: "off",
+    spellcheck: "false", "aria-label": "Asset" });
+  const sides = [["long", "▲", "Long"], ["short", "▼", "Short"]].map(([value, glyph, name]) => {
+    const b = el("button", { type: "button", class: "trade-side " + value, text: glyph, title: name, "aria-label": name, "aria-pressed": String(value === tradeSide) });
+    b.addEventListener("click", () => { tradeSide = value; sides.forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
+    return b;
+  });
+  const label = el("select", { class: "trade-input", "aria-label": "Label", title: "Label (optional): the journal's tag for the position" },
+    [["", "label"], ["directional", "directional"], ["conviction", "conviction"], ["hedge", "hedge"], ["fade", "fade"]]
+      .map(([value, text]) => el("option", { value, text })));
+  const go = el("button", { type: "button", class: "trade-go", text: "▶", title: "Plan the entry", "aria-label": "Plan the entry" });
+  const run = () => {
+    const raw = asset.value.trim();
+    if (!raw) { asset.focus(); return; }
+    const coin = /^[a-z0-9]+:/i.test(raw) ? raw.toLowerCase().replace(/^([a-z0-9]+):(.*)$/, (m, d, c) => d + ":" + c.toUpperCase()) : raw.toUpperCase();
+    feedback("trade", "plan", coin, tradeSide + (label.value ? " " + label.value : ""));
+    if (window.DESK_SOURCE) runAction(tradeSide === "short" ? "Short" : "Long", tradeSide, 1, { coin, wallet: "07f2", label: label.value || undefined });
+    else if (navigator.clipboard) navigator.clipboard.writeText(`${tradeSide} ${coin}${label.value ? " as " + label.value : ""}`);
+  };
+  go.addEventListener("click", run);
+  asset.addEventListener("keydown", (event) => { if (event.key === "Enter") run(); });
+  tradeBarNode = el("div", { class: "trade-bar", role: "group", "aria-label": "Trade" },
+    [asset, ...sides, label, go, el("datalist", { id: "trade-assets" }, tradeAssets().map((n) => el("option", { value: n })))]);
+  return tradeBarNode;
+}
 function drawModes() {
   const host = document.getElementById("modes");
   if (!host) return;
@@ -1533,7 +1570,7 @@ function drawModes() {
     "aria-label": "Live price strip", "aria-pressed": tickerOn ? "true" : "false" }, [icon("pulse")]);
   strip.addEventListener("click", () => { const s = tickerState(); s.on = !s.on; saveTicker(s); feedback("look", "price strip", s.on ? "on" : "off"); drawModes(); refreshTicker(); });
   report.addEventListener("click", openReport);
-  host.replaceChildren(views, units, toggle, styles, strip, report);
+  host.replaceChildren(tradeBar(), views, units, toggle, styles, strip, report);
   host.querySelectorAll(".switch").forEach((group) => group.classList.add("choices"));
 }
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
@@ -2509,7 +2546,7 @@ async function runAction(label, change, fraction, target) {
   const { overlay, box } = actionDialog(title);
   box.replaceChildren(el("h3", { text: title }), el("p", { class: "muted", text: "Planning with live data…" }));
   const post = (body) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-    body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction }, body)) }).then((r) => r.json());
+    body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction, label: target.label }, body)) }).then((r) => r.json());
   let plan;
   try { plan = await post({ stage: "plan" }); } catch (e) { plan = { error: String(e) }; }
   if (plan.error || !plan.token) {

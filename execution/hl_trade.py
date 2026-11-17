@@ -1153,6 +1153,7 @@ def plan_trades(
     conviction: bool = False,
     conviction_pct: float = CONVICTION_NOTIONAL_PCT,
     strategy: str | None = None,
+    label: str | None = None,
 ) -> tuple[list[PlannedTrade], float]:
     """Build risk- and margin-limited entry plans and report current portfolio risk.
 
@@ -1244,6 +1245,8 @@ def plan_trades(
         from desk import trade_rules
 
         tag = strategy if conviction and strategy == "fade" else "conviction" if conviction else (strategy or "directional")   # a fade keeps its own tag
+        if label in ("directional", "conviction", "hedge", "fade"):   # a label picked on the dashboard decides the journal tag
+            tag = label
         plan = replace(plan, strategy=tag, rule_notes="; ".join(trade_rules.entry_notes(
             coin, signal["side"], plan.quantity * market.mark_price, tag)) if plan.quantity > 0 else "")
         plans.append(plan)

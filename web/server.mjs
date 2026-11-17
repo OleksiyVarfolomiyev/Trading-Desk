@@ -268,11 +268,13 @@ async function dashboardAction(request, response) {
   let body = {};
   try { body = JSON.parse((await readBody(request)).toString("utf8") || "{}"); } catch (error) { return send(400, { error: "not JSON" }); }
   const { stage, change, coin, wallet, token } = body;
-  const fraction = Number(body.fraction);
+  const entry = change === "short" || change === "long";   // a new entry from the trade bar: no fraction, an optional journal label
+  const fraction = entry && body.fraction === undefined ? 1 : Number(body.fraction);
+  const label = ["directional", "conviction", "hedge", "fade"].includes(body.label) ? body.label : "";
   if (!["close", "reduce", "add", "short", "long"].includes(change) || !/^[A-Za-z0-9:]{1,24}$/.test(String(coin || "")) || !/^[0-9a-fA-F]{4}$/.test(String(wallet || ""))
       || !(fraction > 0 && fraction <= 1)) return send(400, { error: "bad request" });
-  const key = JSON.stringify([change, coin, wallet, fraction]);
-  const request_ = { cmd: "resize", wallet, coin, change, fraction };
+  const key = JSON.stringify([change, coin, wallet, fraction, label]);
+  const request_ = { cmd: "resize", wallet, coin, change, fraction, label };
   if (actionRunning) return send(409, { error: "another dashboard action is running" });
   actionRunning = true;
   try {
