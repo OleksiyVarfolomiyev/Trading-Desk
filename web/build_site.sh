@@ -7,4 +7,5 @@ cd "$(dirname "$0")/.."
 rm -rf web/site
 mkdir -p web/site
 cp web/index.html web/live.js desk/dashboard_static/app.js desk/dashboard_static/app.css web/site/
+python3 -m desk.tile_catalog > web/site/catalog.json 2>/dev/null || echo '{"entries": []}' > web/site/catalog.json   # the sections a notebook can put on the dashboard
 echo "web/site: $(ls web/site | tr '\n' ' ')"

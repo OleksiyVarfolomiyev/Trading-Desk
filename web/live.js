@@ -593,7 +593,8 @@
     const walletPerf = await every("walletperf", 30 * 60000, () => relay("/walletperf")).catch(() => null);
     const regime = await every("regime", 30 * 60000, () => relay("/regime")).catch(() => null);
     const daemonAlerts = await every("alerts", 60000, () => relay("/alerts")).catch(() => null);
-    const tileFeed = await every("tiles", 60000, () => relay("/tiles")).catch(() => null);   // published from the notebooks (desk/tile_feed.py)
+    const tileFeed = await every("tiles", 60000, () => relay("/tiles")).catch(() => null);
+    const catalogEntries = await every("catalog", 3600000, () => fetch("/catalog.json").then((r) => r.json()).then((c) => c.entries || [])).catch(() => []);   // published from the notebooks (desk/tile_feed.py)
     const syncRun = await every("sync", 30 * 60000, () => relay("/sync")).catch(() => null);
     const research = await every("research", 15 * 60000, () => relay("/research")).catch(() => null);
     const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];
@@ -1181,6 +1182,7 @@
       highlights: { well, attention, hover: Object.fromEntries(((daemonAlerts && daemonAlerts.alerts) || [])
         .filter((a) => a.context).map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), a.context])) },
       tables,
+      catalog: catalogEntries,
       tiles: ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now()),
       charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [] },
       problems, notes,

@@ -481,11 +481,13 @@ function renderTable(id, spec) {
     const key = column.emphasis ? (index !== undefined && standout[column.key] === index ? "key key-top" : "key") : "";
     const classes = [format.num ? "num" : "", tone, key].filter(Boolean).join(" ");
     const text = format.text(value);
+    // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
+    const withDigits = column.key !== "Symbol" && column.key !== "Coin" && /\d/.test(text) ? " digits" : "";
     if (row.__link && (column.key === "Symbol" || column.key === "Coin") && text) {   // the symbol opens its page
       const link = el("a", { class: "symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", text });
       return el("td", { class: classes }, [link]);
     }
-    return el("td", { class: classes, text: ZERO_TEXT.test(text) ? "" : text });
+    return el("td", { class: classes + withDigits, text: ZERO_TEXT.test(text) ? "" : text });
   };
   const body = el("tbody", {}, rows.map((row, index) => el("tr", row.__hover ? { title: row.__hover } : {},
     spec.columns.map((column) => cell(row, column, index)))));
@@ -835,6 +837,7 @@ function render(doc) {
   for (const id of TABLES) renderTable(id, applyView(id, data.tables && data.tables[id], context));
   balanceColumns();
   renderCharts(data.charts);
+  renderPublished(data.tiles || []);
   const notes = document.getElementById("notes");  // developer notes: not on the page (the band shows real problems)
   if (notes) notes.replaceChildren(...(data.notes || []).map((note) => el("li", { text: note })));
 }
@@ -961,7 +964,7 @@ function redrawLook(kind) {
     for (const id of TABLES) renderTable(id, applyView(id, data.tables && data.tables[id], context));
     if (kind === "view") balanceColumns();
   }
-  if (kind !== "view") renderCharts(data.charts);
+  if (kind !== "view") { renderCharts(data.charts); renderPublished(data.tiles || []); }
 }
 drawModes();
 
@@ -985,18 +988,18 @@ const cardTitle = (card) => {   // the heading without its icon, grip and button
   return copy.textContent.trim();
 };
 
-function setupSections() {
-  const content = document.getElementById("content");
-  if (!content) return;
-  const cards = [...content.querySelectorAll(".card")];
-  const byId = {};
-  cards.forEach((card) => {
-    const slot = el("div", { class: "slot" });
-    card.replaceWith(slot);
-    slot.append(card);
-    byId[cardId(card)] = card;
+const CARDS = {};   // card id -> its element
+// A card becomes a window: it sits in a slot, drags by its body, and has minimize, save, full screen and hide.
+function adoptCard(card) {
+    if (!card.parentElement || !card.parentElement.classList.contains("slot")) {
+      const slot = el("div", { class: "slot" });
+      card.replaceWith(slot);
+      slot.append(card);
+    }
+    CARDS[cardId(card)] = card;
     const title = card.querySelector("h2");
-    if (!title) return;
+    if (!title || card.dataset.adopted) return;
+    card.dataset.adopted = "1";
     const grip = el("span", { class: "card-grip", title: "Drag anywhere on the tile (outside the chart) to move it", "aria-label": "Move " + cardTitle(card), text: "⠿" });
     // The whole tile drags, except from a chart, a field, a button or a link (those keep their own mouse behaviour).
     card.addEventListener("mousedown", (event) => {
@@ -1012,7 +1015,7 @@ function setupSections() {
     card.addEventListener("dragend", () => {
       card.draggable = false;
       card.classList.remove("dragging");
-      content.querySelectorAll(".drop-target").forEach((node) => node.classList.remove("drop-target"));
+      document.querySelectorAll("#content .drop-target").forEach((node) => node.classList.remove("drop-target"));
     });
     // Window buttons: minimize to the title bar, full screen, close (hide; the Sections menu brings it back).
     const tool = (cls, label, text, action) => {
@@ -1033,8 +1036,8 @@ function setupSections() {
     card.addEventListener("drop", (event) => {
       event.preventDefault();
       card.classList.remove("drop-target");
-      const moving = byId[event.dataTransfer.getData("text/plain")];
-      if (!moving || moving === card) return;
+      const moving = CARDS[event.dataTransfer.getData("text/plain")];
+      if (!moving || moving === card || Boolean(moving.dataset.published) !== Boolean(card.dataset.published)) return;   // published tiles swap among themselves
       const from = moving.parentElement, to = card.parentElement;
       to.append(moving);
       from.append(card);
@@ -1042,9 +1045,14 @@ function setupSections() {
       feedback("section", "move", cardTitle(moving), "swapped with " + cardTitle(card));
       if (latest && latest.data) renderCharts(latest.data.charts);   // a chart that changed width is redrawn to fit
     });
-  });
+}
+function setupSections() {
+  const content = document.getElementById("content");
+  if (!content) return;
+  [...content.querySelectorAll(".card")].forEach(adoptCard);
+  const byId = CARDS;
   const state = layoutState();
-  const slots = [...content.querySelectorAll(".slot")];
+  const slots = [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest("#feed"));
   if (state.order) state.order.forEach((id, i) => { if (byId[id] && slots[i]) slots[i].append(byId[id]); });
   (state.hidden || []).forEach((id) => { if (byId[id]) byId[id].classList.add("card-off"); });
   (state.minimized || []).forEach((id) => { if (byId[id]) byId[id].classList.add("card-min"); });
@@ -1054,9 +1062,55 @@ function setupSections() {
   });
   buildSectionsMenu(byId);
 }
+
+// ---------------------------------------------------------------- published tiles: charts and tables pushed from the notebooks
+// desk/tile_feed.py publishes a Plotly figure or a table; it appears here as a tile (top of the page, under the key numbers)
+// with the reason it was published, and is a window like the others. The look (colours, font) is the dashboard's own.
+const PUBLISHED_AXES = ["xaxis", "yaxis", "xaxis2", "yaxis2"];
+function renderPublished(tiles) {
+  const content = document.getElementById("content");
+  if (!content) return;
+  let feed = document.getElementById("feed");
+  if (!feed) {
+    feed = el("section", { class: "grid two", id: "feed", "aria-label": "Published from the notebooks" });
+    content.insertBefore(feed, document.getElementById("tiles").nextSibling);
+  }
+  const wanted = new Set(tiles.map((tile) => tile.key));
+  [...feed.querySelectorAll(".card[data-published]")].forEach((card) => {
+    if (wanted.has(card.dataset.published)) return;
+    delete CARDS[cardId(card)];
+    card.closest(".slot").remove();
+  });
+  tiles.forEach((tile) => {
+    let card = [...feed.querySelectorAll(".card[data-published]")].find((node) => node.dataset.published === tile.key);
+    if (!card) {
+      const inner = tile.kind === "chart" ? el("div", { class: "chart", id: "pub-" + tile.key }) : el("div", { class: "table-wrap", id: "t-pub-" + tile.key });
+      card = el("div", { class: "card published", "data-published": tile.key }, [
+        el("h2", { title: tile.reason || "", text: tile.title }), tile.reason ? el("p", { class: "why", text: tile.reason }) : null, inner]);
+      feed.append(card);
+      adoptCard(card);
+      applyCardState(card);
+    }
+    if (tile.kind === "chart" && typeof Plotly !== "undefined") {
+      const base = baseLayout({ hovermode: "closest", margin: { l: 56, r: 24, t: 30, b: 40 }, colorway: [1, 2, 3, 4, 5].map((i) => token("--series-" + i)) });
+      const layout = Object.assign({}, base, Object.fromEntries(Object.entries(tile.layout || {}).filter(([key]) => !PUBLISHED_AXES.includes(key))));
+      PUBLISHED_AXES.forEach((key) => { if (base[key] || (tile.layout || {})[key]) layout[key] = Object.assign({}, base[key] || {}, (tile.layout || {})[key] || {}); });
+      Plotly.react("pub-" + tile.key, tile.data || [], layout, CONFIG).then(markNumericNotes);
+    } else if (tile.kind === "table") {
+      renderTable("pub-" + tile.key, { columns: tile.columns || [], rows: tile.rows || [] });
+    }
+  });
+  feed.hidden = !tiles.length;
+}
+function applyCardState(card) {   // the remembered minimized and hidden state of a card that was created after load
+  const state = layoutState(), id = cardId(card);
+  if ((state.hidden || []).includes(id)) card.classList.add("card-off");
+  if ((state.minimized || []).includes(id)) card.classList.add("card-min");
+}
+
 function saveOrder() {
   const state = layoutState();
-  state.order = [...document.querySelectorAll("#content .slot")].map((slot) => cardId(slot.firstElementChild));
+  state.order = [...document.querySelectorAll("#content .slot")].filter((slot) => !slot.closest("#feed")).map((slot) => cardId(slot.firstElementChild));
   saveLayout(state);
 }
 function setHidden(id, hidden) {
@@ -1166,24 +1220,85 @@ function buildSectionsMenu(byId) {
   });
   drawSectionsMenu();
 }
+let menuQuery = "";
 function drawSectionsMenu() {
   const menu = document.getElementById("sections-menu");
   if (!menu) return;
-  const rows = [...document.querySelectorAll("#content .slot")].map((slot) => slot.firstElementChild).filter(Boolean).map((card) => {
+  let search = document.getElementById("sections-search");
+  if (!search) {
+    search = el("input", { type: "search", id: "sections-search", class: "sections-search", placeholder: "Search tiles and analytics", "aria-label": "Search tiles and analytics", autocomplete: "off" });
+    search.addEventListener("input", () => { menuQuery = search.value; fillMenuLists(); });
+  }
+  let lists = document.getElementById("sections-lists");
+  if (!lists) lists = el("div", { id: "sections-lists" });
+  menu.replaceChildren(search, lists);
+  fillMenuLists();
+}
+function menuMatches(text) {
+  const words = menuQuery.toLowerCase().split(/\s+/).filter(Boolean);
+  return words.every((word) => String(text).toLowerCase().includes(word));
+}
+function fillMenuLists() {
+  const lists = document.getElementById("sections-lists");
+  if (!lists) return;
+  const heading = (text) => el("div", { class: "sections-head", text });
+  const present = [...document.querySelectorAll("#content .slot")].map((slot) => slot.firstElementChild).filter(Boolean);
+  const rows = present.filter((card) => menuMatches(cardTitle(card))).map((card) => {
     const box = el("input", { type: "checkbox", id: "show-" + cardId(card) });
     box.checked = !card.classList.contains("card-off");
     box.addEventListener("change", () => setHidden(cardId(card), !box.checked));
     return el("label", { class: "sections-row" }, [box, el("span", { text: cardTitle(card).trim() })]);
   });
+  // Available to add: key-number tiles that were hidden, and the notebook sections that can be pulled onto the dashboard.
+  const addable = [];
+  (layoutState().tileHidden || []).filter(menuMatches).forEach((label) => {
+    const add = el("button", { type: "button", class: "sections-add", title: "Show " + label, "aria-label": "Show " + label, text: "+" });
+    add.addEventListener("click", () => { const s = layoutState(); s.tileHidden = (s.tileHidden || []).filter((x) => x !== label); saveLayout(s);
+      feedback("tile", "show", label); if (latest && latest.data) renderTiles(latest.data.kpis || {}); drawSectionsMenu(); });
+    addable.push(el("div", { class: "sections-row" }, [el("span", { text: label + " (key number)" }), add]));
+  });
+  const pulled = new Set([...document.querySelectorAll("#feed .card[data-published]")].map((card) => card.dataset.published));
+  const attention = ((latest && latest.data && latest.data.highlights && latest.data.highlights.attention) || []).map((row) => row.join(" ")).join(" ").toLowerCase();
+  const catalog = ((latest && latest.data && latest.data.catalog) || []).filter((entry) => menuMatches(entry.title + " " + entry.description + " " + entry.keywords))
+    .map((entry) => ({ entry, score: entry.keywords.split(/\s+/).filter((word) => word && attention.includes(word)).length }))
+    .sort((a, b) => b.score - a.score);
+  catalog.forEach(({ entry, score }) => {
+    const made = [...pulled].some((key) => key.startsWith(entry.id.replace(":", "-")));
+    const button = el("button", { type: "button", class: "sections-add", title: made ? "On the dashboard" : "Pull onto the dashboard", "aria-label": "Add " + entry.title, text: made ? "✓" : "+" });
+    if (!made) button.addEventListener("click", () => pullTile(entry, button));
+    addable.push(el("div", { class: "sections-row", title: entry.description || entry.call }, [
+      el("span", { text: (score ? "★ " : "") + entry.title }), button]));
+  });
+  lists.replaceChildren(heading("On the dashboard"), ...rows, ...(rows.length ? [] : [el("div", { class: "sections-empty", text: "No match" })]),
+    heading(`Available to add${menuQuery ? "" : ` (${addable.length})`}`), ...addable, ...(addable.length ? [] : [el("div", { class: "sections-empty", text: "Nothing more to add" })]),
+    ...menuFooter());
+}
+async function pullTile(entry, button) {   // the local dashboard builds the section on this Mac and publishes it
+  if (window.DESK_SOURCE) { button.title = "Pulling needs the local dashboard on the Mac (python -m desk.dashboard)"; button.textContent = "!"; return; }
+  feedback("tile", "pull", entry.title);
+  button.textContent = "…"; button.disabled = true;
+  try {
+    await fetch("/api/tiles/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: entry.id }) });
+    for (let tries = 0; tries < 90; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const status = (await (await fetch("/api/tiles/status")).json())[entry.id] || "";
+      if (status.startsWith("done")) { button.textContent = "✓"; lastRendered = null; load(); return; }
+      if (status.startsWith("failed") || status.startsWith("nothing")) { button.textContent = "!"; button.title = status; button.disabled = false; return; }
+    }
+  } catch (e) { button.textContent = "!"; button.disabled = false; }
+}
+function menuFooter() {
   const state = highlightState(), hidden = state.deleted.length + Object.keys(state.read).length;
-  const restore = hidden ? el("button", { type: "button", class: "sections-reset", text: `Restore ${hidden} hidden highlight${hidden === 1 ? "" : "s"}` }) : null;
-  if (restore) restore.addEventListener("click", () => { saveHighlightState({ read: {}, deleted: [] }); feedback("highlight", "restore", "all"); redrawHighlights(); });
-  const tilesHidden = (layoutState().tileHidden || []).length;
-  const restoreTiles = tilesHidden ? el("button", { type: "button", class: "sections-reset", text: `Restore ${tilesHidden} hidden tile${tilesHidden === 1 ? "" : "s"}` }) : null;
-  if (restoreTiles) restoreTiles.addEventListener("click", () => { const s = layoutState(); delete s.tileHidden; saveLayout(s); feedback("tile", "restore all", "hidden"); if (latest && latest.data) renderTiles(latest.data.kpis || {}); drawSectionsMenu(); });
+  const out = [];
+  if (hidden) {
+    const restore = el("button", { type: "button", class: "sections-reset", text: `Restore ${hidden} hidden highlight${hidden === 1 ? "" : "s"}` });
+    restore.addEventListener("click", () => { saveHighlightState({ read: {}, deleted: [] }); feedback("highlight", "restore", "all"); redrawHighlights(); });
+    out.push(restore);
+  }
   const reset = el("button", { type: "button", class: "sections-reset", text: "Reset layout" });
   reset.addEventListener("click", () => { try { localStorage.removeItem(LAYOUT_KEY); } catch (e) {} location.reload(); });
-  menu.replaceChildren(...rows, ...(restore ? [restore] : []), ...(restoreTiles ? [restoreTiles] : []), reset);
+  out.push(reset);
+  return out;
 }
 
 
@@ -1358,6 +1473,7 @@ ${tables}
 }
 function openReport() {
   if (!latest || !latest.data) return;
+  if (document.documentElement.classList.contains("private") && !confirm("The numbers are hidden on the dashboard. Include them in the report?")) return;
   feedback("report", "open", "dashboard");
   const page = window.open("", "_blank");
   if (!page) return;
@@ -1381,7 +1497,7 @@ function setPrivate(on) {
   feedback("look", "numbers", on ? "hidden" : "shown");
 }
 document.addEventListener("click", (event) => {
-  if (event.target.closest && event.target.closest(".tile .value, .tile .sub, td.num, .highlights .text, .js-plotly-plot .textpoint")) {
+  if (event.target.closest && event.target.closest(".tile .value, .tile .sub, td.num, td.digits, tfoot td, .highlights .text, .js-plotly-plot .textpoint, .js-plotly-plot .bartext")) {
     setPrivate(!document.documentElement.classList.contains("private"));
   }
 });

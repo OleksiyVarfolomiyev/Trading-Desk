@@ -400,3 +400,18 @@ html.private .js-plotly-plot .numeric-note { filter: blur(7px); user-select: non
 .tile-tools { position: absolute; top: 2px; right: 2px; opacity: 0; transition: opacity .12s; background: var(--surface); border-radius: 6px; }
 .tile:hover .tile-tools, .tile:focus-within .tile-tools { opacity: 1; }
 .tile.tile-min .sub, .tile.tile-min .line { display: none; }
+/* Privacy, the rest of the page: every table figure (a number column or any cell with a digit), the chart labels (bar and
+   point text, value ticks, end notes) and the chart hover. Names, headings and signs stay. */
+html.private td.digits, html.private tfoot td, html.private .card-full td.num,
+html.private .js-plotly-plot .bartext, html.private .js-plotly-plot .barlayer text,
+html.private .js-plotly-plot .scatterlayer .textpoint { filter: blur(7px); user-select: none; }
+html.private .js-plotly-plot .hoverlayer { display: none; }
+html.private td.digits { cursor: pointer; }
+.sections-search { width: calc(100% - 16px); margin: 4px 8px 6px; background: transparent; color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; }
+.sections-head { margin: 8px 8px 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.sections-empty { margin: 2px 8px 6px; color: var(--muted); font-size: 12px; }
+.sections-menu .sections-row { justify-content: space-between; }
+.sections-add { background: transparent; border: 1px solid var(--border); color: var(--ink-2); border-radius: 6px; cursor: pointer; padding: 0 8px; font-size: 13px; line-height: 1.5; }
+.sections-add:hover { color: var(--ink); background: var(--border); }
+.card.published .why { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+.sections-menu { min-width: 300px; }

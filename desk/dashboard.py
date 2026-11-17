@@ -56,6 +56,15 @@ STATIC_FILES = {
 }
 
 
+def catalog_entries() -> list[dict]:
+    try:
+        from desk import tile_catalog
+
+        return tile_catalog.entries()
+    except Exception:
+        return []
+
+
 def published_tiles() -> list[dict]:
     try:
         from desk import tile_feed
@@ -453,7 +462,8 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     return {
         "kpis": kpis,
-        "tiles": published_tiles(),   # charts and tables published from the notebooks (desk/tile_feed.py)
+        "tiles": published_tiles(),
+        "catalog": catalog_entries(),   # the notebook sections that can be pulled onto the dashboard (desk/tile_catalog.py)   # charts and tables published from the notebooks (desk/tile_feed.py)
         "highlights": {"well": [list(row) for row in well], "attention": [list(row) for row in attention],
                        "hover": daemon_alerts.hovers(daemon_alerts.read())},  # headlines around a big move
         "tables": tables,
@@ -631,7 +641,11 @@ def make_handler(dashboard: Dashboard, port: int):
             if not self._host_ok():
                 return
             path = self.path.split("?", 1)[0]
-            if path == "/api/state":
+            if path == "/api/tiles/status":
+                from desk import tile_catalog
+
+                self._send(json.dumps(tile_catalog.STATUS).encode(), "application/json")
+            elif path == "/api/state":
                 self._send(dashboard.state_json(), "application/json")
             elif path in STATIC_FILES:
                 name, content_type = STATIC_FILES[path]
@@ -655,6 +669,13 @@ def make_handler(dashboard: Dashboard, port: int):
             if self.path == "/api/refresh":
                 dashboard.wake.set()
                 self._send(b'{"ok": true}', "application/json")
+            elif self.path == "/api/tiles/pull":
+                from desk import tile_catalog
+
+                length = min(int(self.headers.get("Content-Length") or 0), 4_000)
+                wanted = json.loads(self.rfile.read(length) or b"{}").get("id", "")
+                tile_catalog.start_pull(str(wanted))
+                self._send(json.dumps({"ok": True, "status": tile_catalog.STATUS.get(str(wanted), "running")}).encode(), "application/json")
             elif self.path == "/api/feedback":
                 self._send(json.dumps({"ok": True, "saved": save_feedback(self.rfile.read(
                     min(int(self.headers.get("Content-Length") or 0), 64_000)))}).encode(), "application/json")

@@ -26,7 +26,7 @@ class WebSiteTests(unittest.TestCase):
                 shutil.copytree(ROOT / part, copy / part, ignore=shutil.ignore_patterns("site", "__pycache__"))
             subprocess.run(["bash", str(copy / "web" / "build_site.sh")], check=True, capture_output=True)
             site = copy / "web" / "site"
-            self.assertEqual(sorted(path.name for path in site.iterdir()), ["app.css", "app.js", "index.html", "live.js"])
+            self.assertEqual(sorted(path.name for path in site.iterdir()), ["app.css", "app.js", "catalog.json", "index.html", "live.js"])
             self.assertEqual((site / "app.js").read_text(), (ROOT / "desk/dashboard_static/app.js").read_text())
             page = (site / "index.html").read_text()
             self.assertIn("plotly-4.1.1.min.js", page)
