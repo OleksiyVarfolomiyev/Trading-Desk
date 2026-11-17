@@ -1487,8 +1487,14 @@ function setupSections() {
   const state = layoutState();
   const slots = [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest(".feed"));
   if (state.order) {   // the saved order of the cards: the slots follow in that sequence, after the highlights
-    let previous = content.querySelector(".highlights-card") || content.querySelector(".tiles");
-    state.order.forEach((id) => { const card = byId[id]; if (card && card.parentElement && !card.closest(".feed") && previous) { previous.after(card.parentElement); previous = card.parentElement; } });
+    let previous = content.querySelector(".tiles");
+    state.order.forEach((id) => {
+      const card = byId[id], slot = card && card.parentElement;
+      if (!slot || card.closest(".feed") || !previous) return;
+      if (slot === previous || slot.contains(previous)) { previous = slot; return; }   // already in place (the first card holds the anchor)
+      previous.after(slot);
+      previous = slot;
+    });
   }
   if (!state.defaultsOff) {   // cards hidden until asked for (the account views: backend detail), once per browser
     const ids = [...content.querySelectorAll(".card[data-default-off]")].map(cardId);
@@ -2343,6 +2349,6 @@ document.addEventListener("click", (event) => {
   setPrivate(document.documentElement.classList.contains("private"));
 })();
 
-watchUse();
-setupSections();   // after every const above is defined (the Sections menu reads the price strip's)
+// Nothing in the arrangement may stop the data from loading: each setup step is isolated, then the poll starts.
+for (const step of [watchUse, setupSections]) { try { step(); } catch (error) { console.error("dashboard setup:", error); } }
 poll();
