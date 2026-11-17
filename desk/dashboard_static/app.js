@@ -136,7 +136,7 @@ function feedback(kind, action, target, detail) {
   try { queue = JSON.parse(localStorage.getItem(FEEDBACK_QUEUE_KEY)) || []; } catch (e) {}
   queue.push({ at: new Date().toISOString(), kind, action, target: String(target || "").slice(0, 120),
     detail: detail ? String(detail).slice(0, 300) : undefined, view: document.documentElement.dataset.view || "tables",
-    style: document.documentElement.dataset.style, mode: document.documentElement.dataset.mode });
+    style: document.documentElement.dataset.style, mode: document.documentElement.dataset.mode, screen: document.documentElement.dataset.screen });
   try { localStorage.setItem(FEEDBACK_QUEUE_KEY, JSON.stringify(queue.slice(-200))); } catch (e) {}
   flushFeedback();
 }
@@ -1484,12 +1484,13 @@ drawModes();
 // places. A card is hidden with its eye button and brought back from the Sections menu. Order and hidden cards are
 // remembered in the browser (touch screens have no drag: use the menu there).
 const LAYOUT_KEY = "desk-layout";
-const LAYOUT_VERSION = 5;   // 3: now first, history and the account view last; an arrangement saved on an older page is dropped
+const LAYOUT_VERSION = 6;   // 3: now first, history and the account view last; an arrangement saved on an older page is dropped
 function layoutState() {
   let state = {};
   try { state = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (e) { return {}; }
   if (state.version !== LAYOUT_VERSION) {   // keep hidden and minimized choices, not slot positions of the old page
     delete state.order;
+    if ((state.version || 0) < 6 && state.hidden) state.hidden = state.hidden.filter((id) => id !== "chart-value");   // 6: it lives on the Research screen
     if ((state.version || 0) < 5) { delete state.cols; delete state.widths; delete state.history; }   // 5: news left, numbers in the middle, charts right
     state.version = LAYOUT_VERSION;
     try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(state)); } catch (e) {}
@@ -2879,8 +2880,9 @@ document.addEventListener("click", (event) => {
 // (what is happening: highlights, positions, exposure, strategies, candidates, market making, the return chart) and Research (the
 // value and return charts and the analytics pulled from the notebooks). The dots sit at the bottom; the choice is remembered.
 const SCREENS = ["now", "research"];
+// Research keeps the research items in: the candidates (short and market-making), the strategy result, the long charts, and whatever is pulled from the notebooks.
 const SCREEN_OF = { now: ["hl-attention", "t-positions", "t-positions_stocks", "t-exposure", "t-strategies", "t-candidates", "t-market_making", "t-mm_candidates", "chart-twr"],
-  research: ["chart-value", "chart-twr"] };
+  research: ["t-candidates", "t-mm_candidates", "t-strategies", "chart-value", "chart-twr"] };
 function screensFor(card) {
   const id = cardId(card);
   if (card.dataset.published) return "research";

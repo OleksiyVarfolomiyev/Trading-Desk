@@ -45,6 +45,8 @@ def summary(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
     used = frame[frame["kind"] == "use"]
     if len(used):   # what is clicked and rested on, by tile, and the tiles marked unused
         out["Use by tile (hourly lines)"] = used.groupby(["target", "action"]).size().rename("lines").reset_index().sort_values("lines", ascending=False)
+    if "screen" in frame.columns and frame["screen"].notna().any():   # what is done on each screen (Now, Research)
+        out["Actions by screen"] = frame.dropna(subset=["screen"]).groupby(["screen", "kind"]).size().rename("events").reset_index().sort_values("events", ascending=False)
     for kind, title in (("section", "Sections"), ("tile", "Key-number tiles"), ("asset", "Assets opened"), ("look", "Look")):
         part = frame[frame["kind"] == kind]
         if len(part):
