@@ -1329,9 +1329,9 @@ function saveLayout(state) {
   try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(state)); } catch (e) {}
 }
 const cardId = (card) => { const inner = card.querySelector("[id]"); return inner ? inner.id : ""; };
-const cardTitle = (card) => {   // the heading without its icon, grip and buttons
+const cardTitle = (card) => {   // the heading without its icon, grip and buttons (the untitled highlights card is "Highlights")
   const h = card.querySelector("h2");
-  if (!h) return "";
+  if (!h) return card.querySelector("#hl-attention") ? "Highlights" : "";
   const copy = h.cloneNode(true);
   copy.querySelectorAll(".card-grip, .card-tools, .icon").forEach((node) => node.remove());
   return copy.textContent.trim();
