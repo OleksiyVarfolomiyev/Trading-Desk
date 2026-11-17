@@ -1185,7 +1185,7 @@ function renderCharts(charts) {
   const lineFor = (s, i) => /^crypto/i.test(s.name) ? { width: 1.8, color: token("--kind-crypto") }
     : /^stocks/i.test(s.name) ? { width: 1.8, color: token("--kind-stocks") }
     : /^(total|desk)/i.test(s.name) ? { width: 2.6, color: token("--ink") }
-    : /^btc/i.test(s.name) ? { width: 1.4, dash: "dash", color: token("--kind-crypto") }
+    : /^btc/i.test(s.name) ? { width: 1.4, dash: "dot", color: token("--kind-crypto") }
     : { width: 1.4, dash: "dot", color: token("--kind-stocks") };
   const twr = (charts.twr || []).map((s, i) => ({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
@@ -1414,7 +1414,7 @@ function drawIntraday(node, days) {
   const desk = rebased(data.desk || [], () => 1);
   if (desk) lines.push(["desk", desk, { width: 2.6, color: token("--ink") }]);
   const btc = rebased(data.BTC || [], (row) => row[1]);
-  if (btc) lines.push(["BTC", btc, { width: 1.4, dash: "dash", color: colorFor("BTC") }]);
+  if (btc) lines.push(["BTC", btc, { width: 1.4, dash: "dot", color: colorFor("BTC") }]);
   const sp = rebased(data["S&P500"] || [], (row) => row[1]);
   if (sp) lines.push(["S&P500", sp, { width: 1.4, dash: "dot", color: colorFor("S&P500") }]);
   if (!lines.length) return false;

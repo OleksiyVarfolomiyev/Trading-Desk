@@ -66,7 +66,7 @@ def _percent(value):
 
 
 # Columns coloured by sign (green up, red down) and the Side column (LONG green, SHORT red).
-SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "Amount", "uPnL (%)", "24h change (%)", "Funding (APR)", "% of position"}
+SIGNED_COLUMNS = {"uPnL", "Unrealized PnL", "Net", "Value", "Amount", "ROE (%)", "uPnL (%)", "24h change (%)", "Funding (APR)", "% of position"}
 
 
 def _signed_style(row_index, column, value, row):
@@ -511,7 +511,7 @@ class DeskOverview:
             total = {"Symbol": "Total", "Account": "", "Quantity": float("nan"),
                      "Avg price": float("nan"), "Mark": float("nan"),
                      "Value": group["Value"].sum(), "uPnL": group["uPnL"].sum(),
-                     "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"),
+                     "uPnL (%)": group["uPnL"][priced].sum() / cost if cost else float("nan"), "ROE (%)": float("nan"),
                      "24h change (%)": day_change_total(group["Value"], group["24h change (%)"]),
                      "Funding (APR)": funding_total(group["Value"], group["Funding (APR)"]),
                      "Weight": float("nan"), "Exposure / equity": group["Exposure / equity"].sum()}
@@ -523,7 +523,7 @@ class DeskOverview:
                                                      text={"Account", "Symbol"})]
             display_interactive_table(
                 group, formatters={"Quantity": number, "Avg price": usd_price, "Mark": usd_price,
-                                   "Value": _money, "uPnL": _money, "uPnL (%)": _signed_percent,
+                                   "Value": _money, "uPnL": _money, "ROE (%)": _signed_percent, "uPnL (%)": _signed_percent,
                                    "24h change (%)": _signed_percent, "Funding (APR)": _signed_percent, "Weight": _percent,
                                    "Exposure / equity": _percent},
                 cell_style=_signed_style, bold_last=True, title=f"OPEN POSITIONS: {klass.upper()}",

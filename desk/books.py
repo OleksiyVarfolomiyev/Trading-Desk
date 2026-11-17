@@ -30,6 +30,7 @@ import pandas as pd
 from IPython.display import display
 
 from desk.charts import show as show_chart
+from desk.overview import SYMBOLIC_HOLDINGS
 from desk.numbers import pct as _pct, since as _since, usd as _usd
 
 KINDS = {"Crypto": "BTC", "Stocks": "SPY"}
@@ -788,12 +789,12 @@ class Book:
 
         perf = self.performance().set_index("Window")
         good, attention = [], []
-        for window in ("7D", "30D"):
+        for window, short in (("7D", "W"), ("30D", "M")):   # the dashboard's period letters
             if window in perf.index:
                 r = perf.at[window, "Return (on equity)"]
                 same = perf.at[window, f"Same $ in {self.benchmark}"] if f"Same $ in {self.benchmark}" in perf else np.nan
-                text = f"{_pct(r)}; same $ in {self.benchmark} {_pct(same)}"
-                (good if r > 0 else attention).append((f"Return {window}", text))
+                text = f"{_pct(r)}, {_pct(same)} same $ in {self.benchmark}"
+                (good if r > 0 else attention).append((f"Return {short}", text))
         summary = self.summary()
         exposure = self.exposure()
         risk = self.realized_risk()
@@ -803,23 +804,23 @@ class Book:
             beta = today.iloc[0][f'Beta {self.benchmark}']
             gross = abs(summary["Gross"])
             held = beta * self.capital / gross if gross else np.nan
-            attention.append(("Beta now", f"{beta:.2f} ({held:.2f} per $), net {_pct(summary['Net / equity'])}, "
+            attention.append(("Beta now", f"{beta:.2f}, {held:.2f} per $, net {_pct(summary['Net / equity'])}, "
                               f"gross {_pct(summary['Gross / equity'])}"))
         realized = risk[risk["Basis"].str.startswith("Last 90")] if len(risk) else risk
         if len(realized) and f"Beta {self.benchmark}" in realized:
             row = realized.iloc[0]
-            attention.append(("Beta realized", f"{row[f'Beta {self.benchmark}']:.2f} over {row['Periods']:.0f} days "
-                              f"({row.get(f'Beta {self.benchmark} 90% range', 'n/a')})"))
+            attention.append(("Beta realized", f"{row[f'Beta {self.benchmark}']:.2f} over {row['Periods']:.0f} days, "
+                              f"{row.get(f'Beta {self.benchmark} 90% range', 'n/a')}"))
         if np.isfinite(summary["Open risk / cap"]):
             attention.append(("Open risk", f"{_pct(summary['Open risk / cap'])} of cap"))
         movers = self.attribution(7)
-        movers = movers[movers["Market"] != "Total"] if len(movers) else movers
+        movers = movers[(movers["Market"] != "Total") & ~movers["Market"].isin(SYMBOLIC_HOLDINGS)] if len(movers) else movers   # KYIV and SWMR are symbolic
         if len(movers):
             best, worst = movers.iloc[-1], movers.iloc[0]
             if best["PnL"] > 0:
-                good.append(("Best 7D", f"{best['Market']} {_pct(best['PnL / equity'])}"))
+                good.append(("Best W", f"{best['Market']} {_pct(best['PnL / equity'])}"))
             if worst["PnL"] < 0:
-                attention.append(("Worst 7D", f"{worst['Market']} {_pct(worst['PnL / equity'])}"))
+                attention.append(("Worst W", f"{worst['Market']} {_pct(worst['PnL / equity'])}"))
         show_lines(good, attention)
 
     def show_positions(self):
