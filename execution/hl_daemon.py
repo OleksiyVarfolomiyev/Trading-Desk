@@ -3002,9 +3002,15 @@ class ResearchFeed:
                 from desk import source_watch
 
                 findings = source_watch.run(held=set(self.daemon.state.held_coins()))
+                try:   # and the products the desk learns from: IB, Robinhood, DefiLlama, Hyperliquid (desk/reference_watch.py)
+                    from desk import reference_watch
+
+                    findings += reference_watch.run()
+                except Exception as exc:
+                    log(f"reference watch failed ({type(exc).__name__}: {exc})")
                 log(f"source watch: {len(findings)} change{'s' if len(findings) != 1 else ''}" + (": " + " | ".join(findings)[:400] if findings else ""))
                 if findings:
-                    self.daemon.alerts.set("sources", "Data sources changed", " ".join(findings)[:600], ttl=86400)
+                    self.daemon.alerts.set("sources", "Sources and reference products changed", " ".join(findings)[:600], ttl=86400)
         except Exception as exc:
             log(f"source watch failed ({type(exc).__name__}: {exc})")
         frame = journal.strategy_frame()

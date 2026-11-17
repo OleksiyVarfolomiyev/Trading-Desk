@@ -33,3 +33,25 @@ class Diff(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReferenceDiff(unittest.TestCase):
+    def test_new_and_gone_headlines_and_a_free_api_going_paid(self):
+        from desk import reference_watch as rw
+
+        old = {"pages": {"RH": {"status": 200, "headlines": ["Cortex scanners", "Old item"]}}, "defillama": {"fees": {"status": 200, "items": 10}}}
+        new = {"pages": {"RH": {"status": 200, "headlines": ["Cortex scanners", "Social trading"]}}, "defillama": {"fees": {"status": 402, "items": 0}}}
+        text = " | ".join(rw.diff(old, new))
+        self.assertIn("RH: new — Social trading", text)
+        self.assertIn("RH: gone — Old item", text)
+        self.assertIn("DefiLlama fees is no longer free", text)
+
+    def test_headlines_from_html_atom_and_llms_txt(self):
+        from desk import reference_watch as rw
+
+        text = "<title>Releases</title><h2>Cortex <b>scanners</b></h2>\n- [Perpetuals](https://x/perps)\n"
+        self.assertEqual(rw.headlines(text), ["Cortex scanners", "Releases", "Perpetuals"])
+
+
+if __name__ == "__main__":
+    unittest.main()
