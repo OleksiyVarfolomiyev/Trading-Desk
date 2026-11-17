@@ -216,8 +216,13 @@ const VIEWS = {
   candidates: { link: (r) => hlLink(r.Coin), columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
   mm_candidates: { link: (r) => hlLink(r.Coin), columns: [["Coin"], ["Daily range 30d"], ["Longs pay 7d (APR)"], ["Own ladder edge per $1k"], ["Volume 24h"], ["Notes"]] },
-  market_making: { derive: (r) => ({ Coin: marketName(r.Coin) }), link: (r) => hlLink(r.Coin),
-    columns: [["Account"], ["Coin"], ["Side"], ["Status"], ["Since"], ["Ladder PnL"], ["Position vs base"], ["Fills"]] },
+  // Live ladders only (stopped ones are research); the ladder's result as a % of what it traded, the rest on hover.
+  market_making: { derive: (r) => ({ Coin: marketName(r.Coin), _return: isNum(r["Ladder PnL"]) && r.Volume ? r["Ladder PnL"] / r.Volume : NaN }),
+    keep: (r) => !/stopped/i.test(String(r.Status || "")),
+    link: (r) => hlLink(r.Coin),
+    hover: (r) => [isNum(r["Ladder PnL"]) ? usd(r["Ladder PnL"]) : "", isNum(r.Fills) ? `${r.Fills} fills` : "", r.Since ? `since ${r.Since}` : "",
+      r.Status || ""].filter(Boolean).join(" · "),
+    columns: [["Coin"], ["_return", "Return", "spct"]] },
 };
 
 function columnsFor(view) {   // the uPnL column in dollars when the $ switch is on
@@ -256,7 +261,7 @@ const CHART_VIEWS = {
   positions: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
   positions_stocks: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
   wallets: { kind: "bars", label: "Symbol", value: "% of desk", text: null },
-  market_making: { kind: "bars", label: "Coin", value: "Ladder PnL", text: "Fills" },
+  market_making: { kind: "bars", label: "Coin", value: "Return", text: null },
   strategies: { kind: "stacked", label: "Strategy", series: ["Crypto", "Stocks"] },   // each strategy's result, crypto and stocks stacked
 };
 const LABEL_FONT = (size = 12, color) => ({ size, color: color || token("--ink-2") });   // the value next to each bar's end
@@ -310,14 +315,14 @@ function renderTableChart(id, spec) {
     if (plan.by === "window") {   // one group per window, one bar per account inside it
       traces = rows.map((row, i) => ({ type: "bar", orientation: "h", name: names[i], y: series,
         x: series.map((key) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
-        text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false,
+        text: series.map((key) => text(key, row[key])), textposition: "auto", insidetextanchor: "end", cliponaxis: false, insidetextfont: { size: 12, color: "#ffffff" },
         textfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
         hoverinfo: "skip" }));   // the value is on the bar
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
     } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
-      text: rows.map((row) => text(key, row[key])), textposition: "outside", cliponaxis: false,
+      text: rows.map((row) => text(key, row[key])), textposition: "auto", insidetextanchor: "end", cliponaxis: false, insidetextfont: { size: 12, color: "#ffffff" },
       textfont: LABEL_FONT(12, rows.map((row) => (row[key] < 0 ? bad : good))),
       hoverinfo: "skip" }));   // the value is on the bar
     if (plan.by !== "window") {
@@ -344,7 +349,7 @@ function renderTableChart(id, spec) {
     const bar = (key, color, title) => ({ type: "bar", orientation: "h", name: title, y: names, marker: { color },
       x: rows.map((row) => (isNum(row[key]) ? Math.abs(row[key]) * axis.mult * (key === plan.short ? -1 : 1) : null)),
       text: rows.map((row, i) => (carrier[i] === key && !roomy[i] ? `${names[i]} · ` : "") + text(key, row[key])),
-      textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(12, color),
+      textposition: "auto", insidetextanchor: "end", cliponaxis: false, insidetextfont: { size: 12, color: "#ffffff" }, outsidetextfont: LABEL_FONT(12, color),
       hoverinfo: "skip" });   // the value is on the bar
     traces = [bar(plan.long, good, "Long"), bar(plan.short, bad, "Short"),
       { type: "scatter", mode: "markers+text", name: "Net", y: names, textposition: "middle right",
@@ -370,15 +375,16 @@ function renderTableChart(id, spec) {
     const drawn = (i) => Math.sign(rows[i][plan.value]) * Math.min(Math.abs(rows[i][plan.value]), cap);
     const clipped = (i) => Math.abs(rows[i][plan.value]) > cap;
     const biggest = Math.max(...order.map((i) => Math.abs(drawn(i)))) || 1;
-    const fits = (i) => nameFits(Math.abs(drawn(i)) / biggest, names[i], host, plan.text ? 130 : 90);
     const figures = (i) => [text(plan.value, rows[i][plan.value]), plan.text ? text(plan.text, rows[i][plan.text]) : ""]
       .filter(Boolean).join(" · ");
+    const fits = (i) => nameFits(Math.abs(drawn(i)) / biggest, names[i] + "   " + figures(i), host, plan.text ? 130 : 90);
     traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => drawn(i) * axis.mult),
       marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)) }, showlegend: false,
       // A short bar has no room for its name inside: the name joins the figures at its end instead of overlapping them.
       text: order.map((i) => (clipped(i) ? "» " : "") + (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
-      textposition: "outside", cliponaxis: false,
-      textfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
+      textposition: "auto", insidetextanchor: "end", cliponaxis: false,   // inside the bar's end when it fits
+      insidetextfont: { size: 13, color: INSIDE_INK() },
+      outsidetextfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
       ...(() => {   // a pop-up only where there is something to see: a big 24h move or a funding rate that matters
         const notable = (row) => [
           isNum(row["24h"]) && Math.abs(row["24h"]) >= 0.05 ? `${text("24h", row["24h"])} 24h` : "",
