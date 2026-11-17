@@ -218,6 +218,25 @@ async function readBody(request) {
 // look): one JSON line per event in DESK_FEEDBACK (default ~/.trading-desk/feedback.jsonl), read back by
 // research/feedback_summary.py. The browser sends a small batch; anything malformed is dropped.
 const FEEDBACK_FILE = process.env.DESK_FEEDBACK || path.join(HOME, ".trading-desk", "feedback.jsonl");
+const HIGHLIGHT_STATE_FILE = process.env.DESK_HIGHLIGHT_STATE || path.join(HOME, ".trading-desk", "highlight_state.json");
+async function highlightState(request, response) {
+  if (request.method === "GET") {
+    let text = '{"read":{},"deleted":[]}';
+    try { text = await fsp.readFile(HIGHLIGHT_STATE_FILE, "utf8"); } catch (error) { /* no answers yet */ }
+    response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    response.end(text);
+    return;
+  }
+  if (request.method !== "POST") return response.writeHead(405).end();
+  let state = {};
+  try { const raw = await readBody(request); state = raw.length < 128_000 ? JSON.parse(raw.toString("utf8")) : {}; } catch (error) { state = {}; }
+  if (!state || typeof state.read !== "object" || !Array.isArray(state.deleted)) {
+    response.writeHead(400, { "Content-Type": "application/json" }); response.end('{"error":"bad state"}'); return;
+  }
+  await fsp.mkdir(path.dirname(HIGHLIGHT_STATE_FILE), { recursive: true });
+  await fsp.writeFile(HIGHLIGHT_STATE_FILE, JSON.stringify({ read: state.read, deleted: state.deleted.filter((x) => typeof x === "string").slice(0, 500) }));
+  response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }); response.end('{"ok":true}');
+}
 async function saveFeedback(request, response) {
   const raw = await readBody(request);
   let events = [];
@@ -317,6 +336,7 @@ async function handle(request, response) {
     return;
   }
   if (url.pathname === "/feedback" && request.method === "POST") return saveFeedback(request, response);
+  if (url.pathname === "/highlight_state") return highlightState(request, response);
   if (url.pathname === "/action" && request.method === "POST") return dashboardAction(request, response);
   if (url.pathname === "/ladder" && request.method === "POST") {   // stop a market-making ladder, or start a neutral one (the confirmations are the click)
     let body = {};

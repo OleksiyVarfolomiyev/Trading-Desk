@@ -1032,6 +1032,29 @@ function highlightState() {
 }
 function saveHighlightState(state) {
   try { localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(state)); } catch (e) {}
+  // The reviewed state belongs to the dashboard account, so desktop and phone share it.
+  const url = window.DESK_SOURCE ? "/highlight_state" : "/api/highlight_state";
+  fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+    body: JSON.stringify(state) }).catch(() => {});
+}
+let highlightStateLoaded = false;
+async function loadHighlightState() {
+  if (highlightStateLoaded) return;
+  highlightStateLoaded = true;
+  try {
+    const response = await fetch(window.DESK_SOURCE ? "/highlight_state" : "/api/highlight_state", { cache: "no-store", credentials: "same-origin" });
+    if (!response.ok) return;
+    const shared = await response.json();
+    if (shared && typeof shared === "object" && shared.read && Array.isArray(shared.deleted)) {
+      const local = highlightState();
+      const merged = { read: Object.assign({}, shared.read, local.read), deleted: [...new Set([...(shared.deleted || []), ...(local.deleted || [])])] };
+      try { localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(merged)); } catch (e) {}
+      if (Object.keys(merged.read).length !== Object.keys(shared.read).length || merged.deleted.length !== shared.deleted.length) {
+        const url = window.DESK_SOURCE ? "/highlight_state" : "/api/highlight_state";
+        fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(merged) }).catch(() => {});
+      }
+    }
+  } catch (e) { /* retain this browser's saved state while offline */ }
 }
 function redrawHighlights() {
   if (!latest || !latest.data) return;
@@ -1326,6 +1349,7 @@ function render(doc) {
 // The web copy (web/live.js) builds the same document in the browser and sets DESK_SOURCE.
 async function load() {
   try {
+    await loadHighlightState();
     if (window.DESK_SOURCE) {
       latest = await window.DESK_SOURCE();
       render(latest);

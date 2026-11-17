@@ -224,6 +224,22 @@ def published_tiles() -> list[dict]:
 
 
 FEEDBACK_FILE = Path(__file__).resolve().parents[1] / "data" / "feedback.jsonl"
+HIGHLIGHT_STATE_FILE = Path(__file__).resolve().parents[1] / "data" / "highlight_state.json"
+
+
+def save_highlight_state(raw: bytes, path: Path | None = None) -> bool:
+    """Save the dashboard's reviewed highlights for the next browser/device session."""
+    try:
+        state = json.loads(raw.decode("utf-8"))
+        if not isinstance(state, dict) or not isinstance(state.get("read"), dict) or not isinstance(state.get("deleted"), list):
+            return False
+        clean = {"read": state["read"], "deleted": [x for x in state["deleted"] if isinstance(x, str)][:500]}
+        destination = path or HIGHLIGHT_STATE_FILE
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(clean), encoding="utf-8")
+        return True
+    except (ValueError, UnicodeDecodeError, OSError):
+        return False
 
 
 def save_feedback(raw: bytes, path: Path | None = None) -> int:
@@ -801,7 +817,13 @@ def make_handler(dashboard: Dashboard, port: int):
             if not self._host_ok():
                 return
             path = self.path.split("?", 1)[0]
-            if path == "/api/tiles/status":
+            if path == "/api/highlight_state":
+                try:
+                    payload = HIGHLIGHT_STATE_FILE.read_bytes()
+                except OSError:
+                    payload = b'{"read":{},"deleted":[]}'
+                self._send(payload, "application/json")
+            elif path == "/api/tiles/status":
                 from desk import tile_catalog
 
                 self._send(json.dumps(tile_catalog.STATUS).encode(), "application/json")
@@ -839,6 +861,9 @@ def make_handler(dashboard: Dashboard, port: int):
             elif self.path == "/api/feedback":
                 self._send(json.dumps({"ok": True, "saved": save_feedback(self.rfile.read(
                     min(int(self.headers.get("Content-Length") or 0), 64_000)))}).encode(), "application/json")
+            elif self.path == "/api/highlight_state":
+                self._send(json.dumps({"ok": save_highlight_state(self.rfile.read(
+                    min(int(self.headers.get("Content-Length") or 0), 128_000)))}).encode(), "application/json")
             else:
                 self.send_error(404)
 
