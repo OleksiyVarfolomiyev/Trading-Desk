@@ -501,3 +501,8 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 .highlights-card .highlights { margin: 0; }
 .highlights-card .highlights.well:not(:empty) { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--grid); }
 .highlights.well li .area { color: var(--good-text); }
+/* Card names on hover only; the heading keeps its height small. */
+.card h2 { min-height: 18px; margin-bottom: 2px; }
+.card h2 .card-name { opacity: 0; transition: opacity .12s; font-weight: 500; color: var(--muted); }
+.card:hover h2 .card-name, .card:focus-within h2 .card-name, .card.card-min h2 .card-name, .card.card-full h2 .card-name { opacity: 1; }
+@media (hover: none) { .card h2 .card-name { opacity: 1; } }

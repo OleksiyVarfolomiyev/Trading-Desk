@@ -187,7 +187,13 @@ const POSITION_VIEW = {
   align: { "Symbol": 28, "uPnL": 18, "24h": 18, "Funding (APR)": 18, "Weight": 18 },
 };
 const VIEWS = {
-  performance: { columns: [["Account", "Book"], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
+  performance: {
+    // One window at a time, as the charts: the window's chips appear on the card's hover.
+    columnsNow: () => {
+      const window = { "1D": ["Return 24h", "24h"], "1W": ["Return 7D", "7d"], "1M": ["Return 30D", "30d"], All: ["Return since inception", "since start"] }[currentScale("performance")];
+      return [["Account", "Book"], window];
+    },
+    columns: [["Account", "Book"], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
     ["Return 90D", "90d"], ["Return 1Y", "1y"], ["Return since inception", "Since start"], ["Since", "Start"]] },
   accounts: {
     keep: (r) => !/wallet$/i.test(String(r.Account || "")),  // margin and leverage mean nothing for a wallet
@@ -225,7 +231,8 @@ const VIEWS = {
     columns: [["Coin"], ["_return", "Return", "spct"]] },
 };
 
-function columnsFor(view) {   // the uPnL column in dollars when the $ switch is on
+function columnsFor(view) {   // the uPnL column in dollars when the $ switch is on; a view can choose its own columns
+  if (view.columnsNow) return view.columnsNow();
   return pnlUnit === "usd" ? view.columns.map((column) => (column[0] === "uPnL (%)" ? ["uPnL", "uPnL"] : column)) : view.columns;
 }
 function applyView(id, spec, context) {
@@ -892,8 +899,12 @@ function renderCharts(charts) {
     hovertemplate: "%{fullData.name}: %{y:.1f}%<extra></extra>",
   }));
   // % since the start; the desk line ends at the "TW return" tile.
-  const labels = endLabels(charts.twr || [], (v) => readablePct(v / 100));
+  const shortName = (name) => (/^(total|desk)/i.test(name) ? "desk" : String(name).replace(/ book$/i, ""));
+  const drawn = (charts.twr || []).map((s, i) => [s, twr[i]]).filter(([s]) => s.y.length);
+  const labels = endLabels(charts.twr || [], (v) => readablePct(v / 100)).map((label, i) => Object.assign(label, {
+    text: `${shortName(drawn[i][0].name)} ${label.text}`, font: { size: 11, color: drawn[i][1].line.color || token("--ink-2") } }));
   const twrLayout = baseLayout({
+    showlegend: false,   // the colours and the end labels name the lines
     annotations: labels,
     shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }],
   });
@@ -1034,7 +1045,9 @@ function setScale(element, scale) {
   try { localStorage.setItem("desk-scales", JSON.stringify(scaleChoices)); } catch (e) {}
   feedback("look", "scale " + element, scaleChoices[element]);
   if (!latest || !latest.data) return;
-  if (element === "tile") renderTiles(latest.data.kpis || {}); else { zoomCharts(); drawChartScales(); }
+  if (element === "tile") renderTiles(latest.data.kpis || {});
+  else if (element === "performance") { renderTable("performance", applyView("performance", latest.data.tables.performance, { deskValue: (latest.data.kpis || {}).desk_value })); drawChartScales(); }
+  else { zoomCharts(); drawChartScales(); }
 }
 function scaleChips(element) {   // the element's own scale buttons, shown on its hover
   const active = currentScale(element), auto = (scaleChoices[element] || "auto") === "auto";
@@ -1044,7 +1057,12 @@ function scaleChips(element) {   // the element's own scale buttons, shown on it
     return chip;
   }));
 }
-function drawChartScales() {   // the value charts' cards carry their scale chips in the heading
+function drawChartScales() {   // the value charts' and the performance table's cards carry their scale chips in the heading
+  const perf = document.getElementById("t-performance"), perfTitle = perf && perf.closest(".card") && perf.closest(".card").querySelector("h2");
+  if (perfTitle) {
+    const chips = scaleChips("performance"), old = perfTitle.querySelector(".scale-chips");
+    if (old) old.replaceWith(chips); else { const tools = perfTitle.querySelector(".card-tools"); if (tools) tools.before(chips); else perfTitle.append(chips); }
+  }
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id), title = node && node.closest(".card") && node.closest(".card").querySelector("h2");
     if (!title) return;
@@ -1178,6 +1196,10 @@ function adoptCard(card) {
     if (!title || card.dataset.adopted) return;
     markKinds(title);
     card.dataset.adopted = "1";
+    // The name shows on hover: most cards say what they are by what they hold (and the dots by their colour).
+    [...title.childNodes].forEach((node) => {
+      if (node.nodeType === 3 && node.textContent.trim()) node.replaceWith(el("span", { class: "card-name", text: node.textContent }));
+    });
     const grip = el("span", { class: "card-grip", title: "Drag anywhere on the tile (outside the chart) to move it", "aria-label": "Move " + cardTitle(card), text: "⠿" });
     // The whole tile drags, except from a chart, a field, a button or a link (those keep their own mouse behaviour).
     card.addEventListener("mousedown", (event) => {
