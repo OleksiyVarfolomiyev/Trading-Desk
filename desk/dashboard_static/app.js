@@ -877,7 +877,7 @@ function renderTiles(k, theses = [], execution = {}) {
 }
 // The key-number tiles are windows too: drag one onto another to swap, minimize to label and value, save as an image, hide
 // (the Sections menu brings hidden ones back). Order, minimized and hidden are remembered with the layout.
-const EXTRA_TILES = ["Return 30D", "MW return", "TW return", "Positions", "Stress", "Held", "Maker"];
+const EXTRA_TILES = ["Return 30D", "MW return", "TW return", "Positions"];
 function arrangeTiles(host, tiles) {
   let state = layoutState();
   if (!state.tileExtras) {   // the extra key numbers start hidden, once per browser
@@ -886,9 +886,9 @@ function arrangeTiles(host, tiles) {
     saveLayout(state);
     state = layoutState();
   }
-  if (!state.stressTile) {   // the stress tile arrived later: hidden until added, once per browser
-    state.tileHidden = [...new Set([...(state.tileHidden || []), "Stress", "Held", "Maker"])];
-    state.stressTile = true;
+  if (!state.tilesShown) {   // Stress, Held and Maker are on from the start (they were hidden for a day), once per browser
+    state.tileHidden = (state.tileHidden || []).filter((name) => !["Stress", "Held", "Maker"].includes(name));
+    state.tilesShown = true;
     saveLayout(state);
     state = layoutState();
   }
