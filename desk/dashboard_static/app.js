@@ -321,6 +321,11 @@ function whenVisible(host, draw) {
   lazyCharts.set(host, draw);
   lazyObserver.observe(host);
 }
+// A bar's colour is its asset class (crypto orange, stocks blue); the side is the direction it points and the sign colour of its figure.
+function kindColor(id, row) {
+  const stocks = id === "positions_stocks" || String(row.Symbol || row.Coin || "").includes(":") || /^(equity|stock|etf|tradfi)/i.test(String(row["Asset class"] || ""));
+  return token(stocks ? "--kind-stocks" : "--kind-crypto");
+}
 function renderTableChart(id, spec, override) {
   const host = document.getElementById("t-" + id);
   const plan = override || chartPlan(id, spec);
@@ -435,7 +440,7 @@ function renderTableChart(id, spec, override) {
       .filter(Boolean).join(" · ");
     const fits = (i) => nameFits(Math.abs(drawn(i)) / biggest, names[i] + "   " + figures(i), host, plan.text ? 130 : 90);
     traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => drawn(i) * axis.mult),
-      marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)) }, showlegend: false,
+      marker: { color: order.map((i) => kindColor(id, rows[i])) }, showlegend: false,
       // A short bar has no room for its name inside: the name joins the figures at its end instead of overlapping them.
       text: order.map((i) => (clipped(i) ? "» " : "") + (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
       textposition: "auto", insidetextanchor: "end", cliponaxis: false,   // inside the bar's end when it fits
@@ -447,7 +452,7 @@ function renderTableChart(id, spec, override) {
           isNum(row["Funding (APR)"]) && Math.abs(row["Funding (APR)"]) >= 0.5 ? `${text("Funding (APR)", row["Funding (APR)"])} funding` : "",
         ].filter(Boolean).join(" · ");
         const lines = order.map((i) => notable(rows[i]));
-        return lines.some(Boolean) ? { hovertext: lines, hoverinfo: "text", marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)),
+        return lines.some(Boolean) ? { hovertext: lines, hoverinfo: "text", marker: { color: order.map((i) => kindColor(id, rows[i])),
           line: { color: order.map((i) => (lines[order.indexOf(i)] ? token("--warning") : "rgba(0,0,0,0)")), width: 1.5 } } } : { hoverinfo: "skip" };
       })() }];
     // The row's name sits inside its bar, from the zero line outwards (left of zero for a short), not on the axis.
