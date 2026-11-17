@@ -1226,7 +1226,44 @@ def show_return_distribution(book: "Book"):
     show_closed_positions(book, closed)
 
 
+def show_kelly_vs_actual(book: "Book"):
+    """The desk's return against the Kelly portfolio of the coins it traded (desk/kelly.py): had the same money held
+    those coins as Kelly weights, walk-forward (what Kelly would really have produced) and in-sample (flattered)."""
+    import plotly.graph_objects as go
+
+    from desk import kelly
+    from desk.hl import signal_research
+
+    if book.kind != "Crypto":
+        print("The Kelly comparison covers the crypto book: its traded coins have daily candles on HL.")
+        return
+    closes = signal_research.frames(signal_research.load_panel())["close"]
+    active = active_days(book)
+    actual = book.returns[book.returns.index >= (active.min() if len(active) else book.days[0])]
+    result = kelly.compare_with_book(actual, closes, kelly.traded_coins(book))
+    if result["lines"].empty:
+        print("Not enough days in common between the desk's book and the Kelly fits yet.")
+        return
+    lines = result["lines"]
+    path = 100 * ((1 + lines.fillna(0.0)).cumprod() - 1)
+    figure = go.Figure()
+    colors = {"Desk (actual)": "#2563eb", "Kelly (walk-forward)": "#7c3aed", "Kelly (in-sample)": "#9ca3af", "BTC": "#F7931A"}
+    for name in lines:
+        figure.add_trace(go.Scatter(x=path.index, y=path[name], name=name, line={"color": colors[name]}))
+    figure.update_layout(title=f"Desk vs Kelly on its {len(result['coins'])} traded coins (%, since {_since(path.index[0])})",
+                         template="plotly_dark", hovermode="x unified", yaxis_ticksuffix="%")
+    show_chart(figure)
+    table = result["table"]
+    book._table(table, "DESK VS KELLY ON THE TRADED COINS",
+                {"Return": _signed_pct, "Volatility (/yr)": _pct, "Max drawdown": _signed_pct, "Sharpe": "{:.2f}".format},
+                key={"Return": None})
+    print("Kelly weights are held within +/-15% per coin (and 2.5x gross in all), refit monthly on the days before (walk-forward). In-sample "
+          "fits the whole window, so it flatters; only walk-forward is a result the desk could have had. The desk line "
+          "is the book's return on equity.")
+
+
 Book.show_return_distribution = show_return_distribution
+Book.show_kelly_vs_actual = show_kelly_vs_actual
 Book.show_returns_on_closed = show_returns_on_closed
 Book.show_closed_positions = show_closed_positions
 

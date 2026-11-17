@@ -1245,64 +1245,7 @@ class _CorrelationPlotMixin(_TableStyleMixin):
 # forced to match current wallet sides.
 
 
-def _project_weights(weights, lower, upper, budget=1.0):
-    projected=np.clip(weights,lower,upper)
-    if projected.sum()<=budget:
-        return projected
-    left=np.min(weights-upper)-1.0
-    right=np.max(weights-lower)+1.0
-    for _ in range(100):
-        shift=(left+right)/2.0
-        projected=np.clip(weights-shift,lower,upper)
-        if projected.sum()>budget:
-            left=shift
-        else:
-            right=shift
-    return np.clip(weights-right,lower,upper)
-
-
-KELLY_STATIONARITY_TOL = 1e-9
-
-
-def _optimize_full_kelly(returns, lower, upper, cash_daily_return, max_iterations=20000):
-    """Constrained full-Kelly weights by projected gradient ascent on mean log growth.
-
-    Converged when a unit gradient step, projected onto the constraints, moves no weight by more
-    than ``KELLY_STATIONARITY_TOL``. That test does not depend on the step size, which grows large
-    along flat directions (near-collinear assets), where step-based tests never settle.
-    """
-    def objective(weights):
-        portfolio_returns=returns@weights+(1.0-weights.sum())*cash_daily_return
-        if np.any(portfolio_returns<=-1.0):
-            return float('inf')
-        return -np.log1p(portfolio_returns).mean()
-    def gradient(weights):
-        portfolio_returns=returns@weights+(1.0-weights.sum())*cash_daily_return
-        marginal_returns=returns-cash_daily_return
-        return -(marginal_returns/(1.0+portfolio_returns[:,None])).mean(axis=0)
-    weights=_project_weights(np.full(returns.shape[1],1.0/returns.shape[1]),lower,upper)
-    step_size=1.0
-    for _ in range(max_iterations):
-        current=objective(weights)
-        grad=gradient(weights)
-        if np.max(np.abs(_project_weights(weights-grad,lower,upper)-weights))<KELLY_STATIONARITY_TOL:
-            return weights
-        trial=step_size
-        for _ in range(100):
-            candidate=_project_weights(weights-trial*grad,lower,upper)
-            direction=candidate-weights
-            candidate_value=objective(candidate)
-            bound=current+grad@direction+(direction@direction)/(2.0*trial)
-            if candidate_value<=bound+1e-14:
-                break
-            trial*=0.5
-        else:
-            raise RuntimeError('Kelly optimizer could not find a stable step.')
-        if np.max(np.abs(direction))<1e-10:
-            return candidate
-        weights=candidate
-        step_size=min(trial*1.2,1e6)
-    raise RuntimeError('Kelly optimizer did not converge within the iteration limit.')
+from desk.kelly import KELLY_STATIONARITY_TOL, _optimize_full_kelly, _project_weights  # noqa: F401  (shared with the desk's Kelly comparison)
 
 
 class _KellyMixin(_TableStyleMixin):
