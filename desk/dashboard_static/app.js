@@ -1979,6 +1979,115 @@ function setupSections() {
 // desk/tile_feed.py publishes a Plotly figure or a table; it appears here as a tile (top of the page, under the key numbers)
 // with the reason it was published, and is a window like the others. The look (colours, font) is the dashboard's own.
 const PUBLISHED_AXES = ["xaxis", "yaxis", "xaxis2", "yaxis2"];
+// Published (notebook) tiles follow the desk's rules. Titles: a repeated last segment is dropped ("Crypto: Performance: Performance" ->
+// "Crypto: Performance"); a table that shares its title with its chart says what it adds. Tables: percent and money columns
+// read as numbers (coloured by sign), the label columns first, then percentages, then money, then the rest. Line charts of
+// returns: no legend (the line ends say who is who), benchmarks dotted, and D W M Y ALL chips on top of the plot.
+function publishedTitles(tiles) {
+  const clean = (title) => {
+    const parts = String(title).split(": ");
+    while (parts.length > 1 && parts[parts.length - 1].toLowerCase() === parts[parts.length - 2].toLowerCase()) parts.pop();
+    return parts.join(": ");
+  };
+  const names = new Map(tiles.map((tile) => [tile.key, clean(tile.title)]));
+  const charts = new Set(tiles.filter((tile) => tile.kind === "chart").map((tile) => names.get(tile.key)));
+  tiles.forEach((tile) => {
+    if (tile.kind === "table" && charts.has(names.get(tile.key))) {
+      const first = ((tile.columns || [])[0] || {}).key;
+      names.set(tile.key, `${names.get(tile.key)}: ${first === "Window" ? "by window" : "detail"}`);
+    }
+  });
+  return names;
+}
+const CELL = /^\s*(-?)\s*(\$?)\s*(-?)([\d,]*\.?\d+)\s*([KMB]?)\s*(%?)\s*$/;
+function parseCell(text) {   // "-1.8%", "$1.21K", "-$244" -> { value, kind }; "" -> {}; anything else null
+  const t = String(text ?? "").trim();
+  if (!t) return {};
+  const m = CELL.exec(t);
+  if (!m) return null;
+  const sign = m[1] === "-" || m[3] === "-" ? -1 : 1, scale = { "": 1, K: 1e3, M: 1e6, B: 1e9 }[m[5]];
+  const number = parseFloat(m[4].replace(/,/g, "")) * scale * sign;
+  if (m[6]) return { value: number / 100, kind: "pct" };
+  return m[2] ? { value: number, kind: "usd" } : { value: number, kind: "plain" };
+}
+function publishedTable(tile) {
+  const columns = tile.columns || [], rows = tile.rows || [];
+  const kinds = columns.map((column) => {
+    const seen = new Set();
+    for (const row of rows) { const cell = parseCell(row[column.key]); if (cell === null) return "text"; if (cell.kind) seen.add(cell.kind); }
+    return seen.size === 1 ? [...seen][0] : "text";
+  });
+  const fmt = { pct: "vpct", usd: "vusd", plain: "text", text: "text" };
+  const out = columns.map((column, i) => ({ key: column.key, fmt: fmt[kinds[i]], kind: kinds[i] }));
+  const rank = (c) => (c.kind === "pct" ? 1 : c.kind === "usd" ? 2 : 3);
+  const lead = [];
+  for (const c of out) { if (c.kind === "text" && lead.length < 2) lead.push(c); else break; }   // the labels, up to two
+  const rest = out.filter((c) => !lead.includes(c)).sort((a, b) => rank(a) - rank(b));
+  const numeric = new Map(out.map((c) => [c.key, c.kind]));
+  const converted = rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => {
+    const kind = numeric.get(key), cell = kind === "pct" || kind === "usd" ? parseCell(value) : null;
+    return [key, cell && cell.kind ? cell.value : value];
+  })));
+  return { columns: lead.concat(rest).map(({ key, fmt: f }) => ({ key, fmt: f })), rows: converted };
+}
+const BENCHMARK_NAME = /^(BTC|ETH|SPY|S&P|SP500|QQQ|Same \$ in)/i;
+function isReturnSeries(traces) {
+  return traces.some((t) => t.type === "scatter" && Array.isArray(t.x) && t.x.length > 10 && /^\d{4}-\d{2}-\d{2}/.test(String(t.x[0])));
+}
+function decoratePublishedTraces(traces, layout) {
+  const colors = [1, 2, 3, 4, 5].map((i) => token("--series-" + i));
+  const copy = traces.map((trace) => Object.assign({}, trace, { x: Array.from(trace.x || []), y: Array.from(trace.y || []) }));
+  copy.forEach((trace) => { if (trace.type === "scatter" && BENCHMARK_NAME.test(String(trace.name || ""))) trace.line = Object.assign({}, trace.line, { dash: "dot" }); });
+  layout.showlegend = false;
+  delete layout.legend;
+  layout.margin = Object.assign({}, layout.margin, { r: 112, t: 30 });
+  layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => trace.type === "scatter" && trace.y.length)
+    .map(([trace, i]) => ({ x: trace.x[trace.x.length - 1], y: trace.y[trace.y.length - 1], xref: "x", yref: "y", showarrow: false, xanchor: "left", xshift: 6,
+      text: `${String(trace.name || "").replace(/ \(on equity\)/, "").replace(/^Same \$ in /, "")} ${readablePct(trace.y[trace.y.length - 1] / 100)}`,
+      font: { size: 11, color: (trace.line && trace.line.color) || colors[i % colors.length] } }));
+  return copy;
+}
+// D W M Y ALL over a published return chart: each curve rebased to the window's start, the x range cut to it.
+function addPeriodChips(node) {
+  if (node._chips) return;
+  const periods = [["D", 1], ["W", 7], ["M", 30], ["Y", 365], ["ALL", 0]];
+  const row = el("div", { class: "scale-chips period-chips" }, periods.map(([label, days]) => {
+    const button = el("button", { type: "button", class: "scale-chip" + (!days ? " on" : ""), text: label });
+    button.addEventListener("click", () => {
+      row.querySelectorAll(".scale-chip").forEach((b) => b.classList.toggle("on", b === button));
+      feedback("chart", "period", node.id, label);
+      rebasePublished(node, days);
+    });
+    return button;
+  }));
+  node._chips = row;
+  node.before(row);
+}
+function rebasePublished(node, days) {
+  node._orig = node._orig || node.data.map((trace) => ({ x: Array.from(trace.x || []), y: Array.from(trace.y || []) }));
+  const last = Math.max(...node._orig.filter((t) => t.x.length).map((t) => new Date(t.x[t.x.length - 1]).getTime()));
+  const start = days ? last - days * 86400000 : null;
+  const ys = node._orig.map((trace, i) => {
+    if (!start || node.data[i].type !== "scatter") return trace.y;
+    let first = -1;
+    trace.x.forEach((x, k) => { if (new Date(x).getTime() <= start) first = k; });
+    if (first < 0) first = 0;
+    const base = 1 + trace.y[first] / 100;
+    return trace.y.map((y) => Math.round(10000 * ((1 + y / 100) / base - 1)) / 100);
+  });
+  const notes = (node.layout.annotations || []).map((note) => Object.assign({}, note));
+  let k = 0;
+  node.data.forEach((trace, i) => {
+    if (trace.type !== "scatter" || !ys[i].length) return;
+    const note = notes[k++];
+    if (!note) return;
+    const y = ys[i][ys[i].length - 1];
+    note.y = y;
+    note.text = note.text.replace(/-?[\d.]+%$/, readablePct(y / 100));
+  });
+  Plotly.restyle(node, { y: ys });
+  Plotly.relayout(node, { annotations: notes, "xaxis.range": start ? [new Date(start).toISOString(), new Date(last + 86400000).toISOString()] : null, "xaxis.autorange": !start, "yaxis.autorange": true });
+}
 function renderPublished(tiles) {
   const content = document.getElementById("content");
   if (!content) return;
@@ -1994,6 +2103,7 @@ function renderPublished(tiles) {
     content.append(later);
   }
   const wanted = new Set(tiles.map((tile) => tile.key));
+  const names = publishedTitles(tiles);
   [...content.querySelectorAll(".feed .card[data-published]")].forEach((card) => {
     if (wanted.has(card.dataset.published)) return;
     delete CARDS[cardId(card)];
@@ -2007,7 +2117,7 @@ function renderPublished(tiles) {
     if (!card) {
       const inner = tile.kind === "chart" ? el("div", { class: "chart", id: "pub-" + tile.key }) : el("div", { class: "table-wrap", id: "t-pub-" + tile.key });
       card = el("div", { class: "card published", "data-published": tile.key }, [
-        el("h2", { title: tile.reason || "", text: tile.title }), inner]);   // why it is here: on hover, not a caption
+        el("h2", { title: tile.reason || "", text: names.get(tile.key) }), inner]);   // why it is here: on hover, not a caption
       if (anchorCard && anchorCard.parentElement) anchorCard.parentElement.after(el("div", { class: "slot" }, [card]));   // beside the tile it was added from
       else home.append(card);
       adoptCard(card);
@@ -2018,9 +2128,14 @@ function renderPublished(tiles) {
       const layout = Object.assign({}, base, Object.fromEntries(Object.entries(tile.layout || {}).filter(([key]) => !PUBLISHED_AXES.includes(key))));
       PUBLISHED_AXES.forEach((key) => { if (base[key] || (tile.layout || {})[key]) layout[key] = Object.assign({}, base[key] || {}, (tile.layout || {})[key] || {}); });
       const node = document.getElementById("pub-" + tile.key);
-      if (node) whenVisible(node, () => Plotly.react(node, tile.data || [], layout, CONFIG).then(markNumericNotes));
+      const series = isReturnSeries(tile.data || []);
+      const data = series ? decoratePublishedTraces(tile.data || [], layout) : tile.data || [];
+      if (node) whenVisible(node, () => Plotly.react(node, data, layout, CONFIG).then(() => {
+        markNumericNotes();
+        if (series) { node._orig = null; addPeriodChips(node); }
+      }));
     } else if (tile.kind === "table") {
-      renderTable("pub-" + tile.key, { columns: tile.columns || [], rows: tile.rows || [] });
+      renderTable("pub-" + tile.key, publishedTable(tile));
     }
   });
   feed.hidden = !feed.querySelector(".card:not(.card-off)");

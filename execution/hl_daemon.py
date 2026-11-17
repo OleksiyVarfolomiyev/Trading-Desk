@@ -2992,8 +2992,9 @@ class BuildUps:
             code = daemon.trade(request, AutoSession())
         finally:
             daemon.trade_lock.release()
-        grown = plan.quantity_delta / abs(held) if held else 0.0
-        note = (f"{coin.split(':')[-1]} raised {grown:.0%}, ${plan.quantity_delta * plan.mark_price:,.0f}"
+        added = plan.quantity_delta * plan.mark_price
+        total = (abs(held) + plan.quantity_delta) * plan.mark_price
+        note = (f"{coin.split(':')[-1]} {side.lower()} added ${added:,.0f} to ${total:,.0f}"
                 if code == 0 else f"{coin.split(':')[-1]} raise did not complete, code {code}")
         log(f"build-up: {note}")
         daemon.alerts.set(f"buildup:{coin}:{int(time.time())}", f"Build-up: {coin}", note, ttl=86400)

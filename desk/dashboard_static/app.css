@@ -698,3 +698,13 @@ html:not([data-screen="research"]) .alert-strip { display: none; }
 
 /* A hidden tile stays hidden even when it has a size of its own (the sized rule is !important). */
 #content .card.card-off, #columns .card.card-off { display: none !important; }
+
+/* Table headings are centered. */
+th { text-align: center; }
+/* Touch screens: the tiles' hover tools and thumbs would sit on the numbers a tap is reading; they stay hidden there (the D/W/M
+   chips are in the tile's own row). */
+@media (hover: none) {
+  .tile .tile-tools, .tile .card-foot, .tile:hover .tile-tools, .tile:hover .card-foot, .tile:focus-within .tile-tools { opacity: 0; pointer-events: none; }
+}
+
+.period-chips { opacity: 1; display: flex; justify-content: flex-end; margin: 0 0 2px; }

@@ -50,7 +50,7 @@
     if (!response.ok) {
       let detail = "";
       try { detail = (await response.json()).error || ""; } catch (error) { /* not JSON */ }
-      throw new Error(`${new URL(url).host} answered HTTP ${response.status}${detail ? ": " + detail : ""}`);
+      throw new Error(`${new URL(url, location.href).host} answered HTTP ${response.status}${detail ? ": " + detail : ""}`);
     }
     return response.json();
   }

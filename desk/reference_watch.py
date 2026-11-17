@@ -25,6 +25,7 @@ REFERENCES = {
     "Robinhood newsroom": "https://robinhood.com/us/en/newsroom/",
     "IBKR newsletter (NEWs @ IBKR)": "https://www.interactivebrokers.com/en/general/communiques/2025/2025-vol27.php",
     "DefiLlama API docs": "https://api-docs.defillama.com/",
+    "DeepAlpha (order books, liquidation map, wallet tracker, smart money)": "https://app.deepalpha.pro/app/",
 }
 # DefiLlama's free API families (checked 2026-11-17: these answer without a key; derivatives, bridges, raises and
 # emissions answer "Upgrade to the paid API plan"). Their size is watched: a family that goes paid or empty is a finding.
