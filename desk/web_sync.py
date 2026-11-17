@@ -185,6 +185,33 @@ BOOKS_FILE = REPO / "data" / "books_performance.json"
 BOOKS_EVERY_SECONDS = 3600
 
 
+def trade_stats() -> dict | None:
+    """The key numbers of the HL fills (the realized PnL statistics of hl_accounts.ipynb, perps, every wallet): hit rate,
+    average win and loss as a share of notional, expected value per close as a share of the closes' notional, and
+    liquidations. None when the fills cannot be read."""
+    try:
+        from desk.accounts import hl_wallets
+        from desk.hl.account_analytics import liquidation_stats, realized_pnl_stats, split_realized_fills
+        from desk.hl.multi_account_analytics import MultiWalletAnalytics
+
+        analytics = MultiWalletAnalytics(hl_wallets(), data_dir="data")
+        analytics.fetch_data()
+        data = analytics.data
+        perp, _ = split_realized_fills(data.realized_df)
+        if perp.empty:
+            return None
+        stats = realized_pnl_stats(perp, funding_history=data.funding_history_df, funding_events=data.funding_df)
+        closes = perp[perp["grossPnl"] != 0]
+        notional = float(closes["notional"].mean()) if len(closes) else float("nan")
+        liquidations = liquidation_stats(perp, funding_history=data.funding_history_df)
+        return {"hit_rate": _clean(float(stats["win_p"])), "avg_win": _clean(float(stats["avg_win_pct"]) / 100),
+                "avg_loss": _clean(float(stats["avg_loss_pct"]) / 100),
+                "ev": _clean(float(stats["ev"]) / notional if notional else float("nan")),
+                "liquidations": int(liquidations["liquidations"]), "closes": int(liquidations["closes"])}
+    except Exception:
+        return None
+
+
 def books_payload() -> dict:
     """Each book's return on trading equity over 1, 7, 30 and 90 days (desk/books.py, the notebooks' numbers), for the
     dashboards' performance table: the books, not the accounts."""
@@ -199,7 +226,7 @@ def books_payload() -> dict:
                      **{f"Return {w}": _clean(float(table.at[w, "Return (on equity)"])) for w in table.index}})
         growth = (1 + chart_returns(book).dropna()).cumprod()
         series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(round(float(value) - 1, 5))] for day, value in growth.items()]
-    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series}
+    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series, "stats": trade_stats()}
 
 
 def push_books(force: bool = False) -> dict | None:

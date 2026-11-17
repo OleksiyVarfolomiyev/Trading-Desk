@@ -1198,70 +1198,86 @@ def split_at_zero(series: pd.Series) -> tuple[pd.Series, pd.Series]:
     return line.where(line >= 0), line.where(line <= 0)
 
 
-def plot_account_dashboard(metrics, value_title='Account Value'):
+ACCOUNT_PANELS = ("value", "pnl", "cumulative", "weekly")
+
+
+def plot_account_dashboard(metrics, value_title='Account Value', panels=ACCOUNT_PANELS):
     'Show account history and PnL distribution in ' \
-        'linked Plotly subplots.'
-    # Only the three time panels share an axis; the histogram's x-axis is a return.
-    fig = make_subplots(rows=4, cols=1, vertical_spacing=0.08,
-        subplot_titles=(value_title, 'Daily Realized and Unrealized PnL', 'Cumulative PnL',
-            'Weekly Return Distribution'), row_heights=[0.28, 0.28, 0.24, 0.2])
-    if not metrics.daily_account.empty:
+        'linked Plotly subplots; ``panels`` picks which (each also stands alone as a dashboard tile).'
+    titles = {'value': value_title, 'pnl': 'Daily Realized and Unrealized PnL', 'cumulative': 'Cumulative PnL',
+              'weekly': 'Weekly Return Distribution'}
+    heights = {'value': 0.28, 'pnl': 0.28, 'cumulative': 0.24, 'weekly': 0.2}
+    panels = [name for name in ACCOUNT_PANELS if name in panels]
+    row = {name: index + 1 for index, name in enumerate(panels)}
+    last = len(panels)
+    # Only the time panels share an axis; the histogram's x-axis is a return.
+    fig = make_subplots(rows=last, cols=1, vertical_spacing=0.08,
+        subplot_titles=tuple(titles[name] for name in panels),
+        row_heights=[heights[name] / sum(heights[n] for n in panels) for name in panels])
+    if 'value' in row and not metrics.daily_account.empty:
         fig.add_trace(go.Scatter(x=metrics.daily_account.index,
                 y=metrics.daily_account.values, name=value_title, line={'color': '#6c757d',
-                    'width': 2}), row=1, col=1)
-    if not metrics.daily_realized.empty:
+                    'width': 2}), row=row['value'], col=1)
+    if 'pnl' in row and not metrics.daily_realized.empty:
         fig.add_trace(go.Scatter(x=metrics.day_index, y=metrics.daily_realized.values,
-                name='Realized', mode='lines+markers', line={'color': '#457b9d'}), row=2, col=1)
-    if not metrics.daily_unrealized.empty:
+                name='Realized', mode='lines+markers', line={'color': '#457b9d'}), row=row['pnl'], col=1)
+    if 'pnl' in row and not metrics.daily_unrealized.empty:
         fig.add_trace(go.Scatter(x=metrics.day_index, y=metrics.daily_unrealized.values,
                 name='Unrealized', mode='lines+markers', connectgaps=True,
-                line={'color': '#e76f51'}), row=2, col=1)
-    if not metrics.cumulative_pnl.empty:
+                line={'color': '#e76f51'}), row=row['pnl'], col=1)
+    if 'cumulative' in row and not metrics.cumulative_pnl.empty:
         # Green while in the money (above zero), red while out of it; the two meet where the line crosses zero.
         above, below = split_at_zero(metrics.cumulative_pnl)
         for part, name, color in ((above, 'Cumulative PnL', PNL_GREEN), (below, 'Cumulative PnL', PNL_RED)):
             fig.add_trace(go.Scatter(x=part.index, y=part.values, name=name, connectgaps=False, legendgroup='cumulative-pnl',
-                    line={'color': color, 'width': 2}, hovertemplate='%{y:$,.2f}<extra></extra>'), row=3, col=1)
+                    line={'color': color, 'width': 2}, hovertemplate='%{y:$,.2f}<extra></extra>'), row=row['cumulative'], col=1)
     periods = inactive_periods(pd.Index(metrics.day_index)[
         np.asarray(metrics.daily_realized.values) != 0
     ]) if not metrics.daily_realized.empty else []
-    returns = drop_inactive_weeks(metrics.weekly_return_pct, periods)
     notes = []  # printed under the chart, not above it
-    if len(returns) < len(metrics.weekly_return_pct):
-        notes.append(f'Weekly return chart omits {len(metrics.weekly_return_pct) - len(returns)} '
-                     'inactive weeks; statistics still include them.')
-    if not returns.empty:
-        display_returns = returns[returns >= -100]
-        excluded = len(returns) - len(display_returns)
-        if not display_returns.empty:
-            fig.add_trace(go.Histogram(x=display_returns.values, name='Weekly returns',
-                    marker_color='#457b9d', opacity=0.8, xbins={'size': 2.5},
-                        showlegend=False), row=4, col=1)
-            average = float(display_returns.mean())
-            fig.add_vline(x=average, line_dash='dash', line_color='#e76f51',
-                annotation_text=f"Average {'-' if average < 0 else ''}{_pct(abs(average), scaled=True)}", row=4, col=1)
-            fig.add_vline(x=0, line_color='#9ca3af', row=4, col=1)
-            if excluded:
-                notes.append(f'Weekly return chart omits {excluded} return(s) below -100%; '
-                             'other data and stats are unchanged.')
+    if 'weekly' in row:
+        returns = drop_inactive_weeks(metrics.weekly_return_pct, periods)
+        axis = f"{row['weekly']}"
+        if len(returns) < len(metrics.weekly_return_pct):
+            notes.append(f'Weekly return chart omits {len(metrics.weekly_return_pct) - len(returns)} '
+                         'inactive weeks; statistics still include them.')
+        if not returns.empty:
+            display_returns = returns[returns >= -100]
+            excluded = len(returns) - len(display_returns)
+            if not display_returns.empty:
+                fig.add_trace(go.Histogram(x=display_returns.values, name='Weekly returns',
+                        marker_color='#457b9d', opacity=0.8, xbins={'size': 2.5},
+                            showlegend=False), row=row['weekly'], col=1)
+                average = float(display_returns.mean())
+                fig.add_vline(x=average, line_dash='dash', line_color='#e76f51',
+                    annotation_text=f"Average {'-' if average < 0 else ''}{_pct(abs(average), scaled=True)}", row=row['weekly'], col=1)
+                fig.add_vline(x=0, line_color='#9ca3af', row=row['weekly'], col=1)
+                if excluded:
+                    notes.append(f'Weekly return chart omits {excluded} return(s) below -100%; '
+                                 'other data and stats are unchanged.')
+            else:
+                fig.add_annotation(text='No valid monthly returns to display', x=0.5, y=0.5,
+                    xref=f'x{axis} domain', yref=f'y{axis} domain', showarrow=False)
         else:
-            fig.add_annotation(text='No valid monthly returns to display', x=0.5, y=0.5,
-                xref='x4 domain', yref='y4 domain', showarrow=False)
-    else:
-        fig.add_annotation(text='Need matched weekly return observations', x=0.5, y=0.5,
-            xref='x4 domain', yref='y4 domain', showarrow=False)
-    fig.add_hline(y=0, line_color='#777', row=2, col=1)
-    fig.add_hline(y=0, line_color='#777', row=3, col=1)
-    fig.update_yaxes(title_text='USD', row=1, col=1)
-    fig.update_yaxes(title_text='USD', row=2, col=1)
-    fig.update_yaxes(title_text='USD', row=3, col=1)
-    fig.update_yaxes(title_text='Weeks', row=4, col=1)
-    fig.update_xaxes(title_text='Weekly return (%)', row=4, col=1)
-    fig.update_xaxes(matches='x3', showticklabels=False, row=1, col=1)
-    fig.update_xaxes(matches='x3', showticklabels=False, row=2, col=1)
-    clip_inactive_periods(fig, periods, {'selector': lambda axis: axis.anchor != 'y4'})
-    fig.update_layout(height=1000, template='plotly_dark', barmode='overlay',
-        hovermode='x unified', showlegend=False, margin={'l': 65, 'r': 25, 't': 95, 'b': 100})
+            fig.add_annotation(text='Need matched weekly return observations', x=0.5, y=0.5,
+                xref=f'x{axis} domain', yref=f'y{axis} domain', showarrow=False)
+    for name in ('pnl', 'cumulative'):
+        if name in row:
+            fig.add_hline(y=0, line_color='#777', row=row[name], col=1)
+    for name in panels:
+        fig.update_yaxes(title_text='Weeks' if name == 'weekly' else 'USD', row=row[name], col=1)
+    if 'weekly' in row:
+        fig.update_xaxes(title_text='Weekly return (%)', row=row['weekly'], col=1)
+    time_panels = [name for name in panels if name != 'weekly']
+    if len(time_panels) > 1:
+        anchor = f"x{row[time_panels[-1]]}" if row[time_panels[-1]] > 1 else 'x'
+        for name in time_panels[:-1]:
+            fig.update_xaxes(matches=anchor, showticklabels=False, row=row[name], col=1)
+    weekly_axis = f"y{row['weekly']}" if 'weekly' in row else None
+    if time_panels:   # a histogram alone has no dates to clip
+        clip_inactive_periods(fig, periods, {'selector': lambda axis: axis.anchor != weekly_axis})
+    fig.update_layout(height=1000 if last == 4 else 360 + 40 * last, template='plotly_dark', barmode='overlay',
+        hovermode='x unified', showlegend=False, margin={'l': 65, 'r': 25, 't': 95 if last > 1 else 60, 'b': 100 if last > 1 else 50})
     show_chart(fig)
     for note in notes:
         print(note)

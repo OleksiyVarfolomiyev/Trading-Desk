@@ -105,3 +105,26 @@ class DashboardLook(unittest.TestCase):
 
         self.assertEqual(charts.concise_title("Stocks book vs SPY (%, since Jan'25)"), "Stocks book vs SPY since Jan'25")
         self.assertEqual(charts.concise_title("Desk value by account (USD; wallet tokens excluded)"), "Desk value by account")
+
+
+class AccountPanels(unittest.TestCase):
+    def test_each_panel_stands_alone(self):
+        import types
+        from unittest import mock
+
+        import numpy as np
+        import pandas as pd
+
+        import desk.hl.account_analytics as an
+
+        days = pd.date_range("2026-01-01", periods=30, tz="UTC")
+        series = lambda: pd.Series(np.arange(30.0), index=days)
+        metrics = types.SimpleNamespace(daily_account=series(), daily_realized=series() + 1, daily_unrealized=series(),
+                                        day_index=days, cumulative_pnl=series(),
+                                        weekly_return_pct=pd.Series([1.0, -2.0, 3.0], index=pd.date_range("2026-01-04", periods=3, freq="W", tz="UTC")))
+        seen = []
+        with mock.patch.object(an, "show_chart", lambda figure, *a, **k: seen.append(figure)):
+            for panels in (("pnl",), ("cumulative",), ("weekly",), an.ACCOUNT_PANELS):
+                an.plot_account_dashboard(metrics, panels=panels)
+        self.assertEqual([len(f.data) for f in seen][:3], [2, 2, 1])
+        self.assertEqual(len(seen), 4)

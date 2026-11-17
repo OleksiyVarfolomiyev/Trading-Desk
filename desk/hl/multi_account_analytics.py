@@ -53,7 +53,7 @@ from desk.hl.account_analytics import (
 
 
 from desk.hl.trade_analytics import time_weighted_index
-from desk.numbers import usd as _usd, pct as _pct
+from desk.numbers import clock, usd as _usd, pct as _pct
 
 
 def _combine_wallet_data(wallet_analytics):
@@ -240,7 +240,7 @@ class _MultiWalletAccountMixin:
                 self.account_metrics.current_account_value),
         )
 
-    def show_account_charts(self):
+    def _chart_metrics(self):
         data=self._require_data()
         chart_metrics=SimpleNamespace(**vars(self.account_metrics))
         chart_metrics.daily_account=data.chart_account_history
@@ -252,7 +252,20 @@ class _MultiWalletAccountMixin:
         chart_metrics.daily_unrealized=self.account_metrics.daily_unrealized.combine_first(
             unrealized_by_wallet.sum(axis=1).reindex(self.account_metrics.day_index)
         )
-        plot_account_dashboard(chart_metrics, value_title='Accounts Value')  # every wallet together
+        return chart_metrics
+
+    def show_account_charts(self):
+        plot_account_dashboard(self._chart_metrics(), value_title='Accounts Value')  # every wallet together
+
+    # One chart each, for the dashboard's options.
+    def show_daily_pnl_chart(self):
+        plot_account_dashboard(self._chart_metrics(), value_title='Accounts Value', panels=('pnl',))
+
+    def show_cumulative_pnl_chart(self):
+        plot_account_dashboard(self._chart_metrics(), value_title='Accounts Value', panels=('cumulative',))
+
+    def show_weekly_returns_chart(self):
+        plot_account_dashboard(self._chart_metrics(), value_title='Accounts Value', panels=('weekly',))
 
     def show_account_vs_btc(self):
         data=self._require_data()
@@ -358,8 +371,50 @@ class _MultiWalletAttributionMixin:
 # Create one object with the dashboard wallet list. It composes the report methods above.
 
 
+class _DashboardPicksMixin:
+    """Tables for the dashboard's options: the latest trades and the top contributors to PnL."""
+
+    def show_latest_trades(self, count=20):
+        data=self._require_data()
+        fills=data.realized_df
+        if fills.empty:
+            print('No fills yet.')
+            return
+        latest=fills.sort_values('ts',ascending=False).head(count)
+        table=pd.DataFrame({
+            'When':[clock(ts) for ts in latest['ts']],
+            'Wallet':[str(w)[-4:] for w in latest['wallet']] if 'wallet' in latest else '',
+            'Market':latest['coin'].to_numpy(),'Direction':latest['dir'].to_numpy(),
+            'Notional':latest['notional'].to_numpy(),'PnL':latest['closedPnl'].to_numpy()})
+        def style(row_index,column,value,row):
+            if column=='PnL' and pd.notna(value):
+                return 'color:#188038;' if value>0 else 'color:#c62828;' if value<0 else ''
+            return ''
+        display_interactive_table(table,formatters={'Notional':lambda v:f'{_usd(v)}','PnL':lambda v:f'{_usd(v)}'},
+                                  cell_style=style,title=f'LATEST {len(table)} TRADES')
+
+    def show_top_pnl(self,top=5):
+        data=self._require_data()
+        tables,_=build_pnl_attribution(data.realized_df,self._load_positions(),funding_history=data.funding_history_df)
+        rows=[table[~table['Asset'].isin(['Total','Net/total'])].reindex(columns=['Asset','Realized','uPnL','Total PnL']) for table in tables.values()]
+        if not rows:
+            print('No PnL to attribute.')
+            return
+        frame=pd.concat(rows,ignore_index=True)
+        frame['uPnL']=frame['uPnL'].fillna(0.0)
+        frame['Total PnL']=frame['Total PnL'].fillna(frame['Realized'])
+        frame=frame.sort_values('Total PnL',ascending=False)
+        picked=pd.concat([frame.head(top),frame.tail(top)]).drop_duplicates('Asset')
+        def style(row_index,column,value,row):
+            if column in {'Realized','uPnL','Total PnL'} and pd.notna(value):
+                return 'color:#188038;' if value>0 else 'color:#c62828;' if value<0 else ''
+            return ''
+        display_interactive_table(picked,formatters={c:(lambda v:f'{_usd(v)}') for c in ('Realized','uPnL','Total PnL')},
+                                  cell_style=style,title=f'TOP {top} WINNERS AND LOSERS BY TOTAL PNL',key_columns={'Total PnL':'abs'})
+
+
 class MultiWalletAnalytics(
-    _HighlightsMixin,
+    _DashboardPicksMixin,_HighlightsMixin,
     _MultiWalletDataMixin,_MultiWalletAccountMixin,_OpenPositionsMixin,
     _MultiWalletRealizedMixin,_MultiWalletVolumeMixin,_ExecutionQualityMixin,_MultiWalletAttributionMixin,
     _NetPnLMixin,_BtcExposureMixin,

@@ -162,6 +162,19 @@ def books_by_kind(tables: dict, max_age: float = 3 * 3600) -> None:
         performance["rows"] = rows
 
 
+def trade_stats_now() -> dict | None:
+    """The HL fills' key numbers (hit rate, average win and loss, EV per close, liquidations) from the Mac's hourly
+    computation (desk/web_sync.py trade_stats)."""
+    import json as _json
+
+    from desk.web_sync import BOOKS_FILE
+
+    try:
+        return _json.loads(BOOKS_FILE.read_text()).get("stats")
+    except (OSError, ValueError):
+        return None
+
+
 def book_lines(start) -> list[dict]:
     """The crypto and stocks books on the return chart, each rebased to 0% on the chart's first day (or its own first day)."""
     import json as _json
@@ -412,6 +425,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     returns = desk.desk_returns(headline)
     peak = headline.cummax()
     kpis = {
+        "trade_stats": trade_stats_now(),
         "desk_value": overview.desk_equity,
         "day_change": day_change.as_dict() if day_change is not None else None,
         "trading_equity": trading_equity,

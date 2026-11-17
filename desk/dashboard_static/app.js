@@ -865,6 +865,21 @@ function renderTiles(k, theses = []) {
     tile("MW", pct(mw.return, 1, true) || "n/a", "", { key: "MW return", valueClass: signClass(mw.return) }),
     tile("TW", pct((k.returns || {}).since_start, 1, true), "", { key: "TW return", valueClass: signClass((k.returns || {}).since_start) }),
     tile("positions", isNum(k.positions) ? String(k.positions) : "n/a", "", { key: "Positions" }),
+    // Key numbers of the account and its trades: off until added with the row's "+" (hit rate and the rest are the HL fills', every wallet).
+    (() => { const total = (tables.accounts || {}).total || {}, net = k.net_leverage;
+      return tile("net", isNum(net) ? pct(net, 0, true) : "n/a", "", { key: "Net exposure", valueClass: "", title: "Net exposure over trading equity" }); })(),
+    (() => { const total = (tables.accounts || {}).total || {}, left = total["Available / equity"];
+      return tile("margin", isNum(left) ? pct(left, 0) : "n/a", "", { key: "Margin left", valueClass: isNum(left) && left < 0.2 ? "neg" : "", title: "Available margin over equity" }); })(),
+    (() => { const used = isNum(risk) ? risk / RISK_CAP : NaN;
+      return tile("risk used", isNum(used) ? pct(used, 0) : "n/a", "", { key: "Risk used", valueClass: used > 1 ? "neg" : "", title: "Open risk as a share of the 33% cap" }); })(),
+    (() => { const s = k.trade_stats || {};
+      return tile("hit", isNum(s.hit_rate) ? pct(s.hit_rate, 0) : "n/a", "", { key: "Hit rate", title: "Share of closes in profit (HL perps, all wallets)" }); })(),
+    (() => { const s = k.trade_stats || {};
+      return tile("W / L", isNum(s.avg_win) && isNum(s.avg_loss) ? `${pct(s.avg_win, 1)} / ${pct(s.avg_loss, 1)}` : "n/a", "", { key: "Avg W/L", title: "Average winning and losing close, as a share of its notional" }); })(),
+    (() => { const s = k.trade_stats || {};
+      return tile("EV", isNum(s.ev) ? pct(s.ev, 1, true) : "n/a", "", { key: "EV/close", valueClass: signClass(s.ev), title: "Expected value of a close, as a share of its notional" }); })(),
+    (() => { const s = k.trade_stats || {};
+      return tile("liq", isNum(s.liquidations) ? String(s.liquidations) : "n/a", isNum(s.closes) ? `of ${s.closes} closes` : "", { key: "Liquidations", valueClass: s.liquidations > 0 ? "neg" : "" }); })(),
     tile("DD", isNum(drawdown) ? pct(drawdown, 1) : "n/a", "",
       { key: "DD", valueClass: drawdown <= -0.10 ? "neg" : "", title: isNum(invested) ? `From the ${usd(invested)} put in, net of withdrawals` : "" }),
   ];
@@ -874,11 +889,18 @@ function renderTiles(k, theses = []) {
 // (the Sections menu brings hidden ones back). Order, minimized and hidden are remembered with the layout.
 const STRESS_WARN = 0.25, STRESS_BLOCK = 0.35;   // desk/stress.py: a scenario loss past 25% warns, past 35% blocks added entries
 const EXTRA_TILES = ["Return 30D", "MW return", "TW return", "Positions"];
+const EXTRA_TILES_2 = ["Net exposure", "Margin left", "Risk used", "Hit rate", "Avg W/L", "EV/close", "Liquidations"];   // off until added
 function arrangeTiles(host, tiles) {
   let state = layoutState();
   if (!state.tileExtras) {   // the extra key numbers start hidden, once per browser
     state.tileHidden = [...new Set([...(state.tileHidden || []), ...EXTRA_TILES])];
     state.tileExtras = true;
+    saveLayout(state);
+    state = layoutState();
+  }
+  if (!state.tileExtras2) {   // the account and trade numbers added on 2026-11-17 start hidden too
+    state.tileHidden = [...new Set([...(state.tileHidden || []), ...EXTRA_TILES_2])];
+    state.tileExtras2 = true;
     saveLayout(state);
     state = layoutState();
   }

@@ -1216,6 +1216,7 @@
 
     return plain({
       kpis: {
+        trade_stats: (bookPerf && bookPerf.stats) || null,
         desk_value: deskEquity,
         day_change: Object.keys(dayParts).length ? { change: dayChange, pct: dayBase > 0 ? dayChange / dayBase : NaN, parts: dayParts, missing } : null,
         trading_equity: tradingEquity, wallet_value: walletValue, unrealized, unrealized_share: gross ? unrealized / gross : NaN,
