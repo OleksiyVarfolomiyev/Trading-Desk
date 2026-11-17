@@ -475,9 +475,10 @@ html.private td.digits { cursor: pointer; }
 .unit-button.auto::after { content: ""; position: absolute; top: 3px; right: 3px; width: 4px; height: 4px; border-radius: 50%; background: var(--series-1); }
 .card-filter-box { margin-left: auto; width: 140px; background: transparent; color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font: inherit; font-size: 12px; }
 .card-filter-box + .card-tools { margin-left: 6px; }
-.js-plotly-plot .modebar { background: transparent !important; }
-.js-plotly-plot .modebar-btn path { fill: var(--muted) !important; }
-.js-plotly-plot .modebar-btn:hover path { fill: var(--ink) !important; }
+.js-plotly-plot .modebar, .js-plotly-plot .modebar-group { background: transparent !important; }
+.js-plotly-plot .modebar { opacity: 0.55; transition: opacity .12s; }
+.js-plotly-plot .modebar:hover { opacity: 1; }
+.js-plotly-plot .modebar-btn svg { height: 13px; width: 13px; }
 /* Candidate rows: refuse, bookmark, act; shown on the row's hover (always on touch). */
 td.row-actions, th.row-actions { width: 1%; white-space: nowrap; text-align: right; padding-right: 4px; }
 .row-act { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 1px 5px; border-radius: 4px; opacity: 0; }

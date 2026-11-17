@@ -767,6 +767,8 @@ function baseLayout(extra) {
     margin: { l: 56, r: 72, t: 30, b: 36 },
     hovermode: "x unified",
     hoverlabel: { bgcolor: token("--surface"), bordercolor: axis, font: { color: token("--ink") } },
+    // The chart tools: no band behind them, icons in the page's muted ink, the active one in its full ink.
+    modebar: { bgcolor: "rgba(0,0,0,0)", color: muted, activecolor: token("--ink"), orientation: "h" },
     legend: { orientation: "h", x: 0, y: 1, yanchor: "bottom", font: { color: ink } },   // above the plot, inside the top margin
     xaxis: { gridcolor: grid, linecolor: axis, tickfont: { color: muted }, showspikes: true,
              spikemode: "across", spikethickness: 1, spikecolor: axis, spikedash: "solid" },
@@ -776,7 +778,7 @@ function baseLayout(extra) {
 
 // Chart tools on hover (zoom, pan, reset, save), as Plotly's own bar; a click on a legend item hides or shows that series.
 const CONFIG = { displayModeBar: "hover", displaylogo: false, responsive: true,
-  modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d", "toggleSpikelines", "hoverCompareCartesian", "hoverClosestCartesian"] };
+  modeBarButtons: [["zoom2d", "pan2d", "resetScale2d", "toImage"]] };   // the four that get used, nothing else
 
 function endLabels(series, format) {
   return series.filter((s) => s.y.length).map((s) => ({
