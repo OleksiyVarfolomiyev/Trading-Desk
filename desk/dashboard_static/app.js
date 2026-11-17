@@ -2050,9 +2050,10 @@ function decoratePublishedTraces(traces, layout) {
   layout.showlegend = false;
   delete layout.legend;
   layout.margin = Object.assign({}, layout.margin, { r: 112, t: 30 });
-  layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => trace.type === "scatter" && trace.y.length)
-    .map(([trace, i]) => ({ x: trace.x[trace.x.length - 1], y: trace.y[trace.y.length - 1], xref: "x", yref: "y", showarrow: false, xanchor: "left", xshift: 6,
-      text: `${String(trace.name || "").replace(/ \(on equity\)/, "").replace(/^Same \$ in /, "")} ${readablePct(trace.y[trace.y.length - 1] / 100)}`,
+  const lastAt = (trace) => { for (let k = trace.y.length - 1; k >= 0; k--) if (Number.isFinite(trace.y[k])) return k; return -1; };
+  layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => trace.type === "scatter" && lastAt(trace) >= 0)
+    .map(([trace, i]) => ({ x: trace.x[lastAt(trace)], y: trace.y[lastAt(trace)], xref: "x", yref: "y", showarrow: false, xanchor: "left", xshift: 6,
+      text: `${String(trace.name || "").replace(/ \(on equity\)/, "").replace(/^Same \$ in /, "")} ${readablePct(trace.y[lastAt(trace)] / 100)}`,
       font: { size: 11, color: (trace.line && trace.line.color) || colors[i % colors.length] } }));
   return copy;
 }
@@ -2087,10 +2088,13 @@ function rebasePublished(node, days) {
   const notes = (node.layout.annotations || []).map((note) => Object.assign({}, note));
   let k = 0;
   node.data.forEach((trace, i) => {
-    if (trace.type !== "scatter" || !ys[i].length) return;
+    if (trace.type !== "scatter") return;
+    let at = ys[i].length - 1;
+    while (at >= 0 && !Number.isFinite(ys[i][at])) at--;
+    if (at < 0) return;
     const note = notes[k++];
     if (!note) return;
-    const y = ys[i][ys[i].length - 1];
+    const y = ys[i][at];
     note.y = y;
     note.text = note.text.replace(/-?[\d.]+%$/, readablePct(y / 100));
   });
