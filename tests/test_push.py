@@ -9,7 +9,8 @@ class PushTests(unittest.TestCase):
     def test_unset_sends_nothing(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("DESK_PUSH_URL", None)
-            self.assertFalse(push.send("t", "x"))
+            with patch.object(push, "SECRET_FILE", push.Path("/nonexistent/push_url")):
+                self.assertFalse(push.send("t", "x"))
 
     def test_rate_limited(self):
         push._last = 0.0

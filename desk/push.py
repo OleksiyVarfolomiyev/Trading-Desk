@@ -1,4 +1,4 @@
-"""Phone push for new desk alerts, through any ntfy-style endpoint: ``DESK_PUSH_URL`` (for example a private topic on
+"""Phone push for new desk alerts, through any ntfy-style endpoint: ``DESK_PUSH_URL`` or the file ``~/.trading-desk/push_url`` (for example a private topic on
 ntfy.sh or a self-hosted ntfy). Unset, nothing is sent. The text is already masked (wallets show their last four)."""
 
 from __future__ import annotations
@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from pathlib import Path
 import urllib.request
 
 MIN_GAP_SECONDS = 20   # a burst of alerts becomes a few pushes, not a buzzing phone
@@ -13,8 +14,18 @@ _last = 0.0
 _lock = threading.Lock()
 
 
+SECRET_FILE = Path.home() / ".trading-desk" / "push_url"   # kept out of the repo: the topic name is the secret
+
+
 def url() -> str | None:
-    return (os.environ.get("DESK_PUSH_URL") or "").strip() or None
+    """``DESK_PUSH_URL``, else the first line of ``~/.trading-desk/push_url``."""
+    value = (os.environ.get("DESK_PUSH_URL") or "").strip()
+    if not value:
+        try:
+            value = SECRET_FILE.read_text().strip().splitlines()[0].strip()
+        except (OSError, IndexError):
+            value = ""
+    return value or None
 
 
 def _post(endpoint: str, title: str, text: str) -> bool:
