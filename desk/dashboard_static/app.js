@@ -506,7 +506,7 @@ function renderTable(id, spec) {
 
 // ---------------------------------------------------------------- tiles
 function tile(label, value, sub, extra) {  // extra.title: the definition, on hover only
-  return el("div", { class: "tile", "data-label": label, title: (extra && extra.title) || "" }, [
+  return el("div", { class: "tile", "data-label": (extra && extra.key) || label, title: (extra && extra.title) || "" }, [
     el("div", { class: "label", text: label }),
     el("div", { class: "value " + (extra && extra.valueClass ? extra.valueClass : ""), text: value }),
     extra && extra.line && extra.line.text ? el("div", { class: "line " + (extra.line.cls || ""), text: extra.line.text,
@@ -532,24 +532,24 @@ function dayChangeLine(day) {
 function renderTiles(k) {
   const r = k.returns || {};
   const mw = k.money_weighted || {};
+  const times = (value) => (isNum(value) ? `${Number(value.toFixed(2))}x` : "n/a");   // 1.6x, 1.33x: no trailing zeros
+  // Number first, then a short label the eye learns once; read left to right: what needs attention before the results.
+  // The key (first argument's stand-in for saved order and hiding) keeps the old names, so arranged tiles stay arranged.
   const tiles = [
-    // Read left to right: what needs attention (drawdown, leverage) before the results.
-    tile("Drawdown now", pct(k.drawdown, 1), k.drawdown < 0 ? `peak ${sinceLabel(k.peak_date)}` : "at peak",
-      { valueClass: k.drawdown <= -0.10 ? "neg" : "" }),
-    tile("Gross leverage", isNum(k.gross_leverage) ? k.gross_leverage.toFixed(2) + "×" : "n/a",
-      isNum(k.net_leverage) ? `net ${k.net_leverage.toFixed(2)}×` : "", { title: "Of trading equity." }),
-
-    tile("Desk value", wholeUsd(k.desk_value), "", { line: dayChangeLine(k.day_change) }),
-    tile("Return 30D", pct(r["30D"], 1, true),
-      `7D ${pct(r["7D"], 1, true) || "n/a"} · 90D ${pct(r["90D"], 1, true) || "n/a"}`,
-      { valueClass: signClass(r["30D"]) }),
-    // The two returns since start, with the dollars under them: money-weighted (what the money made, a loss on a
-    // small balance and a gain on a large one net out) and time-weighted (the strategy, deposits aside).
-    tile("MW return", pct(mw.return, 1, true) || "n/a",
-      [isNum(mw.pnl) ? `PnL ${usd(mw.pnl)}` : "", isNum(k.unrealized) ? `uPnL ${usd(k.unrealized)}` : ""].filter(Boolean).join(" · "),
-      { valueClass: signClass(mw.return), title: "Money-weighted return since start, HL + IB; PnL net of deposits and withdrawals." }),
-    tile("TW return", pct(r.since_start, 1, true), `since ${sinceLabel(k.since)}`,
-      { valueClass: signClass(r.since_start), title: "Time-weighted return since start, wallets included." }),  ];
+    tile("drawdown", pct(k.drawdown, 1), k.drawdown < 0 ? `peak ${sinceLabel(k.peak_date)}` : "at peak",
+      { key: "Drawdown now", valueClass: k.drawdown <= -0.10 ? "neg" : "" }),
+    tile("gross", times(k.gross_leverage), isNum(k.net_leverage) ? `${times(k.net_leverage)} net` : "",
+      { key: "Gross leverage", title: "Of trading equity" }),
+    tile("", wholeUsd(k.desk_value), "", { key: "Desk value", line: dayChangeLine(k.day_change) }),
+    tile("30D", pct(r["30D"], 1, true), `${pct(r["7D"], 1, true) || "n/a"} 7D · ${pct(r["90D"], 1, true) || "n/a"} 90D`,
+      { key: "Return 30D", valueClass: signClass(r["30D"]) }),
+    // Since start: money-weighted (what the money made) and time-weighted (the strategy, deposits aside).
+    tile("MW", pct(mw.return, 1, true) || "n/a",
+      [isNum(mw.pnl) ? `${usd(mw.pnl)} PnL` : "", isNum(k.unrealized) ? `${usd(k.unrealized)} uPnL` : ""].filter(Boolean).join(" · "),
+      { key: "MW return", valueClass: signClass(mw.return), title: "Money-weighted return since start, HL + IB" }),
+    tile("TW", pct(r.since_start, 1, true), `since ${sinceLabel(k.since)}`,
+      { key: "TW return", valueClass: signClass(r.since_start), title: "Time-weighted return since start, wallets included" }),
+  ];
   arrangeTiles(document.getElementById("tiles"), tiles);
 }
 // The key-number tiles are windows too: drag one onto another to swap, minimize to label and value, save as an image, hide
@@ -1694,7 +1694,24 @@ async function refreshTicker() {
     x.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); const s = tickerState(); s.assets = s.assets.filter((a) => a !== asset); saveTicker(s); refreshTicker(); });
     return x;
   };
-  strip.replaceChildren(...state.assets.map((asset) => {
+  const reorderable = (chip, asset) => {   // drag a chip onto another to move it there
+    chip.setAttribute("draggable", "true");
+    chip.addEventListener("dragstart", (event) => { event.dataTransfer.setData("text/plain", "tick:" + asset); event.dataTransfer.effectAllowed = "move"; });
+    chip.addEventListener("dragover", (event) => { event.preventDefault(); chip.classList.add("drop-target"); });
+    chip.addEventListener("dragleave", () => chip.classList.remove("drop-target"));
+    chip.addEventListener("drop", (event) => {
+      event.preventDefault(); chip.classList.remove("drop-target");
+      const moving = String(event.dataTransfer.getData("text/plain")).replace(/^tick:/, "");
+      const s = tickerState(), from = s.assets.indexOf(moving), to = s.assets.indexOf(asset);
+      if (from < 0 || to < 0 || from === to) return;
+      s.assets.splice(to, 0, s.assets.splice(from, 1)[0]);
+      saveTicker(s); feedback("look", "price strip move", moving); refreshTicker();
+    });
+    return chip;
+  };
+  const hideStrip = el("button", { type: "button", class: "tick-x tick-hide", "aria-label": "Hide the price strip", text: "×" });
+  hideStrip.addEventListener("click", () => { const s = tickerState(); s.on = false; saveTicker(s); feedback("look", "price strip", "off"); drawModes(); refreshTicker(); });
+  strip.replaceChildren(...state.assets.map((asset) => reorderable((() => {
     const context = contexts[asset];
     if (!context || !isFinite(context.price)) return el("a", { class: "tick", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
       [el("b", { text: marketName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
@@ -1704,7 +1721,7 @@ async function refreshTicker() {
     return el("a", { class: "tick " + direction, href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
       el("b", { text: marketName(asset) }), el("span", { class: "price", text: priceText(context.price) }),
       el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }), dropper(asset)]);
-  }).concat([addBox]));
+  })(), asset)).concat([addBox, hideStrip]));
 }
 setInterval(refreshTicker, 5000);
 refreshTicker();
