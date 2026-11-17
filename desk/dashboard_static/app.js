@@ -424,9 +424,13 @@ function renderTableChart(id, spec, override) {
   const formatOf = (key) => (spec.columns.find((column) => column.key === key) || {}).fmt;
   const text = (key, value) => (FORMATS[formatOf(key)] || FORMATS.text).text(value);
   const labels = rows.map((row) => String(row[plan.label] ?? ""));
-  // A symbol held in two accounts gets its account in the label.
-  const name = (row, index) => labels.filter((l) => l === labels[index]).length > 1 && row.Account
-    ? `${labels[index]} (${row.Account})` : labels[index];
+  // A label that repeats gets what tells its rows apart: the window (Net · M, Long · W) or, for a symbol held in two
+  // accounts, the account.
+  const name = (row, index) => {
+    if (labels.filter((l) => l === labels[index]).length <= 1) return labels[index];
+    if (row.Window) return `${labels[index]} · ${row.Window}`;
+    return row.Account ? `${labels[index]} (${row.Account})` : labels[index];
+  };
   // A category axis merges equal names onto one row (bars and labels would pile up): every row gets its own name.
   const names = rows.map(name);
   const seen = {};
