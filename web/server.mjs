@@ -287,7 +287,7 @@ async function dashboardAction(request, response) {
       pendingActions.delete(String(token || ""));
       if (!pending || pending.key !== key || pending.expires < Date.now()) return send(400, { error: "the plan expired or changed: plan it again" });
       const { code, text } = await daemonCall({ ...request_, live: true }, (prompt) =>
-        prompt.includes("SUBMIT POSITION ACTIONS") ? "SUBMIT POSITION ACTIONS" : prompt.includes("LIVE TRADING") ? "LIVE TRADING" : "");
+        prompt.includes("SUBMIT ORDERS") ? "SUBMIT ORDERS" : prompt.includes("SUBMIT POSITION ACTIONS") ? "SUBMIT POSITION ACTIONS" : prompt.includes("LIVE TRADING") ? "LIVE TRADING" : "");
       await fsp.appendFile(ACTIONS_LOG, JSON.stringify({ at: new Date().toISOString(), change, coin, wallet, fraction, code,
         result: text.slice(-600) }) + "\n").catch(() => {});
       return send(200, { code, result: text.slice(-4000) });

@@ -992,8 +992,11 @@
       });
       if (winnerParts.length) well.push(["Largest winners", "D " + winnerParts.join("; ") + "."]);
       if (loserParts.length) attention.push(["Largest losers", "D " + loserParts.join("; ") + "."]);
-      const largest = tradePositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
-      const concentration = tradingEquity ? Math.abs(value(largest)) / tradingEquity : NaN;
+      // A broad index (SPY, the S&P perp) is a market holding, not a single-name concentration: never flagged (user, 2026-11-17).
+      const INDEX_FUNDS = new Set(["SPY", "QQQ", "VOO", "IVV", "DIA", "IWM", "SP500"]);
+      const singles = tradePositions.filter((p) => !INDEX_FUNDS.has(String(p.symbol).split(":").pop().toUpperCase()));
+      const largest = singles.length ? singles.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a)) : null;
+      const concentration = largest && tradingEquity ? Math.abs(value(largest)) / tradingEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {
         attention.push(["Concentration", `${largest.symbol} ${largest.quantity > 0 ? "long" : "short"} ${percent(concentration, false, 0)} of equity.`]);
       }

@@ -34,6 +34,7 @@ from desk.numbers import clock, pct as _pct
 OVERVIEW_HIGHLIGHTS_STATE = "desk_overview_highlights_state.json"
 HIGHLIGHT_MOVERS = 3
 MARKET_KINDS = ("Crypto", "Stocks")
+INDEX_FUNDS = {"SPY", "QQQ", "VOO", "IVV", "DIA", "IWM", "SP500"}   # broad indexes: never a single-name concentration
 SYMBOLIC_HOLDINGS = {"KYIV", "SWMR"}   # held to symbolize Ukraine, not on a thesis: never a winner or a loser to act on
 
 
@@ -835,8 +836,10 @@ class DeskOverview:
                 well.append(("Largest winners", "D " + "; ".join(winner_parts) + "."))
             if loser_parts:
                 attention.append(("Largest losers", "D " + "; ".join(loser_parts) + "."))
-            label, largest = max(positions, key=lambda item: abs(item[1].notional_usd))
-            share = abs(largest.notional_usd) / self.trading_equity if self.trading_equity else float("nan")
+            # A broad index (SPY, the S&P perp) is a market holding, not a single-name concentration: never flagged.
+            singles = [item for item in positions if item[1].symbol.split(":")[-1].upper() not in INDEX_FUNDS]
+            label, largest = max(singles or positions, key=lambda item: abs(item[1].notional_usd))
+            share = abs(largest.notional_usd) / self.trading_equity if self.trading_equity and singles else float("nan")
             if share > CONCENTRATION_PCT:
                 attention.append(("Concentration", f"{largest.symbol} {largest.side.lower()} {share:.0%} of equity."))
             # Positions paying funding fast enough to matter (desk/funding_watch.py).
