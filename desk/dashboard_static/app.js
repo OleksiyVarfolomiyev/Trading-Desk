@@ -306,6 +306,21 @@ function chartPlan(id, spec) {
   return key ? { kind: "bars", label: spec.columns[0].key, value: key.key, text: null } : null;
 }
 
+// Cascaded drawing: a chart below the first screen is drawn when it scrolls into view (the first screen comes first).
+const lazyCharts = new Map();   // host element -> the draw waiting for it
+const lazyObserver = typeof IntersectionObserver !== "undefined" ? new IntersectionObserver((entries) => entries.forEach((entry) => {
+  if (!entry.isIntersecting || !lazyCharts.has(entry.target)) return;
+  const draw = lazyCharts.get(entry.target);
+  lazyCharts.delete(entry.target);
+  lazyObserver.unobserve(entry.target);
+  draw();
+}), { rootMargin: "300px" }) : null;
+function whenVisible(host, draw) {
+  const box = host.getBoundingClientRect();
+  if (!lazyObserver || (box.top < window.innerHeight + 300 && box.bottom > -300)) { draw(); return; }
+  lazyCharts.set(host, draw);
+  lazyObserver.observe(host);
+}
 function renderTableChart(id, spec, override) {
   const host = document.getElementById("t-" + id);
   const plan = override || chartPlan(id, spec);
@@ -435,7 +450,7 @@ function renderTableChart(id, spec, override) {
     base.margin = Object.assign({}, base.margin, { l: shorts ? 150 : 12 });
     delete base.insideLabels;
   }
-  Plotly.newPlot(node, traces, base, CONFIG).then(markNumericNotes);
+  whenVisible(host, () => Plotly.newPlot(node, traces, base, CONFIG).then(markNumericNotes));
   return true;
 }
 
@@ -1385,7 +1400,8 @@ function renderPublished(tiles) {
       const base = baseLayout({ hovermode: "closest", margin: { l: 56, r: 24, t: 30, b: 40 }, colorway: [1, 2, 3, 4, 5].map((i) => token("--series-" + i)) });
       const layout = Object.assign({}, base, Object.fromEntries(Object.entries(tile.layout || {}).filter(([key]) => !PUBLISHED_AXES.includes(key))));
       PUBLISHED_AXES.forEach((key) => { if (base[key] || (tile.layout || {})[key]) layout[key] = Object.assign({}, base[key] || {}, (tile.layout || {})[key] || {}); });
-      Plotly.react("pub-" + tile.key, tile.data || [], layout, CONFIG).then(markNumericNotes);
+      const node = document.getElementById("pub-" + tile.key);
+      if (node) whenVisible(node, () => Plotly.react(node, tile.data || [], layout, CONFIG).then(markNumericNotes));
     } else if (tile.kind === "table") {
       renderTable("pub-" + tile.key, { columns: tile.columns || [], rows: tile.rows || [] });
     }
