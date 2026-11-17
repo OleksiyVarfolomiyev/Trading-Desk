@@ -563,6 +563,7 @@ function tile(label, value, sub, extra) {  // extra.title: the definition, on ho
     extra && extra.line && extra.line.text ? el("div", { class: "line " + (extra.line.cls || ""), text: extra.line.text,
       title: extra.line.title || "" }) : null,
     sub ? el("div", { class: "sub" }, kindMarks(sub)) : null,
+    extra && extra.chips ? extra.chips : null,
   ]);
 }
 
@@ -601,11 +602,11 @@ function renderTiles(k) {
   // drawdown last. Returns over windows are history: the performance table below has them.
   const tiles = [
     (() => {   // the chosen window: the day's change, or the desk's return over 7 or 30 days, or since the start
-      const scale = currentScale(), r = k.returns || {};
+      const scale = currentScale("tile"), r = k.returns || {};
       const value = scale === "1D" ? day.pct : scale === "1W" ? r["7D"] : scale === "1M" ? r["30D"] : r.since_start;
       const label = { "1D": "today", "1W": "7D", "1M": "30D", All: "all" }[scale];
       return tile(label, isNum(value) ? pct(value, 1, true) : "n/a", scale === "1D" && isNum(day.change) ? usd(day.change) : "",
-        { key: "Today", valueClass: signClass(value), title: scale === "1D" ? dayChangeLine(day).title : "" });
+        { key: "Today", valueClass: signClass(value), title: scale === "1D" ? dayChangeLine(day).title : "", chips: scaleChips("tile") });
     })(),
     tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", bookShares(tables) || (isNum(k.unrealized) ? usd(k.unrealized) : ""),
       { key: "uPnL", valueClass: signClass(upnl), title: "Open positions against their cost" }),
@@ -863,7 +864,7 @@ function renderCharts(charts) {
     shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }],
   });
   twrLayout.yaxis = Object.assign({}, twrLayout.yaxis, { ticksuffix: "%" });
-  Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => { spreadEndLabels("chart-twr"); markNumericNotes(); zoomCharts(); });
+  Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => { spreadEndLabels("chart-twr"); markNumericNotes(); zoomCharts(); drawChartScales(); });
 }
 
 // ---------------------------------------------------------------- page
@@ -985,23 +986,42 @@ function icon(kind) {   // 16px line icons, drawn in the button's text colour
 // book of day trades opens on the day, conviction trades held for weeks on the month); a click fixes it, a click on the
 // fixed one returns it to auto. It sets the "now" tile's window and zooms the value charts.
 const SCALES = [["1D", 1], ["1W", 7], ["1M", 30], ["All", null]];
-let scaleChoice = "auto";
-try { scaleChoice = localStorage.getItem("desk-scale") || "auto"; } catch (e) {}
+// Each element has its own scale: the "now" tile and the value charts. Left alone it follows how long the open trades have
+// been held; hovering the element shows its scales, a click fixes one, a click on the fixed one returns it to auto.
+let scaleChoices = {};
+try { scaleChoices = JSON.parse(localStorage.getItem("desk-scales")) || {}; } catch (e) {}
 function autoScale() {
   const days = latest && latest.data && latest.data.horizon_days;
   return !isNum(days) ? "1D" : days < 2 ? "1D" : days < 10 ? "1W" : days < 60 ? "1M" : "All";
 }
-function currentScale() { return scaleChoice === "auto" ? autoScale() : scaleChoice; }
-function setScale(scale) {
-  scaleChoice = scaleChoice === scale ? "auto" : scale;
-  try { localStorage.setItem("desk-scale", scaleChoice); } catch (e) {}
-  feedback("look", "scale", scaleChoice);
-  drawModes();
-  if (latest && latest.data) { renderTiles(latest.data.kpis || {}); zoomCharts(); }
+function currentScale(element = "tile") { const choice = scaleChoices[element] || "auto"; return choice === "auto" ? autoScale() : choice; }
+function setScale(element, scale) {
+  scaleChoices[element] = (scaleChoices[element] || "auto") === scale ? "auto" : scale;
+  try { localStorage.setItem("desk-scales", JSON.stringify(scaleChoices)); } catch (e) {}
+  feedback("look", "scale " + element, scaleChoices[element]);
+  if (!latest || !latest.data) return;
+  if (element === "tile") renderTiles(latest.data.kpis || {}); else { zoomCharts(); drawChartScales(); }
+}
+function scaleChips(element) {   // the element's own scale buttons, shown on its hover
+  const active = currentScale(element), auto = (scaleChoices[element] || "auto") === "auto";
+  return el("span", { class: "scale-chips" }, SCALES.map(([name]) => {
+    const chip = el("button", { type: "button", class: "scale-chip" + (name === active ? " on" : "") + (auto && name === active ? " auto" : ""), text: name });
+    chip.addEventListener("click", (event) => { event.stopPropagation(); setScale(element, name); });
+    return chip;
+  }));
+}
+function drawChartScales() {   // the value charts' cards carry their scale chips in the heading
+  ["chart-value", "chart-twr"].forEach((id) => {
+    const node = document.getElementById(id), title = node && node.closest(".card") && node.closest(".card").querySelector("h2");
+    if (!title) return;
+    const old = title.querySelector(".scale-chips");
+    const chips = scaleChips("charts");
+    if (old) old.replaceWith(chips); else { const tools = title.querySelector(".card-tools"); if (tools) tools.before(chips); else title.append(chips); }
+  });
 }
 function zoomCharts() {   // the value charts show the chosen window (All: the whole history)
   if (typeof Plotly === "undefined") return;
-  const days = (SCALES.find(([name]) => name === currentScale()) || [])[1];
+  const days = (SCALES.find(([name]) => name === currentScale("charts")) || [])[1];
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id);
     if (!node || !node.data) return;
@@ -1067,15 +1087,7 @@ function drawModes() {
     "aria-label": "Live price strip", "aria-pressed": tickerOn ? "true" : "false" }, [icon("pulse")]);
   strip.addEventListener("click", () => { const s = tickerState(); s.on = !s.on; saveTicker(s); feedback("look", "price strip", s.on ? "on" : "off"); drawModes(); refreshTicker(); });
   report.addEventListener("click", openReport);
-  const scales = el("div", { class: "switch", role: "group", "aria-label": "Time scale" });
-  const active = currentScale();
-  SCALES.forEach(([name]) => {
-    const button = el("button", { type: "button", class: "unit-button" + (scaleChoice === "auto" && name === active ? " auto" : ""),
-      "aria-pressed": name === active ? "true" : "false", title: scaleChoice === "auto" && name === active ? "Auto: the open trades' horizon" : "", text: name });
-    button.addEventListener("click", () => setScale(name));
-    scales.append(button);
-  });
-  host.replaceChildren(scales, views, units, toggle, styles, strip, report);
+  host.replaceChildren(views, units, toggle, styles, strip, report);
 }
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
 // switch redraws the tables; mode and style are CSS for the tables, so only the Plotly charts (which read the colours and
