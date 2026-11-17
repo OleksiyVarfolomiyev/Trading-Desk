@@ -886,6 +886,7 @@ function renderHighlights(id, rows, hover = {}) {
   const foot = folded.length ? [el("li", {}, [el("button", { type: "button", class: "quiet-toggle", title: "Areas you have dismissed several times: " + [...new Set(folded.map((r) => r[0]))].join(", "),
     text: open ? "hide quiet" : `${folded.length} quiet`, onclick: null })])] : [];
   if (foot.length) foot[0].firstChild.addEventListener("click", () => { host.dataset.showQuiet = open ? "0" : "1"; redrawHighlights(); });
+  numberContext = { positive: id === "hl-well" };
   host.replaceChildren(...ordered.map(([area, text, level, whole]) => {
     const act = (label, symbol, change) => {
       const button = el("button", { type: "button", class: "hl-act", title: label, "aria-label": `${label}: ${area}`, text: symbol });
@@ -894,7 +895,7 @@ function renderHighlights(id, rows, hover = {}) {
     };
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
     return el("li", Object.assign(level ? { class: level } : {}, { title: [area, hover[area]].filter(Boolean).join(": ") }), [
-      el("span", { class: "text" }, linkSymbols(text).flatMap((part) => (typeof part === "string" ? kindMarks(part) : [part]))),
+      el("span", { class: "text" }, linkSymbols(text).flatMap((part) => (typeof part === "string" ? kindMarks(part).flatMap((piece) => (typeof piece === "string" ? coloredNumbers(piece) : [piece])) : [part]))),
       el("span", { class: "hl-actions" }, [
         ...(window.DESK_SOURCE ? symbolActions(text) : []),   // run it: plan, then confirm
         act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + whole] = Date.now(); feedback("highlight", "read", area, text); }),
@@ -1588,6 +1589,21 @@ function knownSymbols() {
 // Crypto and stocks are a colour, not a word: an orange dot for crypto, a blue one for stocks and tradfi, wherever the
 // words would appear (titles, highlights, table cells). The word stays for screen readers and shows on hover.
 const KIND_WORDS = /\b(crypto|stocks and tradfi|stocks & commodities|stocks|tradfi)\b/gi;
+// Percentages in a line: a minus is red; a positive is green on the "what stands out" list (good news), plain elsewhere.
+let numberContext = { positive: false };
+function coloredNumbers(text) {
+  const parts = [], pattern = /(-?\d+(?:\.\d+)?%)/g;
+  let last = 0, match;
+  const source = String(text);
+  while ((match = pattern.exec(source)) !== null) {
+    if (match.index > last) parts.push(source.slice(last, match.index));
+    const negative = match[1].startsWith("-"), cls = negative ? "neg" : numberContext.positive ? "pos" : "";
+    parts.push(cls ? el("span", { class: cls, text: match[1] }) : match[1]);
+    last = match.index + match[1].length;
+  }
+  if (last < source.length) parts.push(source.slice(last));
+  return parts;
+}
 function kindMarks(text) {   // each crypto or stocks part becomes one tinted run: the dot and what it says, to the next part
   const source = String(text), found = [];
   KIND_WORDS.lastIndex = 0;
@@ -1603,7 +1619,7 @@ function kindMarks(text) {   // each crypto or stocks part becomes one tinted ru
     const end = stop >= 0 ? item.end + stop : next;
     const crypto = /crypto/i.test(item.word);
     const words = source.slice(item.end, end).replace(/^[:\s]+/, "").replace(/,\s*$/, "");
-    parts.push(el("span", { class: "kind-run " + (crypto ? "kind-crypto" : "kind-stocks"), title: item.word }, [words]));
+    parts.push(el("span", { class: "kind-run " + (crypto ? "kind-crypto" : "kind-stocks"), title: item.word }, coloredNumbers(words)));
     const between = source.slice(end, next);
     if (between) parts.push(between);
     else if (i + 1 < found.length) parts.push(" ");   // two runs side by side keep a gap
@@ -1647,6 +1663,11 @@ function symbolActions(text) {
   return [button];
 }
 
+function symbolKind(symbol) {   // crypto or stocks, by the table the symbol is held in (or its venue)
+  const tables = (latest && latest.data && latest.data.tables) || {}, name = marketName(symbol).toLowerCase();
+  if (((tables.positions_stocks || {}).rows || []).some((row) => marketName(row.Symbol).toLowerCase() === name)) return "stocks";
+  return /^(spy|s&p500|nasdaq100)$/.test(name) ? "stocks" : "crypto";
+}
 function linkSymbols(text) {   // the text with each known symbol as a button that opens its tile
   const symbols = [...knownSymbols()].filter((s) => s.length >= 2).sort((a, b) => b.length - a.length);
   if (!symbols.length) return [text];
@@ -1658,7 +1679,7 @@ function linkSymbols(text) {   // the text with each known symbol as a button th
     const start = match.index + match[1].length;
     if (start > last) parts.push(text.slice(last, start));
     const symbol = match[2];
-    const button = el("button", { type: "button", class: "symbol-chip", text: symbol });
+    const button = el("button", { type: "button", class: "symbol-chip name-" + symbolKind(symbol), text: symbol });
     button.addEventListener("click", (event) => { event.stopPropagation(); openAsset(symbol); });
     parts.push(button);
     last = start + symbol.length;
@@ -2225,12 +2246,12 @@ async function refreshTicker() {
   strip.replaceChildren(...state.assets.map((asset) => reorderable((() => {
     const context = contexts[marketOf(asset)];
     if (!context || !isFinite(context.price)) return el("a", { class: "tick", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
-      [el("b", { text: friendlyName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
+      [el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
     const change = context.previous ? context.price / context.previous - 1 : NaN;
     const direction = lastPrices[asset] === undefined || lastPrices[asset] === context.price ? "" : context.price > lastPrices[asset] ? "up" : "down";
     lastPrices[asset] = context.price;
     return el("a", { class: "tick " + direction, href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
-      el("b", { text: friendlyName(asset) }), el("span", { class: "price", text: priceText(context.price) }),
+      el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }), el("span", { class: "price", text: priceText(context.price) }),
       el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }), dropper(asset)]);
   })(), asset)).concat([addBox, hideStrip]));
 }
