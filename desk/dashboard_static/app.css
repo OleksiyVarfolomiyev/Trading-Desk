@@ -382,3 +382,10 @@ html.private .js-plotly-plot .numeric-note { filter: blur(7px); user-select: non
 .ticker-remove:hover { color: var(--ink); }
 .report-button { background: transparent; color: var(--ink-2); border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
 .report-button:hover { color: var(--ink); background: var(--border); }
+.style-button { padding: 6px 9px; } .style-button i { width: 12px; height: 12px; }
+.strip-button[aria-pressed="true"] { color: var(--series-1); }
+.tick-x { background: transparent; border: 0; color: var(--muted); cursor: pointer; padding: 0 2px; font-size: 13px; line-height: 1; opacity: 0; }
+.tick:hover .tick-x { opacity: 1; }
+.tick-add { display: inline-flex; align-items: center; }
+.tick-input { background: transparent; color: var(--ink); border: 1px dashed var(--border); border-radius: 6px; padding: 1px 8px; font: inherit; font-size: 12px; width: 84px; }
+.tick-input:focus { outline: none; border-style: solid; border-color: var(--series-1); }

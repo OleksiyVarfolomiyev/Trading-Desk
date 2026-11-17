@@ -835,6 +835,8 @@ function icon(kind) {   // 16px line icons, drawn in the button's text colour
     sun: ["M8 5.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z", "M8 1.5v1.6", "M8 12.9v1.6", "M1.5 8h1.6", "M12.9 8h1.6",
       "M3.4 3.4l1.1 1.1", "M11.5 11.5l1.1 1.1", "M3.4 12.6l1.1-1.1", "M11.5 4.5l1.1-1.1"],
     moon: ["M13 9.6A5.5 5.5 0 0 1 6.4 3a5.5 5.5 0 1 0 6.6 6.6z"],
+    report: ["M4 1.8h5.5L12.5 5v9.2H4z", "M9.5 1.8V5h3", "M6 8h4.5", "M6 10.5h4.5"],
+    pulse: ["M1.5 8.5h3l1.8-5 3.2 9 1.8-4h3.2"],
   }[kind];
   paths.forEach((d) => { const p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.append(p); });
   return svg;
@@ -875,7 +877,7 @@ function drawModes() {
   const styles = el("div", { class: "switch", role: "group", "aria-label": "Style" });
   STYLE_CHOICES.forEach(([value, name, dot]) => {
     const button = el("button", { type: "button", class: "style-button", title: name, "aria-pressed": value === style ? "true" : "false",
-      style: `--dot:${dot}` }, [el("i"), name]);
+      "aria-label": name + " style", style: `--dot:${dot}` }, [el("i")]);
     button.addEventListener("click", () => setLook("style", value));
     styles.append(button);
   });
@@ -886,9 +888,13 @@ function drawModes() {
     button.addEventListener("click", () => setUnit(value));
     units.append(button);
   });
-  const report = el("button", { type: "button", class: "report-button", title: "Report: a printable page of the desk", "aria-label": "Report", text: "Report" });
+  const report = el("button", { type: "button", class: "icon-button report-button", title: "Report: a printable page of the desk", "aria-label": "Report" }, [icon("report")]);
+  const tickerOn = tickerState().on;
+  const strip = el("button", { type: "button", class: "icon-button strip-button", title: tickerOn ? "Hide the price strip" : "Show live prices on top",
+    "aria-label": "Live price strip", "aria-pressed": tickerOn ? "true" : "false" }, [icon("pulse")]);
+  strip.addEventListener("click", () => { const s = tickerState(); s.on = !s.on; saveTicker(s); feedback("look", "price strip", s.on ? "on" : "off"); drawModes(); refreshTicker(); });
   report.addEventListener("click", openReport);
-  host.replaceChildren(views, units, toggle, styles, report);
+  host.replaceChildren(views, units, toggle, styles, strip, report);
 }
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
 // switch redraws the tables; mode and style are CSS for the tables, so only the Plotly charts (which read the colours and
@@ -1113,7 +1119,7 @@ function drawSectionsMenu() {
   if (restore) restore.addEventListener("click", () => { saveHighlightState({ read: {}, deleted: [] }); feedback("highlight", "restore", "all"); redrawHighlights(); });
   const reset = el("button", { type: "button", class: "sections-reset", text: "Reset layout" });
   reset.addEventListener("click", () => { try { localStorage.removeItem(LAYOUT_KEY); } catch (e) {} location.reload(); });
-  menu.replaceChildren(...tickerMenu(), ...rows, ...(restore ? [restore] : []), reset);
+  menu.replaceChildren(...rows, ...(restore ? [restore] : []), reset);
 }
 
 
@@ -1154,17 +1160,34 @@ async function refreshTicker() {
   }
   strip.hidden = false;
   const contexts = await tickerContexts(state.assets);
+  const adding = strip.querySelector(".tick-input");
+  if (adding && document.activeElement === adding) return;   // do not redraw under a field being typed in
+  const addBox = el("span", { class: "tick-add" }, [el("input", { type: "text", class: "tick-input", placeholder: "+ asset", "aria-label": "Add an asset to the price strip", size: "8" })]);
+  addBox.firstChild.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    const name = addBox.firstChild.value.trim();
+    if (!name) return;
+    const s = tickerState();
+    const asset = name.includes(":") ? name.replace(/^([A-Za-z0-9]+):(.*)$/, (m, dex, coin) => dex.toLowerCase() + ":" + coin.toUpperCase()) : name.toUpperCase();
+    if (!s.assets.includes(asset)) s.assets.push(asset);
+    saveTicker(s); feedback("look", "price strip add", asset); refreshTicker();
+  });
+  const dropper = (asset) => {
+    const x = el("button", { type: "button", class: "tick-x", title: "Remove " + asset, "aria-label": "Remove " + asset, text: "×" });
+    x.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); const s = tickerState(); s.assets = s.assets.filter((a) => a !== asset); saveTicker(s); refreshTicker(); });
+    return x;
+  };
   strip.replaceChildren(...state.assets.map((asset) => {
     const context = contexts[asset];
     if (!context || !isFinite(context.price)) return el("a", { class: "tick", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
-      [el("b", { text: marketName(asset) }), el("span", { class: "muted", text: "n/a" })]);
+      [el("b", { text: marketName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
     const change = context.previous ? context.price / context.previous - 1 : NaN;
     const direction = lastPrices[asset] === undefined || lastPrices[asset] === context.price ? "" : context.price > lastPrices[asset] ? "up" : "down";
     lastPrices[asset] = context.price;
     return el("a", { class: "tick " + direction, href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
       el("b", { text: marketName(asset) }), el("span", { class: "price", text: priceText(context.price) }),
-      el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" })]);
-  }));
+      el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }), dropper(asset)]);
+  }).concat([addBox]));
 }
 setInterval(refreshTicker, 5000);
 refreshTicker();
