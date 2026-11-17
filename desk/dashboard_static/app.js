@@ -934,6 +934,19 @@ function severity(title, text) {
 // Highlights can be answered: "✓" marks one read (it disappears until its text changes), "×" says it is not important (that
 // area is not shown again). Both are remembered in the browser; the Sections menu restores them.
 const HIGHLIGHTS_KEY = "desk-highlights";
+// "Read" hides a line until something significant changes: the words (symbols, signs) differ, or a figure has moved by more than
+// a point or a quarter of its size. A refresh that only nudges the numbers does not bring it back.
+const lineShape = (text) => String(text).replace(/-?\d+(?:\.\d+)?/g, "#");
+const lineNumbers = (text) => (String(text).match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+function isRead(state, area, text) {
+  const mine = lineNumbers(text), shape = lineShape(text);
+  return Object.entries(state.read).some(([key, entry]) => {
+    if (!key.startsWith(area + "|")) return false;
+    if (typeof entry !== "object") return key === area + "|" + text;   // an older entry: the exact line only
+    if (entry.shape !== shape || entry.nums.length !== mine.length) return false;
+    return mine.every((value, i) => Math.abs(value - entry.nums[i]) <= Math.max(1, Math.abs(entry.nums[i]) * 0.25));
+  });
+}
 function highlightState() {
   try { return Object.assign({ read: {}, deleted: [] }, JSON.parse(localStorage.getItem(HIGHLIGHTS_KEY)) || {}); }
   catch (e) { return { read: {}, deleted: [] }; }
@@ -957,7 +970,7 @@ function renderHighlights(id, rows, hover = {}) {
   // Areas the reader has dismissed over and over (desk/usage_model.py) are folded away, never a critical row.
   const quiet = new Set((((latest && latest.data && latest.data.usage_model) || {}).quiet) || []);
   const open = host.dataset.showQuiet === "1";
-  const answered = (rows || []).filter(([area, text]) => !state.deleted.includes(area) && !state.read[area + "|" + text])
+  const answered = (rows || []).filter(([area, text]) => !state.deleted.includes(area) && !isRead(state, area, text))
     .flatMap(([area, text]) => sentences(cleanLine(text)).map((part, i) => [area, part, text]));   // [area, line, the whole text it came from]
   const folded = answered.filter(([area, text]) => quiet.has(area) && severity(area, text) !== "critical");
   const shown = open ? answered : answered.filter((row) => !folded.includes(row));
@@ -987,7 +1000,7 @@ function renderHighlights(id, rows, hover = {}) {
       el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),   // the uPnL lines carry no background
       el("span", { class: "hl-actions" }, [
         ...(window.DESK_SOURCE ? symbolActions(text) : []),   // run it: plan, then confirm
-        act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + whole] = Date.now(); feedback("highlight", "read", area, text); }),
+        act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + whole] = { at: Date.now(), shape: lineShape(whole), nums: lineNumbers(whole) }; feedback("highlight", "read", area, text); }),
         act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),   // stays; tells the model this area earns its place
         act("Not important: stop showing this", "👎", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
       ]),
