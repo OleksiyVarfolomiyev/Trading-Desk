@@ -602,6 +602,7 @@ function tile(label, value, sub, extra) {  // extra.title: the definition, on ho
       title: extra.line.title || "" }) : null,
     sub ? el("div", { class: "sub" }, kindMarks(sub)) : null,
     extra && extra.chips ? extra.chips : null,
+    extra && extra.visual ? extra.visual : null,
   ]);
 }
 
@@ -648,8 +649,15 @@ function renderTiles(k) {
     })(),
     tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", bookShares(tables),
       { key: "uPnL", valueClass: signClass(upnl), title: isNum(k.unrealized) ? `${usd(k.unrealized)} uPnL` : "" }),
-    tile("of cap", isNum(risk) ? pct(risk / RISK_CAP) : "n/a", isNum(risk) ? `${pct(risk)} risk` : "",
-      { key: "Risk", valueClass: isNum(risk) && risk / RISK_CAP >= 0.9 ? "neg" : "", title: "Open risk against the 33% cap: the room for new trades" }),
+    (() => {   // risk against the cap as a gauge: the part used, the room left, or how far over
+      const used = isNum(risk) ? risk / RISK_CAP : NaN;
+      const word = !isNum(used) ? "n/a" : used <= 1 ? `${pct(1 - used)} room` : `${pct(used - 1)} over`;
+      const gauge = isNum(used) ? el("span", { class: "gauge" + (used > 1 ? " over" : used >= 0.9 ? " tight" : "") }, [
+        el("span", { class: "gauge-used", style: `width:${Math.min(used, 1) * 100}%` }),
+        used > 1 ? el("span", { class: "gauge-over", style: `width:${Math.min(used - 1, 0.5) * 100}%` }) : null]) : null;
+      return tile("risk", word, "", { key: "Risk", valueClass: used > 1 ? "neg" : "", visual: gauge,
+        title: isNum(risk) ? `Open risk ${pct(risk)} of equity against the 33% cap` : "" });
+    })(),
     tile("gross", times(k.gross_leverage), isNum(k.net_leverage) ? `${times(k.net_leverage)} net` : "",
       { key: "Gross leverage", title: "Of trading equity" }),
     tile("", wholeUsd(k.desk_value), "", { key: "Desk value" }),
