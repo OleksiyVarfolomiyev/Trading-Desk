@@ -2068,7 +2068,7 @@ function tickerState() {
 }
 function saveTicker(state) { try { localStorage.setItem(TICKER_KEY, JSON.stringify(state)); } catch (e) {} }
 const lastPrices = {};
-const priceText = (value) => (value >= 1000 ? value.toLocaleString("en-US", { maximumFractionDigits: 1 }) : String(Number(value.toPrecision(5))));
+const priceText = (value) => (value >= 1000 ? Math.round(value).toLocaleString("en-US") : value >= 100 ? value.toFixed(1).replace(/\.0$/, "") : String(Number(value.toPrecision(5))));   // thousands: whole numbers
 async function tickerContexts(assets) {   // name -> {price, previous} for the main DEX and, when asked for, the xyz DEX
   const out = {};
   const read = async (dex) => {
