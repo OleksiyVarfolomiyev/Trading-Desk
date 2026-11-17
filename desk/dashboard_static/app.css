@@ -575,3 +575,15 @@ th, td { padding: 1px 5px; }
 .card-tool.thumb:hover, .card-tool.thumb.on { filter: none; opacity: 1; }
 /* Critical lines: the red edge alone, no red background. */
 .highlights li.critical { background: transparent !important; }
+/* Where a dragged tile will land: a line above or below the tile it is nearest to (cards), or left or right (key numbers). */
+.card.drop-before { box-shadow: 0 -3px 0 0 var(--series-1); }
+.card.drop-after { box-shadow: 0 3px 0 0 var(--series-1); }
+.tile.drop-left { box-shadow: -3px 0 0 0 var(--series-1); }
+.tile.drop-right { box-shadow: 3px 0 0 0 var(--series-1); }
+.card.drop-target { outline: none; }
+/* Thumbs: bottom right of the tile, on hover. */
+.card { position: relative; }
+.card-foot { position: absolute; right: 4px; bottom: 2px; display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s; background: var(--surface); border-radius: 6px; }
+.card:hover .card-foot, .tile:hover .card-foot { opacity: 1; }
+.tile-foot { right: 2px; bottom: 0; }
+@media (hover: none) { .card-foot { opacity: 1; } }

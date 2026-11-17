@@ -91,7 +91,7 @@ def book_lines(start) -> list[dict]:
         if len(points) < 2:
             continue
         base = 1 + points[0][1]
-        lines.append({"name": f"{name} book", "x": [day for day, _ in points],
+        lines.append({"name": name, "x": [day for day, _ in points],
                       "y": [round(100 * ((1 + value) / base - 1), 2) for _, value in points]})
     return lines
 

@@ -933,7 +933,7 @@
       const kept = points.filter(([day, value]) => value !== null && day >= startDay);
       if (kept.length < 2) return;
       const base = 1 + kept[0][1];
-      twr.push({ name: `${name} book`, x: kept.map(([day]) => day), y: kept.map(([, value]) => Math.round(10000 * ((1 + value) / base - 1)) / 100) });
+      twr.push({ name, x: kept.map(([day]) => day), y: kept.map(([, value]) => Math.round(10000 * ((1 + value) / base - 1)) / 100) });
     });
 
     // -- highlights (desk/overview.py and desk/desk_accounts.py rules)

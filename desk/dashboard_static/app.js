@@ -191,9 +191,9 @@ const VIEWS = {
     // One window at a time, as the charts: the window's chips appear on the card's hover.
     columnsNow: () => {
       const window = { "1D": ["Return 24h", "24h"], "1W": ["Return 7D", "7d"], "1M": ["Return 30D", "30d"], All: ["Return since inception", "since start"] }[currentScale("performance")];
-      return [["Account", "Book"], window];
+      return [["Account", " "], window];
     },
-    columns: [["Account", "Book"], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
+    columns: [["Account", " "], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
     ["Return 90D", "90d"], ["Return 1Y", "1y"], ["Return since inception", "Since start"], ["Since", "Start"]] },
   accounts: {
     keep: (r) => !/wallet$/i.test(String(r.Account || "")),  // margin and leverage mean nothing for a wallet
@@ -755,8 +755,8 @@ function arrangeTiles(host, tiles) {
       button.addEventListener("click", (event) => { event.stopPropagation(); action(); });
       return button;
     };
+    tile.append(el("div", { class: "card-foot tile-foot" }, thumbs(label, "tile")));
     tile.append(el("span", { class: "card-tools tile-tools" }, [
-      ...thumbs(label, "tile"),
       tool("card-minimize", "Minimize", "–", () => {
         const on = !tile.classList.contains("tile-min");
         tile.classList.toggle("tile-min", on);
@@ -779,11 +779,16 @@ function arrangeTiles(host, tiles) {
       tile.classList.add("dragging");
     });
     tile.addEventListener("dragend", () => { tile.draggable = false; tile.classList.remove("dragging"); host.querySelectorAll(".drop-target").forEach((n) => n.classList.remove("drop-target")); });
-    tile.addEventListener("dragover", (event) => { event.preventDefault(); tile.classList.add("drop-target"); });
-    tile.addEventListener("dragleave", () => tile.classList.remove("drop-target"));
+    tile.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      const box = tile.getBoundingClientRect(), left = event.clientX < box.left + box.width / 2;
+      host.querySelectorAll(".drop-left, .drop-right").forEach((n) => n.classList.remove("drop-left", "drop-right"));
+      tile.classList.add(left ? "drop-left" : "drop-right");
+    });
+    tile.addEventListener("dragleave", () => tile.classList.remove("drop-left", "drop-right"));
     tile.addEventListener("drop", (event) => {
       event.preventDefault();
-      tile.classList.remove("drop-target");
+      host.querySelectorAll(".drop-left, .drop-right").forEach((n) => n.classList.remove("drop-left", "drop-right"));
       const [kind, from] = event.dataTransfer.getData("text/plain").split(/:(.*)/s);
       const moving = kind === "tile" && [...host.children].find((node) => node.dataset.label === from);
       if (!moving || moving === tile) return;
@@ -1001,8 +1006,8 @@ function renderCharts(charts) {
   Plotly.react("chart-value", value, valueLayout, CONFIG).then(() => { spreadEndLabels("chart-value"); markNumericNotes(); });
 
   // The desk is the dotted reference line; the crypto and stocks books in their colours; the benchmarks thin.
-  const lineFor = (s, i) => /^crypto book/i.test(s.name) ? { width: 2.2, color: token("--kind-crypto") }
-    : /^stocks book/i.test(s.name) ? { width: 2.2, color: token("--kind-stocks") }
+  const lineFor = (s, i) => /^crypto/i.test(s.name) ? { width: 2.2, color: token("--kind-crypto") }
+    : /^stocks/i.test(s.name) ? { width: 2.2, color: token("--kind-stocks") }
     : /^(total|desk)/i.test(s.name) ? { width: 2, dash: "dot", color: token("--ink") }
     : { width: 1.2, color: colors[i % colors.length] };
   const twr = (charts.twr || []).map((s, i) => ({
@@ -1011,7 +1016,7 @@ function renderCharts(charts) {
     hovertemplate: "%{fullData.name}: %{y:.1f}%<extra></extra>",
   }));
   // % since the start; the desk line ends at the "TW return" tile.
-  const shortName = (name) => (/^(total|desk)/i.test(name) ? "desk" : String(name).replace(/ book$/i, ""));
+  const shortName = (name) => (/^(total|desk)/i.test(name) ? "desk" : String(name));
   const drawn = (charts.twr || []).map((s, i) => [s, twr[i]]).filter(([s]) => s.y.length);
   const labels = endLabels(charts.twr || [], (v) => readablePct(v / 100)).map((label, i) => Object.assign(label, {
     text: `${shortName(drawn[i][0].name)} ${label.text}`, font: { size: 11, color: drawn[i][1].line.color || token("--ink-2") } }));
@@ -1337,6 +1342,7 @@ function thumbs(name, kind) {
   };
   return [make("👍", "useful"), make("👎", "not useful")];
 }
+let draggingCard = null;
 const CARDS = {};   // card id -> its element
 // A card becomes a window: it sits in a slot, drags by its body, and has minimize, save, full screen and hide.
 function adoptCard(card) {
@@ -1366,12 +1372,14 @@ function adoptCard(card) {
     });
     card.addEventListener("dragstart", (event) => {
       if (!card.draggable || card.classList.contains("card-full")) { event.preventDefault(); return; }
+      draggingCard = card;
       event.dataTransfer.setData("text/plain", cardId(card));
       event.dataTransfer.effectAllowed = "move";
       try { event.dataTransfer.setDragImage(card, 24, 14); } catch (e) {}
       card.classList.add("dragging");
     });
     card.addEventListener("dragend", () => {
+      draggingCard = null;
       card.draggable = false;
       card.classList.remove("dragging");
       document.querySelectorAll("#content .drop-target").forEach((node) => node.classList.remove("drop-target"));
@@ -1407,8 +1415,8 @@ function adoptCard(card) {
       return [reset, pan];
     };
     const more = tool("card-more", "Add a layer: more on this", "+", () => openMoreMenu(card, more));
+    card.append(el("div", { class: "card-foot" }, thumbs(cardTitle(card), "section")));   // bottom right, on hover: clear of the heading
     const tools = el("span", { class: "card-tools" }, [
-      ...thumbs(cardTitle(card), "section"),
       more,
       ...chartTools(),
       ...(filter ? [filter] : []),
@@ -1419,25 +1427,55 @@ function adoptCard(card) {
     ]);
     title.prepend(grip);
     title.append(tools);
-    card.addEventListener("dragover", (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; card.classList.add("drop-target"); });
-    card.addEventListener("dragleave", () => card.classList.remove("drop-target"));
-    card.addEventListener("drop", (event) => {
-      event.preventDefault();
-      card.classList.remove("drop-target");
-      const moving = CARDS[event.dataTransfer.getData("text/plain")];
-      if (!moving || moving === card || Boolean(moving.dataset.published || moving.dataset.asset) !== Boolean(card.dataset.published || card.dataset.asset)) return;   // published tiles swap among themselves
-      const box = card.getBoundingClientRect(), before = event.clientY < box.top + box.height / 2 || event.clientX < box.left + box.width * 0.25;
-      const slot = moving.parentElement, target = card.parentElement;
-      if (before) target.before(slot); else target.after(slot);   // dropped into the position pointed at
-      saveOrder();
-      feedback("section", "move", cardTitle(moving), (before ? "before " : "after ") + cardTitle(card));
-      if (latest && latest.data) renderCharts(latest.data.charts);   // a chart that changed width is redrawn to fit
-    });
+
 }
+
+// Dropping puts the tile where the line shows: the pointer picks the nearest tile and the side of it (above or below it in
+// a column), a line marks the spot, and the tile goes there: between two others, or at either end. Not only onto a tile.
+function nearestCard(x, y, skip) {
+  let best = null, bestDistance = Infinity;
+  document.querySelectorAll("#content .card").forEach((card) => {
+    if (card === skip || card.classList.contains("card-off") || card.closest(".card-full")) return;
+    const box = card.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const dx = Math.max(box.left - x, 0, x - box.right), dy = Math.max(box.top - y, 0, y - box.bottom);
+    const distance = Math.hypot(dx, dy);
+    if (distance < bestDistance) { bestDistance = distance; best = { card, box }; }
+  });
+  return best;
+}
+function wireCardDrop(content) {
+  const clear = () => content.querySelectorAll(".drop-before, .drop-after").forEach((n) => n.classList.remove("drop-before", "drop-after"));
+  content.addEventListener("dragover", (event) => {
+    if (!draggingCard) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const hit = nearestCard(event.clientX, event.clientY, draggingCard);
+    clear();
+    if (hit) hit.card.classList.add(event.clientY < hit.box.top + hit.box.height / 2 ? "drop-before" : "drop-after");
+  });
+  content.addEventListener("dragleave", (event) => { if (!content.contains(event.relatedTarget)) clear(); });
+  content.addEventListener("drop", (event) => {
+    if (!draggingCard) return;
+    event.preventDefault();
+    const hit = nearestCard(event.clientX, event.clientY, draggingCard);
+    clear();
+    if (!hit) return;
+    const moving = draggingCard, card = hit.card;
+    if (Boolean(moving.dataset.published || moving.dataset.asset) !== Boolean(card.dataset.published || card.dataset.asset)) return;   // published tiles stay among themselves
+    const before = event.clientY < hit.box.top + hit.box.height / 2;
+    if (before) card.parentElement.before(moving.parentElement); else card.parentElement.after(moving.parentElement);
+    saveOrder();
+    feedback("section", "move", cardTitle(moving), (before ? "before " : "after ") + cardTitle(card));
+    if (latest && latest.data) renderCharts(latest.data.charts);
+  });
+}
+
 function setupSections() {
   const content = document.getElementById("content");
   if (!content) return;
   [...content.querySelectorAll(".card")].forEach(adoptCard);
+  wireCardDrop(content);
   const byId = CARDS;
   const state = layoutState();
   const slots = [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest(".feed"));
