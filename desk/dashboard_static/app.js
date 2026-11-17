@@ -182,19 +182,19 @@ const POSITION_VIEW = {
   // No Side column: Value is signed and coloured (shorts negative, red), which already says the side.
   // % first; dollars on hover (the row's pop-up); the account is the desk's business
   hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", isNum(r.uPnL) ? `${usd(r.uPnL)} uPnL` : ""].filter(Boolean).join(" · "),
-  columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"], ["Funding (APR)"], ["Weight"]],
+  columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "D"], ["Funding (APR)"], ["Weight"]],
   // The crypto and the stocks tables sit one above the other: the same columns at the same widths, so Value, uPnL
   // and 24h line up (no column is collapsed or hidden in either).
-  align: { "Symbol": 20, "uPnL": 20, "24h": 20, "Funding (APR)": 20, "Weight": 20 },
+  align: { "Symbol": 20, "uPnL": 20, "D": 20, "Funding (APR)": 20, "Weight": 20 },
 };
 const VIEWS = {
   performance: {
     // One window at a time, as the charts: the window's chips appear on the card's hover.
     columnsNow: () => {
-      const window = { "1D": ["Return 24h", "24h"], "1W": ["Return 7D", "7d"], "1M": ["Return 30D", "30d"], All: ["Return since inception", "since start"] }[currentScale("performance")];
+      const window = { "1D": ["Return 24h", "D"], "1W": ["Return 7D", "W"], "1M": ["Return 30D", "M"], All: ["Return since inception", "since start"] }[currentScale("performance")];
       return [["Account", " "], window];
     },
-    columns: [["Account", " "], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
+    columns: [["Account", " "], ["Return 24h", "D"], ["Return 7D", "W"], ["Return 30D", "M"],
     ["Return 90D", "90d"], ["Return 1Y", "1y"], ["Return since inception", "Since start"], ["Since", "Start"]] },
   accounts: {
     keep: (r) => !/wallet$/i.test(String(r.Account || "")),  // margin and leverage mean nothing for a wallet
@@ -217,15 +217,15 @@ const VIEWS = {
   wallets: {
     derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol }),
     hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", r.Chain, r.Note].filter(Boolean).join(" · "),
-    columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"], ["Funding (APR)"], ["% of desk"]],
-    align: { "Symbol": 20, "uPnL": 20, "24h": 20, "Funding (APR)": 20, "% of desk": 20 },
+    columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "D"], ["Funding (APR)"], ["% of desk"]],
+    align: { "Symbol": 20, "uPnL": 20, "D": 20, "Funding (APR)": 20, "% of desk": 20 },
   },
   // The "vs BTC" figure over one period at a time (the card's chips: 1D, 1W, 1M), named with its period; the rest as before.
   candidates: { link: (r) => hlLink(r.Coin),
     columnsNow: () => {
       const scale = currentScale("candidates");
-      const pick = { "1D": ["vs BTC 24h", "vs BTC 1D"], "1W": ["vs BTC 7d", "vs BTC 1W"], "1M": ["vs BTC 30d", "vs BTC 1M"], All: ["vs BTC 30d", "vs BTC 1M"] }[scale];
-      return [["Coin"], pick, ["From high 60d"], ["Funding 7d (APR)"], ["OI / volume"], ["Volume 24h"], ["Notes"]];
+      const pick = { "1D": ["vs BTC 24h", "vs BTC D"], "1W": ["vs BTC 7d", "vs BTC W"], "1M": ["vs BTC 30d", "vs BTC M"], All: ["vs BTC 30d", "vs BTC M"] }[scale];
+      return [["Coin"], pick, ["From high 60d"], ["Funding 7d (APR)", "Funding W (APR)"], ["OI / volume"], ["Volume 24h", "Volume D"], ["Notes"]];
     },
     columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
@@ -279,7 +279,7 @@ function applyView(id, spec, context) {
 // ?view=charts draws every table as a chart (?view=tables returns): the same builders, rows and formats, so the two
 // views always agree. Percent and money axes follow the cell format; hover carries the table's own text.
 const CHART_VIEWS = {
-  performance: { kind: "grouped", label: "Account", series: ["24h", "7d", "30d", "90d", "Since start"], by: "window" },
+  performance: { kind: "grouped", label: "Account", series: ["D", "W", "M", "90d", "Since start"], by: "window" },
   accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
   exposure: { kind: "exposure", books: true, label: "Asset class", long: "Long", short: "Short", net: "Net" },
   positions: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
@@ -458,7 +458,7 @@ function renderTableChart(id, spec, override) {
       outsidetextfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
       ...(() => {   // a pop-up only where there is something to see: a big 24h move or a funding rate that matters
         const notable = (row) => [
-          isNum(row["24h"]) && Math.abs(row["24h"]) >= 0.05 ? `${text("24h", row["24h"])} 24h` : "",
+          isNum(row["D"]) && Math.abs(row["D"]) >= 0.05 ? `${text("D", row["D"])} D` : "",
           isNum(row["Funding (APR)"]) && Math.abs(row["Funding (APR)"]) >= 0.5 ? `${text("Funding (APR)", row["Funding (APR)"])} funding` : "",
         ].filter(Boolean).join(" · ");
         const lines = order.map((i) => notable(rows[i]));
@@ -695,15 +695,15 @@ function tile(label, value, sub, extra) {  // extra.title: the definition, on ho
 
 // "24h $123 (1.2%)", net of deposits, withdrawals and transfers; per-account parts on hover.
 function dayChangeLine(day) {
-  if (!day || !isNum(day.change)) return { text: "24h change n/a", cls: "muted" };
+  if (!day || !isNum(day.change)) return { text: "D change n/a", cls: "muted" };
   // The 24h change as a %; the dollars, per account, are on hover.
   const parts = Object.entries(day.parts || {}).map(([name, value]) => `${name}: ${usd(value)}`);
   const missing = (day.missing || []).length ? [`Not included: ${day.missing.join(", ")}`] : [];
   return {
     // A change that rounds to 0% says nothing: no line (the dollars stay on hover of the value).
-    text: isNum(day.pct) && pct(day.pct) === "0%" ? "" : `24h ${isNum(day.pct) ? pct(day.pct) : usd(day.change)}${missing.length ? " *" : ""}`,
+    text: isNum(day.pct) && pct(day.pct) === "0%" ? "" : `D ${isNum(day.pct) ? pct(day.pct) : usd(day.change)}${missing.length ? " *" : ""}`,
     cls: signClass(day.change),
-    title: [`24h ${usd(day.change)}, net of deposits, withdrawals and transfers.`, ...parts, ...missing].join("\n"),
+    title: [`D ${usd(day.change)}, net of deposits, withdrawals and transfers.`, ...parts, ...missing].join("\n"),
   };
 }
 
@@ -730,7 +730,7 @@ function renderTiles(k) {
     (() => {   // the chosen window: the day's change, or the desk's return over 7 or 30 days, or since the start
       const scale = currentScale("tile"), r = k.returns || {};
       const value = scale === "1D" ? day.pct : scale === "1W" ? r["7D"] : scale === "1M" ? r["30D"] : r.since_start;
-      const label = { "1D": "1D", "1W": "7D", "1M": "30D", All: "all" }[scale];
+      const label = { "1D": "D", "1W": "W", "1M": "M", All: "all" }[scale];
       const byBook = dayByBook(tables);
       const title = scale === "1D" ? [`${usd(day.change)} in the day`, isNum(byBook.crypto.change) ? `crypto ${usd(byBook.crypto.change)} (${pct(byBook.crypto.pct, 1, true)})` : "",
         isNum(byBook.stocks.change) ? `stocks ${usd(byBook.stocks.change)} (${pct(byBook.stocks.pct, 1, true)})` : ""].filter(Boolean).join("\n") : "";
@@ -738,7 +738,7 @@ function renderTiles(k) {
     })(),
     (() => {   // uPnL on cost, and its change over the period: 1D, 1W or 1M by its own chips on hover
       const scale = currentScale("upnl"), change = scale === "All" ? NaN : periodMove(tables, scale);
-      const label = { "1D": "1D", "1W": "7D", "1M": "30D" }[scale];
+      const label = { "1D": "D", "1W": "W", "1M": "M" }[scale];
       return tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", isNum(change) ? `${pct(change, 1, true)} ${label}` : bookShares(tables),
         { key: "uPnL", valueClass: signClass(upnl), chips: scaleChips("upnl"), title: isNum(k.unrealized) ? `${usd(k.unrealized)} uPnL` : "" });
     })(),
@@ -1203,7 +1203,7 @@ function setScale(element, scale) {
 function scaleChips(element) {   // the element's own scale buttons, shown on its hover
   const active = currentScale(element), auto = (scaleChoices[element] || "auto") === "auto";
   return el("span", { class: "scale-chips" }, SCALES.map(([name]) => {
-    const chip = el("button", { type: "button", class: "scale-chip" + (name === active ? " on" : "") + (auto && name === active ? " auto" : ""), text: name });
+    const chip = el("button", { type: "button", class: "scale-chip" + (name === active ? " on" : "") + (auto && name === active ? " auto" : ""), text: { "1D": "D", "1W": "W", "1M": "M" }[name] || name });
     chip.addEventListener("click", (event) => { event.stopPropagation(); setScale(element, name); });
     return chip;
   }));

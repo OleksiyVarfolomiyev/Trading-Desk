@@ -361,7 +361,7 @@ def strength_alert(day: dict | None, recent: dict | None, btc_off_low: float = f
 
     turned = btc_turned(btc_off_low, btc_day)
     btc_text = f"BTC {_pct(btc_off_low)} off its day low and green on the day ({_pct(btc_day)})" if turned else ""
-    parts = [(label, read) for label, read, threshold in (("4h", recent, STRENGTH_MOVE_4H), ("24h", day, STRENGTH_MOVE_24H))
+    parts = [(label, read) for label, read, threshold in (("4h", recent, STRENGTH_MOVE_4H), ("D", day, STRENGTH_MOVE_24H))
              if breadth(read) and read["ahead"] >= threshold]
     if parts:
         label, read = parts[0]
