@@ -3343,6 +3343,7 @@ class Daemon:
             if live:
                 self.held.save()
         print("\n".join(done) or "Nothing to remove.")
+        print("Left alone (ladders): " + (", ".join(sorted(f"{coin} ...{wallet[-4:]}" for wallet, coin in laddered)) or "none"))
         print("Removed. The margin guard and the alerts stay." if live else "Dry run: nothing removed (add --live).")
         return 0
 
