@@ -1438,8 +1438,10 @@ def plan_position_actions(
             if request.stop == "none":  # squeeze size: a doubling against the whole position costs the risk budget
                 most = per_position_cap / (market.mark_price * SQUEEZE_ADVERSE_MOVE)
                 if current_quantity + quantity_delta > most:
-                    target_quantity = max(current_quantity, most)
-                    quantity_delta = target_quantity - current_quantity
+                    # Whole size steps, as every other size: an unrounded size is refused by the exchange's wire format.
+                    most = math.floor(most / quantity_step + 1e-12) * quantity_step
+                    target_quantity = round(max(current_quantity, most), market.size_decimals)
+                    quantity_delta = round(target_quantity - current_quantity, market.size_decimals)
             entry_plan = PlannedTrade(
                 **{
                     **entry_plan.__dict__,

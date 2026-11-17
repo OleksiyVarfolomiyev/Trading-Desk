@@ -1916,6 +1916,19 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertLessEqual(squeeze.target_quantity * 100, budget + 1e-9)   # a doubling costs at most the budget
         self.assertLess(squeeze.target_quantity, with_stop.target_quantity)   # smaller than the stopped size
 
+    def test_a_no_stop_size_is_whole_size_steps(self):
+        market = Market("BTC", "", 97.31, 97.31, 2, 10)
+        snapshot = AccountSnapshot(equity=1_000, margin_used=0, target_equity=1_000, target_margin_used=0, positions=(),
+                                   maker_fee_rate=0.0001, taker_fee_rate=0.0004, risk_wallets=("0x" + "1" * 40,))
+        loose = PositionAction("open_margin", "BTC", "", "SHORT", margin_usd=900, strategy="fade", stop="none")
+        with (
+            patch("hl_trade.fetch_daily_candles", return_value=make_candles()),
+            patch("hl_trade.fetch_funding_history", return_value=make_funding()),
+        ):
+            [plan] = plan_position_actions([loose], {"BTC": market}, snapshot, [])
+        self.assertEqual(plan.quantity_delta, round(plan.quantity_delta, 2))   # HL refuses a size with more decimals
+        self.assertEqual(plan.target_quantity, round(plan.target_quantity, 2))
+
     def test_position_action_csv_reads_the_stop_mode(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "actions.csv"
