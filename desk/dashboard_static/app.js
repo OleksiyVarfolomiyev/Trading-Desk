@@ -2030,13 +2030,22 @@ function publishedTable(tile) {
   })));
   return { columns: lead.concat(rest).map(({ key, fmt: f }) => ({ key, fmt: f })), rows: converted };
 }
+// Plotly 6 saves numbers as {dtype, bdata} (base64 of a typed array): decoded here, so the page can rebase and label them.
+function decodeNumbers(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || !value.bdata) return Array.from(value || []);
+  const types = { f8: Float64Array, f4: Float32Array, i1: Int8Array, u1: Uint8Array, i2: Int16Array, u2: Uint16Array, i4: Int32Array, u4: Uint32Array };
+  const bytes = Uint8Array.from(atob(value.bdata), (c) => c.charCodeAt(0));
+  const Type = types[value.dtype] || Float64Array;
+  return Array.from(new Type(bytes.buffer, 0, Math.floor(bytes.length / Type.BYTES_PER_ELEMENT)));
+}
 const BENCHMARK_NAME = /^(BTC|ETH|SPY|S&P|SP500|QQQ|Same \$ in)/i;
 function isReturnSeries(traces) {
   return traces.some((t) => t.type === "scatter" && Array.isArray(t.x) && t.x.length > 10 && /^\d{4}-\d{2}-\d{2}/.test(String(t.x[0])));
 }
 function decoratePublishedTraces(traces, layout) {
   const colors = [1, 2, 3, 4, 5].map((i) => token("--series-" + i));
-  const copy = traces.map((trace) => Object.assign({}, trace, { x: Array.from(trace.x || []), y: Array.from(trace.y || []) }));
+  const copy = traces.map((trace) => Object.assign({}, trace, { x: decodeNumbers(trace.x), y: decodeNumbers(trace.y) }));
   copy.forEach((trace) => { if (trace.type === "scatter" && BENCHMARK_NAME.test(String(trace.name || ""))) trace.line = Object.assign({}, trace.line, { dash: "dot" }); });
   layout.showlegend = false;
   delete layout.legend;
