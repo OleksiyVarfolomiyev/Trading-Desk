@@ -1385,7 +1385,7 @@ function thumbs(name, kind) {
   };
   return [make("👍", "useful"), make("👎", "not useful")];
 }
-let draggingCard = null;
+let draggingCard = null, grabOffset = 0;
 
 // Resize: hovering the bottom edge of a tile shows a grip; dragging it sets the tile's height (kept per tile, a double click
 // returns it to its natural height). Charts inside follow; a table scrolls inside.
@@ -1508,6 +1508,7 @@ function adoptCard(card) {
     card.addEventListener("dragstart", (event) => {
       if (!card.draggable || card.classList.contains("card-full")) { event.preventDefault(); return; }
       draggingCard = card;
+      grabOffset = event.clientY - card.getBoundingClientRect().top;
       event.dataTransfer.setData("text/plain", cardId(card));
       event.dataTransfer.effectAllowed = "move";
       try { event.dataTransfer.setDragImage(card, 24, 14); } catch (e) {}
@@ -1625,6 +1626,8 @@ function buildColumns(content, saved) {
   });
   host.dataset.count = String(count);
   applyColumnWidths(host);
+  const gaps = layoutState().gaps || {};
+  slots.forEach((slot) => { const card = slot.firstElementChild, gap = gaps[cardId(card)]; card.style.marginTop = gap ? gap + "px" : ""; });
 }
 function wireCardDrop(content) {
   const clear = () => content.querySelectorAll(".drop-before, .drop-after, .drop-end").forEach((n) => n.classList.remove("drop-before", "drop-after", "drop-end"));
@@ -1664,6 +1667,20 @@ function wireCardDrop(content) {
     } else {
       const spot = target(event.clientX, event.clientY);
       if (!spot) return;
+      // Free vertical placement: the tile's top is where it was dropped; the space above it, from the tile before (or the
+      // column's top), is kept as a gap (a small one snaps shut).
+      const cards = [...spot.col.children].map((slot) => slot.firstElementChild).filter((card) => card && card !== moving && !card.classList.contains("card-off"));
+      const index = spot.before ? cards.indexOf(spot.before) : cards.length, previous = cards[index - 1] || null;
+      const top = event.clientY - grabOffset;
+      let edge = previous ? previous.getBoundingClientRect().bottom : spot.col.getBoundingClientRect().top;
+      const oldCol = moving.closest(".col");
+      if (oldCol === spot.col && moving.getBoundingClientRect().top < edge) edge -= moving.getBoundingClientRect().height + 4 + (parseFloat(moving.style.marginTop) || 0);   // it leaves its place above
+      let gap = Math.round(top - edge - 4);
+      if (gap < 12) gap = 0;
+      moving.style.marginTop = gap ? gap + "px" : "";
+      const state = layoutState();
+      state.gaps = Object.assign({}, state.gaps, { [cardId(moving)]: gap });
+      saveLayout(state);
       if (spot.before) spot.before.parentElement.before(moving.parentElement); else spot.col.append(moving.parentElement);
     }
     saveOrder();

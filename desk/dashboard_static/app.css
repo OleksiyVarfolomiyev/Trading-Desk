@@ -633,3 +633,9 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .ticker .tick-add, .ticker .tick-hide { opacity: 0; transition: opacity .12s; }
 .ticker:hover .tick-add, .ticker:hover .tick-hide, .ticker:focus-within .tick-add, .ticker:focus-within .tick-hide { opacity: 1; }
 @media (hover: none) { .ticker .tick-add, .ticker .tick-hide { opacity: 1; } }
+/* Highlights: the answers sit under their line, appearing on hover, with no column held open on the right. */
+.highlights li { display: block !important; }
+.highlights li .text { display: block; }
+.highlights li .hl-actions { display: flex; gap: 2px; max-height: 0; overflow: hidden; opacity: 0; transition: max-height .12s, opacity .12s; }
+.highlights li:hover .hl-actions, .highlights li:focus-within .hl-actions { max-height: 24px; opacity: 1; }
+@media (hover: none) { .highlights li .hl-actions { max-height: 24px; opacity: 1; } }
