@@ -269,7 +269,7 @@ async function dashboardAction(request, response) {
   try { body = JSON.parse((await readBody(request)).toString("utf8") || "{}"); } catch (error) { return send(400, { error: "not JSON" }); }
   const { stage, change, coin, wallet, token } = body;
   const fraction = Number(body.fraction);
-  if (!["close", "reduce", "add"].includes(change) || !/^[A-Za-z0-9:]{1,24}$/.test(String(coin || "")) || !/^[0-9a-fA-F]{4}$/.test(String(wallet || ""))
+  if (!["close", "reduce", "add", "short", "long"].includes(change) || !/^[A-Za-z0-9:]{1,24}$/.test(String(coin || "")) || !/^[0-9a-fA-F]{4}$/.test(String(wallet || ""))
       || !(fraction > 0 && fraction <= 1)) return send(400, { error: "bad request" });
   const key = JSON.stringify([change, coin, wallet, fraction]);
   const request_ = { cmd: "resize", wallet, coin, change, fraction };

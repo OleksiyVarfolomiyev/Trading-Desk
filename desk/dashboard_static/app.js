@@ -405,6 +405,37 @@ function renderTableChart(id, spec) {
 
 // A displayed zero amount ($0.00, -$0.00, 0%, 0.00) is an empty cell; a whole-number 0 (a count) stays.
 const ZERO_TEXT = /^-?(\$0(\.0+)?|0(\.0+)?%|0\.0+)$/;
+// Candidates are answered in place: × refuse (hidden for a week), ☆ bookmark (onto the price strip, starred), ▶ act
+// (plan the entry, then confirm; web dashboard). Every answer is logged, so the screener learns what is refused.
+const CANDIDATE_KEY = "desk-candidates";
+const CANDIDATE_TABLES = { candidates: "short", mm_candidates: null };
+function candidateState() { try { return Object.assign({ refused: {}, starred: [] }, JSON.parse(localStorage.getItem(CANDIDATE_KEY)) || {}); } catch (e) { return { refused: {}, starred: [] }; } }
+function saveCandidates(state) { try { localStorage.setItem(CANDIDATE_KEY, JSON.stringify(state)); } catch (e) {} }
+function candidateActions(id, row) {
+  const coin = row.Coin, side = CANDIDATE_TABLES[id], state = candidateState();
+  const button = (text, label, action, on) => {
+    const b = el("button", { type: "button", class: "row-act" + (on ? " on" : ""), "aria-label": `${label} ${coin}`, title: label, text });
+    b.addEventListener("click", (event) => { event.stopPropagation(); action(); });
+    return b;
+  };
+  const starred = state.starred.includes(coin);
+  return el("td", { class: "row-actions" }, [
+    button("×", "Refuse", () => { const s = candidateState(); s.refused[coin] = Date.now(); saveCandidates(s); feedback("candidate", "refuse", coin, id);
+      if (lastSpecs[id]) renderTable(id, lastSpecs[id]); }),
+    button(starred ? "★" : "☆", starred ? "Bookmarked" : "Bookmark", () => {
+      const s = candidateState(), t = tickerState();
+      s.starred = starred ? s.starred.filter((c) => c !== coin) : s.starred.concat([coin]);
+      if (!starred && !t.assets.includes(coin)) { t.assets.push(coin); t.on = true; saveTicker(t); refreshTicker(); drawModes(); }
+      saveCandidates(s); feedback("candidate", starred ? "unbookmark" : "bookmark", coin, id);
+      if (lastSpecs[id]) renderTable(id, lastSpecs[id]);
+    }, starred),
+    ...(side ? [button("▶", window.DESK_SOURCE ? `Act: ${side} ${coin}` : `Act: copy "${side} ${coin}"`, () => {
+      feedback("candidate", "act", coin, id);
+      if (window.DESK_SOURCE) runAction(side === "short" ? "Short" : "Long", side, 1, { coin, wallet: "07f2" });
+      else if (navigator.clipboard) navigator.clipboard.writeText(`${side} ${coin}`);
+    })] : []),
+  ]);
+}
 const filterState = {};   // table id -> text: only rows that contain it are shown
 const lastSpecs = {};     // table id -> the last spec drawn, so a filter redraws without new data
 function renderTable(id, spec) {
@@ -438,6 +469,11 @@ function renderTable(id, spec) {
   }
   const state = sortState[id];
   let rows = spec.rows.slice();
+  if (id in CANDIDATE_TABLES) {
+    const s = candidateState(), week = 7 * 86400000;
+    rows = rows.filter((row) => !(s.refused[row.Coin] && Date.now() - s.refused[row.Coin] < week));
+    rows.sort((a, b) => Number(s.starred.includes(b.Coin)) - Number(s.starred.includes(a.Coin)));
+  }
   const query = (filterState[id] || "").trim().toLowerCase();
   if (query) rows = rows.filter((row) => Object.entries(row).some(([key, value]) => !key.startsWith("__") && String(value ?? "").toLowerCase().includes(query)));
   if (state) {
@@ -497,7 +533,8 @@ function renderTable(id, spec) {
     return el("td", { class: classes + withDigits, text: ZERO_TEXT.test(text) ? "" : text });
   };
   const body = el("tbody", {}, rows.map((row, index) => el("tr", row.__hover ? { title: row.__hover } : {},
-    spec.columns.map((column) => cell(row, column, index)))));
+    spec.columns.map((column) => cell(row, column, index)).concat(id in CANDIDATE_TABLES && row.Coin ? [candidateActions(id, row)] : []))));
+  if (id in CANDIDATE_TABLES) head.append(el("th", { class: "row-actions" }));
   const parts = [el("thead", {}, head), body];
   if (spec.total && spec.rows.length > 1) {  // the total of a single row only repeats it
     parts.push(el("tfoot", {}, el("tr", { class: "total" }, spec.columns.map((column) => cell(spec.total, column)))));

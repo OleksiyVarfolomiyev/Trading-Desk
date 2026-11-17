@@ -3271,6 +3271,21 @@ class Daemon:
             return self.trails.stop(wallet, coin) if request.get("stop") else self.trails.start(wallet, coin, float(request["pct"]))
         if command == "unprotect":
             return self.unprotect(request)
+        if command == "resize" and str(request.get("change")) in ("short", "long"):   # a candidate acted on from the dashboard
+            wallet = self.wallet(str(request.get("wallet") or "07f2"))
+            coin = str(request.get("coin", "")).strip()
+            coin = coin if ":" in coin else coin.upper()
+            dex = coin.split(":")[0] if ":" in coin else ""
+            path = daemon_link.RUN_DIR / f"web_entry_{coin.replace(':', '_').lower()}.csv"
+            path.write_text(f"coin,side,dex\n{coin},{str(request['change']).upper()},{dex}\n")
+            if not self.trade_lock.acquire(timeout=PROMPT_TIMEOUT_SECONDS):
+                print("Another trade is waiting for confirmation in the daemon; try again shortly.")
+                return 2
+            try:   # thesis trades go in without a stop or take-profit (the desk's rule since 2026-11-17)
+                return self.trade({"cmd": "trade", "wallet": wallet, "live": bool(request.get("live")), "signals": str(path),
+                                   "fast": True, "conviction": True, "ignore_unreachable": True}, session)
+            finally:
+                self.trade_lock.release()
         if command == "resize":   # the dashboard's actions on an open position: plan (dry run), then live once confirmed there
             wallet = self.wallet(str(request.get("wallet", "")))
             coin = str(request.get("coin", "")).strip()

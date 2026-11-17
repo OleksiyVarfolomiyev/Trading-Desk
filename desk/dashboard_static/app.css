@@ -478,3 +478,10 @@ html.private td.digits { cursor: pointer; }
 .js-plotly-plot .modebar { background: transparent !important; }
 .js-plotly-plot .modebar-btn path { fill: var(--muted) !important; }
 .js-plotly-plot .modebar-btn:hover path { fill: var(--ink) !important; }
+/* Candidate rows: refuse, bookmark, act; shown on the row's hover (always on touch). */
+td.row-actions, th.row-actions { width: 1%; white-space: nowrap; text-align: right; padding-right: 4px; }
+.row-act { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 1px 5px; border-radius: 4px; opacity: 0; }
+tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
+.row-act.on { color: var(--warning); }
+.row-act:hover { color: var(--ink); background: var(--border); }
+@media (hover: none) { .row-act { opacity: 1; } }
