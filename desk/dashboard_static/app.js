@@ -1134,19 +1134,29 @@ function knownSymbols() {
 // Crypto and stocks are a colour, not a word: an orange dot for crypto, a blue one for stocks and tradfi, wherever the
 // words would appear (titles, highlights, table cells). The word stays for screen readers and shows on hover.
 const KIND_WORDS = /\b(crypto|stocks and tradfi|stocks & commodities|stocks|tradfi)\b/gi;
-function kindMarks(text) {
-  const parts = [];
-  let last = 0, match;
-  const source = String(text);
+function kindMarks(text) {   // each crypto or stocks part becomes one tinted run: the dot and what it says, to the next part
+  const source = String(text), found = [];
   KIND_WORDS.lastIndex = 0;
-  while ((match = KIND_WORDS.exec(source)) !== null) {
-    if (match.index > last) parts.push(source.slice(last, match.index));
-    const crypto = /crypto/i.test(match[1]);
-    parts.push(el("span", { class: "kind " + (crypto ? "kind-crypto" : "kind-stocks"), role: "img", "aria-label": match[1], title: match[1] }));
-    last = match.index + match[0].length;
-  }
-  if (last < source.length) parts.push(source.slice(last));
-  return parts.length ? parts : [source];
+  let match;
+  while ((match = KIND_WORDS.exec(source)) !== null) found.push({ at: match.index, end: match.index + match[0].length, word: match[1] });
+  KIND_WORDS.lastIndex = 0;
+  if (!found.length) return [source];
+  const parts = [];
+  if (found[0].at > 0) parts.push(source.slice(0, found[0].at));
+  found.forEach((item, i) => {
+    const next = i + 1 < found.length ? found[i + 1].at : source.length;
+    const stop = source.slice(item.end, next).search(/[;.](\s|$)/);   // a sentence or list break ends the run
+    const end = stop >= 0 ? item.end + stop : next;
+    const crypto = /crypto/i.test(item.word);
+    const words = source.slice(item.end, end).replace(/^[:\s]+/, "").replace(/,\s*$/, "");
+    parts.push(el("span", { class: "kind-run " + (crypto ? "kind-crypto" : "kind-stocks"), title: item.word }, [
+      el("span", { class: "kind " + (crypto ? "kind-crypto" : "kind-stocks"), role: "img", "aria-label": item.word }), words]));
+    const between = source.slice(end, next);
+    if (between) parts.push(between);
+    else if (i + 1 < found.length) parts.push(" ");   // two runs side by side keep a gap
+  });
+  // "Open positions: crypto" reads "Open positions ●": no colon before a bare dot
+  return parts.map((part, i) => (typeof part === "string" && i + 1 < parts.length && typeof parts[i + 1] !== "string" ? part.replace(/:\s*$/, " ") : part));
 }
 function markKinds(node) {   // replace the words in a heading's text nodes, keeping its buttons and icons
   [...node.childNodes].forEach((child) => {

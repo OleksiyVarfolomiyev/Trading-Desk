@@ -441,5 +441,10 @@ html.private td.digits { cursor: pointer; }
 /* Crypto and stocks as colour. */
 :root { --kind-crypto: #f7931a; --kind-stocks: #3b82f6; }
 .kind { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 4px; vertical-align: middle; }
-.kind-crypto { background: var(--kind-crypto); }
-.kind-stocks { background: var(--kind-stocks); }
+.kind.kind-crypto { background: var(--kind-crypto); }
+.kind.kind-stocks { background: var(--kind-stocks); }
+/* The run after a dot is tinted in its colour, so where crypto ends and stocks begin reads from a distance. */
+.kind-run { border-radius: 4px; padding: 0 5px 0 1px; white-space: nowrap; }
+.kind-run.kind-crypto { background: color-mix(in srgb, var(--kind-crypto) 14%, transparent); }
+.kind-run.kind-stocks { background: color-mix(in srgb, var(--kind-stocks) 14%, transparent); }
+.kind-run .kind { margin: 0 4px 0 2px; }
