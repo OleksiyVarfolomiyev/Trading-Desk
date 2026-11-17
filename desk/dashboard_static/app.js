@@ -1343,12 +1343,13 @@ drawModes();
 // places. A card is hidden with its eye button and brought back from the Sections menu. Order and hidden cards are
 // remembered in the browser (touch screens have no drag: use the menu there).
 const LAYOUT_KEY = "desk-layout";
-const LAYOUT_VERSION = 4;   // 3: now first, history and the account view last; an arrangement saved on an older page is dropped
+const LAYOUT_VERSION = 5;   // 3: now first, history and the account view last; an arrangement saved on an older page is dropped
 function layoutState() {
   let state = {};
   try { state = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (e) { return {}; }
   if (state.version !== LAYOUT_VERSION) {   // keep hidden and minimized choices, not slot positions of the old page
     delete state.order;
+    if ((state.version || 0) < 5) { delete state.cols; delete state.widths; delete state.history; }   // 5: news left, numbers in the middle, charts right
     state.version = LAYOUT_VERSION;
     try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(state)); } catch (e) {}
   }
@@ -1429,6 +1430,54 @@ function addResizeHandle(card) {
   if (saved) applyCardHeight(card, saved);
 }
 
+
+// Column widths: the right edge of a tile is a grip too; dragging it moves the boundary between its column and the next one
+// (the previous one for the last column). Widths are kept per number of columns; a double click levels them.
+function applyColumnWidths(host) {
+  const count = host.children.length, widths = (layoutState().widths || {})[count];
+  [...host.children].forEach((col, i) => { col.style.flex = `${widths && widths[i] ? widths[i] : 1} 1 0`; });
+}
+function addColumnHandle(card) {
+  const handle = el("div", { class: "card-resize-x", title: "Drag to resize the column" });
+  handle.addEventListener("mousedown", (event) => {
+    const col = card.closest(".col"), host = col && col.parentElement;
+    if (!host) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const cols = [...host.children], i = cols.indexOf(col), j = i < cols.length - 1 ? i + 1 : i - 1;
+    if (j < 0) return;
+    const startX = event.clientX, sizes = cols.map((c) => c.getBoundingClientRect().width), pair = sizes[i] + sizes[j];
+    const MIN = 220;
+    const move = (e) => {
+      const delta = (e.clientX - startX) * (j > i ? 1 : -1);   // a last column's right edge works against the one before it
+      const mine = Math.min(Math.max(sizes[i] + (j > i ? delta : -delta), MIN), pair - MIN);
+      const next = sizes.slice();
+      next[i] = mine; next[j] = pair - mine;
+      cols.forEach((c, k) => { c.style.flex = `${next[k]} 1 0`; });
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      const state = layoutState(), grows = cols.map((c) => Math.round(c.getBoundingClientRect().width));
+      state.widths = Object.assign({}, state.widths, { [cols.length]: grows });
+      saveLayout(state);
+      feedback("section", "resize column", cardTitle(card), grows.join(","));
+      if (latest && latest.data) renderCharts(latest.data.charts);
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+  handle.addEventListener("dblclick", () => {
+    const col = card.closest(".col"), host = col && col.parentElement, state = layoutState();
+    if (!host) return;
+    if (state.widths) delete state.widths[host.children.length];
+    saveLayout(state);
+    applyColumnWidths(host);
+    if (latest && latest.data) renderCharts(latest.data.charts);
+  });
+  card.append(handle);
+}
+
 const CARDS = {};   // card id -> its element
 // A card becomes a window: it sits in a slot, drags by its body, and has minimize, save, full screen and hide.
 function adoptCard(card) {
@@ -1454,7 +1503,7 @@ function adoptCard(card) {
     const grip = el("span", { class: "card-grip", title: "Drag anywhere on the tile (outside the chart) to move it", "aria-label": "Move " + cardTitle(card), text: "⠿" });
     // The whole tile drags, except from a chart, a field, a button or a link (those keep their own mouse behaviour).
     card.addEventListener("mousedown", (event) => {
-      card.draggable = !event.target.closest(".js-plotly-plot, input, textarea, select, button, a, .card-full, .card-resize");
+      card.draggable = !event.target.closest(".js-plotly-plot, input, textarea, select, button, a, .card-full, .card-resize, .card-resize-x");
     });
     card.addEventListener("dragstart", (event) => {
       if (!card.draggable || card.classList.contains("card-full")) { event.preventDefault(); return; }
@@ -1502,6 +1551,7 @@ function adoptCard(card) {
     };
     const more = tool("card-more", "Add a layer: more on this", "+", () => openMoreMenu(card, more));
     addResizeHandle(card);
+    addColumnHandle(card);
     card.append(el("div", { class: "card-foot" }, thumbs(cardTitle(card), "section")));   // bottom right, on hover: clear of the heading
     const tools = el("span", { class: "card-tools" }, [
       more,
@@ -1536,7 +1586,7 @@ function nearestCard(x, y, skip) {
 // number of columns.
 const COLUMN_WIDTH = 420;
 function columnCount(content) { return Math.max(1, Math.min(4, Math.floor((content.clientWidth || window.innerWidth) / COLUMN_WIDTH))); }
-const columnSlots = (content) => [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest(".feed") && !slot.querySelector(":scope > .highlights-card"));
+const columnSlots = (content) => [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest(".feed"));
 function currentColumns(content) { return [...content.querySelectorAll("#columns > .col")].map((col) => [...col.children].map((slot) => cardId(slot.firstElementChild))); }
 function buildColumns(content, saved) {
   const count = columnCount(content), state = layoutState();
@@ -1553,7 +1603,20 @@ function buildColumns(content, saved) {
   const cols = [...host.children], placed = new Set();
   const put = (id, index) => { const slot = byCard.get(id); if (!slot || placed.has(id)) return; placed.add(id); cols[index].append(slot); };
   if (known && known.length === count) known.forEach((ids, index) => ids.forEach((id) => put(id, index)));
-  else flat.forEach((id, i) => put(id, i % count));   // no arrangement for this width yet: the order dealt out in turn
+  else if (count === 1) flat.forEach((id) => put(id, 0));
+  else {   // no arrangement for this width yet: the news (highlights) on the left, the numbers in the middle, the charts on the right
+    const middle = Array.from({ length: Math.max(1, count - 2) }, (_, k) => k + 1).filter((k) => k < count);
+    const heights = cols.map(() => 0);
+    flat.forEach((id) => {
+      const slot = byCard.get(id);
+      if (!slot) return;
+      const card = slot.firstElementChild, isNews = Boolean(card.classList.contains("highlights-card")), isChart = /^chart-/.test(id);
+      const pool = isNews ? [0] : isChart ? [count - 1] : count === 2 ? [0, 1] : middle;
+      const index = pool.reduce((best, k) => (heights[k] < heights[best] ? k : best), pool[0]);
+      heights[index] += isNews ? 3 : isChart ? 2 : 1;
+      put(id, index);
+    });
+  }
   slots.forEach((slot) => {   // new tiles go to the shortest column
     const id = cardId(slot.firstElementChild);
     if (placed.has(id)) return;
@@ -1561,6 +1624,7 @@ function buildColumns(content, saved) {
     cols.reduce((best, c) => (c.scrollHeight < best.scrollHeight ? c : best)).append(slot);
   });
   host.dataset.count = String(count);
+  applyColumnWidths(host);
 }
 function wireCardDrop(content) {
   const clear = () => content.querySelectorAll(".drop-before, .drop-after, .drop-end").forEach((n) => n.classList.remove("drop-before", "drop-after", "drop-end"));

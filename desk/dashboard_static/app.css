@@ -622,3 +622,10 @@ th, td { padding: 0 4px !important; line-height: 1.3; }
 .card[data-sized] .chart, .card[data-sized] #chart-value, .card[data-sized] #chart-twr { height: auto !important; flex: 1 1 auto; min-height: 60px; }
 table.aligned { min-width: 0 !important; }
 table.aligned td, table.aligned th { padding: 0 3px !important; }
+/* Column grip: the right edge of a tile inside the columns. */
+.card-resize-x { display: none; position: absolute; top: 0; bottom: 0; right: -3px; width: 8px; cursor: ew-resize; z-index: 4; }
+#columns .card-resize-x { display: block; }
+.card-resize-x::after { content: ""; position: absolute; top: 50%; right: 3px; height: 36px; width: 3px; margin-top: -18px; border-radius: 2px; background: var(--muted); opacity: 0; transition: opacity .12s; }
+.card-resize-x:hover::after { opacity: .8; }
+/* The highlights card is the left column's news, not a banner across the top. */
+#content > .highlights-card, #columns .highlights-card { column-span: none; width: 100%; }
