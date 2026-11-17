@@ -1507,7 +1507,12 @@ class Alerts:
         move = alt_rally.index_move(meta, contexts)
         watches = remembered(STOCK_DIP_FILE, False)
         name = alt_rally.level(move, watches, now, alt_rally.STOCK_WATCH_MOVE, alt_rally.STOCK_CUT_MOVE)
-        if name == "none":
+        from desk import market_regime as _regime
+
+        auto_now = getattr(daemon, "auto", None)
+        if name != "none" and (_regime.acted("equity_selloff") or (auto_now and auto_now.acted_prefix("trim:xyz:"))):
+            self.clear("stock_dip")   # the trim already cut the stock longs; its own alert says so
+        elif name == "none":
             self.clear("stock_dip")
         else:
             by_coin = {asset["name"]: context for asset, context in zip(meta.get("universe", []), contexts)}
@@ -1967,6 +1972,7 @@ class RegimeGuard:
                 self.last_day[regime] = today
                 continue
             log(f"regime guard: {label} at high confidence ({part['detail']}); trimming {config['trim_fraction']:.0%}: {plan}")
+            market_regime.ACTED[regime] = time.time()
             self.daemon.alerts.set(f"regime:{regime}", f"regime guard trimmed ({label})",
                                    f"Trimmed {config['trim_fraction']:.0%}: {plan}", ttl=24 * 3600)
             for wallet, position, quantity in orders:
@@ -2647,6 +2653,12 @@ class AutoTrader:
             except OSError:
                 pass
         return True
+
+    def acted_prefix(self, prefix: str, hours: float | None = None) -> bool:
+        """Whether any rule whose key starts with ``prefix`` has acted in its current episode."""
+        hours = auto_config()["episode_hours"] if hours is None else hours
+        with self.lock:
+            return any(key.startswith(prefix) and time.time() - float(at) < hours * 3600 for key, at in self.done.items())
 
     def acted(self, key: str, hours: float | None = None) -> bool:
         """Whether the rule ``key`` has already acted in its current episode: its own "Auto: ..." alert then says

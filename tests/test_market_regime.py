@@ -72,3 +72,13 @@ class EquityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ActedRegimeTests(unittest.TestCase):
+    def test_notice_is_dropped_once_the_desk_has_trimmed(self):
+        state = {"equity_selloff": {"level": "high", "signals": {"E1": True}, "measures": {}}}
+        m.ACTED.clear()
+        self.assertEqual(len(m.notices(state)), 1)
+        m.ACTED["equity_selloff"] = __import__("time").time()
+        self.assertEqual(m.notices(state), [])
+        m.ACTED.clear()

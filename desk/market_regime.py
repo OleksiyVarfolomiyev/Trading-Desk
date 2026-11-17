@@ -233,6 +233,17 @@ def _signal(name: str, measures: dict) -> str:
         return name
 
 
+ACTED: dict[str, float] = {}   # regime -> when the regime guard last trimmed for it (set by the daemon)
+ACTED_HOURS = 24
+
+
+def acted(regime: str, now: float | None = None) -> bool:
+    """Whether the desk has already trimmed for ``regime`` today: its own alert says so, the notice would only repeat it."""
+    import time
+
+    return (time.time() if now is None else now) - ACTED.get(regime, 0.0) < ACTED_HOURS * 3600
+
+
 def notices(state: dict | None) -> list[tuple[str, str]]:
     """One "Regime" highlights row for the regimes at "notice" or "high": the level, the signals on (with their
     numbers), and the evidence (how often the regime followed after days like today, against the base rate)."""
@@ -242,7 +253,7 @@ def notices(state: dict | None) -> list[tuple[str, str]]:
     for key, name in (("alt_season", "Alt season"), ("equity_selloff", "Equity sell-off")):
         part = state.get(key) or {}
         level = part.get("level", "none")
-        if level == "none":
+        if level == "none" or acted(key):
             continue
         signals = part.get("signals", {})
         on = [_signal(code, part.get("measures") or {}) for code, value in signals.items() if value]
