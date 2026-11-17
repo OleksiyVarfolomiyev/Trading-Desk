@@ -496,3 +496,4 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 @media (hover: none) { .scale-chips { opacity: 1; } }
 .hl-act { filter: grayscale(1); }
 .hl-act:hover { filter: none; }
+.card-tool.on { color: var(--ink); background: var(--border); }

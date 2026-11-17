@@ -777,8 +777,8 @@ function baseLayout(extra) {
 }
 
 // Chart tools on hover (zoom, pan, reset, save), as Plotly's own bar; a click on a legend item hides or shows that series.
-const CONFIG = { displayModeBar: "hover", displaylogo: false, responsive: true,
-  modeBarButtons: [["zoom2d", "pan2d", "resetScale2d", "toImage"]] };   // the four that get used, nothing else
+// Plotly's own tool bar is off: drag zooms, and the tile's hover tools carry reset and pan (save is the tile's save).
+const CONFIG = { displayModeBar: false, displaylogo: false, responsive: true };
 
 function endLabels(series, format) {
   return series.filter((s) => s.y.length).map((s) => ({
@@ -1182,7 +1182,20 @@ function adoptCard(card) {
       box.focus();
       feedback("section", "filter", cardTitle(card));
     }) : null;
+    const chartTools = () => {   // for a tile with a chart: reset the view, switch dragging between zoom and pan
+      const charts = () => [...card.querySelectorAll(".js-plotly-plot")];
+      if (!card.querySelector(".chart")) return [];
+      const reset = tool("card-reset", "Reset view", "⟲", () => charts().forEach((node) =>
+        Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true })));
+      const pan = tool("card-pan", "Pan (drag moves) / zoom (drag selects)", "✥", () => {
+        const panning = !pan.classList.contains("on");
+        pan.classList.toggle("on", panning);
+        charts().forEach((node) => Plotly.relayout(node, { dragmode: panning ? "pan" : "zoom" }));
+      });
+      return [reset, pan];
+    };
     const tools = el("span", { class: "card-tools" }, [
+      ...chartTools(),
       ...(filter ? [filter] : []),
       tool("card-minimize", "Minimize", "–", () => setMinimized(cardId(card), !card.classList.contains("card-min"))),
       tool("card-save", "Save as image", "⤓", () => saveTile(card)),
