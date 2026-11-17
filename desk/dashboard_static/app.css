@@ -454,3 +454,11 @@ html.private td.digits { cursor: pointer; }
 .card:hover .card-tools, .card:focus-within .card-tools, .card.card-full .card-tools { opacity: 1; }
 .card-grip { display: none; }
 @media (hover: none) { .card .card-tools, .tile-tools { opacity: 1; } }
+/* Key numbers on one line each: label, value, then the detail, which gives way (ellipsis) before the value does. */
+.tile { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; white-space: nowrap; overflow: hidden; }
+.tile .label { flex: 0 0 auto; font-size: 12px; }
+.tile .value { flex: 0 0 auto; font-size: 17px; margin: 0; }
+.tile .line, .tile .sub { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; margin: 0; font-size: 12px; }
+.tile .line { order: 3; }
+.tile .sub { order: 4; }
+@media (max-width: 1180px) { .tile .sub { display: none; } }
