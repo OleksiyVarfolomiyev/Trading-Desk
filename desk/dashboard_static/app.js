@@ -1118,7 +1118,7 @@ drawModes();
 // places. A card is hidden with its eye button and brought back from the Sections menu. Order and hidden cards are
 // remembered in the browser (touch screens have no drag: use the menu there).
 const LAYOUT_KEY = "desk-layout";
-const LAYOUT_VERSION = 2;   // 2: the page leads with what is happening; an arrangement saved on the old order is dropped
+const LAYOUT_VERSION = 3;   // 3: now first, history and the account view last; an arrangement saved on an older page is dropped
 function layoutState() {
   let state = {};
   try { state = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (e) { return {}; }
@@ -1234,6 +1234,12 @@ function setupSections() {
   const state = layoutState();
   const slots = [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest(".feed"));
   if (state.order) state.order.forEach((id, i) => { if (byId[id] && slots[i]) slots[i].append(byId[id]); });
+  if (!state.defaultsOff) {   // cards hidden until asked for (the account views: backend detail), once per browser
+    const ids = [...content.querySelectorAll(".card[data-default-off]")].map(cardId);
+    state.hidden = [...new Set([...(state.hidden || []), ...ids])];
+    state.defaultsOff = true;
+    saveLayout(state);
+  }
   (state.hidden || []).forEach((id) => { if (byId[id]) byId[id].classList.add("card-off"); });
   (state.minimized || []).forEach((id) => { if (byId[id]) byId[id].classList.add("card-min"); });
   document.addEventListener("keydown", (event) => {
