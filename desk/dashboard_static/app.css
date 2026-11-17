@@ -389,3 +389,7 @@ html.private .js-plotly-plot .numeric-note { filter: blur(7px); user-select: non
 .tick-add { display: inline-flex; align-items: center; }
 .tick-input { background: transparent; color: var(--ink); border: 1px dashed var(--border); border-radius: 6px; padding: 1px 8px; font: inherit; font-size: 12px; width: 84px; }
 .tick-input:focus { outline: none; border-style: solid; border-color: var(--series-1); }
+.card:not(.card-full) { cursor: grab; }
+.card .chart, .card .js-plotly-plot, .card a, .card button, .card input, .card td, .card th, .card .highlights li { cursor: auto; }
+.card th { cursor: pointer; }
+.card.dragging { cursor: grabbing; }

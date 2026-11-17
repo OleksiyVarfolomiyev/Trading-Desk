@@ -942,14 +942,20 @@ function setupSections() {
     byId[cardId(card)] = card;
     const title = card.querySelector("h2");
     if (!title) return;
-    const grip = el("span", { class: "card-grip", draggable: "true", title: "Drag to move", "aria-label": "Move " + cardTitle(card), text: "⠿" });
-    grip.addEventListener("dragstart", (event) => {
+    const grip = el("span", { class: "card-grip", title: "Drag anywhere on the tile (outside the chart) to move it", "aria-label": "Move " + cardTitle(card), text: "⠿" });
+    // The whole tile drags, except from a chart, a field, a button or a link (those keep their own mouse behaviour).
+    card.addEventListener("mousedown", (event) => {
+      card.draggable = !event.target.closest(".js-plotly-plot, input, textarea, select, button, a, .card-full");
+    });
+    card.addEventListener("dragstart", (event) => {
+      if (!card.draggable || card.classList.contains("card-full")) { event.preventDefault(); return; }
       event.dataTransfer.setData("text/plain", cardId(card));
       event.dataTransfer.effectAllowed = "move";
       try { event.dataTransfer.setDragImage(card, 24, 14); } catch (e) {}
       card.classList.add("dragging");
     });
-    grip.addEventListener("dragend", () => {
+    card.addEventListener("dragend", () => {
+      card.draggable = false;
       card.classList.remove("dragging");
       content.querySelectorAll(".drop-target").forEach((node) => node.classList.remove("drop-target"));
     });
