@@ -807,23 +807,34 @@ class DeskOverview:
                     parts.insert(0, percent(total, signed=True))  # all open positions first; the books follow in their colour
                 if parts:
                     rows.append(("uPnL", " ".join(parts)))
-            def mover(position):
-                # The % is unrealized PnL over the position's entry value, as in the movers table.
-                share = _pnl_share(position)
-                return f"{position.symbol} {_pct(share)}" if math.isfinite(share) else f"{position.symbol} n/a"
+            # Winners and losers are today's: each position's 24h price move in its direction (a short gains when the price
+            # falls). What was gained or lost since entry is the uPnL row above, and can be months old.
+            try:
+                from desk.day_change import position_changes
+
+                moves = position_changes(self.snapshots)
+            except Exception:
+                moves = {}
+            def day_move(item):
+                label, position = item
+                change = moves.get((label, position.symbol), float("nan"))
+                return change * (1 if position.quantity > 0 else -1)
             winner_parts, loser_parts = [], []
             for kind in MARKET_KINDS:  # crypto and stocks ranked apart, shown in one row per side
-                group = [item for item in ranked if market_kind(item[1]) == kind and item[1].symbol not in SYMBOLIC_HOLDINGS]
-                winners = [item for item in group[::-1] if item[1].unrealized_usd > 0][:HIGHLIGHT_MOVERS]
-                losers = [item for item in group if item[1].unrealized_usd < 0][:HIGHLIGHT_MOVERS]
+                group = [item for item in ranked if market_kind(item[1]) == kind and item[1].symbol not in SYMBOLIC_HOLDINGS
+                         and math.isfinite(day_move(item))]
+                group.sort(key=day_move)
+                line = lambda rows: ", ".join(f"{item[1].symbol} {_pct(day_move(item))}" for item in rows)
+                winners = [item for item in group[::-1] if day_move(item) > 0][:HIGHLIGHT_MOVERS]
+                losers = [item for item in group if day_move(item) < 0][:HIGHLIGHT_MOVERS]
                 if winners:
-                    winner_parts.append(f"{kind.lower()}: " + ", ".join(mover(p) for _, p in winners))
+                    winner_parts.append(f"{kind.lower()}: " + line(winners))
                 if losers:
-                    loser_parts.append(f"{kind.lower()}: " + ", ".join(mover(p) for _, p in losers))
+                    loser_parts.append(f"{kind.lower()}: " + line(losers))
             if winner_parts:
-                well.append(("Largest winners", "uPnL " + "; ".join(winner_parts) + "."))
+                well.append(("Largest winners", "D " + "; ".join(winner_parts) + "."))
             if loser_parts:
-                attention.append(("Largest losers", "uPnL " + "; ".join(loser_parts) + "."))
+                attention.append(("Largest losers", "D " + "; ".join(loser_parts) + "."))
             label, largest = max(positions, key=lambda item: abs(item[1].notional_usd))
             share = abs(largest.notional_usd) / self.trading_equity if self.trading_equity else float("nan")
             if share > CONCENTRATION_PCT:

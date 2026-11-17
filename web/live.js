@@ -977,17 +977,21 @@
         if (fin(total) && side(total)) parts.unshift(percent(total, true));  // all open positions first; the books follow in their colour
         if (parts.length) list.push(["uPnL", parts.join(" ")]);
       });
-      const mover = (p) => `${p.symbol} ${fin(share(p)) ? percent(share(p), true) : "n/a"}`;
+      // Winners and losers are today's: each position's 24h price move in its direction (a short gains when the price
+      // falls). What was gained or lost since entry is the uPnL row above, and can be months old.
+      const dayMove = (r) => (r.Side === "SHORT" ? -1 : 1) * r["24h change (%)"];
       const winnerParts = [], loserParts = [];
       KINDS.forEach((kind) => {  // crypto and stocks ranked apart, shown in one row per side
-        const group = ranked.filter((p) => marketKind(p) === kind && !SYMBOLIC.has(String(p.symbol)));
-        const winners = group.slice().reverse().filter((p) => p.unrealized > 0).slice(0, HIGHLIGHT_MOVERS);
-        const losers = group.filter((p) => p.unrealized < 0).slice(0, HIGHLIGHT_MOVERS);
-        if (winners.length) winnerParts.push(`${kind.toLowerCase()}: ${winners.map(mover).join(", ")}`);
-        if (losers.length) loserParts.push(`${kind.toLowerCase()}: ${losers.map(mover).join(", ")}`);
+        const group = tableRows.filter((r) => (String(r["Asset class"]).startsWith("crypto") ? "Crypto" : "Stocks") === kind
+          && !SYMBOLIC.has(String(r.Symbol)) && fin(dayMove(r))).sort((a, b) => dayMove(a) - dayMove(b));
+        const line = (rows) => rows.map((r) => `${r.Symbol} ${percent(dayMove(r), true)}`).join(", ");
+        const winners = group.slice().reverse().filter((r) => dayMove(r) > 0).slice(0, HIGHLIGHT_MOVERS);
+        const losers = group.filter((r) => dayMove(r) < 0).slice(0, HIGHLIGHT_MOVERS);
+        if (winners.length) winnerParts.push(`${kind.toLowerCase()}: ${line(winners)}`);
+        if (losers.length) loserParts.push(`${kind.toLowerCase()}: ${line(losers)}`);
       });
-      if (winnerParts.length) well.push(["Largest winners", "uPnL " + winnerParts.join("; ") + "."]);
-      if (loserParts.length) attention.push(["Largest losers", "uPnL " + loserParts.join("; ") + "."]);
+      if (winnerParts.length) well.push(["Largest winners", "D " + winnerParts.join("; ") + "."]);
+      if (loserParts.length) attention.push(["Largest losers", "D " + loserParts.join("; ") + "."]);
       const largest = tradePositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
       const concentration = tradingEquity ? Math.abs(value(largest)) / tradingEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {
