@@ -185,7 +185,7 @@ const POSITION_VIEW = {
   columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"], ["Funding (APR)"], ["Weight"]],
   // The crypto and the stocks tables sit one above the other: the same columns at the same widths, so Value, uPnL
   // and 24h line up (no column is collapsed or hidden in either).
-  align: { "Symbol": 28, "uPnL": 18, "24h": 18, "Funding (APR)": 18, "Weight": 18 },
+  align: { "Symbol": 20, "uPnL": 20, "24h": 20, "Funding (APR)": 20, "Weight": 20 },
 };
 const VIEWS = {
   performance: {
@@ -218,7 +218,7 @@ const VIEWS = {
     derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol }),
     hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", r.Chain, r.Note].filter(Boolean).join(" · "),
     columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"], ["Funding (APR)"], ["% of desk"]],
-    align: { "Symbol": 28, "uPnL": 18, "24h": 18, "Funding (APR)": 18, "% of desk": 18 },
+    align: { "Symbol": 20, "uPnL": 20, "24h": 20, "Funding (APR)": 20, "% of desk": 20 },
   },
   // The "vs BTC" figure over one period at a time (the card's chips: 1D, 1W, 1M), named with its period; the rest as before.
   candidates: { link: (r) => hlLink(r.Coin),
