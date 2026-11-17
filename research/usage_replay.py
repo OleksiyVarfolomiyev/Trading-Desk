@@ -26,9 +26,10 @@ CATEGORIES = {
 
 
 def user_messages(folder: Path | None = None) -> list[tuple[str, str]]:
-    folder = folder or Path.home() / ".claude" / "projects" / "-Users-admin-Dropbox-Investing-trading-desk"
+    root = Path.home() / ".claude" / "projects"
+    folders = [folder] if folder else [root / "-Users-admin-trading-desk", root / "-Users-admin-Dropbox-Investing-trading-desk"]
     found = []
-    for path in sorted(folder.glob("*.jsonl")):
+    for path in sorted(p for f in folders for p in f.glob("*.jsonl")):
         for line in path.read_text(errors="ignore").splitlines():
             try:
                 record = json.loads(line)

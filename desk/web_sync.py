@@ -312,7 +312,7 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
 
 
 SERVER = "desk"                                   # the desk server's ssh alias
-STATE_BACKUP_DIR = REPO.parent / "trading-desk-state"   # in Dropbox: off the server and versioned
+STATE_BACKUP_DIR = REPO.parent / "trading-desk-state"   # next to the repo, on this disk: off the server
 SERVER_STATE = (".trading-desk/ladder.json", ".trading-desk/ladders.json", ".trading-desk/hl_guards.json",
                 ".trading-desk/held_targets.json", ".trading-desk/margin_guard.json", ".trading-desk/regime_guard.json",
                 "trading-desk/data/trade_journal.json", "trading-desk/data/market_events.jsonl",

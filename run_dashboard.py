@@ -1,6 +1,6 @@
 """Start the live desk dashboard from any folder:
 
-    /Users/admin/anaconda3/envs/py314/bin/python /Users/admin/Dropbox/Investing/trading-desk/run_dashboard.py --open
+    /Users/admin/anaconda3/envs/py314/bin/python /Users/admin/trading-desk/run_dashboard.py --open
 
 Same options as ``python -m desk.dashboard`` (run from the repository root).
 """

@@ -107,7 +107,7 @@ IB's API has no account-value history, so beta and alpha to SPY, Sharpe, volatil
 `desk_accounts.ipynb` as a web page that keeps itself current. With the py314 environment (it needs plotly), from any folder:
 
 ```bash
-/Users/admin/anaconda3/envs/py314/bin/python /Users/admin/Dropbox/Investing/trading-desk/run_dashboard.py --open
+/Users/admin/anaconda3/envs/py314/bin/python /Users/admin/trading-desk/run_dashboard.py --open
 ```
 
 From the repository root, `python -m desk.dashboard --open` does the same.
@@ -373,7 +373,7 @@ The executor applies the limits to each action but does not choose positions; th
 `execution/hl_daemon.py` keeps everything the executor reads live, so an order goes out about a second after the final confirmation instead of 25-30 seconds, and guards act within about a second instead of every 15 seconds. Start it in a terminal of its own and leave it running (Ctrl-C stops it). It loads each wallet's API key from the Keychain, like the executor:
 
 ```bash
-cd /Users/admin/Dropbox/Investing/trading-desk && .venv/bin/python execution/hl_daemon.py serve
+cd /Users/admin/trading-desk && .venv/bin/python execution/hl_daemon.py serve
 ```
 
 From another terminal in the repository folder, check it (wallets, data age, guards):
