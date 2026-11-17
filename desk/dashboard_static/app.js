@@ -710,7 +710,7 @@ function renderTiles(k) {
     (() => {   // the chosen window: the day's change, or the desk's return over 7 or 30 days, or since the start
       const scale = currentScale("tile"), r = k.returns || {};
       const value = scale === "1D" ? day.pct : scale === "1W" ? r["7D"] : scale === "1M" ? r["30D"] : r.since_start;
-      const label = { "1D": "today", "1W": "7D", "1M": "30D", All: "all" }[scale];
+      const label = { "1D": "24h", "1W": "7D", "1M": "30D", All: "all" }[scale];
       const byBook = dayByBook(tables);
       const title = scale === "1D" ? [`${usd(day.change)} in the day`, isNum(byBook.crypto.change) ? `crypto ${usd(byBook.crypto.change)} (${pct(byBook.crypto.pct, 1, true)})` : "",
         isNum(byBook.stocks.change) ? `stocks ${usd(byBook.stocks.change)} (${pct(byBook.stocks.pct, 1, true)})` : ""].filter(Boolean).join("\n") : "";
