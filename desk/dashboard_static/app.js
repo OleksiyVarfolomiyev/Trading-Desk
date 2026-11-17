@@ -168,8 +168,16 @@ const RISK_CAP = 0.33;  // desk/risk.py MAX_TOTAL_RISK_PCT
 const ASSET_NAMES = { "crypto perp": "Crypto", "crypto spot": "Wallet tokens", "tradfi perp": "Stocks & commodities (HL)",
   "equity": "Stocks (IB)", "stock": "Stocks (IB)", "etf": "ETFs (IB)" };
 const marketName = (symbol) => String(symbol || "").replace(/^[a-z0-9]+:/, "");  // "xyz:AMD" -> "AMD"
+// The uPnL column reads in percent of cost (the desk's default) or in dollars: the $ / % switch in the top bar (as on HL).
+let pnlUnit = "pct";
+try { pnlUnit = localStorage.getItem("desk-unit") === "usd" ? "usd" : "pct"; } catch (e) {}
+const HL_PAGE = "https://app.hyperliquid.xyz/trade/";
+const hlLink = (market) => HL_PAGE + encodeURIComponent(String(market || "")).replace(/%3A/g, ":");
+const stockLink = (symbol) => "https://finance.yahoo.com/quote/" + encodeURIComponent(String(symbol || ""));
 const POSITION_VIEW = {
   derive: (r) => ({ Symbol: marketName(r.Symbol) }),
+  // A symbol opens its page: HL's trade page for an HL market, a quote page for an IB stock (as on HL).
+  link: (r) => (/^IB/.test(String(r.Account || "")) ? stockLink(r.Symbol) : hlLink(r.Symbol)),
   // No Side column: Value is signed and coloured (shorts negative, red), which already says the side.
   columns: [["Account"], ["Symbol"], ["Value"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"],
     ["Funding (APR)"], ["Weight"]],
@@ -205,13 +213,16 @@ const VIEWS = {
       ["Funding (APR)"], ["% of desk"]],
     align: { "Account": 15, "Symbol": 18, "Value": 15, "uPnL": 13, "24h": 12, "Funding (APR)": 15, "% of desk": 12 },
   },
-  candidates: { columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
+  candidates: { link: (r) => hlLink(r.Coin), columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
-  mm_candidates: { columns: [["Coin"], ["Daily range 30d"], ["Longs pay 7d (APR)"], ["Own ladder edge per $1k"], ["Volume 24h"], ["Notes"]] },
-  market_making: { derive: (r) => ({ Coin: marketName(r.Coin) }),
+  mm_candidates: { link: (r) => hlLink(r.Coin), columns: [["Coin"], ["Daily range 30d"], ["Longs pay 7d (APR)"], ["Own ladder edge per $1k"], ["Volume 24h"], ["Notes"]] },
+  market_making: { derive: (r) => ({ Coin: marketName(r.Coin) }), link: (r) => hlLink(r.Coin),
     columns: [["Account"], ["Coin"], ["Side"], ["Status"], ["Since"], ["Ladder PnL"], ["Position vs base"], ["Fills"]] },
 };
 
+function columnsFor(view) {   // the uPnL column in dollars when the $ switch is on
+  return pnlUnit === "usd" ? view.columns.map((column) => (column[0] === "uPnL (%)" ? ["uPnL", "uPnL"] : column)) : view.columns;
+}
 function applyView(id, spec, context) {
   const view = VIEWS[id];
   if (!view || !spec || !spec.columns || !spec.columns.length) return spec;
@@ -220,12 +231,13 @@ function applyView(id, spec, context) {
     if (!row) return row;
     const full = Object.assign({}, row, view.derive ? view.derive(row, context) : {});
     const out = {};
-    view.columns.forEach(([from, name]) => { out[name || from] = full[from]; });
+    columnsFor(view).forEach(([from, name]) => { out[name || from] = full[from]; });
     if (view.hover) out.__hover = view.hover(row);
+    if (view.link) out.__link = view.link(row);
     return out;
   };
   // Derived fields start with _; an aligned table keeps every column, present in its data or not.
-  const columns = view.columns.filter(([from]) => view.align || from in source || from.startsWith("_"))
+  const columns = columnsFor(view).filter(([from]) => view.align || from in source || from.startsWith("_"))
     .map(([from, name, fmt]) => ({ key: name || from, fmt: fmt || (source[from] || {}).fmt, emphasis: (source[from] || {}).emphasis }));
   const rows = spec.rows.filter((row) => !view.keep || view.keep(row)).map(shape);
   let total = spec.total ? shape(spec.total) : null;
@@ -469,6 +481,10 @@ function renderTable(id, spec) {
     const key = column.emphasis ? (index !== undefined && standout[column.key] === index ? "key key-top" : "key") : "";
     const classes = [format.num ? "num" : "", tone, key].filter(Boolean).join(" ");
     const text = format.text(value);
+    if (row.__link && (column.key === "Symbol" || column.key === "Coin") && text) {   // the symbol opens its page
+      const link = el("a", { class: "symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", text });
+      return el("td", { class: classes }, [link]);
+    }
     return el("td", { class: classes, text: ZERO_TEXT.test(text) ? "" : text });
   };
   const body = el("tbody", {}, rows.map((row, index) => el("tr", row.__hover ? { title: row.__hover } : {},
@@ -823,6 +839,13 @@ function icon(kind) {   // 16px line icons, drawn in the button's text colour
   paths.forEach((d) => { const p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.append(p); });
   return svg;
 }
+function setUnit(unit) {
+  pnlUnit = unit;
+  try { localStorage.setItem("desk-unit", unit); } catch (e) {}
+  feedback("look", "unit", unit);
+  drawModes();
+  redrawLook("view");
+}
 function setLook(kind, value) {
   const root = document.documentElement;
   root.dataset[kind] = value;
@@ -856,7 +879,16 @@ function drawModes() {
     button.addEventListener("click", () => setLook("style", value));
     styles.append(button);
   });
-  host.replaceChildren(views, toggle, styles);
+  const units = el("div", { class: "switch", role: "group", "aria-label": "uPnL in percent or dollars" });
+  [["pct", "%"], ["usd", "$"]].forEach(([value, name]) => {
+    const button = el("button", { type: "button", class: "unit-button", title: value === "pct" ? "uPnL in % of cost" : "uPnL in dollars",
+      "aria-pressed": value === pnlUnit ? "true" : "false", text: name });
+    button.addEventListener("click", () => setUnit(value));
+    units.append(button);
+  });
+  const report = el("button", { type: "button", class: "report-button", title: "Report: a printable page of the desk", "aria-label": "Report", text: "Report" });
+  report.addEventListener("click", openReport);
+  host.replaceChildren(views, units, toggle, styles, report);
 }
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
 // switch redraws the tables; mode and style are CSS for the tables, so only the Plotly charts (which read the colours and
@@ -1081,9 +1113,144 @@ function drawSectionsMenu() {
   if (restore) restore.addEventListener("click", () => { saveHighlightState({ read: {}, deleted: [] }); feedback("highlight", "restore", "all"); redrawHighlights(); });
   const reset = el("button", { type: "button", class: "sections-reset", text: "Reset layout" });
   reset.addEventListener("click", () => { try { localStorage.removeItem(LAYOUT_KEY); } catch (e) {} location.reload(); });
-  menu.replaceChildren(...rows, ...(restore ? [restore] : []), reset);
+  menu.replaceChildren(...tickerMenu(), ...rows, ...(restore ? [restore] : []), reset);
 }
-setupSections();
+
+
+// ---------------------------------------------------------------- price strip: chosen assets with live prices on top
+// An option (Sections menu): a thin strip under the title bar with the assets you pick, price and 24h change from HL's
+// public info API every few seconds; click a chip to open the asset's HL page. Off by default (the first screen stays
+// as it is); the choice and the assets are remembered in the browser.
+const TICKER_KEY = "desk-ticker";
+const HL_INFO = "https://api.hyperliquid.xyz/info";
+function tickerState() {
+  try { return Object.assign({ on: false, assets: ["BTC", "ETH", "SOL"] }, JSON.parse(localStorage.getItem(TICKER_KEY)) || {}); }
+  catch (e) { return { on: false, assets: ["BTC", "ETH", "SOL"] }; }
+}
+function saveTicker(state) { try { localStorage.setItem(TICKER_KEY, JSON.stringify(state)); } catch (e) {} }
+const lastPrices = {};
+const priceText = (value) => (value >= 1000 ? value.toLocaleString("en-US", { maximumFractionDigits: 1 }) : String(Number(value.toPrecision(5))));
+async function tickerContexts(assets) {   // name -> {price, previous} for the main DEX and, when asked for, the xyz DEX
+  const out = {};
+  const read = async (dex) => {
+    const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ type: "metaAndAssetCtxs" }, dex ? { dex } : {})) });
+    const [meta, contexts] = await response.json();
+    meta.universe.forEach((asset, i) => { out[asset.name] = { price: Number(contexts[i].markPx), previous: Number(contexts[i].prevDayPx) }; });
+  };
+  const jobs = [read("")];
+  if (assets.some((asset) => asset.startsWith("xyz:"))) jobs.push(read("xyz"));
+  await Promise.all(jobs.map((job) => job.catch(() => null)));
+  return out;
+}
+async function refreshTicker() {
+  const state = tickerState();
+  let strip = document.getElementById("ticker");
+  if (!state.on) { if (strip) strip.hidden = true; return; }
+  if (!strip) {
+    strip = el("div", { class: "ticker", id: "ticker", "aria-label": "Live prices" });
+    const bar = document.querySelector(".topbar");
+    bar.after(strip);
+  }
+  strip.hidden = false;
+  const contexts = await tickerContexts(state.assets);
+  strip.replaceChildren(...state.assets.map((asset) => {
+    const context = contexts[asset];
+    if (!context || !isFinite(context.price)) return el("a", { class: "tick", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
+      [el("b", { text: marketName(asset) }), el("span", { class: "muted", text: "n/a" })]);
+    const change = context.previous ? context.price / context.previous - 1 : NaN;
+    const direction = lastPrices[asset] === undefined || lastPrices[asset] === context.price ? "" : context.price > lastPrices[asset] ? "up" : "down";
+    lastPrices[asset] = context.price;
+    return el("a", { class: "tick " + direction, href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
+      el("b", { text: marketName(asset) }), el("span", { class: "price", text: priceText(context.price) }),
+      el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" })]);
+  }));
+}
+setInterval(refreshTicker, 5000);
+refreshTicker();
+function tickerMenu() {   // the Sections menu's part: on or off, and the assets
+  const state = tickerState();
+  const box = el("input", { type: "checkbox", id: "ticker-on" });
+  box.checked = state.on;
+  box.addEventListener("change", () => { const s = tickerState(); s.on = box.checked; saveTicker(s); feedback("look", "price strip", s.on ? "on" : "off"); refreshTicker(); });
+  const field = el("input", { type: "text", class: "ticker-input", placeholder: "Add asset (BTC, xyz:AMD)", "aria-label": "Add an asset to the price strip" });
+  const add = () => {
+    const name = field.value.trim();
+    if (!name) return;
+    const s = tickerState();
+    const asset = name.includes(":") ? name.toLowerCase().replace(/^([a-z0-9]+):(.*)$/, (m, dex, coin) => dex + ":" + coin.toUpperCase()) : name.toUpperCase();
+    if (!s.assets.includes(asset)) s.assets.push(asset);
+    s.on = true;
+    saveTicker(s); feedback("look", "price strip add", asset);
+    field.value = "";
+    drawSectionsMenu(); refreshTicker();
+  };
+  field.addEventListener("keydown", (event) => { if (event.key === "Enter") add(); });
+  const chips = state.assets.map((asset) => {
+    const remove = el("button", { type: "button", class: "ticker-remove", title: "Remove " + asset, "aria-label": "Remove " + asset, text: "×" });
+    remove.addEventListener("click", () => { const s = tickerState(); s.assets = s.assets.filter((a) => a !== asset); saveTicker(s); drawSectionsMenu(); refreshTicker(); });
+    return el("span", { class: "ticker-chip" }, [marketName(asset), remove]);
+  });
+  return [el("label", { class: "sections-row" }, [box, el("span", { text: "Live prices on top" })]),
+    el("div", { class: "ticker-edit" }, [field, el("div", { class: "ticker-chips" }, chips)])];
+}
+
+
+// ---------------------------------------------------------------- report (as IB's Reports): a printable page of the desk
+// "Report" opens one page with the key numbers, the highlights and every table as they are on screen now, light and ready
+// to print or save as a PDF from the browser (Ctrl/Cmd+P).
+function reportHtml() {
+  const escape = (text) => String(text === undefined || text === null ? "" : text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const data = latest.data, now = new Date(latest.server_time || Date.now());
+  const stamp = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", dateStyle: "long", timeStyle: "short" }).format(now);
+  const tiles = [...document.querySelectorAll("#tiles .tile")].map((tile) => {
+    const text = (selector) => (tile.querySelector(selector) || {}).textContent || "";
+    return `<div class="k"><div class="l">${escape(text(".label"))}</div><div class="v">${escape(text(".value"))}</div><div class="s">${escape(text(".sub"))}</div></div>`;
+  }).join("");
+  const rows = (list) => (list || []).map(([area, text]) => `<li><b>${escape(area)}</b> ${escape(text)}</li>`).join("") || "<li>Nothing to report.</li>";
+  const context = { deskValue: (data.kpis || {}).desk_value };
+  const titles = { performance: "Performance", strategies: "Performance by strategy", accounts: "Accounts", exposure: "Exposure by asset class",
+    positions: "Open positions: crypto", wallets: "Wallets holdings", positions_stocks: "Open positions: stocks and tradfi",
+    candidates: "Short candidates", market_making: "Market making", mm_candidates: "Market-making candidates" };
+  const tables = TABLES.map((id) => {
+    const spec = applyView(id, data.tables && data.tables[id], context);
+    if (!spec || !spec.columns || !spec.columns.length || !(spec.rows || []).length) return "";
+    const cell = (row, column) => { const f = FORMATS[column.fmt] || FORMATS.text; const t = f.text(row[column.key]); return `<td class="${f.num ? "n" : ""}">${escape(ZERO_TEXT.test(t) ? "" : t)}</td>`; };
+    const body = spec.rows.map((row) => `<tr>${spec.columns.map((column) => cell(row, column)).join("")}</tr>`).join("");
+    const foot = spec.total && spec.rows.length > 1 ? `<tr class="t">${spec.columns.map((column) => cell(spec.total, column)).join("")}</tr>` : "";
+    return `<h2>${escape(titles[id] || id)}</h2><table><thead><tr>${spec.columns.map((column) => `<th>${escape(column.key)}</th>`).join("")}</tr></thead><tbody>${body}${foot}</tbody></table>`;
+  }).join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Trading desk report, ${escape(stamp)}</title>
+<style>
+  body { font: 12px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif; color: #111; margin: 24px auto; max-width: 980px; padding: 0 16px; }
+  h1 { font-size: 20px; margin: 0 0 2px; } .as { color: #666; margin-bottom: 14px; }
+  h2 { font-size: 13px; margin: 18px 0 6px; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+  .keys { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; } .k { border: 1px solid #ddd; border-radius: 6px; padding: 6px 8px; }
+  .l { color: #666; font-size: 11px; } .v { font-size: 16px; font-weight: 600; } .s { color: #666; font-size: 10px; }
+  ul { margin: 4px 0; padding-left: 18px; } li { margin: 2px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 11px; page-break-inside: auto; } tr { page-break-inside: avoid; }
+  th, td { border-bottom: 1px solid #e4e4e4; padding: 3px 6px; text-align: left; white-space: nowrap; } th { color: #555; font-weight: 600; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; } tr.t td { font-weight: 700; border-top: 1px solid #999; }
+  .bar { margin-bottom: 12px; } button { font: inherit; padding: 4px 12px; cursor: pointer; }
+  @media print { .bar { display: none; } body { margin: 0; max-width: none; } }
+</style></head><body>
+<div class="bar"><button onclick="window.print()">Print / save as PDF</button></div>
+<h1>Trading desk report</h1><div class="as">${escape(stamp)} ET · from the dashboard's data</div>
+<div class="keys">${tiles}</div>
+<h2>What stands out</h2><ul>${rows(data.highlights && data.highlights.well)}</ul>
+<h2>Needs attention</h2><ul>${rows(data.highlights && data.highlights.attention)}</ul>
+${tables}
+</body></html>`;
+}
+function openReport() {
+  if (!latest || !latest.data) return;
+  feedback("report", "open", "dashboard");
+  const page = window.open("", "_blank");
+  if (!page) return;
+  page.document.open();
+  page.document.write(reportHtml());
+  page.document.close();
+}
 
 // ---------------------------------------------------------------- privacy: click a number and the numbers hide (as in IB)
 // Click any number (a tile value, a table figure, a highlight) to blur every number on the page; click one again to
@@ -1118,4 +1285,5 @@ document.addEventListener("click", (event) => {
   setPrivate(document.documentElement.classList.contains("private"));
 })();
 
+setupSections();   // after every const above is defined (the Sections menu reads the price strip's)
 poll();
