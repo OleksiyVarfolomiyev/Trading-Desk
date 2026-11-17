@@ -371,9 +371,10 @@ function renderTableChart(id, spec, override) {
         x: books.map(([book]) => (isNum(row[book]) ? row[book] * axis.mult : 0)),
         marker: { color: books.map(([, color]) => shade(color, i)), line: { color: token("--surface"), width: 1.5 } },
         text: books.map(([book]) => (isNum(row[book]) && row[book] !== 0 ? `${row.Strategy} ${text(book, row[book])}` : "")),
-        textposition: "inside", insidetextanchor: "middle", insidetextfont: { size: 11, color: "#ffffff" }, hoverinfo: "skip" };
+        textposition: "inside", insidetextanchor: "middle", insidetextfont: { size: 11, color: "#ffffff" },
+        hovertext: books.map(([book]) => (isNum(row[book]) && row[book] !== 0 ? `${row.Strategy} ${text(book, row[book])}` : "")), hoverinfo: "text" };
     });
-    layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis), uniformtext: { mode: "hide", minsize: 9 } };
+    layout = { barmode: "relative", hovermode: "closest", xaxis: Object.assign({ zeroline: true }, axis), uniformtext: { mode: "hide", minsize: 9 } };
     height = 120;
     names.splice(0, names.length, ...books.map(([book]) => book));
   } else if (plan.kind === "stacked" && !plan.series.some((key) => rows.some((row) => isNum(row[key]) && row[key] !== 0))) {
@@ -1212,13 +1213,13 @@ function zoomCharts() {   // the value charts show the chosen window (All: the w
     const node = document.getElementById(id);
     if (!node || !node.data) return;
     if (id === "chart-twr") rebaseReturns(node, days);
-    if (!days) { Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }); return; }
+    if (!days) { Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }).then(() => spreadEndLabels(id)); return; }
     const end = Date.now(), start = end - days * 86400000;
     const ys = node.data.flatMap((trace) => (trace.x || []).map((x, i) => [new Date(x).getTime(), trace.y && trace.y[i]]))
       .filter(([t, y]) => t >= start && isNum(y)).map(([, y]) => y);
     const update = { "xaxis.range": [new Date(start).toISOString(), new Date(end).toISOString()] };
     if (ys.length) { const low = Math.min(...ys), high = Math.max(...ys), pad = (high - low) * 0.08 || Math.abs(high) * 0.01 || 1; update["yaxis.range"] = [low - pad, high + pad]; }
-    Plotly.relayout(node, update);
+    Plotly.relayout(node, update).then(() => spreadEndLabels(id));   // the axis changed: end labels that now touch are spread again
   });
 }
 function setUnit(unit) {

@@ -573,3 +573,5 @@ th, td { padding: 1px 5px; }
 .card h2 .card-name { margin-left: 2px; }
 .card-tool.thumb { filter: grayscale(1); opacity: .7; }
 .card-tool.thumb:hover, .card-tool.thumb.on { filter: none; opacity: 1; }
+/* Critical lines: the red edge alone, no red background. */
+.highlights li.critical { background: transparent !important; }
