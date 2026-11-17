@@ -3069,7 +3069,7 @@ class ResearchFeed:
             log(f"screener not refreshed ({type(exc).__name__}: {exc})")
             screen = screener.load()
         payload = {"as_of": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), "strategies": strategies,
-                   "overdue": overdue, "screener": screen}
+                   "overdue": overdue, "screener": screen, "horizon_days": journal.horizon_days()}
         if self.path is not None:
             self.path.write_text(json.dumps(payload, indent=1))
         try:

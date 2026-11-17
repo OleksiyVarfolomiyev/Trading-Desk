@@ -505,13 +505,22 @@ function renderTable(id, spec) {
 }
 
 // ---------------------------------------------------------------- tiles
+function bookShares(tables) {   // uPnL on cost per book, as coloured runs: what is traded now apart from the stock holdings
+  const part = (id) => {
+    const rows = ((tables[id] || {}).rows || []).filter((row) => isNum(row.uPnL) && isNum(row.Value) && isNum(row["uPnL (%)"]));
+    const cost = rows.reduce((sum, row) => sum + Math.abs(row.Value - row.uPnL), 0);
+    return cost ? rows.reduce((sum, row) => sum + row.uPnL, 0) / cost : NaN;
+  };
+  const crypto = part("positions"), stocks = part("positions_stocks");
+  return [isNum(crypto) ? `crypto ${pct(crypto, 1, true)}` : "", isNum(stocks) ? `stocks ${pct(stocks, 1, true)}` : ""].filter(Boolean).join(" ");
+}
 function tile(label, value, sub, extra) {  // extra.title: the definition, on hover only
   return el("div", { class: "tile", "data-label": (extra && extra.key) || label, title: (extra && extra.title) || "" }, [
     el("div", { class: "label", text: label }),
     el("div", { class: "value " + (extra && extra.valueClass ? extra.valueClass : ""), text: value }),
     extra && extra.line && extra.line.text ? el("div", { class: "line " + (extra.line.cls || ""), text: extra.line.text,
       title: extra.line.title || "" }) : null,
-    sub ? el("div", { class: "sub", text: sub }) : null,
+    sub ? el("div", { class: "sub" }, kindMarks(sub)) : null,
   ]);
 }
 
@@ -549,9 +558,14 @@ function renderTiles(k) {
   // positions (manage them), the risk room under the cap (can a trade be added), exposure, the money, and the agreement's
   // drawdown last. Returns over windows are history: the performance table below has them.
   const tiles = [
-    tile("today", isNum(day.pct) ? pct(day.pct, 1, true) : "n/a", isNum(day.change) ? usd(day.change) : "",
-      { key: "Today", valueClass: signClass(day.change), title: dayChangeLine(day).title }),
-    tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", isNum(k.unrealized) ? usd(k.unrealized) : "",
+    (() => {   // the chosen window: the day's change, or the desk's return over 7 or 30 days, or since the start
+      const scale = currentScale(), r = k.returns || {};
+      const value = scale === "1D" ? day.pct : scale === "1W" ? r["7D"] : scale === "1M" ? r["30D"] : r.since_start;
+      const label = { "1D": "today", "1W": "7D", "1M": "30D", All: "all" }[scale];
+      return tile(label, isNum(value) ? pct(value, 1, true) : "n/a", scale === "1D" && isNum(day.change) ? usd(day.change) : "",
+        { key: "Today", valueClass: signClass(value), title: scale === "1D" ? dayChangeLine(day).title : "" });
+    })(),
+    tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", bookShares(tables) || (isNum(k.unrealized) ? usd(k.unrealized) : ""),
       { key: "uPnL", valueClass: signClass(upnl), title: "Open positions against their cost" }),
     tile("of cap", isNum(risk) ? pct(risk / RISK_CAP) : "n/a", isNum(risk) ? `${pct(risk)} risk` : "",
       { key: "Risk", valueClass: isNum(risk) && risk / RISK_CAP >= 0.9 ? "neg" : "", title: "Open risk against the 33% cap: the room for new trades" }),
@@ -805,7 +819,7 @@ function renderCharts(charts) {
     shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }],
   });
   twrLayout.yaxis = Object.assign({}, twrLayout.yaxis, { ticksuffix: "%" });
-  Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => { spreadEndLabels("chart-twr"); markNumericNotes(); });
+  Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => { spreadEndLabels("chart-twr"); markNumericNotes(); zoomCharts(); });
 }
 
 // ---------------------------------------------------------------- page
@@ -923,6 +937,39 @@ function icon(kind) {   // 16px line icons, drawn in the button's text colour
   paths.forEach((d) => { const p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.append(p); });
   return svg;
 }
+// Time scale, as on TradingView: 1D, 1W, 1M or all. Left on auto it follows how long the open trades have been held (a
+// book of day trades opens on the day, conviction trades held for weeks on the month); a click fixes it, a click on the
+// fixed one returns it to auto. It sets the "now" tile's window and zooms the value charts.
+const SCALES = [["1D", 1], ["1W", 7], ["1M", 30], ["All", null]];
+let scaleChoice = "auto";
+try { scaleChoice = localStorage.getItem("desk-scale") || "auto"; } catch (e) {}
+function autoScale() {
+  const days = latest && latest.data && latest.data.horizon_days;
+  return !isNum(days) ? "1D" : days < 2 ? "1D" : days < 10 ? "1W" : days < 60 ? "1M" : "All";
+}
+function currentScale() { return scaleChoice === "auto" ? autoScale() : scaleChoice; }
+function setScale(scale) {
+  scaleChoice = scaleChoice === scale ? "auto" : scale;
+  try { localStorage.setItem("desk-scale", scaleChoice); } catch (e) {}
+  feedback("look", "scale", scaleChoice);
+  drawModes();
+  if (latest && latest.data) { renderTiles(latest.data.kpis || {}); zoomCharts(); }
+}
+function zoomCharts() {   // the value charts show the chosen window (All: the whole history)
+  if (typeof Plotly === "undefined") return;
+  const days = (SCALES.find(([name]) => name === currentScale()) || [])[1];
+  ["chart-value", "chart-twr"].forEach((id) => {
+    const node = document.getElementById(id);
+    if (!node || !node.data) return;
+    if (!days) { Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }); return; }
+    const end = Date.now(), start = end - days * 86400000;
+    const ys = node.data.flatMap((trace) => (trace.x || []).map((x, i) => [new Date(x).getTime(), trace.y && trace.y[i]]))
+      .filter(([t, y]) => t >= start && isNum(y)).map(([, y]) => y);
+    const update = { "xaxis.range": [new Date(start).toISOString(), new Date(end).toISOString()] };
+    if (ys.length) { const low = Math.min(...ys), high = Math.max(...ys), pad = (high - low) * 0.08 || Math.abs(high) * 0.01 || 1; update["yaxis.range"] = [low - pad, high + pad]; }
+    Plotly.relayout(node, update);
+  });
+}
 function setUnit(unit) {
   pnlUnit = unit;
   try { localStorage.setItem("desk-unit", unit); } catch (e) {}
@@ -976,7 +1023,15 @@ function drawModes() {
     "aria-label": "Live price strip", "aria-pressed": tickerOn ? "true" : "false" }, [icon("pulse")]);
   strip.addEventListener("click", () => { const s = tickerState(); s.on = !s.on; saveTicker(s); feedback("look", "price strip", s.on ? "on" : "off"); drawModes(); refreshTicker(); });
   report.addEventListener("click", openReport);
-  host.replaceChildren(views, units, toggle, styles, strip, report);
+  const scales = el("div", { class: "switch", role: "group", "aria-label": "Time scale" });
+  const active = currentScale();
+  SCALES.forEach(([name]) => {
+    const button = el("button", { type: "button", class: "unit-button" + (scaleChoice === "auto" && name === active ? " auto" : ""),
+      "aria-pressed": name === active ? "true" : "false", title: scaleChoice === "auto" && name === active ? "Auto: the open trades' horizon" : "", text: name });
+    button.addEventListener("click", () => setScale(name));
+    scales.append(button);
+  });
+  host.replaceChildren(scales, views, units, toggle, styles, strip, report);
 }
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
 // switch redraws the tables; mode and style are CSS for the tables, so only the Plotly charts (which read the colours and

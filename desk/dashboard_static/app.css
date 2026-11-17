@@ -471,3 +471,5 @@ html.private td.digits { cursor: pointer; }
 .tick.drop-target { outline: 1px dashed var(--series-1); }
 .tick-hide { opacity: 0.6; font-size: 15px; padding: 0 6px; }
 .ticker:hover .tick-hide { opacity: 1; }
+.unit-button.auto { position: relative; }
+.unit-button.auto::after { content: ""; position: absolute; top: 3px; right: 3px; width: 4px; height: 4px; border-radius: 50%; background: var(--series-1); }

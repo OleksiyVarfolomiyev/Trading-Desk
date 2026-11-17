@@ -379,6 +379,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
                                          key={"Ladder PnL": "abs"}) if len(frame) else table(frame, {}))
     except Exception as exc:
         desk.notes.append(f"Market-making metrics unavailable ({type(exc).__name__}: {exc}).")
+    research: dict = {}
     # Performance by strategy, trades due for review and the screener, as the trading daemon last saved them (hourly).
     try:
         import json as _json
@@ -471,6 +472,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     return {
         "kpis": kpis,
+        "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,   # the open trades' median age
         "usage_model": usage_model_now(),   # what the reader has said is noise (desk/usage_model.py)
         "tiles": published_tiles(),
         "catalog": catalog_entries(),   # the notebook sections that can be pulled onto the dashboard (desk/tile_catalog.py)   # charts and tables published from the notebooks (desk/tile_feed.py)

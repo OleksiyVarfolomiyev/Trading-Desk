@@ -1184,6 +1184,7 @@
         .filter((a) => a.context).map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), a.context])) },
       tables,
       catalog: catalogEntries,
+      horizon_days: research && research.horizon_days,
       usage_model: usageModel,
       tiles: ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now()),
       charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [] },

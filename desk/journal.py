@@ -342,3 +342,16 @@ def show_strategies(desk_value: float) -> None:
                               formatters={column: signed for column in VIEW_COLUMNS[1:]}, key_columns={"Total": "abs"})
     print("Realized PnL is net of fees; funding (received positive, paid negative) is separate and goes to the strategy that held the position when it was paid. A position's unrealized PnL counts under its own strategy; the ladders' "
           "fills count under market making. Fills before a position was journalled are untagged.")
+
+
+def horizon_days(entries: list[dict] | None = None, now: float | None = None) -> float | None:
+    """How long the open trades have been held, the median in days: the time scale the dashboard opens at (a book of
+    day trades reads on the day, a book held for weeks on the month). None with nothing open."""
+    entries = load() if entries is None else entries
+    now = time.time() if now is None else now
+    ages = sorted((now - time.mktime(time.strptime(e["opened"][:19], "%Y-%m-%dT%H:%M:%S")) + time.timezone) / 86400
+                  for e in entries if not e.get("closed") and e.get("opened"))
+    if not ages:
+        return None
+    middle = len(ages) // 2
+    return ages[middle] if len(ages) % 2 else (ages[middle - 1] + ages[middle]) / 2
