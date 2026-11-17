@@ -263,6 +263,7 @@ function applyView(id, spec, context) {
     if (view.hover) out.__hover = view.hover(row);
     if (view.link) out.__link = view.link(row);
     if (view.size) out.__size = view.size(full);
+    out.__raw = { Account: full.Account, Value: full.Value, Symbol: full.Symbol };   // what a row's actions need
     return out;
   };
   // Derived fields start with _; an aligned table keeps every column, present in its data or not.
@@ -335,10 +336,60 @@ function kindColor(id, row) {
   const stocks = id === "positions_stocks" || String(row.Symbol || row.Coin || "").includes(":") || /^(equity|stock|etf|tradfi)/i.test(String(row["Asset class"] || ""));
   return token(stocks ? "--kind-stocks" : "--kind-crypto");
 }
+
+// Bars as list rows (the highlights' design): a name, a bar with its figures, and what can be done with the row on hover (trim or
+// close a position, refuse, bookmark or act on a candidate, open its page). Plain HTML, so every row is actionable.
+function kindClass(id, row) {
+  const stocks = id === "positions_stocks" || String(row.Symbol || row.Coin || "").includes(":") || /^(equity|stock|etf|tradfi)/i.test(String(row["Asset class"] || ""));
+  return stocks ? "stocks" : "crypto";
+}
+function renderBarList(id, spec, plan, host) {
+  const rows = spec.rows.slice();
+  const formatOf = (key) => (spec.columns.find((column) => column.key === key) || {}).fmt;
+  const text = (key, value) => (FORMATS[formatOf(key)] || FORMATS.text).text(value);
+  let list = rows.filter((row) => isNum(row[plan.value]));
+  if (id in CANDIDATE_TABLES) {
+    const s = candidateState(), week = 7 * 86400000;
+    list = list.filter((row) => !(s.refused[row.Coin] && Date.now() - s.refused[row.Coin] < week));
+    list.sort((a, b) => Number(s.starred.includes(b.Coin)) - Number(s.starred.includes(a.Coin)));
+  } else {
+    const bySize = list.some((row) => isNum(row.__size));
+    list.sort((a, b) => (bySize ? (b.__size || 0) - (a.__size || 0) : Math.abs(b[plan.value]) - Math.abs(a[plan.value])));
+  }
+  const sizes = list.map((row) => Math.abs(row[plan.value])).sort((a, b) => b - a);
+  const cap = sizes.length > 2 ? sizes[1] * BAR_CAP : Infinity;   // one dominant bar is drawn at most 3x the second
+  const biggest = Math.min(sizes[0] || 1, cap) || 1;
+  const mixed = list.some((row) => row[plan.value] < 0) && list.some((row) => row[plan.value] > 0);
+  const body = el("div", { class: "barlist" }, list.map((row) => {
+    const value = row[plan.value], share = Math.min(Math.abs(value), cap) / biggest, kind = kindClass(id, row);
+    const label = String(row[plan.label] ?? ""), figure = [text(plan.value, value), plan.text ? text(plan.text, row[plan.text]) : ""].filter(Boolean).join(" · ");
+    const width = Math.max(2, share * (mixed ? 50 : 100));
+    const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
+    const fig = el("span", { class: "bfig " + (value < 0 ? "neg" : "pos"), style: mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)` }, [(Math.abs(value) > cap ? "» " : "") + figure]);
+    const name = el("button", { type: "button", class: "bname name-" + kind, text: friendlyName(label) });
+    name.addEventListener("click", () => openAsset(label));
+    const notable = [isNum(row["D"]) && Math.abs(row["D"]) >= 0.05 ? `${text("D", row["D"])} D` : "", isNum(row["Funding (APR)"]) && Math.abs(row["Funding (APR)"]) >= 0.5 ? `${text("Funding (APR)", row["Funding (APR)"])} funding` : ""].filter(Boolean).join(" · ");
+    const acts = el("span", { class: "bacts" }, []);
+    if (id in CANDIDATE_TABLES) candidateRowButtons(id, row).forEach((b) => acts.append(b));
+    else if (window.DESK_SOURCE && /^HL /.test(String((row.__raw || {}).Account || "")) && isNum((row.__raw || {}).Value)) {
+      [["Trim ⅓", "reduce", 1 / 3], ["Close", "close", 1]].forEach(([word, change, fraction]) => {
+        const b = el("button", { type: "button", class: "row-act", title: `${word}: ${label}`, "aria-label": `${word} ${label}`, text: change === "close" ? "✕" : "⅓" });
+        b.addEventListener("click", (event) => { event.stopPropagation(); runAction(word, change, fraction, { coin: row.__raw.Symbol, wallet: String(row.__raw.Account).slice(-4) }); });
+        acts.append(b);
+      });
+    }
+    if (row.__link) acts.append(el("a", { class: "row-act symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", title: "Open its page", text: "↗" }));
+    return el("div", { class: "brow" + (notable ? " notable" : ""), title: notable || row.__hover || "" }, [name, el("span", { class: "btrack" }, [fill, fig]), acts]);
+  }));
+  host.replaceChildren(body);
+  return true;
+}
+
 function renderTableChart(id, spec, override) {
   const host = document.getElementById("t-" + id);
   const plan = override || chartPlan(id, spec);
   if (typeof Plotly === "undefined" || !plan) return false;
+  if (plan.kind === "bars") return renderBarList(id, spec, plan, host);   // plain rows with actions on hover, not a Plotly chart
   const rows = spec.rows.slice();
   const formatOf = (key) => (spec.columns.find((column) => column.key === key) || {}).fmt;
   const text = (key, value) => (FORMATS[formatOf(key)] || FORMATS.text).text(value);
@@ -388,8 +439,8 @@ function renderTableChart(id, spec, override) {
         textposition: "inside", insidetextanchor: "middle", insidetextfont: { size: 11, color: "#ffffff" },
         hovertext: books.map(([book]) => (isNum(row[book]) && row[book] !== 0 ? `${row.Strategy} ${text(book, row[book])}` : "")), hoverinfo: "text" };
     });
-    layout = { barmode: "relative", hovermode: "closest", xaxis: Object.assign({ zeroline: true }, axis), uniformtext: { mode: "hide", minsize: 9 } };
-    height = 120;
+    layout = { barmode: "relative", bargap: 0.1, hovermode: "closest", xaxis: Object.assign({ zeroline: true }, axis), uniformtext: { mode: "hide", minsize: 9 } };
+    height = 170;
     names.splice(0, names.length, ...books.map(([book]) => book));
   } else if (plan.kind === "stacked" && !plan.series.some((key) => rows.some((row) => isNum(row[key]) && row[key] !== 0))) {
     return renderTableChart(id, spec, { kind: "bars", label: plan.label, value: "Total", text: null });   // no split yet: the totals
@@ -412,7 +463,7 @@ function renderTableChart(id, spec, override) {
       text: data.map(([, v]) => text(plan.net, v)), textposition: "auto", insidetextanchor: "end", insidetextfont: { size: 13, color: "#ffffff" },
       outsidetextfont: LABEL_FONT(13), cliponaxis: false, hoverinfo: "skip", showlegend: false }];
     layout = { xaxis: Object.assign({ zeroline: true }, axis) };
-    height = Math.max(110, data.length * 34 + 50);
+    height = Math.max(120, data.length * 52 + 30);
     names.splice(0, names.length, ...data.map(([n]) => n));
   } else if (plan.kind === "exposure") {
     const axis = chartAxis(formatOf(plan.long));
@@ -514,7 +565,10 @@ function candidateActions(id, row) {
     return b;
   };
   const starred = state.starred.includes(coin);
-  return el("td", { class: "row-actions" }, [
+  return el("td", { class: "row-actions" }, candidateButtons(id, row, button, starred, side, coin));
+}
+function candidateButtons(id, row, button, starred, side, coin) {
+  return ([
     button("×", "Refuse", () => { const s = candidateState(); s.refused[coin] = Date.now(); saveCandidates(s); feedback("candidate", "refuse", coin, id);
       if (lastSpecs[id]) renderTable(id, lastSpecs[id]); }),
     button(starred ? "★" : "☆", starred ? "Bookmarked" : "Bookmark", () => {
@@ -530,6 +584,15 @@ function candidateActions(id, row) {
       else if (navigator.clipboard) navigator.clipboard.writeText(`${side} ${coin}`);
     })] : []),
   ]);
+}
+function candidateRowButtons(id, row) {   // the same answers as a list row's buttons
+  const coin = row.Coin, side = CANDIDATE_TABLES[id], starred = candidateState().starred.includes(coin);
+  const button = (text, label, action, on) => {
+    const b = el("button", { type: "button", class: "row-act" + (on ? " on" : ""), "aria-label": `${label} ${coin}`, title: label, text });
+    b.addEventListener("click", (event) => { event.stopPropagation(); action(); });
+    return b;
+  };
+  return candidateButtons(id, row, button, starred, side, coin);
 }
 const filterState = {};   // table id -> text: only rows that contain it are shown
 const lastSpecs = {};     // table id -> the last spec drawn, so a filter redraws without new data
@@ -1202,7 +1265,7 @@ function setScale(element, scale) {
 }
 function scaleChips(element) {   // the element's own scale buttons, shown on its hover
   const active = currentScale(element), auto = (scaleChoices[element] || "auto") === "auto";
-  return el("span", { class: "scale-chips" }, SCALES.map(([name]) => {
+  return el("span", { class: "scale-chips" }, SCALES.filter(([name]) => name !== active).map(([name]) => {   // the current one is already shown
     const chip = el("button", { type: "button", class: "scale-chip" + (name === active ? " on" : "") + (auto && name === active ? " auto" : ""), text: { "1D": "D", "1W": "W", "1M": "M" }[name] || name });
     chip.addEventListener("click", (event) => { event.stopPropagation(); setScale(element, name); });
     return chip;
@@ -1480,6 +1543,27 @@ function addColumnHandle(card) {
 
 const CARDS = {};   // card id -> its element
 // A card becomes a window: it sits in a slot, drags by its body, and has minimize, save, full screen and hide.
+// The whole tile drags, except from a chart, a field, a button or a link (those keep their own mouse behaviour).
+function wireDrag(card) {
+  card.addEventListener("mousedown", (event) => {
+    card.draggable = !event.target.closest(".js-plotly-plot, input, textarea, select, button, a, .card-full, .card-resize, .card-resize-x");
+  });
+  card.addEventListener("dragstart", (event) => {
+    if (!card.draggable || card.classList.contains("card-full")) { event.preventDefault(); return; }
+    draggingCard = card;
+    grabOffset = event.clientY - card.getBoundingClientRect().top;
+    event.dataTransfer.setData("text/plain", cardId(card));
+    event.dataTransfer.effectAllowed = "move";
+    try { event.dataTransfer.setDragImage(card, 24, 14); } catch (e) {}
+    card.classList.add("dragging");
+  });
+  card.addEventListener("dragend", () => {
+    draggingCard = null;
+    card.draggable = false;
+    card.classList.remove("dragging");
+    document.querySelectorAll("#content .drop-target").forEach((node) => node.classList.remove("drop-target"));
+  });
+}
 function adoptCard(card) {
     if (!card.parentElement || !card.parentElement.classList.contains("slot")) {
       const slot = el("div", { class: "slot" });
@@ -1488,8 +1572,9 @@ function adoptCard(card) {
     }
     CARDS[cardId(card)] = card;
     const title = card.querySelector("h2");
-    if (!title || card.dataset.adopted) return;
+    if (card.dataset.adopted) return;
     card.dataset.adopted = "1";
+    if (!title) { wireDrag(card); addResizeHandle(card); addColumnHandle(card); return; }   // an untitled tile (the highlights) moves and resizes too
     if (card.querySelector("#t-market_making, #t-mm_candidates")) {   // a two-sided ladder: bids below, asks above, the price between
       const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
       [["viewBox", "0 0 16 16"], ["width", "16"], ["height", "16"], ["fill", "none"], ["stroke", "currentColor"], ["stroke-width", "1.5"], ["stroke-linecap", "round"], ["class", "card-icon"]].forEach(([k, v]) => svg.setAttribute(k, v));
@@ -1501,25 +1586,7 @@ function adoptCard(card) {
       if (node.nodeType === 3 && node.textContent.trim()) node.replaceWith(el("span", { class: "card-name", text: node.textContent }));
     });
     const grip = el("span", { class: "card-grip", title: "Drag anywhere on the tile (outside the chart) to move it", "aria-label": "Move " + cardTitle(card), text: "⠿" });
-    // The whole tile drags, except from a chart, a field, a button or a link (those keep their own mouse behaviour).
-    card.addEventListener("mousedown", (event) => {
-      card.draggable = !event.target.closest(".js-plotly-plot, input, textarea, select, button, a, .card-full, .card-resize, .card-resize-x");
-    });
-    card.addEventListener("dragstart", (event) => {
-      if (!card.draggable || card.classList.contains("card-full")) { event.preventDefault(); return; }
-      draggingCard = card;
-      grabOffset = event.clientY - card.getBoundingClientRect().top;
-      event.dataTransfer.setData("text/plain", cardId(card));
-      event.dataTransfer.effectAllowed = "move";
-      try { event.dataTransfer.setDragImage(card, 24, 14); } catch (e) {}
-      card.classList.add("dragging");
-    });
-    card.addEventListener("dragend", () => {
-      draggingCard = null;
-      card.draggable = false;
-      card.classList.remove("dragging");
-      document.querySelectorAll("#content .drop-target").forEach((node) => node.classList.remove("drop-target"));
-    });
+    wireDrag(card);
     // Window buttons: minimize to the title bar, full screen, close (hide; the Sections menu brings it back).
     const tool = (cls, label, text, action) => {
       const button = el("button", { type: "button", class: "card-tool " + cls, title: label, "aria-label": label + ": " + cardTitle(card), text });
@@ -1541,6 +1608,12 @@ function adoptCard(card) {
     const chartTools = () => {   // for a tile with a chart: reset the view, switch dragging between zoom and pan
       const charts = () => [...card.querySelectorAll(".js-plotly-plot")];
       if (!card.querySelector(".chart")) return [];
+      if (card.querySelector("#chart-twr")) {   // the return chart is actionable: more or less of each asset class
+        const kindTool = (kind, change, symbol, label) => { const b = tool("card-kind kind-btn-" + kind, label, symbol, () => runClassAction(kind, change, 1 / 3)); return b; };
+        return [kindTool("crypto", "reduce", "▾", "Reduce crypto by a third"), kindTool("crypto", "add", "▴", "Add to crypto by a third"),
+          kindTool("stocks", "reduce", "▾", "Reduce stocks by a third"), kindTool("stocks", "add", "▴", "Add to stocks by a third"),
+          ...(() => { const r = tool("card-reset", "Reset view", "⟲", () => charts().forEach((node) => Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }))); return [r]; })()];
+      }
       const reset = tool("card-reset", "Reset view", "⟲", () => charts().forEach((node) =>
         Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true })));
       const pan = tool("card-pan", "Pan (drag moves) / zoom (drag selects)", "✥", () => {
@@ -2116,6 +2189,43 @@ async function runAction(label, change, fraction, target) {
     ...mine.map((line) => el("p", { class: "action-line", text: line })),
     el("div", { class: "asset-actions" }, [confirm, cancel]));
 }
+
+// Exposure to an asset class from the return chart: reduce or add a third of every held HL position in the class. Each
+// position is planned with the daemon first; one dialog shows the plans and their notices, and Confirm sends them in turn.
+async function runClassAction(kind, change, fraction) {
+  const id = kind === "crypto" ? "positions" : "positions_stocks";
+  const rows = (((latest && latest.data && latest.data.tables) || {})[id] || { rows: [] }).rows
+    .filter((row) => /^HL /.test(String(row.Account || "")) && isNum(row.Value));
+  const word = change === "reduce" ? "Reduce" : "Add to";
+  const title = `${word} ${kind} by a third`;
+  feedback("action", "plan class", kind, title);
+  if (!window.DESK_SOURCE) {   // the local page copies the order for Claude
+    if (navigator.clipboard) navigator.clipboard.writeText(`${change === "reduce" ? "trim" : "add a third to"} all ${kind} positions${change === "reduce" ? " by a third" : ""}`);
+    return;
+  }
+  const { overlay, box } = actionDialog(title);
+  box.replaceChildren(el("h3", { text: title }), el("p", { class: "muted", text: "Planning each position…" }));
+  const post = (row, body) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+    body: JSON.stringify(Object.assign({ change, coin: row.Symbol, wallet: String(row.Account).slice(-4), fraction }, body)) }).then((r) => r.json());
+  const plans = [];
+  for (const row of rows) { try { plans.push([row, await post(row, { stage: "plan" })]); } catch (e) { plans.push([row, { error: String(e) }]); } }
+  const ready = plans.filter(([, plan]) => plan.token);
+  const lines = plans.flatMap(([row, plan]) => { const l = planLines(plan.plan || plan.error || "", row.Symbol); return [...l.notices.map((t) => ["notice", t]), ...l.mine.slice(-1).map((t) => ["", t])]; });
+  const confirm = el("button", { type: "button", class: "asset-action lead", text: `Confirm: ${ready.length} position${ready.length === 1 ? "" : "s"}` });
+  const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
+  cancel.addEventListener("click", () => { feedback("action", "cancel class", kind, title); overlay.remove(); });
+  confirm.addEventListener("click", async () => {
+    confirm.disabled = true; confirm.textContent = "Sending…";
+    feedback("action", "confirm class", kind, title);
+    const results = [];
+    for (const [row, plan] of ready) { try { const r = await post(row, { stage: "confirm", token: plan.token }); results.push(`${marketName(row.Symbol)} ${r.code === 0 ? "done" : "not completed"}`); } catch (e) { results.push(`${marketName(row.Symbol)} failed`); } }
+    box.replaceChildren(el("h3", { text: title }), ...results.map((t) => el("p", { class: "action-line", text: t })), closeButton(overlay));
+    lastRendered = null; load();
+  });
+  box.replaceChildren(el("h3", { text: title }), ...lines.map(([cls, t]) => el("p", { class: "action-line " + cls, text: t })),
+    el("div", { class: "asset-actions" }, [...(ready.length ? [confirm] : []), cancel]));
+}
+
 function closeButton(overlay) {
   const button = el("button", { type: "button", class: "asset-action", text: "Close" });
   button.addEventListener("click", () => overlay.remove());
@@ -2436,6 +2546,16 @@ async function loadUniverse() {
   });
   list.replaceChildren(...friendly.sort().map((name) => el("option", { value: name })));
 }
+// Outliers among the open positions (a 24h move far from the rest, at least 4%) join the pulse bar while they are outliers and held.
+function outlierAssets() {
+  const tables = (latest && latest.data && latest.data.tables) || {};
+  const rows = ["positions", "positions_stocks"].flatMap((id) => ((tables[id] || {}).rows || []))
+    .filter((row) => /^HL /.test(String(row.Account || "")) && isNum(row["24h change (%)"]));
+  if (rows.length < 4) return [];
+  const moves = rows.map((row) => row["24h change (%)"]), mean = moves.reduce((a, b) => a + b, 0) / moves.length;
+  const spread = Math.sqrt(moves.reduce((a, b) => a + (b - mean) ** 2, 0) / moves.length) || 1;
+  return rows.filter((row) => Math.abs(row["24h change (%)"]) >= 0.04 && Math.abs(row["24h change (%)"] - mean) / spread >= 2).map((row) => row.Symbol);
+}
 async function refreshTicker() {
   const state = tickerState();
   let strip = document.getElementById("ticker");
@@ -2449,7 +2569,9 @@ async function refreshTicker() {
   await loadUniverse();
   universeMap.spy = universeMap.spy || universeMap["s&p500"] || universeMap.sp500;   // SPY on the strip is HL's S&P 500 perp
   const marketOf = (asset) => universeMap[asset.toLowerCase()] || asset;
-  const contexts = await tickerContexts(state.assets.map(marketOf));
+  const auto = outlierAssets().filter((asset) => !state.assets.some((mine) => marketOf(mine) === asset));
+  const shownAssets = state.assets.concat(auto);
+  const contexts = await tickerContexts(shownAssets.map(marketOf));
   const adding = strip.querySelector(".tick-input");
   if (adding && document.activeElement === adding) return;   // do not redraw under a field being typed in
   const addBox = el("span", { class: "tick-add" }, [el("input", { type: "text", class: "tick-input", placeholder: "+ asset", list: "tick-universe",
@@ -2496,17 +2618,17 @@ async function refreshTicker() {
   };
   const hideStrip = el("button", { type: "button", class: "tick-x tick-hide", "aria-label": "Hide the price strip", text: "×" });
   hideStrip.addEventListener("click", () => { const s = tickerState(); s.on = false; saveTicker(s); feedback("look", "price strip", "off"); drawModes(); refreshTicker(); });
-  strip.replaceChildren(...state.assets.map((asset) => reorderable((() => {
+  strip.replaceChildren(...shownAssets.map((asset) => reorderable((() => {
     const context = contexts[marketOf(asset)];
     if (!context || !isFinite(context.price)) return el("a", { class: "tick", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
       [el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
     const change = context.previous ? context.price / context.previous - 1 : NaN;
     const direction = lastPrices[asset] === undefined || lastPrices[asset] === context.price ? "" : context.price > lastPrices[asset] ? "up" : "down";
     lastPrices[asset] = context.price;
-    return el("a", { class: "tick " + direction, href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
+    return el("a", { class: "tick " + direction + (auto.includes(asset) ? " auto-asset" : ""), href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
       el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }),
       el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }),   // the move first, the price after
-      el("span", { class: "price", text: priceText(context.price) }), dropper(asset)]);
+      el("span", { class: "price", text: priceText(context.price) }), ...(auto.includes(asset) ? [] : [dropper(asset)])]);
   })(), asset)).concat([addBox, hideStrip]));
 }
 setInterval(refreshTicker, 5000);
