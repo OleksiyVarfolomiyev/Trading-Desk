@@ -1163,6 +1163,25 @@ class TrimRuleTests(unittest.TestCase):
         self.assertFalse(hl_daemon.AUTO_DEFAULTS["momentum_flip"])
 
 
+class ResizeTests(unittest.TestCase):
+    def test_close_reduce_and_add(self):
+        position = {"coin": "xyz:AMD", "szi": "0.4", "marginUsed": "60"}
+        self.assertIn("close,xyz:AMD,LONG,xyz,", hl_daemon.resize_actions(position, "close", 1))
+        self.assertIn("adjust_margin,xyz:AMD,LONG,xyz,-20.00", hl_daemon.resize_actions(position, "reduce", 1 / 3))
+        self.assertIn("adjust_margin,xyz:AMD,LONG,xyz,20.00", hl_daemon.resize_actions(position, "add", 1 / 3))
+        self.assertIn("close,", hl_daemon.resize_actions(position, "reduce", 1.0))   # reducing all of it is a close
+        short = {"coin": "SYRUP", "szi": "-9805", "marginUsed": "300"}
+        self.assertIn("adjust_margin,SYRUP,SHORT,,-100.00", hl_daemon.resize_actions(short, "reduce", 1 / 3))
+
+    def test_bad_requests_are_refused(self):
+        with self.assertRaises(ValueError):
+            hl_daemon.resize_actions({"coin": "BTC", "szi": "1", "marginUsed": "10"}, "flip", 0.5)
+        with self.assertRaises(ValueError):
+            hl_daemon.resize_actions({"coin": "BTC", "szi": "1", "marginUsed": "10"}, "reduce", 1.5)
+        with self.assertRaises(ValueError):
+            hl_daemon.resize_actions({"coin": "BTC", "szi": "1", "marginUsed": "0"}, "reduce", 0.5)
+
+
 class ActedTests(unittest.TestCase):
     def test_acted_is_true_only_inside_the_episode(self):
         import tempfile

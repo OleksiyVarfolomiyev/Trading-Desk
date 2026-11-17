@@ -1138,7 +1138,7 @@ function linkSymbols(text) {   // the text with each known symbol as a button th
     const start = match.index + match[1].length;
     if (start > last) parts.push(text.slice(last, start));
     const symbol = match[2];
-    const button = el("button", { type: "button", class: "symbol-chip", title: "Open " + symbol + " as a tile", text: symbol });
+    const button = el("button", { type: "button", class: "symbol-chip", text: symbol });
     button.addEventListener("click", (event) => { event.stopPropagation(); openAsset(symbol); });
     parts.push(button);
     last = start + symbol.length;
@@ -1161,9 +1161,13 @@ function assetAdvice(rows) {   // where it stands, and what is sensible
   const costs = held.reduce((sum, row) => sum + Math.abs(row.Value - (row.uPnL || 0)), 0), share = costs ? pnl / costs : NaN;
   const side = value < 0 ? "short" : "long", name = marketName(held[0].Symbol);
   const line = `${side}, ${usd(Math.abs(value))}, uPnL ${isNum(share) ? pct(share) : "n/a"}`;
-  const trim = [`Trim a third`, `trim ${name} by a third`], close = [`Close`, `close ${name}`], add = [`Add a third`, `add a third to the ${name} ${side}`];
+  const trim = [`Trim a third`, `trim ${name} by a third`, "reduce", 1 / 3], close = [`Close`, `close ${name}`, "close", 1],
+    add = [`Add a third`, `add a third to the ${name} ${side}`, "add", 1 / 3];
   const actions = share >= 0.1 ? [trim, close, add] : share <= -0.1 ? [close, trim, add] : [trim, add, close];
-  return { line, actions, lead: share >= 0.1 ? "Winner: take part of it" : share <= -0.1 ? "Loser: decide" : "" };
+  // On the web dashboard an HL position's actions run through the daemon (plan, then confirm); IB and the local page copy.
+  const hl = held.find((row) => /^HL /.test(String(row.Account || "")));
+  return { line, actions, lead: share >= 0.1 ? "Winner: take part of it" : share <= -0.1 ? "Loser: decide" : "",
+    target: hl && window.DESK_SOURCE ? { coin: hl.Symbol, wallet: String(hl.Account).slice(-4) } : null };
 }
 async function openAsset(symbol) {
   const name = marketName(symbol), key = "asset-" + name.replace(/[^A-Za-z0-9]/g, "_");
@@ -1191,8 +1195,13 @@ async function openAsset(symbol) {
       el("div", { class: "chart asset-chart", id: key + "-chart", hidden: true }),
       advice.lead ? el("div", { class: "asset-lead", text: advice.lead }) : null,
       el("div", { class: "asset-actions" }, [
-        ...advice.actions.map(([label, sentence], i) => { const b = el("button", { type: "button", class: "asset-action" + (i === 0 && advice.lead ? " lead" : ""), title: "Copies: " + sentence, text: label });
-          b.addEventListener("click", () => copy(sentence, b)); return b; }),
+        ...advice.actions.map(([label, sentence, change, fraction], i) => {
+          const runs = advice.target && change;
+          const b = el("button", { type: "button", class: "asset-action" + (i === 0 && advice.lead ? " lead" : ""),
+            title: runs ? `Plan it, then confirm: ${sentence}` : "Copies: " + sentence, text: label });
+          b.addEventListener("click", () => (runs ? runAction(label, change, fraction, advice.target) : copy(sentence, b)));
+          return b;
+        }),
         el("a", { class: "asset-action", href: external, target: "_blank", rel: "noopener noreferrer", title: "Open the asset's page", text: "Page ↗" })]));
     const strip = el("button", { type: "button", class: "asset-action", title: "Show it in the price strip", text: "+ strip" });
     strip.addEventListener("click", () => { const s = tickerState(); if (!s.assets.includes(name)) s.assets.push(name); s.on = true; saveTicker(s); refreshTicker(); drawModes(); strip.textContent = "added"; });
@@ -1278,6 +1287,68 @@ function rarelyUsed() {   // tiles shown for a week or more and not touched in t
   });
   saveUsage(state);
   return out;
+}
+
+
+// ---------------------------------------------------------------- run an action: plan (the daemon's dry run), then confirm
+// One dialog: the plan with its notices (cap, funding, blocked) on top, then Confirm or Cancel. Confirm sends it live; the
+// result shows in the same dialog and the page refreshes. The server keeps a log of every confirmed action.
+function actionDialog(title) {
+  document.querySelectorAll(".action-dialog").forEach((node) => node.remove());
+  const box = el("div", { class: "action-box", role: "dialog", "aria-modal": "true", "aria-label": title });
+  const overlay = el("div", { class: "action-dialog" }, [box]);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  document.addEventListener("keydown", function escape(event) { if (event.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", escape); } });
+  document.body.append(overlay);
+  return { overlay, box };
+}
+function planLines(text, coin) {   // what matters in the daemon's output: the coin's lines and any notice
+  const name = marketName(coin).toLowerCase();
+  const lines = String(text).split("\n").map((line) => line.trim()).filter(Boolean);
+  const notices = lines.filter((line) => /BLOCKED|cap|funding|kill switch|refused|could not|stale|No open/i.test(line));
+  const mine = lines.filter((line) => line.toLowerCase().includes(name) && !notices.includes(line));
+  return { notices, mine: mine.slice(-8) };
+}
+async function runAction(label, change, fraction, target) {
+  const coin = target.coin, title = `${label}: ${marketName(coin)} (HL ${target.wallet})`;
+  feedback("action", "plan", marketName(coin), label);
+  const { overlay, box } = actionDialog(title);
+  box.replaceChildren(el("h3", { text: title }), el("p", { class: "muted", text: "Planning with live data…" }));
+  const post = (body) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+    body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction }, body)) }).then((r) => r.json());
+  let plan;
+  try { plan = await post({ stage: "plan" }); } catch (e) { plan = { error: String(e) }; }
+  if (plan.error || !plan.token) {
+    const { notices, mine } = planLines(plan.plan || plan.error || "", coin);
+    box.replaceChildren(el("h3", { text: title }), el("p", { class: "neg", text: "Nothing can be sent." }),
+      ...notices.concat(mine).map((line) => el("p", { class: "action-line", text: line })), closeButton(overlay));
+    return;
+  }
+  const { notices, mine } = planLines(plan.plan, coin);
+  const confirm = el("button", { type: "button", class: "asset-action lead", text: `Confirm: ${label.toLowerCase()} ${marketName(coin)}` });
+  const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
+  cancel.addEventListener("click", () => { feedback("action", "cancel", marketName(coin), label); overlay.remove(); });
+  confirm.addEventListener("click", async () => {
+    confirm.disabled = true; confirm.textContent = "Sending…";
+    feedback("action", "confirm", marketName(coin), label);
+    let result;
+    try { result = await post({ stage: "confirm", token: plan.token }); } catch (e) { result = { error: String(e) }; }
+    const lines = planLines(result.result || result.error || "", coin);
+    box.replaceChildren(el("h3", { text: title }),
+      el("p", { class: result.code === 0 ? "pos" : "neg", text: result.code === 0 ? "Done." : "Not completed." }),
+      ...lines.notices.map((line) => el("p", { class: "action-line notice", text: line })),
+      ...lines.mine.map((line) => el("p", { class: "action-line", text: line })), closeButton(overlay));
+    lastRendered = null; load();
+  });
+  box.replaceChildren(el("h3", { text: title }),
+    ...notices.map((line) => el("p", { class: "action-line notice", text: line })),
+    ...mine.map((line) => el("p", { class: "action-line", text: line })),
+    el("div", { class: "asset-actions" }, [confirm, cancel]));
+}
+function closeButton(overlay) {
+  const button = el("button", { type: "button", class: "asset-action", text: "Close" });
+  button.addEventListener("click", () => overlay.remove());
+  return el("div", { class: "asset-actions" }, [button]);
 }
 
 function saveOrder() {

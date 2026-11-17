@@ -17,6 +17,7 @@
 //   node web/server.mjs --set-password  ask for the dashboard password and store its scrypt hash
 
 import http from "node:http";
+import net from "node:net";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -228,6 +229,75 @@ async function saveFeedback(request, response) {
   response.end(JSON.stringify({ ok: true, saved: clean.length }));
 }
 
+// ---- Dashboard actions on an open HL position (close, reduce or add a share of it), through the trading daemon.
+// Two steps, each a click on the page: "plan" runs the daemon's dry run and returns its plan with a one-time token;
+// "confirm" (within two minutes, same request) sends it live, the click standing in for the typed confirmations. Every
+// confirm is written to ~/.trading-desk/web_actions.log. The daemon's own caps, kill switch and guards apply as always.
+const DAEMON_SOCKET = path.join(HOME, ".trading-desk", "hl_daemon.sock");
+const ACTIONS_LOG = path.join(HOME, ".trading-desk", "web_actions.log");
+const pendingActions = new Map();   // token -> { key, expires }
+let actionRunning = false;
+
+function daemonCall(message, answer) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ path: DAEMON_SOCKET });
+    let buffer = "", text = "", code = 2;
+    const finish = () => { socket.destroy(); resolve({ code, text }); };
+    socket.setTimeout(240_000, finish);
+    socket.on("connect", () => socket.write(JSON.stringify(message) + "\n"));
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      let at;
+      while ((at = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
+        let item; try { item = JSON.parse(line); } catch (error) { continue; }
+        if (item.t === "out") text += item.text;
+        else if (item.t === "ask") { text += item.text + "\n"; socket.write(JSON.stringify({ t: "answer", text: answer ? answer(item.text) : "" }) + "\n"); }
+        else if (item.t === "end") { code = Number(item.code); finish(); }
+      }
+    });
+    socket.on("error", (error) => { text += `The trading daemon could not be reached (${error.code || error.message}).`; finish(); });
+    socket.on("end", finish);
+  });
+}
+
+async function dashboardAction(request, response) {
+  const send = (status, body) => { response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); response.end(JSON.stringify(body)); };
+  const origin = request.headers.origin;
+  if (origin && origin.replace(/^https?:\/\//, "") !== request.headers.host) return send(403, { error: "cross-site request refused" });
+  let body = {};
+  try { body = JSON.parse((await readBody(request)).toString("utf8") || "{}"); } catch (error) { return send(400, { error: "not JSON" }); }
+  const { stage, change, coin, wallet, token } = body;
+  const fraction = Number(body.fraction);
+  if (!["close", "reduce", "add"].includes(change) || !/^[A-Za-z0-9:]{1,24}$/.test(String(coin || "")) || !/^[0-9a-fA-F]{4}$/.test(String(wallet || ""))
+      || !(fraction > 0 && fraction <= 1)) return send(400, { error: "bad request" });
+  const key = JSON.stringify([change, coin, wallet, fraction]);
+  const request_ = { cmd: "resize", wallet, coin, change, fraction };
+  if (actionRunning) return send(409, { error: "another dashboard action is running" });
+  actionRunning = true;
+  try {
+    if (stage === "plan") {
+      const { code, text } = await daemonCall({ ...request_, live: false });
+      const id = crypto.randomBytes(12).toString("hex");
+      pendingActions.set(id, { key, expires: Date.now() + 120_000 });
+      return send(200, { code, plan: text.slice(-4000), token: code === 0 ? id : null });
+    }
+    if (stage === "confirm") {
+      const pending = pendingActions.get(String(token || ""));
+      pendingActions.delete(String(token || ""));
+      if (!pending || pending.key !== key || pending.expires < Date.now()) return send(400, { error: "the plan expired or changed: plan it again" });
+      const { code, text } = await daemonCall({ ...request_, live: true }, (prompt) =>
+        prompt.includes("SUBMIT POSITION ACTIONS") ? "SUBMIT POSITION ACTIONS" : prompt.includes("LIVE TRADING") ? "LIVE TRADING" : "");
+      await fsp.appendFile(ACTIONS_LOG, JSON.stringify({ at: new Date().toISOString(), change, coin, wallet, fraction, code,
+        result: text.slice(-600) }) + "\n").catch(() => {});
+      return send(200, { code, result: text.slice(-4000) });
+    }
+    return send(400, { error: "stage must be plan or confirm" });
+  } finally {
+    actionRunning = false;
+  }
+}
+
 async function handle(request, response) {
   const url = new URL(request.url, "http://localhost");
   if (url.pathname === "/login" && request.method === "POST") return signIn(request, response);
@@ -245,6 +315,7 @@ async function handle(request, response) {
     return;
   }
   if (url.pathname === "/feedback" && request.method === "POST") return saveFeedback(request, response);
+  if (url.pathname === "/action" && request.method === "POST") return dashboardAction(request, response);
   if (url.pathname === "/usage_model" && request.method === "GET") {   // fitted hourly by the daemon from the feedback log (desk/usage_model.py)
     let text = '{"areas":{},"tiles":{},"quiet":[]}';
     try { text = await fsp.readFile(path.join(HOME, ".trading-desk", "usage_model.json"), "utf8"); } catch (error) { /* none yet */ }

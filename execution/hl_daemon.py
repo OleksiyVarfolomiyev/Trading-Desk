@@ -520,6 +520,18 @@ class HLState:
             return ht.collect_snapshot(wallets, self.dexes, self.markets(), states=states,
                                        collateral=self.collateral, fee_rates=fees)
 
+    def position(self, wallet: str, coin: str, dex: str) -> dict | None:
+        """The live position record (size, value, margin, leverage) or None when absent or the state is stale."""
+        with self.lock:
+            if time.time() - self.state_time.get(wallet, 0.0) > STATE_STALE_SECONDS:
+                return None
+            state = self.states.get(wallet, {}).get(dex)
+        for item in (state or {}).get("assetPositions", []):
+            position = item.get("position", {})
+            if position.get("coin") == coin and float(position.get("szi") or 0):
+                return dict(position)
+        return None
+
     def position_quantity(self, wallet: str, coin: str, dex: str) -> float | None:
         """Signed size from the live state, or None when that state is stale."""
         with self.lock:
@@ -2559,6 +2571,28 @@ AUTO_DEFAULTS = {
 }
 
 
+RESIZE_CHANGES = ("close", "reduce", "add")
+
+
+def resize_actions(position: dict, change: str, fraction: float) -> str:
+    """The actions CSV for a dashboard request on an open position: close it, or reduce or add ``fraction`` of it (as a
+    share of the margin it uses, so of its size at the same leverage). Adds go through the usual risk caps."""
+    if change not in RESIZE_CHANGES:
+        raise ValueError(f"change must be one of {', '.join(RESIZE_CHANGES)}")
+    if not 0 < fraction <= 1:
+        raise ValueError("fraction must be above 0 and at most 1")
+    coin = str(position["coin"])
+    dex = coin.split(":")[0] if ":" in coin else ""
+    side = "SHORT" if float(position.get("szi") or 0) < 0 else "LONG"
+    if change == "close" or (change == "reduce" and fraction >= 0.999):
+        return f"action,coin,side,dex,margin_usd\nclose,{coin},{side},{dex},\n"
+    margin = float(position.get("marginUsed") or 0)
+    if margin <= 0:
+        raise ValueError(f"{coin}: no margin on record to size the change from")
+    signed = -fraction * margin if change == "reduce" else fraction * margin
+    return f"action,coin,side,dex,margin_usd\nadjust_margin,{coin},{side},{dex},{signed:.2f}\n"
+
+
 def auto_config() -> dict:
     config = dict(AUTO_DEFAULTS)
     try:
@@ -3234,6 +3268,24 @@ class Daemon:
             coin = str(request.get("coin", "")).strip()
             coin = coin if ":" in coin else coin.upper()
             return self.trails.stop(wallet, coin) if request.get("stop") else self.trails.start(wallet, coin, float(request["pct"]))
+        if command == "resize":   # the dashboard's actions on an open position: plan (dry run), then live once confirmed there
+            wallet = self.wallet(str(request.get("wallet", "")))
+            coin = str(request.get("coin", "")).strip()
+            coin = coin if ":" in coin else coin.upper()
+            position = self.state.position(wallet, coin, coin.split(":")[0] if ":" in coin else "")
+            if position is None:
+                print(f"No open {coin} position in ...{wallet[-4:]} (or its state is stale); nothing to do.")
+                return 2
+            path = daemon_link.RUN_DIR / f"web_resize_{wallet[-4:]}_{coin.replace(':', '_').lower()}.csv"
+            path.write_text(resize_actions(position, str(request.get("change", "")), float(request.get("fraction") or 0)))
+            if not self.trade_lock.acquire(timeout=PROMPT_TIMEOUT_SECONDS):
+                print("Another trade is waiting for confirmation in the daemon; try again shortly.")
+                return 2
+            try:
+                return self.trade({"cmd": "trade", "wallet": wallet, "live": bool(request.get("live")), "actions": str(path),
+                                   "ignore_unreachable": True}, session)
+            finally:
+                self.trade_lock.release()
         if command == "buildup":
             wallet = self.wallet(str(request.get("wallet", "")))
             coin = str(request.get("coin", "")).strip()
