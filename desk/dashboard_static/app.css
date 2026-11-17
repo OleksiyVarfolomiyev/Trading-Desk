@@ -671,3 +671,10 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .tick:hover .tick-pop, .tick:focus-within .tick-pop { display: inline-flex; }
 .tick-act { background: transparent; border: 0; color: var(--ink-2); cursor: pointer; font: inherit; font-size: 12px; padding: 1px 7px; border-radius: 4px; }
 .tick-act:hover { color: var(--ink); background: var(--border); }
+/* Screens: a tile shows on the screens it belongs to. */
+html[data-screen="now"] .card[data-screens]:not([data-screens~="now"]) { display: none !important; }
+html[data-screen="research"] .card[data-screens]:not([data-screens~="research"]) { display: none !important; }
+html[data-screen="research"] .tiles { display: none !important; }
+#screen-dots { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 50; display: flex; gap: 8px; padding: 4px 8px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 85%, transparent); }
+#screen-dots button { width: 8px; height: 8px; padding: 0; border-radius: 50%; border: 0; background: var(--muted); cursor: pointer; opacity: .5; }
+#screen-dots button[aria-pressed="true"] { opacity: 1; background: var(--ink); }

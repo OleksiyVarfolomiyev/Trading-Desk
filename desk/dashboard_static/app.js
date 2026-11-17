@@ -1652,6 +1652,7 @@ function adoptCard(card) {
     const title = card.querySelector("h2");
     if (card.dataset.adopted) return;
     card.dataset.adopted = "1";
+    card.dataset.screens = screensFor(card);
     if (!title) { wireDrag(card); addResizeHandle(card); addColumnHandle(card); return; }   // an untitled tile (the highlights) moves and resizes too
     if (card.querySelector("#t-market_making, #t-mm_candidates")) {   // a two-sided ladder: bids below, asks above, the price between
       const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
@@ -2873,6 +2874,59 @@ document.addEventListener("click", (event) => {
   if (page) page.focus(); else window.location.assign(link.href);
 });
 
+
+// Screens: swipe the whole page left or right (touch), press the arrow keys, or tap a dot to move between alternative screens: Now
+// (what is happening: highlights, positions, exposure, strategies, candidates, market making, the return chart) and Research (the
+// value and return charts and the analytics pulled from the notebooks). The dots sit at the bottom; the choice is remembered.
+const SCREENS = ["now", "research"];
+const SCREEN_OF = { now: ["hl-attention", "t-positions", "t-positions_stocks", "t-exposure", "t-strategies", "t-candidates", "t-market_making", "t-mm_candidates", "chart-twr"],
+  research: ["chart-value", "chart-twr"] };
+function screensFor(card) {
+  const id = cardId(card);
+  if (card.dataset.published) return "research";
+  if (card.dataset.asset) return "now";
+  const on = SCREENS.filter((name) => SCREEN_OF[name].includes(id));
+  return on.length ? on.join(" ") : "now research";   // a tile that belongs to no screen shows on both
+}
+function setScreen(name) {
+  if (!SCREENS.includes(name)) return;
+  document.documentElement.dataset.screen = name;
+  try { localStorage.setItem("desk-screen", name); } catch (e) {}
+  document.querySelectorAll("#screen-dots button").forEach((dot) => dot.setAttribute("aria-pressed", dot.dataset.screen === name ? "true" : "false"));
+  feedback("look", "screen", name);
+  if (latest && latest.data) renderCharts(latest.data.charts);   // charts that were hidden have no size until now
+}
+function stepScreen(direction) {
+  const at = SCREENS.indexOf(document.documentElement.dataset.screen || "now");
+  setScreen(SCREENS[Math.min(SCREENS.length - 1, Math.max(0, at + direction))]);
+}
+function wireScreens() {
+  let saved = "now";
+  try { saved = localStorage.getItem("desk-screen") || "now"; } catch (e) {}
+  const dots = el("div", { id: "screen-dots", role: "group", "aria-label": "Screens" }, SCREENS.map((name) => {
+    const dot = el("button", { type: "button", "data-screen": name, "aria-label": `Screen ${name}`, "aria-pressed": "false" });
+    dot.addEventListener("click", () => setScreen(name));
+    return dot;
+  }));
+  document.body.append(dots);
+  setScreen(SCREENS.includes(saved) ? saved : "now");
+  let startX = 0, startY = 0, tracking = false;
+  document.addEventListener("touchstart", (event) => {
+    tracking = event.touches.length === 1 && !event.target.closest(".js-plotly-plot, .table-wrap, input, textarea, select, .card-resize, .card-resize-x, #notices, .action-dialog");
+    if (tracking) { startX = event.touches[0].clientX; startY = event.touches[0].clientY; }
+  }, { passive: true });
+  document.addEventListener("touchend", (event) => {
+    if (!tracking) return;
+    tracking = false;
+    const dx = event.changedTouches[0].clientX - startX, dy = event.changedTouches[0].clientY - startY;
+    if (Math.abs(dx) > 90 && Math.abs(dy) < 60) stepScreen(dx < 0 ? 1 : -1);   // swipe left: the next screen; right: the one before
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.target.closest && event.target.closest("input, textarea, select") || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === "ArrowRight") stepScreen(1); else if (event.key === "ArrowLeft") stepScreen(-1);
+  });
+}
+
 // ---------------------------------------------------------------- privacy: click a number and the numbers hide (as in IB)
 // Click any number (a tile value, a table figure, a highlight) to blur every number on the page; click one again to
 // show them. Remembered in the browser; the eye next to the title does the same.
@@ -2907,5 +2961,5 @@ document.addEventListener("click", (event) => {
 })();
 
 // Nothing in the arrangement may stop the data from loading: each setup step is isolated, then the poll starts.
-for (const step of [watchUse, setupSections]) { try { step(); } catch (error) { console.error("dashboard setup:", error); } }
+for (const step of [watchUse, setupSections, wireScreens]) { try { step(); } catch (error) { console.error("dashboard setup:", error); } }
 poll();
