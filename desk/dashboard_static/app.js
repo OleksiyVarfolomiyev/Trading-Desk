@@ -841,12 +841,13 @@ function renderTiles(k, theses = [], execution = {}) {
       return tile("risk", word, "", { key: "Risk", valueClass: used > 1 ? "neg" : "",
         title: isNum(risk) ? `Open risk ${pct(risk)} of equity against the 33% cap` : "" });
     })(),
-    (() => {   // the worst of the shocks the book is priced against (alt rally, equity sell-off, crypto sell-off), on hover all
-      const rows = Object.entries(k.stress || {}).filter(([, v]) => isNum(v)).sort((a, b) => a[1] - b[1]);
+    (() => {   // the room under the stress limit: the worst shock's loss against the 35% where adding entries is blocked (25% warns)
+      const rows = Object.entries(k.stress || {}).filter(([, v]) => isNum(v)).sort((a, b) => a[1] - b[1]);   // mirrors desk/stress.py
       if (!rows.length) return tile("stress", "n/a", "", { key: "Stress" });
-      const [name, worst] = rows[0];
-      return tile("stress", pct(worst, 1, true), name, { key: "Stress", valueClass: worst <= -0.25 ? "neg" : "",
-        title: rows.map(([n, v]) => `${n} ${pct(v, 1, true)}`).join("\n") });
+      const [name, worst] = rows[0], loss = Math.max(0, -worst), room = STRESS_BLOCK - loss;
+      return tile("stress", room > 0 ? `${pct(room)} room` : `${pct(-room)} over`, `${name} ${pct(worst, 1, true)}`,
+        { key: "Stress", valueClass: loss >= STRESS_WARN ? "neg" : "",
+          title: rows.map(([n, v]) => `${n} ${pct(v, 1, true)}`).join("\n") });
     })(),
     (() => {   // the thesis clock: how long the open trades have been held, each with the thesis it was opened on
       const rows = theses || [];
@@ -877,6 +878,7 @@ function renderTiles(k, theses = [], execution = {}) {
 }
 // The key-number tiles are windows too: drag one onto another to swap, minimize to label and value, save as an image, hide
 // (the Sections menu brings hidden ones back). Order, minimized and hidden are remembered with the layout.
+const STRESS_WARN = 0.25, STRESS_BLOCK = 0.35;   // desk/stress.py: a scenario loss past 25% warns, past 35% blocks added entries
 const EXTRA_TILES = ["Return 30D", "MW return", "TW return", "Positions"];
 function arrangeTiles(host, tiles) {
   let state = layoutState();

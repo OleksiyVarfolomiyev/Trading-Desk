@@ -7,7 +7,8 @@ bounded by it. Each scenario below moves every position's price at once, with no
 help, and prices the loss on the whole desk (HL perps, IB, and the wallets' tokens, so the staked
 VVV offsets the VVV short):
 
-* alt rally: alts +25%, BTC and ETH +10%, stablecoins and everything else unchanged;
+* alt rally: alts +20%, BTC and ETH +10%, stablecoins and everything else unchanged (research/alt_beta_test.py: in 15 weeks
+  where BTC rose 10%+, the median alt rose 16% and the bad-side alt 20%);
 * equity sell-off: equities (IB stocks and HL equity perps) -10%, everything else unchanged.
 
 Limits, as a share of desk equity: a scenario loss of 25% is a warning; at 35% the pre-flight
@@ -22,11 +23,11 @@ WARN_PCT = 0.25
 BLOCK_PCT = 0.35
 
 SCENARIOS = {
-    "alt rally": {"alt": 0.25, "major": 0.10},
+    "alt rally": {"alt": 0.20, "major": 0.10},
     "equity sell-off": {"equity": -0.10},
 }
-# The stress tile also reads a crypto sell-off (BTC and ETH -10%, alts 15 points worse): informational, it never blocks an entry.
-TILE_SCENARIOS = {**SCENARIOS, "crypto sell-off": {"major": -0.10, "alt": -0.25}}
+# The stress tile also reads a crypto sell-off (BTC and ETH -10%, alts -20%: the bad-side alt fell 22% in 14 weeks of 10%+ BTC drops): informational, it never blocks an entry.
+TILE_SCENARIOS = {**SCENARIOS, "crypto sell-off": {"major": -0.10, "alt": -0.20}}
 MAJORS = {"BTC", "ETH", "WBTC", "CBBTC", "WETH", "CBETH", "STETH", "WSTETH"}
 STABLES = {"USDC", "USDT", "USDE", "DAI", "USDH", "USDBC", "EURC", "GHO", "PYUSD", "FDUSD", "USDS", "SUSDE"}
 COMMODITIES = {"GOLD", "SILVER", "BRENTOIL", "WTIOIL", "OIL", "CL", "COPPER", "NATGAS", "PLATINUM", "PALLADIUM",
@@ -87,7 +88,7 @@ def notices(exposures, equity: float) -> list[tuple[str, str]]:
     for item in evaluate(exposures, equity):
         if item["status"] == "ok":
             continue
-        shock = "alts +25% and BTC/ETH +10%" if item["scenario"] == "alt rally" else "equities -10%"
+        shock = "alts +20% and BTC/ETH +10%" if item["scenario"] == "alt rally" else "equities -10%"
         limit = "adding entries blocked" if item["status"] == "block" else f"entries shrunk past {BLOCK_PCT:.0%}"
         rows.append((f"Stress: {item['scenario']} ({item['status']})",
                      f"{shock}: {-item['share']:.0%} of desk equity; {limit}."))

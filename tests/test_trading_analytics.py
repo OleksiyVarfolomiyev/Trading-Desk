@@ -1245,6 +1245,7 @@ class TradeAnalyticsTests(unittest.TestCase):
         exits.assert_called_once()
         self.assertEqual(len(active), 1)
 
+    @patch.dict("desk.stress.SCENARIOS", {"alt rally": {"alt": 0.25, "major": 0.10}})
     def test_plan_trades_cuts_an_entry_that_would_push_a_stress_scenario_past_the_limit(self):
         from hl_trade import AccountSnapshot, plan_trades
 

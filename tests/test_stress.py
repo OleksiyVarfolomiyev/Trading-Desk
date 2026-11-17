@@ -1,6 +1,7 @@
 """Scenario stress: the book's loss in a correlated shock, and the entry check built on it."""
 
 import unittest
+from unittest.mock import patch
 
 from desk import stress
 
@@ -10,6 +11,11 @@ BOOK = [("crypto perp", "ICP", -4000.0), ("crypto perp", "BTC", -1500.0), ("cryp
 
 
 class ScenarioTests(unittest.TestCase):
+    def setUp(self):   # the arithmetic is tested at the original 25% alt shock, whatever the calibrated shock is
+        patcher = patch.dict(stress.SCENARIOS["alt rally"], {"alt": 0.25})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_positions_are_classified(self):
         kinds = {symbol: stress.classify(cls, symbol) for cls, symbol, _ in BOOK}
         self.assertEqual(kinds["ICP"], "alt")

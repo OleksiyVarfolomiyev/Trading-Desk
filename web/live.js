@@ -408,8 +408,8 @@
   const IB_STALE_MS = 26 * HOUR_MS;
   // Scenario stress (desk/stress.py): what a correlated shock would cost the whole desk, no stop assumed to help.
   const STRESS_WARN = 0.25, STRESS_BLOCK = 0.35;
-  const STRESS = { "alt rally": { alt: 0.25, major: 0.10 }, "equity sell-off": { equity: -0.10 } };
-  const STRESS_TILE = { ...STRESS, "crypto sell-off": { major: -0.10, alt: -0.25 } };
+  const STRESS = { "alt rally": { alt: 0.20, major: 0.10 }, "equity sell-off": { equity: -0.10 } };
+  const STRESS_TILE = { ...STRESS, "crypto sell-off": { major: -0.10, alt: -0.20 } };
   const STRESS_MAJORS = new Set(["BTC", "ETH", "WBTC", "CBBTC", "WETH", "CBETH", "STETH", "WSTETH"]);
   const STRESS_STABLES = new Set(["USDC", "USDT", "USDE", "DAI", "USDH", "USDBC", "EURC", "GHO", "PYUSD", "FDUSD", "USDS", "SUSDE"]);
   const STRESS_COMMODITIES = new Set(["GOLD", "SILVER", "BRENTOIL", "WTIOIL", "OIL", "CL", "COPPER", "NATGAS", "PLATINUM", "PALLADIUM", "URANIUM", "PAXG", "XAUT"]);
@@ -1049,7 +1049,7 @@
       const share = deskEquity > 0 ? loss / deskEquity : NaN;
       if (!(share >= STRESS_WARN)) return;
       const status = share >= STRESS_BLOCK ? "block" : "warn";
-      const shock = name === "alt rally" ? "alts +25% and BTC/ETH +10%" : "equities -10%";
+      const shock = name === "alt rally" ? "alts +20% and BTC/ETH +10%" : "equities -10%";
       attention.unshift([`Stress: ${name} (${status})`, `${shock}: ${percent(-share, false, 0)} of desk equity; ${status === "block" ? "adding entries blocked" : "entries shrunk past 35%"}.`]);
     });
     // Data flow: every feed the page relies on, with how stale it may get before it is a problem.
