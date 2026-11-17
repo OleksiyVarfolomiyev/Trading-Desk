@@ -18,3 +18,4 @@ web/site/
 data/
 research/data/hl_book_exposure_weekly.csv
 tests/.test_map.json
+charts/
