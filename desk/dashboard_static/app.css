@@ -537,3 +537,12 @@ table { font-size: 12.5px; }
 .chart { height: 280px; }
 .topbar { padding: 4px 6px; gap: 8px; }
 .ticker { padding: 2px 6px; }
+/* As many columns as the screen holds, cards flowing down them with no blank space (a masonry): the key numbers, the
+   highlights and the top feed span the full width; everything else fills the columns in page order. */
+#content:not([hidden]) { display: block; column-width: 420px; column-gap: 4px; }
+#content > .tiles, #content > .highlights-card, #content > #banners { column-span: all; margin-bottom: 4px; }
+#content .grid.two, #content .stack, #content #positions-grid, #content .feed { display: contents; }
+#content .card { display: block; break-inside: avoid; margin: 0 0 4px; width: 100%; }
+#content .card.card-off { display: none; }
+#content .card.card-full { position: fixed; inset: 0; z-index: 60; margin: 0; }
+@media (max-width: 640px) { #content:not([hidden]) { column-width: auto; column-count: 1; } }
