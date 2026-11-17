@@ -333,14 +333,14 @@ function whenVisible(host, draw) {
 }
 // A bar's colour is its asset class (crypto orange, stocks blue); the side is the direction it points and the sign colour of its figure.
 function kindColor(id, row) {
-  const stocks = id === "positions_stocks" || String(row.Symbol || row.Coin || "").includes(":") || /^(equity|stock|etf|tradfi)/i.test(String(row["Asset class"] || ""));
-  return token(stocks ? "--kind-stocks" : "--kind-crypto");
+  const stocks = id === "positions_stocks" || /^pub-desk_stocks/.test(id) || String(row.Symbol || row.Coin || "").includes(":") || /^(equity|stock|etf|tradfi)/i.test(String(row["Asset class"] || ""));
+  return token(stocks ? "--kind-stocks" : "--kind-crypto");   // a tile pulled from the stocks notebook is the stocks book: blue
 }
 
 // Bars as list rows (the highlights' design): a name, a bar with its figures, and what can be done with the row on hover (trim or
 // close a position, refuse, bookmark or act on a candidate, open its page). Plain HTML, so every row is actionable.
 function kindClass(id, row) {
-  const stocks = id === "positions_stocks" || String(row.Symbol || row.Coin || "").includes(":") || /^(equity|stock|etf|tradfi)/i.test(String(row["Asset class"] || ""));
+  const stocks = id === "positions_stocks" || /^pub-desk_stocks/.test(id) || String(row.Symbol || row.Coin || "").includes(":") || /^(equity|stock|etf|tradfi)/i.test(String(row["Asset class"] || ""));
   return stocks ? "stocks" : "crypto";
 }
 function renderBarList(id, spec, plan, host) {
