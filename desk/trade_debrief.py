@@ -138,6 +138,60 @@ def markdown(entry: dict, thesis: tuple[str, bool], mkt: dict, ex: dict, ended: 
     return "\n".join(lines) + "\n"
 
 
+def chart(entry: dict, fills: list[dict], path: Path, now_ms: int | None = None) -> Path | None:
+    """One picture of the trade: the coin's price from a bit before the entry (15-minute candles) with the entry and exit
+    fills marked, the entry price as a line, the best and worst the trade saw shaded, and BTC rebased to the entry."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    now_ms = now_ms or int(time.time() * 1000)
+    opened_ms = _ms(entry["opened"])
+    closed_ms = _ms(entry["closed"]) if entry.get("closed") else None
+    entries, exits = trade_fills(fills, entry["coin"], entry["side"], opened_ms, closed_ms)
+    if not entries:
+        return None
+    start, end = opened_ms - 3 * 3600_000, (closed_ms or now_ms) + 3600_000
+    candles, btc = _candles(entry["coin"], start, end, "15m"), _candles("BTC", start, end, "15m")
+    if candles.empty:
+        return None
+    ex = execution(entries, exits, None, entry["side"])
+    times = pd.to_datetime(candles["t"], unit="ms", utc=True).dt.tz_convert("America/New_York")
+    good, bad = "#16a34a", "#dc2626"
+    figure, axis = plt.subplots(figsize=(9, 4.4))
+    axis.plot(times, candles["c"], color="#334155", lw=1.6, label=entry["coin"])
+    axis.fill_between(times, candles["l"], candles["h"], color="#94a3b8", alpha=0.25, lw=0)
+    axis.axhline(ex["entry_px"], color="#64748b", ls="--", lw=1)
+    held = candles[candles["t"] >= opened_ms]
+    if len(held):
+        best = held["l"].min() if entry["side"] == "SHORT" else held["h"].max()
+        worst = held["h"].max() if entry["side"] == "SHORT" else held["l"].min()
+        axis.axhline(best, color=good, lw=0.8, ls=":"); axis.axhline(worst, color=bad, lw=0.8, ls=":")
+        axis.annotate(f"best {abs(best / ex['entry_px'] - 1):.1%}", (times.iloc[-1], best), color=good, fontsize=8, va="bottom", ha="right")
+        axis.annotate(f"worst {abs(worst / ex['entry_px'] - 1):.1%}", (times.iloc[-1], worst), color=bad, fontsize=8, va="top", ha="right")
+    for rows, color, marker in ((entries, "#2563eb", "v" if entry["side"] == "SHORT" else "^"), (exits, "#7c3aed", "o")):
+        if rows:
+            axis.scatter(pd.to_datetime([int(r["time"]) for r in rows], unit="ms", utc=True).tz_convert("America/New_York"),
+                         [float(r["px"]) for r in rows], color=color, marker=marker, s=46, zorder=5,
+                         label="entry fills" if color == "#2563eb" else "exit fills")
+    if not btc.empty:
+        twin = axis.twinx()
+        base = float(btc[btc["t"] >= opened_ms]["c"].iloc[0]) if (btc["t"] >= opened_ms).any() else float(btc["c"].iloc[0])
+        twin.plot(pd.to_datetime(btc["t"], unit="ms", utc=True).dt.tz_convert("America/New_York"), 100 * (btc["c"] / base - 1),
+                  color="#f59e0b", lw=1, alpha=0.8, label="BTC (% from entry)")
+        twin.set_ylabel("BTC, % from entry", color="#f59e0b")
+        twin.spines[["top"]].set_visible(False)
+    axis.set_title(f"{entry['coin']} {entry['side']}: entry {ex['entry_px']:.6g}", fontsize=11)
+    axis.set_ylabel("Price"); axis.legend(loc="upper left", fontsize=8, frameon=False)
+    axis.spines[["top", "right"]].set_visible(False)
+    figure.autofmt_xdate(); figure.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, dpi=120)
+    plt.close(figure)
+    return path
+
+
 def debrief(entry: dict, fills: list[dict], events: list[dict] | None = None, now_ms: int | None = None) -> str:
     now_ms = now_ms or int(time.time() * 1000)
     opened_ms = _ms(entry["opened"])
@@ -161,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wallet", help="last four characters of the wallet")
     parser.add_argument("--all", action="store_true", help="every journal trade")
     parser.add_argument("--out", type=Path, help="write one markdown file per trade into this folder")
+    parser.add_argument("--chart", action="store_true", help="also draw the trade's picture (a PNG next to the markdown, or in charts/)")
     args = parser.parse_args(argv)
     from desk import event_watch
     from desk.accounts import hl_wallet
@@ -180,6 +235,10 @@ def main(argv: list[str] | None = None) -> int:
         if wallet not in fills_by_wallet:
             fills_by_wallet[wallet] = fetch_user_fills(wallet)
         text = debrief(entry, fills_by_wallet[wallet], events)
+        if args.chart:
+            name = f"{entry['opened'][:10]}_{entry['wallet']}_{entry['coin'].replace(':', '-')}.png"
+            picture = chart(entry, fills_by_wallet[wallet], (args.out or REPO / "charts") / name)
+            print(f"picture: {picture}" if picture else "no picture (no entry fills in HL's history)")
         if args.out:
             args.out.mkdir(parents=True, exist_ok=True)
             name = f"{entry['opened'][:10]}_{entry['wallet']}_{entry['coin'].replace(':', '-')}.md"
