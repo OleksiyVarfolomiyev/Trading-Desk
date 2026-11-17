@@ -213,7 +213,7 @@ const CHART_VIEWS = {
 };
 const LABEL_FONT = (size = 12, color) => ({ size, color: color || token("--ink-2") });   // the value next to each bar's end
 const BAR_CAP = 3;   // the longest a bar is drawn, in times the second largest
-const INSIDE_INK = () => (document.documentElement.dataset.theme === "light" ? "#ffffff" : token("--ink"));   // names inside bars: white on the light page
+const INSIDE_INK = () => (document.documentElement.dataset.mode === "light" ? "#ffffff" : token("--ink"));   // names inside bars: white on the light page
 // A name goes inside its bar only when the bar is long enough, in pixels, to hold it (13px text, about 7.5px a character).
 function nameFits(share, name, host, rightMargin) {
   const plotPx = Math.max(200, (host.clientWidth || 600) - 20 - rightMargin) * 0.85;   // the longest bar's room, with padding
@@ -337,7 +337,7 @@ function renderTableChart(id, spec) {
   host.replaceChildren();
   const node = el("div", { class: "chart", id: "tc-" + id, style: `height:${height}px` });
   host.append(node);
-  const margin = Object.assign({ l: 90, r: 90, t: 8, b: 36 }, layout.margin || {});
+  const margin = Object.assign({ l: 90, r: 90, t: plan.kind === "grouped" ? 30 : 8, b: 36 }, layout.margin || {});
   const base = baseLayout(Object.assign({ hovermode: "closest" }, layout, { margin }));
   // Values sit at the bar ends: no x labels, grid, zero line or axis line.
   base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false, showticklabels: false, showgrid: false,
@@ -544,11 +544,11 @@ function baseLayout(extra) {
   const ink = token("--ink-2"), muted = token("--muted"), grid = token("--grid"), axis = token("--axis");
   return Object.assign({
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
-    font: { family: "system-ui, -apple-system, Segoe UI, sans-serif", size: 12, color: ink },
-    margin: { l: 56, r: 72, t: 8, b: 36 },
+    font: { family: token("--font") || "system-ui, -apple-system, Segoe UI, sans-serif", size: 12, color: ink },
+    margin: { l: 56, r: 72, t: 30, b: 36 },
     hovermode: "x unified",
     hoverlabel: { bgcolor: token("--surface"), bordercolor: axis, font: { color: token("--ink") } },
-    legend: { orientation: "h", x: 0, y: 1.08, font: { color: ink } },
+    legend: { orientation: "h", x: 0, y: 1, yanchor: "bottom", font: { color: ink } },   // above the plot, inside the top margin
     xaxis: { gridcolor: grid, linecolor: axis, tickfont: { color: muted }, showspikes: true,
              spikemode: "across", spikethickness: 1, spikecolor: axis, spikedash: "solid" },
     yaxis: { gridcolor: grid, linecolor: axis, zerolinecolor: axis, tickfont: { color: muted } },
@@ -734,37 +734,67 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 });
 
 // ---------------------------------------------------------------- look switches
-// Two switches in the top bar: Numbers (the tables) or Charts (every table drawn as a chart), and the colours: Dark
-// (the default), Light or HL (Hyperliquid's). Both are remembered in the browser (?view= and ?theme= still work).
-// Each theme button wears its own colours (page, text, accent); the view buttons are icons: a table and a chart.
+// Three switches in the top bar: Numbers or Charts (the tables drawn as charts), a sun or moon for light or dark, and the
+// style: Indie (the desk's own), HL (Hyperliquid) or Apple. Every style has a light and a dark version. The choices are
+// remembered in the browser; the page's head script sets them before first paint (and reads ?mode= ?style= ?view=).
 const VIEW_CHOICES = [["tables", "Numbers (tables)", "table"], ["charts", "Charts", "chart"]];
-const THEME_CHOICES = [
-  ["dark", "Dark", { background: "#0d0d0f", color: "#f0efec", accent: "#1fa67d" }],
-  ["light", "Light", { background: "#f9f9f7", color: "#0b0b0b", accent: "#0ca30c" }],
-  ["hl", "HL", { background: "#0f1a1e", color: "#f6fefd", accent: "#50d2c1" }],
-];
+const STYLE_CHOICES = [["indie", "Indie", "#898781"], ["hl", "HL", "#50d2c1"], ["apple", "Apple", "#0a84ff"]];
+function lookTheme(mode, style) {   // the CSS theme for a style and mode
+  return style === "indie" ? mode : style === "hl" ? (mode === "dark" ? "hl" : "hl-light") : "apple-" + mode;
+}
 function icon(kind) {   // 16px line icons, drawn in the button's text colour
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", "0 0 16 16"); svg.setAttribute("width", "16"); svg.setAttribute("height", "16");
   svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "1.5");
-  svg.setAttribute("aria-hidden", "true");
-  const paths = kind === "table"
-    ? ["M2 3.5h12v9H2z", "M2 7h12", "M2 10h12", "M6.5 3.5v9"]
-    : ["M3 13V8", "M7 13V4", "M11 13V9", "M14 13V6.5", "M2 13.5h13"];
+  svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("aria-hidden", "true");
+  const paths = {
+    table: ["M2 3.5h12v9H2z", "M2 7h12", "M2 10h12", "M6.5 3.5v9"],
+    chart: ["M3 13V8", "M7 13V4", "M11 13V9", "M14 13V6.5", "M2 13.5h13"],
+    sun: ["M8 5.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z", "M8 1.5v1.6", "M8 12.9v1.6", "M1.5 8h1.6", "M12.9 8h1.6",
+      "M3.4 3.4l1.1 1.1", "M11.5 11.5l1.1 1.1", "M3.4 12.6l1.1-1.1", "M11.5 4.5l1.1-1.1"],
+    moon: ["M13 9.6A5.5 5.5 0 0 1 6.4 3a5.5 5.5 0 1 0 6.6 6.6z"],
+  }[kind];
   paths.forEach((d) => { const p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.append(p); });
   return svg;
 }
 function setLook(kind, value) {
   const root = document.documentElement;
-  if (kind === "view") root.dataset.view = value; else root.dataset.theme = value;
-  try { localStorage.setItem(kind === "view" ? "desk-view" : "desk-theme", value); } catch (e) {}
+  root.dataset[kind] = value;
+  root.dataset.theme = lookTheme(root.dataset.mode || "dark", root.dataset.style || "indie");
+  try { localStorage.setItem("desk-" + kind, value); } catch (e) {}
   drawModes();
   redrawLook(kind);
 }
+function drawModes() {
+  const host = document.getElementById("modes");
+  if (!host) return;
+  const root = document.documentElement.dataset;
+  const mode = root.mode === "light" ? "light" : "dark", style = root.style || "indie";
+  const views = el("div", { class: "switch", role: "group", "aria-label": "Numbers or charts" });
+  VIEW_CHOICES.forEach(([value, name, shape]) => {
+    const button = el("button", { type: "button", class: "icon-button", title: name, "aria-label": name,
+      "aria-pressed": value === (root.view === "charts" ? "charts" : "tables") ? "true" : "false" }, [icon(shape)]);
+    button.addEventListener("click", () => setLook("view", value));
+    views.append(button);
+  });
+  const next = mode === "dark" ? "light" : "dark";   // the sun shows in light mode, the moon in dark; a click flips it
+  const toggle = el("div", { class: "switch", role: "group", "aria-label": "Light or dark" }, [
+    el("button", { type: "button", class: "icon-button", title: `Switch to ${next} mode`, "aria-label": `Switch to ${next} mode`,
+      "aria-pressed": "false" }, [icon(mode === "light" ? "sun" : "moon")])]);
+  toggle.firstChild.addEventListener("click", () => setLook("mode", next));
+  const styles = el("div", { class: "switch", role: "group", "aria-label": "Style" });
+  STYLE_CHOICES.forEach(([value, name, dot]) => {
+    const button = el("button", { type: "button", class: "style-button", title: name, "aria-pressed": value === style ? "true" : "false",
+      style: `--dot:${dot}` }, [el("i"), name]);
+    button.addEventListener("click", () => setLook("style", value));
+    styles.append(button);
+  });
+  host.replaceChildren(views, toggle, styles);
+}
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
-// switch redraws the tables; a colour switch is CSS for the tables, so only the Plotly charts (which read the colours
-// when drawn) are redrawn, and the table charts when the charts view is on.
+// switch redraws the tables; mode and style are CSS for the tables, so only the Plotly charts (which read the colours and
+// font when drawn) are redrawn, and the table charts when the charts view is on.
 function redrawLook(kind) {
   if (!latest || !latest.data) return;
   const data = latest.data, context = { deskValue: (data.kpis || {}).desk_value };
@@ -772,30 +802,7 @@ function redrawLook(kind) {
     for (const id of TABLES) renderTable(id, applyView(id, data.tables && data.tables[id], context));
     if (kind === "view") balanceColumns();
   }
-  if (kind === "theme") renderCharts(data.charts);
-}
-function drawModes() {
-  const host = document.getElementById("modes");
-  if (!host) return;
-  const root = document.documentElement.dataset;
-  const views = el("div", { class: "switch", role: "group", "aria-label": "Numbers or charts" });
-  VIEW_CHOICES.forEach(([value, name, shape]) => {
-    const active = value === (root.view === "charts" ? "charts" : "tables");
-    const button = el("button", { type: "button", class: "icon-button", title: name, "aria-label": name,
-      "aria-pressed": active ? "true" : "false" }, [icon(shape)]);
-    button.addEventListener("click", () => setLook("view", value));
-    views.append(button);
-  });
-  const themes = el("div", { class: "switch", role: "group", "aria-label": "Colours" });
-  const current = THEME_CHOICES.some(([v]) => v === root.theme) ? root.theme : "dark";
-  THEME_CHOICES.forEach(([value, name, look]) => {
-    const button = el("button", { type: "button", class: "theme-button", title: name, "aria-label": name,
-      "aria-pressed": value === current ? "true" : "false", text: name,
-      style: `background:${look.background};color:${look.color};--accent:${look.accent}` });
-    button.addEventListener("click", () => setLook("theme", value));
-    themes.append(button);
-  });
-  host.replaceChildren(views, themes);
+  if (kind !== "view") renderCharts(data.charts);
 }
 drawModes();
 

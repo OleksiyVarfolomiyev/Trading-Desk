@@ -6,18 +6,38 @@
 <title>Desk Dashboard</title>
 <link rel="stylesheet" href="/app.css">
 <script>
-  // ?theme=hl, light or viridis switches the look (remembered); ?theme=dark returns to the default.
+  // The look is set before first paint. ?mode=light|dark, ?style=indie|hl|apple, ?view=tables|charts (all remembered).
+  // The older ?theme=dark|light|hl|viridis (and a theme the browser remembers) still work: they become a mode and style.
   (function () {
-    var theme = null;
-    try { theme = new URLSearchParams(location.search).get("theme") || localStorage.getItem("desk-theme"); } catch (e) {}
-    if (theme === "hl" || theme === "viridis" || theme === "dark" || theme === "light") {
-      document.documentElement.setAttribute("data-theme", theme);
-      try { localStorage.setItem("desk-theme", theme); } catch (e) {}
+    var root = document.documentElement, params = null, stored = function (key) {
+      try { return localStorage.getItem(key); } catch (e) { return null; }
+    };
+    try { params = new URLSearchParams(location.search); } catch (e) {}
+    var asked = function (key) { return (params && params.get(key)) || null; };
+    var mode = asked("mode"), style = asked("style"), theme = asked("theme"), view = asked("view");
+    if (theme && !mode && !style) {
+      if (theme === "light") { mode = "light"; style = "indie"; }
+      else if (theme === "dark") { mode = "dark"; style = "indie"; }
+      else if (theme === "hl") { mode = "dark"; style = "hl"; }
     }
-    var view = null;   // ?view=charts draws the tables as charts; ?view=tables returns
-    try { view = new URLSearchParams(location.search).get("view") || localStorage.getItem("desk-view"); } catch (e) {}
+    mode = mode || stored("desk-mode"); style = style || stored("desk-style");
+    if (!mode && !style && !theme) {   // a theme remembered by an older version of the page
+      var old = stored("desk-theme");
+      if (old === "light") { mode = "light"; style = "indie"; }
+      else if (old === "hl") { mode = "dark"; style = "hl"; }
+    }
+    mode = mode === "light" ? "light" : "dark";
+    style = style === "hl" || style === "apple" ? style : "indie";
+    root.setAttribute("data-mode", mode);
+    root.setAttribute("data-style", style);
+    root.setAttribute("data-theme", theme === "viridis" ? "viridis" : style === "indie" ? mode
+      : style === "hl" ? (mode === "dark" ? "hl" : "hl-light") : "apple-" + mode);
+    if (asked("mode") || asked("style") || (theme && theme !== "viridis")) {
+      try { localStorage.setItem("desk-mode", mode); localStorage.setItem("desk-style", style); } catch (e) {}
+    }
+    view = view || stored("desk-view");
     if (view === "charts" || view === "tables") {
-      document.documentElement.setAttribute("data-view", view);
+      root.setAttribute("data-view", view);
       try { localStorage.setItem("desk-view", view); } catch (e) {}
     }
   })();

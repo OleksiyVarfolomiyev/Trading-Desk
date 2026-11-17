@@ -1,4 +1,6 @@
 :root {
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-numbers: var(--font);
   color-scheme: light;
   --page: #f9f9f7;
   --surface: #fcfcfb;
@@ -120,7 +122,7 @@ html, body { margin: 0; }
 body {
   background: var(--page);
   color: var(--ink);
-  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 14px/1.45 var(--font);
 }
 
 .topbar {
@@ -245,15 +247,68 @@ tr.total td.key { background: rgba(59, 130, 246, 0.12); }
   main { padding: 8px 16px 40px; }
 }
 
-/* Look switches: view icons (table, chart) and the colour buttons, each in its own scheme. */
+/* HL, light: the same mint and rose, darkened to read on white. */
+:root[data-theme="hl-light"] {
+  color-scheme: light;
+  --page: #f2f8f7; --surface: #ffffff; --ink: #0f1a1e; --ink-2: #3d4a4f; --muted: #6b7a7f;
+  --grid: #dbe7e5; --axis: #b9cdca; --border: rgba(15, 26, 30, 0.12);
+  --good-text: #12805f; --bad-text: #c23f5d; --good: #1fa67d; --warning: #c98a2b; --critical: #d94f6e;
+  --wash-warning: rgba(201, 138, 43, 0.14);
+  --series-1: #1a9b8c; --series-2: #c98a2b; --series-3: #4f6bd6; --series-4: #d94f6e; --series-5: #8a63d2;
+}
+/* Apple: system colours (blue, green, red), grey page behind white cards by day, black behind dark-grey cards by night. */
+:root[data-theme="apple-light"] {
+  color-scheme: light;
+  --page: #f2f2f7; --surface: #ffffff; --ink: #1c1c1e; --ink-2: #3a3a3c; --muted: #8e8e93;
+  --grid: #e5e5ea; --axis: #c7c7cc; --border: rgba(60, 60, 67, 0.12);
+  --good-text: #248a3d; --bad-text: #d70015; --good: #34c759; --warning: #ff9500; --critical: #ff3b30;
+  --wash-warning: rgba(255, 149, 0, 0.14);
+  --series-1: #007aff; --series-2: #ff9500; --series-3: #34c759; --series-4: #af52de; --series-5: #ff2d55;
+}
+:root[data-theme="apple-dark"] {
+  color-scheme: dark;
+  --page: #000000; --surface: #1c1c1e; --ink: #ffffff; --ink-2: #d1d1d6; --muted: #8e8e93;
+  --grid: #38383a; --axis: #48484a; --border: rgba(84, 84, 88, 0.45);
+  --good-text: #30d158; --bad-text: #ff453a; --good: #30d158; --warning: #ff9f0a; --critical: #ff453a;
+  --wash-warning: rgba(255, 159, 10, 0.16);
+  --series-1: #0a84ff; --series-2: #ff9f0a; --series-3: #30d158; --series-4: #bf5af2; --series-5: #ff375f;
+}
+:root[data-style="apple"] {
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  --font-numbers: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+:root[data-style="apple"] .topbar {
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid var(--grid);
+}
+:root[data-style="apple"] h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+:root[data-style="apple"] .card, :root[data-style="apple"] .tile { border: 0; border-radius: 14px; }
+:root[data-style="apple"] .tile .value { font-family: var(--font-numbers); font-weight: 600; }
+:root[data-style="apple"] th, :root[data-style="apple"] td { border-bottom: 0.5px solid var(--grid); }
+:root[data-style="apple"] .card h2 { font-size: 15px; font-weight: 600; }
+
+/* Look switches in the top bar: table / chart icons, a sun or moon for light or dark, and the style group. */
 .modes { display: inline-flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .switch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.switch button { border: 0; font: inherit; font-size: 12px; cursor: pointer; }
+.switch button { border: 0; font: inherit; font-size: 12px; cursor: pointer; background: transparent; color: var(--muted); }
 .switch button + button { border-left: 1px solid var(--border); }
-.icon-button { display: inline-flex; align-items: center; justify-content: center; padding: 5px 9px; background: transparent; color: var(--muted); }
-.icon-button:hover { color: var(--ink); }
-.icon-button[aria-pressed="true"] { background: var(--border); color: var(--ink); }
-.theme-button { padding: 4px 12px; box-shadow: inset 0 -3px 0 transparent; }
-.theme-button[aria-pressed="true"] { font-weight: 600; box-shadow: inset 0 -3px 0 var(--accent); }
-.theme-button:not([aria-pressed="true"]) { opacity: 0.75; }
-.theme-button:hover { opacity: 1; }
+.switch button:hover { color: var(--ink); }
+.switch button[aria-pressed="true"] { background: var(--border); color: var(--ink); font-weight: 600; }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; padding: 5px 9px; }
+.style-button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px; }
+.style-button i { width: 8px; height: 8px; border-radius: 50%; background: var(--dot); display: inline-block; }
+/* Apple's segmented control: a grey track with the chosen option raised. */
+:root[data-style="apple"] .switch { border: 0; background: var(--grid); border-radius: 9px; padding: 2px; gap: 2px; }
+:root[data-style="apple"] .switch button { border: 0; border-radius: 7px; }
+:root[data-style="apple"] .switch button + button { border-left: 0; }
+:root[data-style="apple"] .switch button[aria-pressed="true"] { background: var(--surface); color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+
+/* Phones: narrow margins, so the tables and charts use the width. */
+@media (max-width: 640px) {
+  main { padding: 6px 6px 32px; gap: 8px; }
+  .topbar { padding: 8px 8px; gap: 8px; }
+  .card { padding: 8px 8px; }
+  th, td { padding: 5px 6px; }
+}
