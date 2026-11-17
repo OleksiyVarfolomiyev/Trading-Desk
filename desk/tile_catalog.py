@@ -18,6 +18,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 NOTEBOOKS = {"desk_crypto": "Crypto", "desk_stocks": "Stocks"}
 # What each section answers, for matching against what the dashboard is flagging right now.
+# Sections that change with the market (positions, exposure, risk, today's PnL) are live: they can sit at the top. The rest
+# (closed-trade returns, factor models, tie-outs, performance history) are report material: they go to the bottom.
+LIVE_SECTIONS = ("Positions", "Exposure", "Open risk", "PnL by market", "Market making", "Highlights", "Wallet tokens")
 KEYWORDS = {"Performance": "return performance drawdown underperform", "Open risk": "risk cap margin leverage liquidation",
             "Exposure": "exposure beta leverage net gross", "Picks": "picks benchmark alpha selection", "Risk and beta": "beta risk volatility",
             "Factor model": "alpha factor beta", "PnL by market": "pnl loss winners losers market", "Returns on closed": "closed trades win loss",
@@ -45,7 +48,8 @@ def entries() -> list[dict]:
             elif cell["cell_type"] == "code" and section and text.strip().startswith("book."):
                 keywords = " ".join(words for key, words in KEYWORDS.items() if section.startswith(key))
                 found.append({"id": f"{name}:{_slug(section)}", "notebook": name, "book": book, "title": f"{book}: {section}",
-                              "section": section, "call": text.strip(), "description": description, "keywords": keywords})
+                              "section": section, "call": text.strip(), "description": description, "keywords": keywords,
+                              "live": section.startswith(LIVE_SECTIONS)})
                 section = None
     return found
 
@@ -115,12 +119,13 @@ def pull(entry_id: str) -> str:
         for index, (kind, content) in enumerate(made):
             key = entry_id.replace(":", "-") + (f"-{index + 1}" if index else "")
             reason = f"Pulled from {entry['notebook']}.ipynb: {entry['section']}"
+            relevance = 0.6 if entry["live"] else 0.3   # report material sits at the bottom
             if kind == "chart":
-                tile_feed.publish(content, entry["title"], reason, relevance=0.6, hours=24, key=key, push=False)
+                tile_feed.publish(content, entry["title"], reason, relevance=relevance, hours=24, key=key, push=False)
             else:
                 title, frame, formatters = content
                 tile_feed.publish(_formatted(frame, formatters), f"{entry['title']}" + (f": {title.title()}" if title else ""),
-                                  reason, relevance=0.6, hours=24, key=key, push=False)
+                                  reason, relevance=relevance, hours=24, key=key, push=False)
             published += 1
         if published:
             tile_feed.push_to_web()

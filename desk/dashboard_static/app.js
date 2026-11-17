@@ -1063,7 +1063,7 @@ function setupSections() {
   [...content.querySelectorAll(".card")].forEach(adoptCard);
   const byId = CARDS;
   const state = layoutState();
-  const slots = [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest("#feed"));
+  const slots = [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest(".feed"));
   if (state.order) state.order.forEach((id, i) => { if (byId[id] && slots[i]) slots[i].append(byId[id]); });
   (state.hidden || []).forEach((id) => { if (byId[id]) byId[id].classList.add("card-off"); });
   (state.minimized || []).forEach((id) => { if (byId[id]) byId[id].classList.add("card-min"); });
@@ -1081,24 +1081,31 @@ const PUBLISHED_AXES = ["xaxis", "yaxis", "xaxis2", "yaxis2"];
 function renderPublished(tiles) {
   const content = document.getElementById("content");
   if (!content) return;
-  let feed = document.getElementById("feed");
+  // What changes with the market (relevance 0.5 and up) sits at the top; report material (closed-trade returns, models,
+  // history) goes to the bottom of the page, where it is there when wanted and out of the way when trading.
+  let feed = document.getElementById("feed"), later = document.getElementById("feed-later");
   if (!feed) {
-    feed = el("section", { class: "grid two", id: "feed", "aria-label": "Published from the notebooks" });
+    feed = el("section", { class: "grid two feed", id: "feed", "aria-label": "Published from the notebooks" });
     content.insertBefore(feed, document.getElementById("tiles").nextSibling);
   }
+  if (!later) {
+    later = el("section", { class: "grid two feed", id: "feed-later", "aria-label": "Reports" });
+    content.append(later);
+  }
   const wanted = new Set(tiles.map((tile) => tile.key));
-  [...feed.querySelectorAll(".card[data-published]")].forEach((card) => {
+  [...content.querySelectorAll(".feed .card[data-published]")].forEach((card) => {
     if (wanted.has(card.dataset.published)) return;
     delete CARDS[cardId(card)];
     card.closest(".slot").remove();
   });
   tiles.forEach((tile) => {
-    let card = [...feed.querySelectorAll(".card[data-published]")].find((node) => node.dataset.published === tile.key);
+    let card = [...content.querySelectorAll(".feed .card[data-published]")].find((node) => node.dataset.published === tile.key);
+    const home = Number(tile.relevance) >= 0.5 ? feed : later;
     if (!card) {
       const inner = tile.kind === "chart" ? el("div", { class: "chart", id: "pub-" + tile.key }) : el("div", { class: "table-wrap", id: "t-pub-" + tile.key });
       card = el("div", { class: "card published", "data-published": tile.key }, [
-        el("h2", { title: tile.reason || "", text: tile.title }), tile.reason ? el("p", { class: "why", text: tile.reason }) : null, inner]);
-      feed.append(card);
+        el("h2", { title: tile.reason || "", text: tile.title }), inner]);   // why it is here: on hover, not a caption
+      home.append(card);
       adoptCard(card);
       applyCardState(card);
     }
@@ -1111,7 +1118,8 @@ function renderPublished(tiles) {
       renderTable("pub-" + tile.key, { columns: tile.columns || [], rows: tile.rows || [] });
     }
   });
-  feed.hidden = !tiles.length;
+  feed.hidden = !feed.querySelector(".card:not(.card-off)");
+  later.hidden = !later.querySelector(".card:not(.card-off)");
 }
 function applyCardState(card) {   // the remembered minimized and hidden state of a card that was created after load
   const state = layoutState(), id = cardId(card);
@@ -1394,7 +1402,7 @@ function closeButton(overlay) {
 
 function saveOrder() {
   const state = layoutState();
-  state.order = [...document.querySelectorAll("#content .slot")].filter((slot) => !slot.closest("#feed")).map((slot) => cardId(slot.firstElementChild));
+  state.order = [...document.querySelectorAll("#content .slot")].filter((slot) => !slot.closest(".feed")).map((slot) => cardId(slot.firstElementChild));
   saveLayout(state);
 }
 function setHidden(id, hidden) {
@@ -1541,7 +1549,7 @@ function fillMenuLists() {
       feedback("tile", "show", label); if (latest && latest.data) renderTiles(latest.data.kpis || {}); drawSectionsMenu(); });
     addable.push(el("div", { class: "sections-row" }, [el("span", { text: label + " (key number)" }), add]));
   });
-  const pulled = new Set([...document.querySelectorAll("#feed .card[data-published]")].map((card) => card.dataset.published));
+  const pulled = new Set([...document.querySelectorAll(".feed .card[data-published]")].map((card) => card.dataset.published));
   const attention = ((latest && latest.data && latest.data.highlights && latest.data.highlights.attention) || []).map((row) => row.join(" ")).join(" ").toLowerCase();
   const catalog = ((latest && latest.data && latest.data.catalog) || []).filter((entry) => menuMatches(entry.title + " " + entry.description + " " + entry.keywords))
     .map((entry) => ({ entry, score: entry.keywords.split(/\s+/).filter((word) => word && attention.includes(word)).length }))
