@@ -2497,6 +2497,16 @@ function openReport() {
   page.document.close();
 }
 
+
+// A symbol's page opens in a window of its own (not a tab), the same window for the next symbol, so the dashboard stays in view.
+document.addEventListener("click", (event) => {
+  const link = event.target.closest && event.target.closest("a.symbol-link, a.tick, a.asset-action[href]");
+  if (!link || event.metaKey || event.ctrlKey || event.shiftKey || !link.href) return;
+  event.preventDefault();
+  const page = window.open(link.href, "desk-symbol-page", "popup=yes,width=1280,height=860,noopener=no");
+  if (page) page.focus(); else window.location.assign(link.href);
+});
+
 // ---------------------------------------------------------------- privacy: click a number and the numbers hide (as in IB)
 // Click any number (a tile value, a table figure, a highlight) to blur every number on the page; click one again to
 // show them. Remembered in the browser; the eye next to the title does the same.
