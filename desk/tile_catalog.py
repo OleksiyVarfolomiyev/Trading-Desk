@@ -16,7 +16,9 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-NOTEBOOKS = {"desk_crypto": "Crypto", "desk_stocks": "Stocks"}
+NOTEBOOKS = {"desk_crypto": "Crypto", "desk_stocks": "Stocks", "desk_overview": "Desk"}
+# desk_overview is mostly tables the dashboard already has: only these sections are offered (its calls are ``overview.``).
+DESK_SECTIONS = ("Exposure by asset class",)
 # What each section answers, for matching against what the dashboard is flagging right now.
 # Sections that change with the market (positions, exposure, risk, today's PnL) are live: they can sit at the top. The rest
 # (closed-trade returns, factor models, tie-outs, performance history) are report material: they go to the bottom.
@@ -45,7 +47,8 @@ def entries() -> list[dict]:
             if cell["cell_type"] == "markdown" and text.startswith("## "):
                 head, _, rest = text[3:].partition("\n")
                 section, description = head.strip(), " ".join(rest.split())[:200]
-            elif cell["cell_type"] == "code" and section and text.strip().startswith("book."):
+            elif cell["cell_type"] == "code" and section and text.strip().startswith(("book.", "overview.")) \
+                    and (name != "desk_overview" or section in DESK_SECTIONS):
                 keywords = " ".join(words for key, words in KEYWORDS.items() if section.startswith(key))
                 found.append({"id": f"{name}:{_slug(section)}", "notebook": name, "book": book, "title": f"{book}: {section}",
                               "section": section, "call": text.strip(), "description": description, "keywords": keywords,
@@ -65,6 +68,13 @@ def _book(name: str):
     cached = _BOOKS.get(name)
     if cached and time.time() - cached[0] < BOOK_TTL:
         return cached[1]
+    if name == "desk_overview":
+        from desk.overview import DeskOverview
+
+        overview = DeskOverview(data_dir=str(REPO / "data"))
+        overview.fetch_data()
+        _BOOKS[name] = (time.time(), overview)
+        return overview
     cells = json.loads((REPO / f"{name}.ipynb").read_text())["cells"]
     setup = next("".join(c["source"]) for c in cells if c["cell_type"] == "code" and "Book(" in "".join(c["source"]))
     expression = re.search(r"Book\(.*\)", setup).group(0)
@@ -85,14 +95,16 @@ def capture(call: str, book) -> list[tuple[str, object]]:
     import desk.hl.account_analytics as analytics
 
     out: list[tuple[str, object]] = []
+    import desk.overview
 
     def table(frame, formatters=None, **kwargs):
         out.append(("table", (str(kwargs.get("title") or ""), frame, formatters or {})))
 
     with mock.patch.object(desk.charts, "show", lambda figure, *a, **k: out.append(("chart", figure))), \
             mock.patch.object(desk.books, "show_chart", lambda figure, *a, **k: out.append(("chart", figure))), \
-            mock.patch.object(analytics, "display_interactive_table", table):
-        eval(call, {"book": book})
+            mock.patch.object(analytics, "display_interactive_table", table), \
+            mock.patch.object(desk.overview, "display_interactive_table", table):
+        eval(call, {"book": book, "overview": book})
     return out
 
 

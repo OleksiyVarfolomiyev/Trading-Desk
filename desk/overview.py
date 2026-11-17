@@ -17,7 +17,7 @@ from desk.privacy import account_file
 from desk import emphasis
 from desk.hl.account_analytics import display_interactive_table
 from desk.notebook_highlights import HighlightsState, money, percent, signed_money
-from desk.notebook_highlights import show as show_highlights
+from desk.notebook_highlights import dashboard_rows, show as show_highlights
 from desk.risk import (
     MAX_TOTAL_RISK_PCT,
     BookEntry,
@@ -914,6 +914,7 @@ class DeskOverview:
         if self._highlights_state is None:
             self._highlights_state = HighlightsState(self.data_dir / OVERVIEW_HIGHLIGHTS_STATE)
         since = self._highlights_state.compare(metrics, items)
+        well, attention = dashboard_rows(well, attention)   # the dashboard's list
         show_highlights(well, attention, since,
                         footnote="Changes in desk value include deposits, withdrawals and price moves in wallet tokens.")
 

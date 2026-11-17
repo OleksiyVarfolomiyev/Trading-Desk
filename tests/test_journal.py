@@ -168,3 +168,9 @@ class LiveUnrealizedTests(unittest.TestCase):
         shown = journal.with_live_unrealized(frame, {"directional": 80.0, "conviction": -10.0}).set_index("Strategy")
         self.assertEqual(list(shown["Unrealized PnL"]), [80.0, -10.0, 70.0])
         self.assertIs(journal.with_live_unrealized(frame, None), frame)             # no live figure: unchanged
+
+
+class EveryStrategyHasARow(unittest.TestCase):
+    def test_fade_is_listed_without_trades(self):
+        frame = journal.split_by_strategy([], {}, {}, {})
+        self.assertEqual(list(frame["Strategy"][:4]), ["directional", "conviction", "hedge", "fade"])

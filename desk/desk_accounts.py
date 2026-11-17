@@ -28,7 +28,7 @@ from desk.hl.account_analytics import display_interactive_table, fetch_btc_candl
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var, time_weighted_index
 from desk.live_risk import MIN_RATIO_DAYS, book_line as live_risk_line
 from desk.notebook_highlights import HighlightsState, percent, signed_money
-from desk.notebook_highlights import show as show_highlights
+from desk.notebook_highlights import dashboard_rows, show as show_highlights
 from desk.overview import DeskOverview
 from desk import emphasis
 from desk.charts import show as show_chart
@@ -616,6 +616,7 @@ class DeskAccounts:
         if self._highlights_state is None:
             self._highlights_state = HighlightsState(self.data_dir / ACCOUNTS_HIGHLIGHTS_STATE)
         since = self._highlights_state.compare(metrics, items)
+        well, attention = dashboard_rows(well, attention)   # the dashboard's list
         show_highlights(well, attention, since,
                         footnote="Returns are time-weighted and net of deposits and withdrawals. Betas are per book on today's "
                                  "holdings: crypto against BTC, stocks against SPY (desk_crypto and desk_stocks notebooks).")

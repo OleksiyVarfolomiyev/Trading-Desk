@@ -922,6 +922,9 @@ class Book:
                     {"PnL": _usd, "PnL / equity": _signed_pct, "Price": _usd, "Fills vs close": _usd, "Fees": _usd,
                      "Funding": _usd},
                     bold_last=True, key={"PnL": "abs"})
+
+    def show_sides(self):
+        """The long and short legs' PnL over 7, 30 and 90 days."""
         sides = self.sides()
         self._table(sides, "LONG AND SHORT LEGS", {c: _usd for c in sides if c != "Window"})
 
@@ -1165,11 +1168,8 @@ def show_versus_benchmark_with_chart(book: "Book"):
 Book.show_versus_benchmark = show_versus_benchmark_with_chart
 
 
-def show_return_distribution(book: "Book"):
-    """How much volume the book closed at each return, with the density behind it: HL fills and, for stocks, the IB
-    statements' closing trades."""
-    from pathlib import Path
-
+def _closed_positions(book: "Book") -> pd.DataFrame | None:
+    """The book's closed positions (HL fills and, for stocks, the IB statements' closing trades); None with too few."""
     from desk import return_distribution as dist
     from desk.accounts import accounts_for
     from desk.hl.account_analytics import fetch_user_fills
@@ -1183,8 +1183,28 @@ def show_return_distribution(book: "Book"):
     closed = closed[closed["book"] == book.kind]
     if len(closed) < 20:
         print(f"Only {len(closed)} closed {book.kind.lower()} positions: too few for a distribution.")
+        return None
+    return closed
+
+
+def show_returns_on_closed(book: "Book", closed: pd.DataFrame | None = None):
+    """How much volume the book closed at each return, with the density behind it (the chart)."""
+    from desk import return_distribution as dist
+
+    closed = _closed_positions(book) if closed is None else closed
+    if closed is not None:
+        dist.plot_return_distribution(closed, f"{book.kind} closes")
+
+
+def show_closed_positions(book: "Book", closed: pd.DataFrame | None = None):
+    """The closed positions' table: volume, hit rate, payoff, expectancy. The closes are also saved as a dataset."""
+    from pathlib import Path
+
+    from desk import return_distribution as dist
+
+    closed = _closed_positions(book) if closed is None else closed
+    if closed is None:
         return
-    dist.plot_return_distribution(closed, f"{book.kind} closes")
     table = dist.metrics_table(closed)
     book._table(table, "CLOSED POSITIONS", {"Volume": _usd, "In profit": _pct, "Avg win": _pct, "Avg loss": _pct,
                                            "Expectancy": _pct, "PnL": _usd, "Fees": _usd,
@@ -1199,7 +1219,16 @@ def show_return_distribution(book: "Book"):
         pass
 
 
+def show_return_distribution(book: "Book"):
+    """The chart and the table of the closed positions together."""
+    closed = _closed_positions(book)
+    show_returns_on_closed(book, closed)
+    show_closed_positions(book, closed)
+
+
 Book.show_return_distribution = show_return_distribution
+Book.show_returns_on_closed = show_returns_on_closed
+Book.show_closed_positions = show_closed_positions
 
 
 def show_trades_vs_pnl(book: "Book"):

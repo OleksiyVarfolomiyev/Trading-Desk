@@ -196,6 +196,15 @@ def render(well: list[Row], attention: list[Row], since: SinceLastRun | None = N
     return "".join(parts)
 
 
+def dashboard_rows(well: list[Row], attention: list[Row]) -> tuple[list[Row], list[Row]]:
+    """The rows as the dashboard lists them: the trading daemon's problems first, no desk return row (it is in the
+    tiles), funding as one row (``render`` consolidates it)."""
+    from desk import alerts as daemon_alerts
+
+    attention = list(daemon_alerts.rows(daemon_alerts.read())) + list(attention)
+    return ([row for row in well if row[0] != "Desk return"], [row for row in attention if row[0] != "Desk return"])
+
+
 def show(well: list[Row], attention: list[Row], since: SinceLastRun | None = None, footnote: str = "") -> None:
     display(HTML(no_math(render(well, attention, since, footnote))))
 

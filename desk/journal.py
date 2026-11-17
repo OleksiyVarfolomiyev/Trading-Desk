@@ -183,6 +183,8 @@ def split_by_strategy(entries: list[dict], fills_by_wallet: dict[str, list[dict]
         return rows.setdefault(name, {"Strategy": name, "Open positions": 0, "Unrealized PnL": 0.0, "Realized PnL 30d": 0.0,
                                       "Fees 30d": 0.0, "Funding 30d": 0.0, "Volume 30d": 0.0, "Fills 30d": 0})
 
+    for name in STRATEGIES[:4]:   # directional, conviction, hedge and fade always have a row, with or without trades
+        row(name)
     now_ms = time.time() * 1000
     marks: dict[tuple[str, str], float] = {}
     for wallet, positions in positions_by_wallet.items():

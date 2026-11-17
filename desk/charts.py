@@ -159,7 +159,37 @@ def _spread(fig, labels: list[dict]) -> None:
                 label["yshift"] = round(place - at)
 
 
-def end_labels(fig):
+BENCHMARK_NAME = re.compile(r"^(BTC|ETH|SPY|S&P|SP500|QQQ|Same \$ in)", re.I)   # as the web page (app.js BENCHMARK_NAME)
+
+
+def line_name(name: str) -> str:
+    """A line's name as the end label carries it: no "(on equity)", "Same $ in BTC" as "BTC"."""
+    return re.sub(r"^Same \$ in ", "", re.sub(r"\s*\(on equity\)", "", str(name or ""))).strip()
+
+
+def concise_title(text: str) -> str:
+    """A title as short as the dashboard's: the unit parenthesis goes ("(%, since Jan'25)" keeps "since Jan'25"), the words
+    the axis and the lines already say go with it."""
+    if not text:
+        return text
+    def unit(match):
+        inner = match.group(1)
+        since = re.search(r"since [^,)]+", inner)
+        return f" {since.group(0)}" if since else ""
+    text = re.sub(r"\s*\(((?:%|USD|\$)[^)]*)\)", unit, text)
+    text = re.sub(r"\s*\((?:on equity|time-weighted)[^)]*\)", "", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def benchmarks_dotted(fig):
+    """Benchmark lines (BTC, SPY, "Same $ in ...") are dotted, as on the dashboard."""
+    for trace in fig.data:
+        if getattr(trace, "type", "scatter") == "scatter" and BENCHMARK_NAME.match(str(trace.name or "")):
+            trace.update(line={"dash": "dot"})
+    return fig
+
+
+def end_labels(fig, names: bool = False):
     """Write each time-series line's last value at its right end, as on the web dashboard. Returns ``fig``.
 
     A stacked layer's label sits at the top of its layer and shows the layer's own value. Lines drawn
@@ -171,6 +201,9 @@ def end_labels(fig):
 
     stacked: dict[tuple, float] = {}
     labels = []
+    lines = [t for t in fig.data if getattr(t, "type", "scatter") == "scatter" and "lines" in (t.mode or "lines") and _is_time(t.x)
+             and t.y is not None and t.visible is not False]
+    named = names and len({t.name for t in lines if t.name}) > 1   # several lines: each label says whose it is (no legend)
     ends: dict[str, int] = {}   # legend group -> index of the label that ends latest
     chart_title = fig.layout.title.text if fig.layout.title and fig.layout.title.text else ""
     for trace in fig.data:
@@ -199,7 +232,7 @@ def end_labels(fig):
                 labels[earlier] = None
             ends[group] = len(labels)
         labels.append({"x": x, "y": top, "xref": trace.xaxis or "x", "yref": trace.yaxis or "y",
-                       "text": _end_text(y, axis, chart_title), "showarrow": False, "xanchor": "left", "xshift": 6,
+                       "text": (f"{line_name(trace.name)} " if named and trace.name else "") + _end_text(y, axis, chart_title), "showarrow": False, "xanchor": "left", "xshift": 6,
                        "font": {"size": 11, **({"color": color} if color else {})}})
     labels = [label for label in labels if label]
     # A label sitting on a reference line (the zero line of a PnL chart) is not struck through by it: the label
@@ -218,6 +251,18 @@ def end_labels(fig):
     return fig
 
 
+def drop_legend(fig):
+    """No legend when the end labels (lines) and the bars' colours already name every entry, as on the dashboard."""
+    shown = [t for t in fig.data if t.name and t.showlegend is not False]
+    if not shown or fig.layout.showlegend is False:
+        return fig
+    labelled = {id(t) for t in fig.data if getattr(t, "type", "scatter") == "scatter" and "lines" in (t.mode or "lines")
+                and _is_time(t.x) and t.y is not None}
+    if all(id(t) in labelled or getattr(t, "type", "") == "bar" for t in shown):
+        fig.update_layout(showlegend=False)
+    return fig
+
+
 def style(fig):
     """Legend on top, a wrapped title and end-value labels, with a top margin that fits. Returns ``fig``.
 
@@ -225,7 +270,11 @@ def style(fig):
     the legend rows, then room for subplot titles, then the plot.
     """
     dollar_axes(fig)
-    end_labels(fig)
+    benchmarks_dotted(fig)
+    end_labels(fig, names=True)
+    drop_legend(fig)
+    if fig.layout.title and fig.layout.title.text:
+        fig.update_layout(title_text=concise_title(fig.layout.title.text))
     width = fig.layout.width or DEFAULT_WIDTH_PX
     height = fig.layout.height or DEFAULT_HEIGHT_PX
     title = fig.layout.title.text if fig.layout.title else None

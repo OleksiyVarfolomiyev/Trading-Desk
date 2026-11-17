@@ -81,3 +81,27 @@ class BarsWithLabelledLineTests(unittest.TestCase):
                          go.Scatter(x=days, y=[1.0, 2.0, 3.0], mode="lines", name="Gross")])
         charts.style(fig)                                   # was: AttributeError: 'Bar' object has no attribute 'stackgroup'
         self.assertEqual(len(fig.layout.annotations), 1)
+
+
+class DashboardLook(unittest.TestCase):
+    def figure(self):
+        import plotly.graph_objects as go
+
+        days = ["2026-01-01", "2026-01-02", "2026-01-03"]
+        return go.Figure([go.Scatter(x=days, y=[0, 1, 2], name="Crypto book (on equity)"), go.Scatter(x=days, y=[0, 0.5, 1], name="BTC")])
+
+    def test_no_legend_benchmark_dotted_labels_name_the_lines(self):
+        from desk import charts
+
+        fig = charts.style(self.figure())
+        self.assertFalse(fig.layout.showlegend)
+        self.assertEqual(fig.data[1].line.dash, "dot")
+        self.assertIsNone(fig.data[0].line.dash)
+        self.assertTrue(any(a.text.startswith("Crypto book ") for a in fig.layout.annotations))
+        self.assertTrue(any(a.text.startswith("BTC ") for a in fig.layout.annotations))
+
+    def test_concise_title(self):
+        from desk import charts
+
+        self.assertEqual(charts.concise_title("Stocks book vs SPY (%, since Jan'25)"), "Stocks book vs SPY since Jan'25")
+        self.assertEqual(charts.concise_title("Desk value by account (USD; wallet tokens excluded)"), "Desk value by account")
