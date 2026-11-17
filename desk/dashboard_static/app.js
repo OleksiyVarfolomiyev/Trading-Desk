@@ -1213,6 +1213,23 @@ async function tickerContexts(assets) {   // name -> {price, previous} for the m
   await Promise.all(jobs.map((job) => job.catch(() => null)));
   return out;
 }
+// Suggestions for the "+ asset" field: every HL market (main DEX and the xyz stocks and commodities), loaded once.
+let universeLoaded = false;
+async function loadUniverse() {
+  if (universeLoaded) return;
+  universeLoaded = true;
+  const names = [];
+  for (const dex of ["", "xyz"]) {
+    try {
+      const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({ type: "meta" }, dex ? { dex } : {})) });
+      (await response.json()).universe.forEach((asset) => { if (!asset.isDelisted) names.push(asset.name); });
+    } catch (e) { universeLoaded = false; }
+  }
+  let list = document.getElementById("tick-universe");
+  if (!list) { list = el("datalist", { id: "tick-universe" }); document.body.append(list); }
+  list.replaceChildren(...names.sort().map((name) => el("option", { value: name })));
+}
 async function refreshTicker() {
   const state = tickerState();
   let strip = document.getElementById("ticker");
@@ -1226,15 +1243,25 @@ async function refreshTicker() {
   const contexts = await tickerContexts(state.assets);
   const adding = strip.querySelector(".tick-input");
   if (adding && document.activeElement === adding) return;   // do not redraw under a field being typed in
-  const addBox = el("span", { class: "tick-add" }, [el("input", { type: "text", class: "tick-input", placeholder: "+ asset", "aria-label": "Add an asset to the price strip", size: "8" })]);
-  addBox.firstChild.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
+  const addBox = el("span", { class: "tick-add" }, [el("input", { type: "text", class: "tick-input", placeholder: "+ asset", list: "tick-universe",
+    autocomplete: "off", "aria-label": "Add an asset to the price strip", size: "8" })]);
+  addBox.firstChild.addEventListener("focus", loadUniverse);
+  const addAsset = () => {
     const name = addBox.firstChild.value.trim();
     if (!name) return;
     const s = tickerState();
-    const asset = name.includes(":") ? name.replace(/^([A-Za-z0-9]+):(.*)$/, (m, dex, coin) => dex.toLowerCase() + ":" + coin.toUpperCase()) : name.toUpperCase();
+    const list = document.getElementById("tick-universe");   // the market's own spelling (kPEPE, xyz:AMD) when it is known
+    const known = list && [...list.options].find((option) => option.value.toLowerCase() === name.toLowerCase());
+    const asset = known ? known.value : name.includes(":") ? name.replace(/^([A-Za-z0-9]+):(.*)$/, (m, dex, coin) => dex.toLowerCase() + ":" + coin.toUpperCase()) : name.toUpperCase();
     if (!s.assets.includes(asset)) s.assets.push(asset);
+    addBox.firstChild.value = "";
     saveTicker(s); feedback("look", "price strip add", asset); refreshTicker();
+  };
+  addBox.firstChild.addEventListener("keydown", (event) => { if (event.key === "Enter") addAsset(); });
+  addBox.firstChild.addEventListener("change", () => {   // a suggestion picked from the list adds at once
+    const value = addBox.firstChild.value.trim();
+    const list = document.getElementById("tick-universe");
+    if (list && [...list.options].some((option) => option.value.toLowerCase() === value.toLowerCase())) addAsset();
   });
   const dropper = (asset) => {
     const x = el("button", { type: "button", class: "tick-x", title: "Remove " + asset, "aria-label": "Remove " + asset, text: "×" });
