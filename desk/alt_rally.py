@@ -374,5 +374,5 @@ def strength_alert(day: dict | None, recent: dict | None, btc_off_low: float = f
     leaders = ", ".join(f"{coin.split(':')[-1]} {_pct(move)}" for coin, move in read["leaders"])
     text = (f"shorts {_pct(read['book'])} vs BTC {_pct(read['btc'])} in {label}, {_pct(read['ahead'])} beyond their "
             f"beta ({read['beating']} of {read['count']} ahead; {leaders})" + (f"; {btc_text}" if btc_text else "")
-            + ". The weak-alt thesis is off for now: cut, or tighten the stops?")
+            + ". The weak-alt thesis is off for now: a signal if it holds for days or BTC turns with it.")
     return title, text[0].upper() + text[1:]

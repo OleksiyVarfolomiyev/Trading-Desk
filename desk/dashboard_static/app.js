@@ -272,7 +272,7 @@ function applyView(id, spec, context) {
 const CHART_VIEWS = {
   performance: { kind: "grouped", label: "Account", series: ["24h", "7d", "30d", "90d", "Since start"], by: "window" },
   accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
-  exposure: { kind: "exposure", label: "Asset class", long: "Long", short: "Short", net: "Net" },
+  exposure: { kind: "exposure", books: true, label: "Asset class", long: "Long", short: "Short", net: "Net" },
   positions: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
   positions_stocks: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
   wallets: { kind: "bars", label: "Symbol", value: "% of desk", text: null },
@@ -342,11 +342,13 @@ function renderTableChart(id, spec, override) {
   if (plan.kind === "grouped") {
     const series = plan.series.filter((key) => rows.some((row) => isNum(row[key])));
     const axis = chartAxis(formatOf(series[0]));
-    if (plan.by === "window") {   // one group per window, one bar per account inside it
-      traces = rows.map((row, i) => ({ type: "bar", orientation: "h", name: names[i], y: series,
-        x: series.map((key) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
+    if (plan.by === "window") {   // one group per window, one bar per book (crypto, stocks) inside it, in the book's colour
+      const kept = rows.map((row, i) => [row, i]).filter(([row]) => /^(crypto|stocks)$/i.test(String(row.Book || row.Account)));
+      traces = kept.map(([row, i]) => ({ type: "bar", orientation: "h", name: names[i], y: series, showlegend: false,
+        x: series.map((key) => (isNum(row[key]) ? row[key] * axis.mult : null)),
+        marker: { color: /crypto/i.test(String(row.Book || row.Account)) ? token("--kind-crypto") : token("--kind-stocks") },
         text: series.map((key) => text(key, row[key])), textposition: "auto", insidetextanchor: "end", cliponaxis: false, insidetextfont: { size: 12, color: "#ffffff" },
-        textfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
+        outsidetextfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
         hoverinfo: "skip" }));   // the value is on the bar
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
@@ -371,6 +373,17 @@ function renderTableChart(id, spec, override) {
       textfont: LABEL_FONT(11, "#ffffff"), hoverinfo: "skip", showlegend: false }));
     layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis) };
     height = Math.max(160, rows.length * 34 + 70);
+  } else if (plan.kind === "exposure" && plan.books) {   // two bars, crypto and stocks: net exposure to equity, in their colours
+    const sum = (list, key) => list.reduce((total, row) => total + (isNum(row[key]) ? row[key] : 0), 0);
+    const crypto = rows.filter((row) => /crypto/i.test(String(row["Asset class"]))), stocks = rows.filter((row) => !/crypto/i.test(String(row["Asset class"])));
+    const data = [["Crypto", sum(crypto, plan.net), token("--kind-crypto")], ["Stocks", sum(stocks, plan.net), token("--kind-stocks")]].filter(([, v]) => v !== 0);
+    const axis = chartAxis(formatOf(plan.net));
+    traces = [{ type: "bar", orientation: "h", y: data.map(([n]) => n), x: data.map(([, v]) => v * axis.mult), marker: { color: data.map(([, , c]) => c) },
+      text: data.map(([, v]) => text(plan.net, v)), textposition: "auto", insidetextanchor: "end", insidetextfont: { size: 13, color: "#ffffff" },
+      outsidetextfont: LABEL_FONT(13), cliponaxis: false, hoverinfo: "skip", showlegend: false }];
+    layout = { xaxis: Object.assign({ zeroline: true }, axis) };
+    height = Math.max(110, data.length * 34 + 50);
+    names.splice(0, names.length, ...data.map(([n]) => n));
   } else if (plan.kind === "exposure") {
     const axis = chartAxis(formatOf(plan.long));
     const size = (row, key) => (isNum(row[key]) ? Math.abs(row[key]) : 0);
@@ -600,6 +613,17 @@ function renderTable(id, spec) {
 }
 
 // ---------------------------------------------------------------- tiles
+// The last 24 hours of the open positions by book: the price move on what was held (value now against value a day ago).
+function dayByBook(tables) {
+  const part = (id) => {
+    const rows = ((tables[id] || {}).rows || []).filter((row) => isNum(row.Value) && isNum(row["24h change (%)"]) && row["24h change (%)"] > -1);
+    const before = rows.map((row) => row.Value / (1 + row["24h change (%)"]));
+    const base = before.reduce((sum, v) => sum + Math.abs(v), 0);
+    const change = rows.reduce((sum, row, i) => sum + row.Value - before[i], 0);
+    return { change, pct: base ? change / base : NaN };
+  };
+  return { crypto: part("positions"), stocks: part("positions_stocks") };
+}
 function bookShares(tables) {   // uPnL on cost per book, as coloured runs: what is traded now apart from the stock holdings
   const part = (id) => {
     const rows = ((tables[id] || {}).rows || []).filter((row) => isNum(row.uPnL) && isNum(row.Value) && isNum(row["uPnL (%)"]));
@@ -659,18 +683,22 @@ function renderTiles(k) {
       const scale = currentScale("tile"), r = k.returns || {};
       const value = scale === "1D" ? day.pct : scale === "1W" ? r["7D"] : scale === "1M" ? r["30D"] : r.since_start;
       const label = { "1D": "today", "1W": "7D", "1M": "30D", All: "all" }[scale];
-      return tile(label, isNum(value) ? pct(value, 1, true) : "n/a", "",
-        { key: "Today", valueClass: signClass(value), title: scale === "1D" ? dayChangeLine(day).title : "", chips: scaleChips("tile") });
+      const byBook = dayByBook(tables);
+      const title = scale === "1D" ? [`${usd(day.change)} in the day`, isNum(byBook.crypto.change) ? `crypto ${usd(byBook.crypto.change)} (${pct(byBook.crypto.pct, 1, true)})` : "",
+        isNum(byBook.stocks.change) ? `stocks ${usd(byBook.stocks.change)} (${pct(byBook.stocks.pct, 1, true)})` : ""].filter(Boolean).join("\n") : "";
+      return tile(label, isNum(value) ? pct(value, 1, true) : "n/a", "", { key: "Today", valueClass: signClass(value), title, chips: scaleChips("tile") });
     })(),
-    tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", bookShares(tables),
+    tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", (() => {   // its change over the period (the day's price move on what is held)
+      if (currentScale("tile") !== "1D") return bookShares(tables);
+      const move = dayByBook(tables), both = [move.crypto, move.stocks].filter((m) => isNum(m.change));
+      const total = both.reduce((sum, m) => sum + m.change, 0), basis = priced.reduce((sum, row) => sum + Math.abs(row.Value), 0);
+      return both.length && basis ? `${pct(total / basis, 1, true)} 1D` : bookShares(tables);
+    })(),
       { key: "uPnL", valueClass: signClass(upnl), title: isNum(k.unrealized) ? `${usd(k.unrealized)} uPnL` : "" }),
-    (() => {   // risk against the cap as a gauge: the part used, the room left, or how far over
+    (() => {   // risk against the cap: the room left, or how far over
       const used = isNum(risk) ? risk / RISK_CAP : NaN;
       const word = !isNum(used) ? "n/a" : used <= 1 ? `${pct(1 - used)} room` : `${pct(used - 1)} over`;
-      const gauge = isNum(used) ? el("span", { class: "gauge" + (used > 1 ? " over" : used >= 0.9 ? " tight" : "") }, [
-        el("span", { class: "gauge-used", style: `width:${Math.min(used, 1) * 100}%` }),
-        used > 1 ? el("span", { class: "gauge-over", style: `width:${Math.min(used - 1, 0.5) * 100}%` }) : null]) : null;
-      return tile("risk", word, "", { key: "Risk", valueClass: used > 1 ? "neg" : "", visual: gauge,
+      return tile("risk", word, "", { key: "Risk", valueClass: used > 1 ? "neg" : "",
         title: isNum(risk) ? `Open risk ${pct(risk)} of equity against the 33% cap` : "" });
     })(),
     tile("gross", times(k.gross_leverage), isNum(k.net_leverage) ? `${times(k.net_leverage)} net` : "",
@@ -712,6 +740,7 @@ function arrangeTiles(host, tiles) {
       return button;
     };
     tile.append(el("span", { class: "card-tools tile-tools" }, [
+      ...thumbs(label, "tile"),
       tool("card-minimize", "Minimize", "–", () => {
         const on = !tile.classList.contains("tile-min");
         tile.classList.toggle("tile-min", on);
@@ -742,8 +771,8 @@ function arrangeTiles(host, tiles) {
       const [kind, from] = event.dataTransfer.getData("text/plain").split(/:(.*)/s);
       const moving = kind === "tile" && [...host.children].find((node) => node.dataset.label === from);
       if (!moving || moving === tile) return;
-      const mine = [...host.children], a = mine.indexOf(moving), b = mine.indexOf(tile);
-      if (a < b) tile.after(moving); else tile.before(moving);   // the dragged tile takes the target's place
+      const box = tile.getBoundingClientRect();
+      if (event.clientX < box.left + box.width / 2) tile.before(moving); else tile.after(moving);   // into the position pointed at
       remember((s) => { s.tileOrder = [...host.children].map((node) => node.dataset.label); });
       feedback("tile", "move", from, "before " + label);
     });
@@ -804,13 +833,17 @@ function redrawHighlights() {
   renderHighlights("hl-attention", hl.attention, hover);
   if (typeof drawSectionsMenu === "function") drawSectionsMenu();
 }
+const VENUES = /\b(xyz|flx|vntl|hyna|km|abcd|cash|para|mkts|io):/gi;
+const cleanLine = (text) => String(text).replace(VENUES, "").replace(/\bSP500\b/g, "S&P500");   // the venue is the desk's business
+const sentences = (text) => String(text).split(/(?<=[.;?])\s+(?=[A-Z])/).map((part) => part.trim()).filter(Boolean);   // each thought its own line
 function renderHighlights(id, rows, hover = {}) {
   const host = document.getElementById(id);
   const state = highlightState();
   // Areas the reader has dismissed over and over (desk/usage_model.py) are folded away, never a critical row.
   const quiet = new Set((((latest && latest.data && latest.data.usage_model) || {}).quiet) || []);
   const open = host.dataset.showQuiet === "1";
-  const answered = (rows || []).filter(([area, text]) => !state.deleted.includes(area) && !state.read[area + "|" + text]);
+  const answered = (rows || []).filter(([area, text]) => !state.deleted.includes(area) && !state.read[area + "|" + text])
+    .flatMap(([area, text]) => sentences(cleanLine(text)).map((part, i) => [area, part, text]));   // [area, line, the whole text it came from]
   const folded = answered.filter(([area, text]) => quiet.has(area) && severity(area, text) !== "critical");
   const shown = open ? answered : answered.filter((row) => !folded.includes(row));
   if (!shown.length && !folded.length) {   // one card holds both lists: say it once, on the first list, when both are empty
@@ -822,12 +855,12 @@ function renderHighlights(id, rows, hover = {}) {
   const rank = { critical: 0, watch: 1, "": 2 };
   // A dashboard line, not a sentence: one trailing period goes (several sentences keep theirs)
   const tidy = (text) => (/\.\s+\S/.test(String(text)) ? String(text) : String(text).replace(/\.\s*$/, ""));
-  const ordered = shown.map(([area, text]) => [area, tidy(text), severity(area, text)])
+  const ordered = shown.map(([area, text, whole]) => [area, tidy(text), severity(area, whole), whole])
     .sort((a, b) => rank[a[2]] - rank[b[2]]);  // stable: same-level rows keep their order
   const foot = folded.length ? [el("li", {}, [el("button", { type: "button", class: "quiet-toggle", title: "Areas you have dismissed several times: " + [...new Set(folded.map((r) => r[0]))].join(", "),
     text: open ? "hide quiet" : `${folded.length} quiet`, onclick: null })])] : [];
   if (foot.length) foot[0].firstChild.addEventListener("click", () => { host.dataset.showQuiet = open ? "0" : "1"; redrawHighlights(); });
-  host.replaceChildren(...ordered.map(([area, text, level]) => {
+  host.replaceChildren(...ordered.map(([area, text, level, whole]) => {
     const act = (label, symbol, change) => {
       const button = el("button", { type: "button", class: "hl-act", title: label, "aria-label": `${label}: ${area}`, text: symbol });
       button.addEventListener("click", () => { const s = highlightState(); change(s); saveHighlightState(s); redrawHighlights(); });
@@ -837,7 +870,8 @@ function renderHighlights(id, rows, hover = {}) {
     return el("li", Object.assign(level ? { class: level } : {}, { title: [area, hover[area]].filter(Boolean).join(": ") }), [
       el("span", { class: "text" }, linkSymbols(text).flatMap((part) => (typeof part === "string" ? kindMarks(part) : [part]))),
       el("span", { class: "hl-actions" }, [
-        act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + text] = Date.now(); feedback("highlight", "read", area, text); }),
+        ...(window.DESK_SOURCE ? symbolActions(text) : []),   // run it: plan, then confirm
+        act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + whole] = Date.now(); feedback("highlight", "read", area, text); }),
         act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),   // stays; tells the model this area earns its place
         act("Not important: stop showing this", "👎", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
       ]),
@@ -1133,12 +1167,36 @@ function drawChartScales() {   // the value charts' and the performance table's 
     if (old) old.replaceWith(chips); else { const tools = title.querySelector(".card-tools"); if (tools) tools.before(chips); else title.append(chips); }
   });
 }
+// The return chart over a window: every curve starts at 0% on the window's first day (what each did over the window, not
+// since its own start). All: the curves as they were drawn.
+function rebaseReturns(node, days) {
+  node._orig = node._orig || node.data.map((trace) => ({ x: trace.x.slice(), y: trace.y.slice() }));
+  const start = days ? Date.now() - days * 86400000 : null;
+  const ys = node._orig.map((trace) => {
+    if (!start) return trace.y;
+    const first = trace.x.findIndex((x) => new Date(x).getTime() >= start);
+    if (first < 0) return trace.y;
+    const base = 1 + trace.y[first] / 100;
+    return trace.y.map((y) => Math.round(10000 * ((1 + y / 100) / base - 1)) / 100);
+  });
+  Plotly.restyle(node, { y: ys });
+  const notes = (node.layout.annotations || []).map((note) => Object.assign({}, note));
+  const drawn = ys.map((y, i) => [y, i]).filter(([y]) => y.length);
+  notes.filter((note) => note.xshift === 6).forEach((note, k) => {
+    const [y, i] = drawn[k] || [];
+    if (!y) return;
+    note.y = y[y.length - 1];
+    note.text = note.text.replace(/-?[\d.]+%$/, readablePct(y[y.length - 1] / 100));
+  });
+  Plotly.relayout(node, { annotations: notes });
+}
 function zoomCharts() {   // the value charts show the chosen window (All: the whole history)
   if (typeof Plotly === "undefined") return;
   const days = (SCALES.find(([name]) => name === currentScale("charts")) || [])[1];
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id);
     if (!node || !node.data) return;
+    if (id === "chart-twr") rebaseReturns(node, days);
     if (!days) { Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }); return; }
     const end = Date.now(), start = end - days * 86400000;
     const ys = node.data.flatMap((trace) => (trace.x || []).map((x, i) => [new Date(x).getTime(), trace.y && trace.y[i]]))
@@ -1245,6 +1303,24 @@ const cardTitle = (card) => {   // the heading without its icon, grip and button
   return copy.textContent.trim();
 };
 
+// Thumbs up and down on every tile: what is useful and what is not, logged for the usage model (kept per tile, in the browser too).
+function thumbs(name, kind) {
+  const state = (() => { try { return JSON.parse(localStorage.getItem("desk-thumbs")) || {}; } catch (e) { return {}; } })();
+  const make = (symbol, verdict) => {
+    const button = el("button", { type: "button", class: "card-tool thumb" + (state[name] === verdict ? " on" : ""), "aria-label": `${verdict}: ${name}`, title: verdict, text: symbol });
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const now = (() => { try { return JSON.parse(localStorage.getItem("desk-thumbs")) || {}; } catch (e) { return {}; } })();
+      now[name] = now[name] === verdict ? undefined : verdict;
+      try { localStorage.setItem("desk-thumbs", JSON.stringify(now)); } catch (e) {}
+      feedback(kind, verdict, name);
+      button.parentElement.querySelectorAll(".thumb").forEach((b) => b.classList.remove("on"));
+      if (now[name]) button.classList.add("on");
+    });
+    return button;
+  };
+  return [make("👍", "useful"), make("👎", "not useful")];
+}
 const CARDS = {};   // card id -> its element
 // A card becomes a window: it sits in a slot, drags by its body, and has minimize, save, full screen and hide.
 function adoptCard(card) {
@@ -1257,6 +1333,12 @@ function adoptCard(card) {
     const title = card.querySelector("h2");
     if (!title || card.dataset.adopted) return;
     card.dataset.adopted = "1";
+    if (card.querySelector("#t-market_making, #t-mm_candidates")) {   // a two-sided ladder: bids below, asks above, the price between
+      const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+      [["viewBox", "0 0 16 16"], ["width", "16"], ["height", "16"], ["fill", "none"], ["stroke", "currentColor"], ["stroke-width", "1.5"], ["stroke-linecap", "round"], ["class", "card-icon"]].forEach(([k, v]) => svg.setAttribute(k, v));
+      ["M3 3.5h10", "M4.5 6h7", "M3 8h10", "M4.5 10h7", "M3 12.5h10"].forEach((d) => { const p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.append(p); });
+      title.prepend(svg);
+    }
     // The name shows on hover: most cards say what they are by what they hold (and the dots by their colour).
     [...title.childNodes].forEach((node) => {
       if (node.nodeType === 3 && node.textContent.trim()) node.replaceWith(el("span", { class: "card-name", text: node.textContent }));
@@ -1310,6 +1392,7 @@ function adoptCard(card) {
     };
     const more = tool("card-more", "Add a layer: more on this", "+", () => openMoreMenu(card, more));
     const tools = el("span", { class: "card-tools" }, [
+      ...thumbs(cardTitle(card), "section"),
       more,
       ...chartTools(),
       ...(filter ? [filter] : []),
@@ -1327,11 +1410,11 @@ function adoptCard(card) {
       card.classList.remove("drop-target");
       const moving = CARDS[event.dataTransfer.getData("text/plain")];
       if (!moving || moving === card || Boolean(moving.dataset.published || moving.dataset.asset) !== Boolean(card.dataset.published || card.dataset.asset)) return;   // published tiles swap among themselves
-      const from = moving.parentElement, to = card.parentElement;
-      to.append(moving);
-      from.append(card);
+      const box = card.getBoundingClientRect(), before = event.clientY < box.top + box.height / 2 || event.clientX < box.left + box.width * 0.25;
+      const slot = moving.parentElement, target = card.parentElement;
+      if (before) target.before(slot); else target.after(slot);   // dropped into the position pointed at
       saveOrder();
-      feedback("section", "move", cardTitle(moving), "swapped with " + cardTitle(card));
+      feedback("section", "move", cardTitle(moving), (before ? "before " : "after ") + cardTitle(card));
       if (latest && latest.data) renderCharts(latest.data.charts);   // a chart that changed width is redrawn to fit
     });
 }
@@ -1342,7 +1425,10 @@ function setupSections() {
   const byId = CARDS;
   const state = layoutState();
   const slots = [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest(".feed"));
-  if (state.order) state.order.forEach((id, i) => { if (byId[id] && slots[i]) slots[i].append(byId[id]); });
+  if (state.order) {   // the saved order of the cards: the slots follow in that sequence, after the highlights
+    let previous = content.querySelector(".highlights-card") || content.querySelector(".tiles");
+    state.order.forEach((id) => { const card = byId[id]; if (card && card.parentElement && !card.closest(".feed") && previous) { previous.after(card.parentElement); previous = card.parentElement; } });
+  }
   if (!state.defaultsOff) {   // cards hidden until asked for (the account views: backend detail), once per browser
     const ids = [...content.querySelectorAll(".card[data-default-off]")].map(cardId);
     state.hidden = [...new Set([...(state.hidden || []), ...ids])];
@@ -1445,8 +1531,7 @@ function kindMarks(text) {   // each crypto or stocks part becomes one tinted ru
     const end = stop >= 0 ? item.end + stop : next;
     const crypto = /crypto/i.test(item.word);
     const words = source.slice(item.end, end).replace(/^[:\s]+/, "").replace(/,\s*$/, "");
-    parts.push(el("span", { class: "kind-run " + (crypto ? "kind-crypto" : "kind-stocks"), title: item.word }, [
-      el("span", { class: "kind " + (crypto ? "kind-crypto" : "kind-stocks"), role: "img", "aria-label": item.word }), words]));
+    parts.push(el("span", { class: "kind-run " + (crypto ? "kind-crypto" : "kind-stocks"), title: item.word }, [words]));
     const between = source.slice(end, next);
     if (between) parts.push(between);
     else if (i + 1 < found.length) parts.push(" ");   // two runs side by side keep a gap
@@ -1462,6 +1547,32 @@ function markKinds(node) {   // replace the words in a heading's text nodes, kee
     }
     KIND_WORDS.lastIndex = 0;
   });
+}
+
+
+// Executable lines: a highlight that names held symbols offers to act on them: trim a third or close, each planned with the
+// daemon (its notices on top) and confirmed in one dialog. Only held HL positions; the web page runs them.
+function symbolActions(text) {
+  const found = [...knownSymbols()].filter((s) => new RegExp("(^|[^A-Za-z0-9])" + s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![A-Za-z0-9])").test(text));
+  const targets = found.map((symbol) => ({ symbol, rows: assetRows(symbol) })).filter(({ rows }) => rows.some((r) => /^HL /.test(String(r.Account || "")) && isNum(r.Value)));
+  if (!targets.length) return [];
+  const button = el("button", { type: "button", class: "hl-act", title: "Act on these", "aria-label": "Act on " + targets.map((t) => t.symbol).join(", "), text: "▶" });
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    document.querySelectorAll(".more-menu").forEach((node) => node.remove());
+    const menu = el("div", { class: "more-menu" }, targets.flatMap(({ symbol, rows }) => {
+      const hl = rows.find((r) => /^HL /.test(String(r.Account || "")));
+      const target = { coin: hl.Symbol, wallet: String(hl.Account).slice(-4) };
+      return [["Trim ⅓", "reduce", 1 / 3], ["Close", "close", 1]].map(([label, change, fraction]) => {
+        const row = el("button", { type: "button", class: "sections-row tile-pick" }, [el("b", { text: symbol }), el("span", { text: label })]);
+        row.addEventListener("click", () => { menu.remove(); runAction(label, change, fraction, target); });
+        return row;
+      });
+    }));
+    button.after(menu);
+    setTimeout(() => document.addEventListener("click", function away(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", away); } }), 0);
+  });
+  return [button];
 }
 
 function linkSymbols(text) {   // the text with each known symbol as a button that opens its tile
@@ -1993,7 +2104,10 @@ async function refreshTicker() {
     bar.after(strip);
   }
   strip.hidden = false;
-  const contexts = await tickerContexts(state.assets);
+  await loadUniverse();
+  universeMap.spy = universeMap.spy || universeMap["s&p500"] || universeMap.sp500;   // SPY on the strip is HL's S&P 500 perp
+  const marketOf = (asset) => universeMap[asset.toLowerCase()] || asset;
+  const contexts = await tickerContexts(state.assets.map(marketOf));
   const adding = strip.querySelector(".tick-input");
   if (adding && document.activeElement === adding) return;   // do not redraw under a field being typed in
   const addBox = el("span", { class: "tick-add" }, [el("input", { type: "text", class: "tick-input", placeholder: "+ asset", list: "tick-universe",
@@ -2037,7 +2151,7 @@ async function refreshTicker() {
   const hideStrip = el("button", { type: "button", class: "tick-x tick-hide", "aria-label": "Hide the price strip", text: "×" });
   hideStrip.addEventListener("click", () => { const s = tickerState(); s.on = false; saveTicker(s); feedback("look", "price strip", "off"); drawModes(); refreshTicker(); });
   strip.replaceChildren(...state.assets.map((asset) => reorderable((() => {
-    const context = contexts[asset];
+    const context = contexts[marketOf(asset)];
     if (!context || !isFinite(context.price)) return el("a", { class: "tick", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
       [el("b", { text: friendlyName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
     const change = context.previous ? context.price / context.previous - 1 : NaN;

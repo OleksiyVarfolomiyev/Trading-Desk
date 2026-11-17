@@ -499,7 +499,7 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 .card-tool.on { color: var(--ink); background: var(--border); }
 /* Highlights: one card, no title; attention first, then what stands out (a green edge marks those). */
 .highlights-card .highlights { margin: 0; }
-.highlights-card .highlights.well:not(:empty) { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--grid); }
+.highlights-card .highlights.well:not(:empty) { margin-top: 2px; }
 .highlights.well li .area { color: var(--good-text); }
 /* Card names on hover only; the heading keeps its height small. */
 .card h2 { min-height: 18px; margin-bottom: 2px; }
@@ -559,3 +559,17 @@ table { font-size: 12.5px; }
 .highlights li .text { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .highlights li .hl-actions { flex: 0 0 auto; }
 .highlights .kind-run { white-space: normal; }
+.kind-run { padding: 0 4px; }
+.kind-run.kind-crypto { background: color-mix(in srgb, var(--kind-crypto) 22%, transparent); }
+.kind-run.kind-stocks { background: color-mix(in srgb, var(--kind-stocks) 22%, transparent); }
+/* Tighter again, and the key numbers and the price strip centred on the screen. */
+.card { padding: 2px 4px; }
+th, td { padding: 1px 5px; }
+.tile { padding: 2px 6px; }
+.tiles { display: flex !important; flex-wrap: wrap; justify-content: center; gap: 4px; }
+.tiles .tile { flex: 0 0 auto; }
+.ticker { justify-content: center; }
+.card-icon { color: var(--muted); margin-right: 4px; flex: 0 0 auto; }
+.card h2 .card-name { margin-left: 2px; }
+.card-tool.thumb { filter: grayscale(1); opacity: .7; }
+.card-tool.thumb:hover, .card-tool.thumb.on { filter: none; opacity: 1; }

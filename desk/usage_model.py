@@ -68,6 +68,9 @@ def fit(events: list[dict], now: float | None = None) -> dict:
             tile = tiles.setdefault(target, {"lines": 0, "hidden_unused": 0})
             tile["lines"] += 1
             tile["hidden_unused"] += action == "hide unused"
+        elif kind in ("section", "tile") and action in ("useful", "not useful"):
+            tile = tiles.setdefault(target, {"lines": 0, "hidden_unused": 0})
+            tile["useful" if action == "useful" else "not_useful"] = tile.get("useful" if action == "useful" else "not_useful", 0) + 1
         elif kind == "section" and action in ("hide", "minimize"):
             tile = tiles.setdefault(target, {"lines": 0, "hidden_unused": 0})
             tile["hidden"] = tile.get("hidden", 0) + 1
