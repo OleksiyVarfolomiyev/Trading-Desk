@@ -646,6 +646,11 @@ function renderTiles(k) {
     tile("gross", times(k.gross_leverage), isNum(k.net_leverage) ? `${times(k.net_leverage)} net` : "",
       { key: "Gross leverage", title: "Of trading equity" }),
     tile("", wholeUsd(k.desk_value), "", { key: "Desk value" }),
+    // Extra key numbers, off until added with the row's "+": history and counts, for when they are wanted on top.
+    tile("30D", pct((k.returns || {})["30D"], 1, true), "", { key: "Return 30D", valueClass: signClass((k.returns || {})["30D"]) }),
+    tile("MW", pct(mw.return, 1, true) || "n/a", "", { key: "MW return", valueClass: signClass(mw.return), title: "Money-weighted return since start" }),
+    tile("TW", pct((k.returns || {}).since_start, 1, true), "", { key: "TW return", valueClass: signClass((k.returns || {}).since_start), title: "Time-weighted return since start" }),
+    tile("positions", isNum(k.positions) ? String(k.positions) : "n/a", "", { key: "Positions" }),
     tile("DD", isNum(drawdown) ? pct(drawdown, 1) : "n/a", "",
       { key: "DD", valueClass: drawdown <= -0.10 ? "neg" : "", title: isNum(invested) ? `From the ${usd(invested)} put in, net of withdrawals` : "" }),
   ];
@@ -653,8 +658,15 @@ function renderTiles(k) {
 }
 // The key-number tiles are windows too: drag one onto another to swap, minimize to label and value, save as an image, hide
 // (the Sections menu brings hidden ones back). Order, minimized and hidden are remembered with the layout.
+const EXTRA_TILES = ["Return 30D", "MW return", "TW return", "Positions"];
 function arrangeTiles(host, tiles) {
-  const state = layoutState();
+  let state = layoutState();
+  if (!state.tileExtras) {   // the extra key numbers start hidden, once per browser
+    state.tileHidden = [...new Set([...(state.tileHidden || []), ...EXTRA_TILES])];
+    state.tileExtras = true;
+    saveLayout(state);
+    state = layoutState();
+  }
   const hidden = new Set(state.tileHidden || []), minimized = new Set(state.tileMin || []), order = state.tileOrder || [];
   const rank = (tile) => { const i = order.indexOf(tile.dataset.label); return i < 0 ? 1e6 : i; };
   const shown = tiles.filter((tile) => !hidden.has(tile.dataset.label)).sort((a, b) => rank(a) - rank(b));
@@ -704,7 +716,24 @@ function arrangeTiles(host, tiles) {
       feedback("tile", "move", from, "before " + label);
     });
   });
-  host.replaceChildren(...shown);
+  // "+" at the row's end: the hidden key numbers, one click to bring one back
+  const hiddenTiles = tiles.filter((tile) => hidden.has(tile.dataset.label));
+  const plus = el("button", { type: "button", class: "tile-add", "aria-label": "Add a key number", text: "+" });
+  plus.addEventListener("click", (event) => {
+    event.stopPropagation();
+    document.querySelectorAll(".more-menu").forEach((node) => node.remove());
+    const menu = el("div", { class: "more-menu tile-menu" }, hiddenTiles.length ? hiddenTiles.map((tile) => {
+      const label = tile.dataset.label;
+      const row = el("button", { type: "button", class: "sections-row tile-pick" }, [el("b", { text: tile.querySelector(".value").textContent }),
+        el("span", { text: tile.querySelector(".label").textContent || label })]);
+      row.addEventListener("click", () => { remember((s) => { s.tileHidden = (s.tileHidden || []).filter((x) => x !== label); }); feedback("tile", "add", label);
+        if (latest && latest.data) renderTiles(latest.data.kpis || {}); });
+      return row;
+    }) : [el("div", { class: "sections-empty", text: "All shown" })]);
+    plus.after(menu);
+    setTimeout(() => document.addEventListener("click", function away(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", away); } }), 0);
+  });
+  host.replaceChildren(...shown, el("div", { class: "tile-add-wrap" }, [plus]));
 }
 
 function renderAccountStatus(rows, now) {
@@ -1247,7 +1276,9 @@ function adoptCard(card) {
       });
       return [reset, pan];
     };
+    const more = tool("card-more", "Add a layer: more on this", "+", () => openMoreMenu(card, more));
     const tools = el("span", { class: "card-tools" }, [
+      more,
       ...chartTools(),
       ...(filter ? [filter] : []),
       tool("card-minimize", "Minimize", "–", () => setMinimized(cardId(card), !card.classList.contains("card-min"))),
@@ -1322,11 +1353,14 @@ function renderPublished(tiles) {
   tiles.forEach((tile) => {
     let card = [...content.querySelectorAll(".feed .card[data-published]")].find((node) => node.dataset.published === tile.key);
     const home = Number(tile.relevance) >= 0.5 ? feed : later;
+    const anchorId = Object.entries(tileAnchors()).find(([prefix]) => tile.key.startsWith(prefix));
+    const anchorCard = anchorId && document.getElementById(anchorId[1]) && document.getElementById(anchorId[1]).closest(".card");
     if (!card) {
       const inner = tile.kind === "chart" ? el("div", { class: "chart", id: "pub-" + tile.key }) : el("div", { class: "table-wrap", id: "t-pub-" + tile.key });
       card = el("div", { class: "card published", "data-published": tile.key }, [
         el("h2", { title: tile.reason || "", text: tile.title }), inner]);   // why it is here: on hover, not a caption
-      home.append(card);
+      if (anchorCard && anchorCard.parentElement) anchorCard.parentElement.after(el("div", { class: "slot" }, [card]));   // beside the tile it was added from
+      else home.append(card);
       adoptCard(card);
       applyCardState(card);
     }
@@ -1620,6 +1654,38 @@ function closeButton(overlay) {
   return el("div", { class: "asset-actions" }, [button]);
 }
 
+
+// "+" on a tile: the analytics that go deeper on it, related ones first (matched on the tile's name and its section
+// keywords), all of them searchable; a pick is built and placed next to this tile.
+function openMoreMenu(card, button) {
+  document.querySelectorAll(".more-menu").forEach((node) => node.remove());
+  const catalog = (latest && latest.data && latest.data.catalog) || [];
+  const words = cardTitle(card).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+  const score = (entry) => words.filter((w) => (entry.title + " " + entry.keywords + " " + entry.description).toLowerCase().includes(w)).length;
+  const menu = el("div", { class: "more-menu" });
+  const field = el("input", { type: "search", class: "sections-search", placeholder: "search", "aria-label": "Search analytics" });
+  const list = el("div", {});
+  const fill = () => {
+    const q = field.value.trim().toLowerCase();
+    const rows = catalog.filter((entry) => !q || (entry.title + " " + entry.keywords).toLowerCase().includes(q))
+      .map((entry) => ({ entry, s: score(entry) })).sort((a, b) => b.s - a.s).slice(0, 14);
+    list.replaceChildren(...rows.map(({ entry, s }) => {
+      const add = el("button", { type: "button", class: "sections-add", text: "+" });
+      add.addEventListener("click", () => pullTile(entry, add, cardId(card)));
+      return el("div", { class: "sections-row" }, [el("span", { text: (s ? "★ " : "") + entry.title }), add]);
+    }));
+  };
+  field.addEventListener("input", fill);
+  menu.append(field, list);
+  fill();
+  card.querySelector("h2").append(menu);
+  field.focus();
+  setTimeout(() => document.addEventListener("click", function away(event) {
+    if (!menu.contains(event.target) && event.target !== button) { menu.remove(); document.removeEventListener("click", away); }
+  }), 0);
+  feedback("section", "more", cardTitle(card));
+}
+
 function saveOrder() {
   const state = layoutState();
   state.order = [...document.querySelectorAll("#content .slot")].filter((slot) => !slot.closest(".feed")).map((slot) => cardId(slot.firstElementChild));
@@ -1793,20 +1859,29 @@ function fillMenuLists() {
     heading(`Available to add${menuQuery ? "" : ` (${addable.length})`}`), ...addable, ...(addable.length ? [] : [el("div", { class: "sections-empty", text: "Nothing more to add" })]),
     ...menuFooter());
 }
-async function pullTile(entry, button) {   // the local dashboard builds the section on this Mac and publishes it
-  if (window.DESK_SOURCE) { button.title = "Pulling needs the local dashboard on the Mac (python -m desk.dashboard)"; button.textContent = "!"; return; }
+async function pullTile(entry, button, anchor) {   // the section is built (the Mac for the local page, the server for the web) and published
   feedback("tile", "pull", entry.title);
-  button.textContent = "…"; button.disabled = true;
+  if (anchor) { const anchors = tileAnchors(); anchors[entry.id.replace(":", "-")] = anchor; saveTileAnchors(anchors); }
+  if (button) { button.textContent = "…"; button.disabled = true; }
+  const web = Boolean(window.DESK_SOURCE);
+  const start = web ? () => fetch("/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: entry.id }) })
+    : () => fetch("/api/tiles/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: entry.id }) });
+  const status = web ? async () => (await (await fetch("/pull", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: entry.id, stage: "status" }) })).json()).status || ""
+    : async () => (await (await fetch("/api/tiles/status")).json())[entry.id] || "";
   try {
-    await fetch("/api/tiles/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: entry.id }) });
+    await start();
     for (let tries = 0; tries < 90; tries++) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      const status = (await (await fetch("/api/tiles/status")).json())[entry.id] || "";
-      if (status.startsWith("done")) { button.textContent = "✓"; lastRendered = null; load(); return; }
-      if (status.startsWith("failed") || status.startsWith("nothing")) { button.textContent = "!"; button.title = status; button.disabled = false; return; }
+      const now = await status();
+      if (now.startsWith("done")) { if (button) button.textContent = "✓"; lastRendered = null; load(); return; }
+      if (now.startsWith("failed") || now.startsWith("nothing")) { if (button) { button.textContent = "!"; button.title = now; button.disabled = false; } return; }
     }
-  } catch (e) { button.textContent = "!"; button.disabled = false; }
+  } catch (e) { if (button) { button.textContent = "!"; button.disabled = false; } }
 }
+// A pulled tile sits next to the tile it was added from (remembered per section).
+function tileAnchors() { try { return JSON.parse(localStorage.getItem("desk-anchors")) || {}; } catch (e) { return {}; } }
+function saveTileAnchors(map) { try { localStorage.setItem("desk-anchors", JSON.stringify(map)); } catch (e) {} }
 function menuFooter() {
   const state = highlightState(), hidden = state.deleted.length + Object.keys(state.read).length;
   const out = [];

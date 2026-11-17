@@ -316,6 +316,19 @@ async function handle(request, response) {
   }
   if (url.pathname === "/feedback" && request.method === "POST") return saveFeedback(request, response);
   if (url.pathname === "/action" && request.method === "POST") return dashboardAction(request, response);
+  if (url.pathname === "/pull" && request.method === "POST") {   // a notebook section onto the dashboard, built by the daemon
+    let body = {};
+    try { body = JSON.parse((await readBody(request)).toString("utf8") || "{}"); } catch (error) { body = {}; }
+    const id = String(body.id || "");
+    const ok = /^[a-z_]+:[a-z0-9-]+$/.test(id);
+    const { text } = ok ? await daemonCall(body.stage === "status" ? { cmd: "pull_status" } : { cmd: "pull", id }) : { text: "{}" };
+    let parsed = {};
+    try { parsed = JSON.parse(text.trim().split("\n").pop() || "{}"); } catch (error) { parsed = {}; }
+    const status = body.stage === "status" ? parsed[id] || "" : parsed.status || "";
+    response.writeHead(ok ? 200 : 400, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    response.end(JSON.stringify({ status }));
+    return;
+  }
   if (url.pathname === "/usage_model" && request.method === "GET") {   // fitted hourly by the daemon from the feedback log (desk/usage_model.py)
     let text = '{"areas":{},"tiles":{},"quiet":[]}';
     try { text = await fsp.readFile(path.join(HOME, ".trading-desk", "usage_model.json"), "utf8"); } catch (error) { /* none yet */ }

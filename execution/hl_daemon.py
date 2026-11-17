@@ -3269,6 +3269,17 @@ class Daemon:
             coin = str(request.get("coin", "")).strip()
             coin = coin if ":" in coin else coin.upper()
             return self.trails.stop(wallet, coin) if request.get("stop") else self.trails.start(wallet, coin, float(request["pct"]))
+        if command == "pull":   # a notebook section onto the dashboards (desk/tile_catalog.py), built here and sent to the relay
+            from desk import tile_catalog
+
+            tile_catalog.start_pull(str(request.get("id", "")))
+            print(json.dumps({"status": tile_catalog.STATUS.get(str(request.get("id", "")), "running")}))
+            return 0
+        if command == "pull_status":
+            from desk import tile_catalog
+
+            print(json.dumps(tile_catalog.STATUS))
+            return 0
         if command == "unprotect":
             return self.unprotect(request)
         if command == "resize" and str(request.get("change")) in ("short", "long"):   # a candidate acted on from the dashboard
