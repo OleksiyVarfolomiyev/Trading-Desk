@@ -1195,6 +1195,20 @@
         .filter((a) => a.context).map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), a.context])) },
       tables,
       catalog: catalogEntries,
+      moves: (() => {   // each held position's price move over 7 and 30 days (the uPnL tile's periods)
+        const out = {}, now = Date.now();
+        const at = (rows, days) => { let c = null; rows.forEach((r) => { if (r.t <= now - days * DAY_MS) c = r.c; }); return c; };
+        const add = (symbol, rows, mark) => {
+          if (!rows || rows.length < 2 || !fin(mark)) return;
+          const key = String(symbol).replace(/^[a-z0-9]+:/i, "");
+          out[key] = {};
+          [7, 30].forEach((days) => { const c0 = at(rows, days); if (c0) out[key][days] = mark / c0 - 1; });
+        };
+        hlPositions.forEach((p) => add(p.coin, candleOf[p.coin], p.mark_price));
+        const closes = (ibData && ibData.closes) || {};
+        ibs.forEach((a) => a.positions.forEach((p) => add(p.symbol, (closes[p.symbol] || []).map(([day, c]) => ({ t: Date.parse(day + "T00:00:00Z"), c })), p.mark_price)));
+        return out;
+      })(),
       horizon_days: research && research.horizon_days,
       usage_model: usageModel,
       tiles: ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now()),

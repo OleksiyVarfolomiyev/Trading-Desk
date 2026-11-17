@@ -652,6 +652,22 @@ function dayByBook(tables) {
   };
   return { crypto: part("positions"), stocks: part("positions_stocks") };
 }
+// A period's price move on what is held: value now against value then, over what was held then (the 24h change from the
+// tables; 7 and 30 days from the moves the page builds, positions without history left out).
+function periodMove(tables, scale) {
+  const moves = (latest && latest.data && latest.data.moves) || {};
+  const days = { "1W": "7", "1M": "30" }[scale];
+  let change = 0, base = 0;
+  ["positions", "positions_stocks"].forEach((id) => ((tables[id] || {}).rows || []).forEach((row) => {
+    if (!isNum(row.Value)) return;
+    const move = scale === "1D" ? row["24h change (%)"] : (moves[marketName(row.Symbol)] || {})[days];
+    if (!isNum(move) || move <= -1) return;
+    const before = row.Value / (1 + move);
+    change += row.Value - before;
+    base += Math.abs(before);
+  }));
+  return base ? change / base : NaN;
+}
 function bookShares(tables) {   // uPnL on cost per book, as coloured runs: what is traded now apart from the stock holdings
   const part = (id) => {
     const rows = ((tables[id] || {}).rows || []).filter((row) => isNum(row.uPnL) && isNum(row.Value) && isNum(row["uPnL (%)"]));
@@ -716,13 +732,12 @@ function renderTiles(k) {
         isNum(byBook.stocks.change) ? `stocks ${usd(byBook.stocks.change)} (${pct(byBook.stocks.pct, 1, true)})` : ""].filter(Boolean).join("\n") : "";
       return tile(label, isNum(value) ? pct(value, 1, true) : "n/a", "", { key: "Today", valueClass: signClass(value), title, chips: scaleChips("tile") });
     })(),
-    tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", (() => {   // its change over the period (the day's price move on what is held)
-      if (currentScale("tile") !== "1D") return bookShares(tables);
-      const move = dayByBook(tables), both = [move.crypto, move.stocks].filter((m) => isNum(m.change));
-      const total = both.reduce((sum, m) => sum + m.change, 0), basis = priced.reduce((sum, row) => sum + Math.abs(row.Value), 0);
-      return both.length && basis ? `${pct(total / basis, 1, true)} 1D` : bookShares(tables);
+    (() => {   // uPnL on cost, and its change over the period: 1D, 1W or 1M by its own chips on hover
+      const scale = currentScale("upnl"), change = scale === "All" ? NaN : periodMove(tables, scale);
+      const label = { "1D": "1D", "1W": "7D", "1M": "30D" }[scale];
+      return tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", isNum(change) ? `${pct(change, 1, true)} ${label}` : bookShares(tables),
+        { key: "uPnL", valueClass: signClass(upnl), chips: scaleChips("upnl"), title: isNum(k.unrealized) ? `${usd(k.unrealized)} uPnL` : "" });
     })(),
-      { key: "uPnL", valueClass: signClass(upnl), title: isNum(k.unrealized) ? `${usd(k.unrealized)} uPnL` : "" }),
     (() => {   // risk against the cap: the room left, or how far over
       const used = isNum(risk) ? risk / RISK_CAP : NaN;
       const word = !isNum(used) ? "n/a" : used <= 1 ? `${pct(1 - used)} room` : `${pct(used - 1)} over`;
@@ -1176,7 +1191,7 @@ function setScale(element, scale) {
   try { localStorage.setItem("desk-scales", JSON.stringify(scaleChoices)); } catch (e) {}
   feedback("look", "scale " + element, scaleChoices[element]);
   if (!latest || !latest.data) return;
-  if (element === "tile") renderTiles(latest.data.kpis || {});
+  if (element === "tile" || element === "upnl") renderTiles(latest.data.kpis || {});
   else if (element === "candidates") { renderTable("candidates", applyView("candidates", latest.data.tables.candidates, {})); drawChartScales(); }
   else if (element === "performance") { renderTable("performance", applyView("performance", latest.data.tables.performance, { deskValue: (latest.data.kpis || {}).desk_value })); drawChartScales(); }
   else { zoomCharts(); drawChartScales(); }

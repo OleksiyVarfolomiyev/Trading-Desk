@@ -56,6 +56,43 @@ STATIC_FILES = {
 }
 
 
+def position_moves(overview) -> dict:
+    """Each held position's price move over 7 and 30 days, keyed by its bare symbol, for the uPnL tile's periods: HL positions
+    from daily candles, IB stocks from Yahoo closes. A position without history is left out."""
+    import pandas as _pd
+
+    out = {}
+    try:
+        from desk.hl.trade_analytics import fetch_daily_candles
+        from desk.live_risk import yahoo_stock_closes
+
+        for snapshot in overview.snapshots:
+            for position in snapshot.positions:
+                symbol = str(position.symbol)
+                key = symbol.split(":")[-1]
+                if key in out or not position.mark_price:
+                    continue
+                try:
+                    if position.asset_class == "equity":
+                        closes = yahoo_stock_closes(symbol, 45)
+                        series = _pd.Series(closes.values, index=_pd.to_datetime(closes.index, utc=True))
+                    else:
+                        frame = fetch_daily_candles(key, "xyz" if ":" in symbol else "", lookback_days=45)
+                        series = _pd.Series(frame["close"].astype(float).values, index=_pd.to_datetime(frame["time"], utc=True))
+                except Exception:
+                    continue
+                moves = {}
+                for days in (7, 30):
+                    before = series[series.index <= _pd.Timestamp.now(tz="UTC") - _pd.Timedelta(days=days)]
+                    if len(before) and float(before.iloc[-1]):
+                        moves[str(days)] = float(position.mark_price) / float(before.iloc[-1]) - 1
+                if moves:
+                    out[key] = moves
+    except Exception:
+        return out
+    return out
+
+
 def books_by_kind(tables: dict, max_age: float = 3 * 3600) -> None:
     """The performance table by book (crypto, stocks) instead of by account, from the Mac's hourly computation
     (desk/web_sync.py push_books); the desk's total row stays. Left as it is when that file is missing or stale."""
@@ -516,6 +553,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     return {
         "kpis": kpis,
         "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,   # the open trades' median age
+        "moves": position_moves(overview),   # the held positions' price moves over 7 and 30 days
         "usage_model": usage_model_now(),   # what the reader has said is noise (desk/usage_model.py)
         "tiles": published_tiles(),
         "catalog": catalog_entries(),   # the notebook sections that can be pulled onto the dashboard (desk/tile_catalog.py)   # charts and tables published from the notebooks (desk/tile_feed.py)
