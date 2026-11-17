@@ -676,7 +676,9 @@ function arrangeTiles(host, tiles) {
   }
   const hidden = new Set(state.tileHidden || []), minimized = new Set(state.tileMin || []), order = state.tileOrder || [];
   const rank = (tile) => { const i = order.indexOf(tile.dataset.label); return i < 0 ? 1e6 : i; };
-  const shown = tiles.filter((tile) => !hidden.has(tile.dataset.label)).sort((a, b) => rank(a) - rank(b));
+  // A value that rounds to 0% says nothing (desk rule): that tile is left out until it has something to say.
+  const says = (tile) => !/^-?0%$/.test((tile.querySelector(".value") || {}).textContent || "");
+  const shown = tiles.filter((tile) => !hidden.has(tile.dataset.label) && says(tile)).sort((a, b) => rank(a) - rank(b));
   const remember = (change) => { const s = layoutState(); change(s); saveLayout(s); };
   shown.forEach((tile) => {
     const label = tile.dataset.label;
