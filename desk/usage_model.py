@@ -58,9 +58,12 @@ def fit(events: list[dict], now: float | None = None) -> dict:
     tiles: dict[str, dict] = {}
     for event in events:
         kind, action, target = event.get("kind"), event.get("action"), str(event.get("target") or "")
-        if kind == "highlight" and action in ("read", "not important"):
+        if kind == "highlight" and action in ("read", "useful", "not important"):
             area = areas.setdefault(target, {"read": 0, "dismissed": 0})
-            area["read" if action == "read" else "dismissed"] += 1
+            if action == "not important":
+                area["dismissed"] += 1
+            else:   # read, or marked useful (a thumbs-up counts twice: it is a judgement, not just a glance)
+                area["read"] += 2 if action == "useful" else 1
         elif kind == "use":
             tile = tiles.setdefault(target, {"lines": 0, "hidden_unused": 0})
             tile["lines"] += 1

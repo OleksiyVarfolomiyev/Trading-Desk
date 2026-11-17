@@ -35,5 +35,11 @@ class Fit(unittest.TestCase):
             self.assertEqual(len(usage_model.load_events([a, b])), 1)
 
 
+class Thumbs(unittest.TestCase):
+    def test_a_thumbs_up_outweighs_a_dismissal(self):
+        events = [event("highlight", "not important", "Funding")] * 3 + [event("highlight", "useful", "Funding")] * 2
+        self.assertFalse(usage_model.fit(events)["areas"]["Funding"]["quiet"])   # keep (4+1)/(4+3+2) = 56%
+
+
 if __name__ == "__main__":
     unittest.main()

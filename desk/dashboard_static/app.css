@@ -493,3 +493,5 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 .scale-chip.auto::after { content: ""; position: absolute; top: 1px; right: 1px; width: 3px; height: 3px; border-radius: 50%; background: var(--series-1); }
 .card h2 .scale-chips { margin-left: auto; font-weight: 400; }
 @media (hover: none) { .scale-chips { opacity: 1; } }
+.hl-act { filter: grayscale(1); }
+.hl-act:hover { filter: none; }
