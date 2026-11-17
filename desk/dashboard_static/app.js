@@ -983,8 +983,16 @@ drawModes();
 // places. A card is hidden with its eye button and brought back from the Sections menu. Order and hidden cards are
 // remembered in the browser (touch screens have no drag: use the menu there).
 const LAYOUT_KEY = "desk-layout";
+const LAYOUT_VERSION = 2;   // 2: the page leads with what is happening; an arrangement saved on the old order is dropped
 function layoutState() {
-  try { return JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (e) { return {}; }
+  let state = {};
+  try { state = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (e) { return {}; }
+  if (state.version !== LAYOUT_VERSION) {   // keep hidden and minimized choices, not slot positions of the old page
+    delete state.order;
+    state.version = LAYOUT_VERSION;
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+  return state;
 }
 function saveLayout(state) {
   try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(state)); } catch (e) {}

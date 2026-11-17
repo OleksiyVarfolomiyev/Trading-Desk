@@ -62,49 +62,17 @@
   </div>
 
   <div id="content" hidden>
+    <!-- What is happening first (key numbers, highlights, positions, risk, market making, candidates); history last. -->
     <section class="tiles" id="tiles" aria-label="Key numbers"></section>
 
     <section class="grid two">
       <div class="card">
-        <h2><span class="icon good" aria-hidden="true">✓</span>What stands out</h2>
-        <ul class="highlights" id="hl-well"></ul>
-      </div>
-      <div class="card">
         <h2><span class="icon bad" aria-hidden="true">!</span>Needs attention</h2>
         <ul class="highlights" id="hl-attention"></ul>
       </div>
-    </section>
-
-    <section class="grid two">
       <div class="card">
-        <h2 title="USD, daily; wallet tokens on other chains have no history and are not included.">Desk value by account</h2>
-        <div class="chart" id="chart-value"></div>
-      </div>
-      <div class="card">
-        <h2 title="% since the desk's start, time-weighted (net of deposits and withdrawals), wallets included; the desk line ends at the TW return tile.">Desk vs benchmarks</h2>
-        <div class="chart" id="chart-twr"></div>
-      </div>
-    </section>
-
-    <section class="grid two">
-      <div class="card">
-        <h2 title="Time-weighted returns, net of deposits and withdrawals.">Performance</h2>
-        <div class="table-wrap" id="t-performance"></div>
-      </div>
-      <div class="card">
-        <h2 title="HL PnL by the journal's tag, as a share of desk value: realized over 30 days (net of fees, with funding) and unrealized now. Market making counts only the ladders' own result; fills from before the journal are untagged.">Performance by strategy</h2>
-        <div class="table-wrap" id="t-strategies"></div>
-      </div>
-    </section>
-
-    <section class="grid two">
-      <div class="card">
-        <h2 title="Each account's share of the desk; the other columns are a share of that account's own equity. Open risk: each position's stop distance plus costs (HL adds a 5-day funding reserve); the total row is the desk against its 33% cap.">Accounts</h2>
-        <div class="table-wrap" id="t-accounts"></div>
-      </div>
-      <div class="card">
-        <h2>Exposure by asset class</h2>
-        <div class="table-wrap" id="t-exposure"></div>
+        <h2><span class="icon good" aria-hidden="true">✓</span>What stands out</h2>
+        <ul class="highlights" id="hl-well"></ul>
       </div>
     </section>
 
@@ -128,9 +96,15 @@
       </div>
     </section>
 
-    <section class="card">
-      <h2 title="The 40 most liquid HL perps ranked by the signals the research harness validated (or the desk's own record until one is). Size at budget is what the 5% risk budget buys at the 3 × ATR stop; nothing trades until you run it.">Short candidates (screener)</h2>
-      <div class="table-wrap" id="t-candidates"></div>
+    <section class="grid two">
+      <div class="card">
+        <h2 title="Each account's share of the desk; the other columns are a share of that account's own equity. Open risk: each position's stop distance plus costs (HL adds a 5-day funding reserve); the total row is the desk against its 33% cap.">Accounts</h2>
+        <div class="table-wrap" id="t-accounts"></div>
+      </div>
+      <div class="card">
+        <h2>Exposure by asset class</h2>
+        <div class="table-wrap" id="t-exposure"></div>
+      </div>
     </section>
 
     <section class="grid two">
@@ -141,6 +115,33 @@
       <div class="card">
         <h2 title="Liquid coins that have gone nowhere over 30 days (low efficiency: net move against the sum of daily moves), so ladder quotes on both sides keep filling.">Market-making candidates</h2>
         <div class="table-wrap" id="t-mm_candidates"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 title="The 40 most liquid HL perps ranked by the signals the research harness validated (or the desk's own record until one is). Size at budget is what the 5% risk budget buys at the 3 × ATR stop; nothing trades until you run it.">Short candidates (screener)</h2>
+      <div class="table-wrap" id="t-candidates"></div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2 title="USD, daily; wallet tokens on other chains have no history and are not included.">Desk value by account</h2>
+        <div class="chart" id="chart-value"></div>
+      </div>
+      <div class="card">
+        <h2 title="% since the desk's start, time-weighted (net of deposits and withdrawals), wallets included; the desk line ends at the TW return tile.">Desk vs benchmarks</h2>
+        <div class="chart" id="chart-twr"></div>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2 title="Time-weighted returns, net of deposits and withdrawals.">Performance</h2>
+        <div class="table-wrap" id="t-performance"></div>
+      </div>
+      <div class="card">
+        <h2 title="HL PnL by the journal's tag, as a share of desk value: realized over 30 days (net of fees, with funding) and unrealized now. Market making counts only the ladders' own result; fills from before the journal are untagged.">Performance by strategy</h2>
+        <div class="table-wrap" id="t-strategies"></div>
       </div>
     </section>
 
