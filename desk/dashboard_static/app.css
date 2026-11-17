@@ -695,3 +695,6 @@ html:not([data-screen="research"]) .alert-strip { display: none; }
 
 .asset-actions .asset-action.lead, .asset-actions .asset-action { min-width: 56px; font-size: 20px; line-height: 1; padding: 8px 16px; }
 .asset-actions .asset-action.lead { color: var(--good-text); }
+
+/* A hidden tile stays hidden even when it has a size of its own (the sized rule is !important). */
+#content .card.card-off, #columns .card.card-off { display: none !important; }
