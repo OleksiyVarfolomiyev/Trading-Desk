@@ -1148,8 +1148,8 @@
         // A coin held now is a candidate already taken (the screener runs hourly; positions are live).
         const held = new Set(hlPositions.map((p) => p.coin));
         const rows = ((research && research.screener && research.screener.shorts) || []).filter((r) => !held.has(r.Coin));
-        return rows.length ? table(rows, ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "From high 60d", "Funding 7d (APR)", "OI / volume", "Volume 24h", "Notes"],
-          { "Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "From high 60d": "spct", "Funding 7d (APR)": "spct", "OI / volume": "num2", "Volume 24h": "usd" },
+        return rows.length ? table(rows, ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "vs BTC 24h", "From high 60d", "Funding 7d (APR)", "OI / volume", "Volume 24h", "Notes"],
+          { "Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "vs BTC 24h": "spct", "From high 60d": "spct", "Funding 7d (APR)": "spct", "OI / volume": "num2", "Volume 24h": "usd" },
           { key: { "Score": "min" } }) : { columns: [], rows: [], total: null };
       })(),
       mm_candidates: (() => {

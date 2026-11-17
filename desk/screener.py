@@ -48,9 +48,9 @@ CROWDED_LONG_APR = 0.365                 # longs paying 0.1% a day on average ov
 CROWDED_SHARE = 0.5                      # shorts paid in more than half the hours of the last 7 days: crowded
 FUNDING_DAYS = 7
 # Research columns only: the stop, the size and the margin are the executor's and the daemon's.
-CANDIDATE_COLUMNS = ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "From high 60d", "Funding 7d (APR)",
+CANDIDATE_COLUMNS = ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "vs BTC 24h", "From high 60d", "Funding 7d (APR)",
                      "OI / volume", "Volume 24h", "Notes"]
-CANDIDATE_FORMATS = {"Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "From high 60d": "spct",
+CANDIDATE_FORMATS = {"Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "vs BTC 24h": "spct", "From high 60d": "spct",
                      "Funding 7d (APR)": "spct", "OI / volume": "num2", "Volume 24h": "usd"}
 # Funding for a ladder: the 7-day time-weighted average from the long side (positive: longs pay). The ladder's
 # position swings both ways, so what it pays is that average times its lean; a crowded side is flagged in Notes.
@@ -71,7 +71,7 @@ def live_markets() -> pd.DataFrame:
     for asset, context in zip(meta["universe"], contexts):
         if asset.get("isDelisted"):
             continue
-        rows.append({"coin": asset["name"], "mark": float(context.get("markPx") or 0),
+        rows.append({"coin": asset["name"], "mark": float(context.get("markPx") or 0), "prev": float(context.get("prevDayPx") or 0),
                      "volume24h": float(context.get("dayNtlVlm") or 0), "funding_hour": float(context.get("funding") or 0),
                      "open_interest": float(context.get("openInterest") or 0) * float(context.get("markPx") or 0),
                      "max_leverage": int(asset.get("maxLeverage") or 1)})
@@ -160,7 +160,10 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
         notes = crowded + trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else [])
         volume = live.loc[coin, "volume24h"]
         open_interest = live.loc[coin, "open_interest"] if "open_interest" in live.columns else float("nan")
+        day = (live.loc[coin, "mark"] / live.loc[coin, "prev"] - 1) if "prev" in live.columns and live.loc[coin, "prev"] else float("nan")
+        btc_day = (live.loc["BTC", "mark"] / live.loc["BTC", "prev"] - 1) if "BTC" in live.index and "prev" in live.columns and live.loc["BTC", "prev"] else float("nan")
         rows.append({"Coin": coin, "Score": row["score"], "Basis": basis, "vs BTC 30d": row.get("rel30"), "vs BTC 7d": row.get("rel7"),
+                     "vs BTC 24h": (1 + day) / (1 + btc_day) - 1 if day == day and btc_day == btc_day else float("nan"),
                      "From high 60d": row.get("from_high60"), "Funding 7d (APR)": apr,
                      "OI / volume": open_interest / volume if volume else float("nan"), "Volume 24h": volume,
                      "Notes": "; ".join(notes)})
@@ -270,7 +273,7 @@ def _formatters() -> dict:
 
     money = lambda value: usd(value, missing="")
     number = lambda value: "" if value is None or value != value else f"{value:.2f}"
-    return {"Score": number, "vs BTC 30d": percent, "vs BTC 7d": percent, "From high 60d": percent, "Funding 7d (APR)": percent,
+    return {"Score": number, "vs BTC 30d": percent, "vs BTC 7d": percent, "vs BTC 24h": percent, "From high 60d": percent, "Funding 7d (APR)": percent,
             "OI / volume": number,
             "Longs pay 7d (APR)": percent,
             "Volume 24h": money,

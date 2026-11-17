@@ -219,7 +219,14 @@ const VIEWS = {
     columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"], ["Funding (APR)"], ["% of desk"]],
     align: { "Symbol": 28, "uPnL": 18, "24h": 18, "Funding (APR)": 18, "% of desk": 18 },
   },
-  candidates: { link: (r) => hlLink(r.Coin), columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
+  // The "vs BTC" figure over one period at a time (the card's chips: 1D, 1W, 1M), named with its period; the rest as before.
+  candidates: { link: (r) => hlLink(r.Coin),
+    columnsNow: () => {
+      const scale = currentScale("candidates");
+      const pick = { "1D": ["vs BTC 24h", "vs BTC 1D"], "1W": ["vs BTC 7d", "vs BTC 1W"], "1M": ["vs BTC 30d", "vs BTC 1M"], All: ["vs BTC 30d", "vs BTC 1M"] }[scale];
+      return [["Coin"], pick, ["From high 60d"], ["Funding 7d (APR)"], ["OI / volume"], ["Volume 24h"], ["Notes"]];
+    },
+    columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
   mm_candidates: { link: (r) => hlLink(r.Coin), columns: [["Coin"], ["Daily range 30d"], ["Longs pay 7d (APR)"], ["Own ladder edge per $1k"], ["Volume 24h"], ["Notes"]] },
   // Live ladders only (stopped ones are research); the ladder's result as a % of what it traded, the rest on hover.
@@ -1089,6 +1096,7 @@ function render(doc) {
   balanceColumns();
   renderCharts(data.charts);
   renderPublished(data.tiles || []);
+  drawChartScales();
   const notes = document.getElementById("notes");  // developer notes: not on the page (the band shows real problems)
   if (notes) notes.replaceChildren(...(data.notes || []).map((note) => el("li", { text: note })));
 }
@@ -1169,6 +1177,7 @@ function setScale(element, scale) {
   feedback("look", "scale " + element, scaleChoices[element]);
   if (!latest || !latest.data) return;
   if (element === "tile") renderTiles(latest.data.kpis || {});
+  else if (element === "candidates") { renderTable("candidates", applyView("candidates", latest.data.tables.candidates, {})); drawChartScales(); }
   else if (element === "performance") { renderTable("performance", applyView("performance", latest.data.tables.performance, { deskValue: (latest.data.kpis || {}).desk_value })); drawChartScales(); }
   else { zoomCharts(); drawChartScales(); }
 }
@@ -1181,11 +1190,12 @@ function scaleChips(element) {   // the element's own scale buttons, shown on it
   }));
 }
 function drawChartScales() {   // the value charts' and the performance table's cards carry their scale chips in the heading
-  const perf = document.getElementById("t-performance"), perfTitle = perf && perf.closest(".card") && perf.closest(".card").querySelector("h2");
-  if (perfTitle) {
-    const chips = scaleChips("performance"), old = perfTitle.querySelector(".scale-chips");
-    if (old) old.replaceWith(chips); else { const tools = perfTitle.querySelector(".card-tools"); if (tools) tools.before(chips); else perfTitle.append(chips); }
-  }
+  [["performance", "t-performance"], ["candidates", "t-candidates"]].forEach(([element, hostId]) => {
+    const host = document.getElementById(hostId), heading = host && host.closest(".card") && host.closest(".card").querySelector("h2");
+    if (!heading) return;
+    const chips = scaleChips(element), old = heading.querySelector(".scale-chips");
+    if (old) old.replaceWith(chips); else { const tools = heading.querySelector(".card-tools"); if (tools) tools.before(chips); else heading.append(chips); }
+  });
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id), title = node && node.closest(".card") && node.closest(".card").querySelector("h2");
     if (!title) return;
