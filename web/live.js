@@ -938,7 +938,25 @@
       twr.push({ name, x: kept.map(([day]) => day), y: kept.map(([, value]) => Math.round(10000 * ((1 + value) / base - 1)) / 100) });
     });
 
-    // -- highlights (desk/overview.py and desk/desk_accounts.py rules)
+    // -- the chart's day and week at hourly resolution: the HL wallets' PnL (net of deposits) over their value at the start, and
+    // BTC and the S&P 500 perp from hourly candles; the page rebases each to its window (D 24h, W 7 days)
+    const intraday = await (async () => {
+      const end = Date.now(), from = end - 8 * DAY_MS;
+      const hours = (coin) => remember(`desk:hourly:${coin}`, 10 * 60000, async () => {
+        const rows = await info({ type: "candleSnapshot", req: { coin, interval: "1h", startTime: from, endTime: end } });
+        return (rows || []).map((r) => [r.t, num(r.c)]);
+      }).catch(() => []);
+      const hl = traders.filter((a) => a.venue === "hl").map((a) => historyOf[a.id] || []).filter((h) => h.length);
+      const grid = [...new Set(hl.flatMap((h) => h.filter((p) => p.t >= from).map((p) => Math.floor(p.t / 3600000) * 3600000)))].sort((a, b) => a - b);
+      const at = (h, t) => { let last = null; for (const p of h) { if (p.t <= t) last = p; else break; } return last; };
+      const desk = grid.map((t) => {
+        const parts = hl.map((h) => at(h, t)).filter(Boolean);
+        return parts.length === hl.length ? [t, sum(parts.map((p) => p.pnl)), sum(parts.map((p) => p.value))] : null;
+      }).filter(Boolean);
+      return { desk, BTC: await hours(BTC), "S&P500": await hours(SP500) };
+    })();
+
+    // -- highlights (desk/overview.py and desk_accounts.py rules)
     const well = [], attention = [];
     let fundingNow = [];  // positions paying adverse funding at the current rate, for the one "Funding" row
     // The desk return is in the TW return and Return 30D tiles and the performance table's bold row: no highlight.
@@ -1197,6 +1215,7 @@
         .filter((a) => a.context).map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), a.context])) },
       tables,
       catalog: catalogEntries,
+      intraday,
       moves: (() => {   // each held position's price move over 7 and 30 days (the uPnL tile's periods)
         const out = {}, now = Date.now();
         const at = (rows, days) => { let c = null; rows.forEach((r) => { if (r.t <= now - days * DAY_MS) c = r.c; }); return c; };

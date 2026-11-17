@@ -1178,10 +1178,12 @@ function renderCharts(charts) {
   Plotly.react("chart-value", value, valueLayout, CONFIG).then(() => { spreadEndLabels("chart-value"); markNumericNotes(); });
 
   // The desk is the dotted reference line; the crypto and stocks books in their colours; the benchmarks thin.
-  const lineFor = (s, i) => /^crypto/i.test(s.name) ? { width: 2.2, color: token("--kind-crypto") }
-    : /^stocks/i.test(s.name) ? { width: 2.2, color: token("--kind-stocks") }
-    : /^(total|desk)/i.test(s.name) ? { width: 2, dash: "dot", color: token("--ink") }
-    : { width: 1.2, color: colors[i % colors.length] };
+  // The desk is the solid line (its crypto and stocks parts in their colours, solid); the benchmarks are dashed and dotted.
+  const lineFor = (s, i) => /^crypto/i.test(s.name) ? { width: 1.8, color: token("--kind-crypto") }
+    : /^stocks/i.test(s.name) ? { width: 1.8, color: token("--kind-stocks") }
+    : /^(total|desk)/i.test(s.name) ? { width: 2.6, color: token("--ink") }
+    : /^btc/i.test(s.name) ? { width: 1.4, dash: "dash", color: token("--kind-crypto") }
+    : { width: 1.4, dash: "dot", color: token("--kind-stocks") };
   const twr = (charts.twr || []).map((s, i) => ({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
     line: Object.assign({ shape: "linear" }, lineFor(s, i)),
@@ -1393,12 +1395,46 @@ function rebaseReturns(node, days) {
   Plotly.relayout(node, { annotations: notes });
   return baseTime;
 }
+
+// The return chart over a day or a week at hourly resolution (daily points make a straight line): the HL wallets' PnL over their
+// value at the window's start, BTC and the S&P 500 perp, each from the window's first hour. A month or more keeps the daily curves.
+function drawIntraday(node, days) {
+  const data = (latest && latest.data && latest.data.intraday) || {};
+  const start = Date.now() - days * 86400000;
+  const lines = [];
+  const rebased = (points, pick) => {
+    const rows = points.filter(([t]) => t >= start);
+    if (rows.length < 3) return null;
+    const base = pick(rows[0]);
+    return { x: rows.map(([t]) => new Date(t)), y: rows.map((row) => Math.round(10000 * (row.length === 3 ? (row[1] - rows[0][1]) / rows[0][2] : pick(row) / base - 1)) / 100) };
+  };
+  const desk = rebased(data.desk || [], () => 1);
+  if (desk) lines.push(["desk", desk, { width: 2.6, color: token("--ink") }]);
+  const btc = rebased(data.BTC || [], (row) => row[1]);
+  if (btc) lines.push(["BTC", btc, { width: 1.4, dash: "dash", color: colorFor("BTC") }]);
+  const sp = rebased(data["S&P500"] || [], (row) => row[1]);
+  if (sp) lines.push(["S&P500", sp, { width: 1.4, dash: "dot", color: colorFor("S&P500") }]);
+  if (!lines.length) return false;
+  const traces = lines.map(([name, line, style]) => ({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
+    hovertemplate: "%{fullData.name}: %{y:.2f}%<extra></extra>" }));
+  const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ x: line.x[line.x.length - 1], y: line.y[line.y.length - 1], xanchor: "left", xshift: 6,
+    showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color } })), xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null }),
+    yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }) });
+  node._orig = null;
+  node._intraday = true;
+  Plotly.react(node, traces, layout, CONFIG).then(() => { spreadEndLabels(node.id); markNumericNotes(); });
+  return true;
+}
+const colorFor = (name) => (name === "BTC" ? token("--kind-crypto") : token("--kind-stocks"));
+
 function zoomCharts() {   // the value charts show the chosen window (All: the whole history)
   if (typeof Plotly === "undefined") return;
   const days = (SCALES.find(([name]) => name === currentScale("charts")) || [])[1];
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id);
     if (!node || !node.data) return;
+    if (id === "chart-twr" && days && days <= 7) { if (drawIntraday(node, days)) return; }          // a day or a week: hourly
+    else if (id === "chart-twr" && node._intraday) { node._intraday = false; if (latest && latest.data) renderCharts(latest.data.charts); return; }   // back to the daily curves
     const rebasedFrom = id === "chart-twr" ? rebaseReturns(node, days) : null;
     if (!days) { Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }).then(() => spreadEndLabels(id)); return; }
     const end = Date.now(), start = Math.min(end - days * 86400000, rebasedFrom || Infinity);

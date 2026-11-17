@@ -56,6 +56,46 @@ STATIC_FILES = {
 }
 
 
+def intraday_series(desk) -> dict:
+    """Hourly points for the return chart's D and W: the HL wallets' PnL and value (``desk``, [t ms, pnl, value]) and BTC and the
+    S&P 500 perp's hourly closes ([t ms, close]); the page rebases each to its window. Empty where HL does not answer."""
+    import time as _time
+
+    import pandas as _pd
+
+    out = {"desk": [], "BTC": [], "S&P500": []}
+    try:
+        from desk.accounts import accounts_for
+
+        histories = [desk.histories[a.name].copy() for a in accounts_for("hl", desk.accounts) if a.name in desk.histories]
+        cutoff = _pd.Timestamp.now(tz="UTC") - _pd.Timedelta(days=8)
+        frames = []
+        for history in histories:
+            frame = history[history["ts"] >= cutoff].copy()
+            frame["hour"] = frame["ts"].dt.floor("h")
+            frames.append(frame.groupby("hour")[["pnl", "accountValue"]].last())
+        if frames and all(len(f) for f in frames):
+            grid = sorted(set().union(*[set(f.index) for f in frames]))
+            combined = _pd.concat([f.reindex(grid).ffill() for f in frames], axis=1, keys=range(len(frames))).dropna()
+            for stamp, row in combined.iterrows():
+                out["desk"].append([int(stamp.timestamp() * 1000), float(sum(row[(k, "pnl")] for k in range(len(frames)))),
+                                    float(sum(row[(k, "accountValue")] for k in range(len(frames))))])
+    except Exception:
+        pass
+    try:
+        from desk.hl.trade_analytics import post_info
+
+        end = int(_time.time() * 1000)
+        for name, coin, dex in (("BTC", "BTC", ""), ("S&P500", "xyz:SP500", "")):
+            request = {"type": "candleSnapshot", "req": {"coin": coin, "interval": "1h", "startTime": end - 8 * 86_400_000, "endTime": end}}
+            if dex:
+                request["dex"] = dex
+            out[name] = [[int(row["t"]), float(row["c"])] for row in (post_info(request) or [])]
+    except Exception:
+        pass
+    return out
+
+
 def position_moves(overview) -> dict:
     """Each held position's price move over 7 and 30 days, keyed by its bare symbol, for the uPnL tile's periods: HL positions
     from daily candles, IB stocks from Yahoo closes. A position without history is left out."""
@@ -553,6 +593,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     return {
         "kpis": kpis,
         "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,   # the open trades' median age
+        "intraday": intraday_series(desk),   # the day and week at hourly resolution (the return chart's D and W)
         "moves": position_moves(overview),   # the held positions' price moves over 7 and 30 days
         "usage_model": usage_model_now(),   # what the reader has said is noise (desk/usage_model.py)
         "tiles": published_tiles(),
