@@ -179,11 +179,12 @@ const POSITION_VIEW = {
   // A symbol opens its page: HL's trade page for an HL market, a quote page for an IB stock (as on HL).
   link: (r) => (/^IB/.test(String(r.Account || "")) ? stockLink(r.Symbol) : hlLink(r.Symbol)),
   // No Side column: Value is signed and coloured (shorts negative, red), which already says the side.
-  columns: [["Account"], ["Symbol"], ["Value"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"],
-    ["Funding (APR)"], ["Weight"]],
+  // % first; dollars on hover (the row's pop-up); the account is the desk's business
+  hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", isNum(r.uPnL) ? `${usd(r.uPnL)} uPnL` : ""].filter(Boolean).join(" · "),
+  columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"], ["Funding (APR)"], ["Weight"]],
   // The crypto and the stocks tables sit one above the other: the same columns at the same widths, so Value, uPnL
   // and 24h line up (no column is collapsed or hidden in either).
-  align: { "Account": 15, "Symbol": 18, "Value": 15, "uPnL": 13, "24h": 12, "Funding (APR)": 15, "Weight": 12 },
+  align: { "Symbol": 28, "uPnL": 18, "24h": 18, "Funding (APR)": 18, "Weight": 18 },
 };
 const VIEWS = {
   performance: { columns: [["Account", "Book"], ["Return 24h", "24h"], ["Return 7D", "7d"], ["Return 30D", "30d"],
@@ -208,10 +209,9 @@ const VIEWS = {
   // the positions show their weight (tokens have no cost basis or funding, so those cells stay empty).
   wallets: {
     derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol }),
-    hover: (r) => [r.Chain, r.Note].filter(Boolean).join(", "),
-    columns: [["Account"], ["Symbol"], ["Value"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"],
-      ["Funding (APR)"], ["% of desk"]],
-    align: { "Account": 15, "Symbol": 18, "Value": 15, "uPnL": 13, "24h": 12, "Funding (APR)": 15, "% of desk": 12 },
+    hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", r.Chain, r.Note].filter(Boolean).join(" · "),
+    columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "24h"], ["Funding (APR)"], ["% of desk"]],
+    align: { "Symbol": 28, "uPnL": 18, "24h": 18, "Funding (APR)": 18, "% of desk": 18 },
   },
   candidates: { link: (r) => hlLink(r.Coin), columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
@@ -253,9 +253,9 @@ const CHART_VIEWS = {
   performance: { kind: "grouped", label: "Account", series: ["24h", "7d", "30d", "90d", "Since start"], by: "window" },
   accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
   exposure: { kind: "exposure", label: "Asset class", long: "Long", short: "Short", net: "Net" },
-  positions: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
-  positions_stocks: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
-  wallets: { kind: "bars", label: "Symbol", value: "Value", text: "uPnL" },
+  positions: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
+  positions_stocks: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
+  wallets: { kind: "bars", label: "Symbol", value: "% of desk", text: null },
   market_making: { kind: "bars", label: "Coin", value: "Ladder PnL", text: "Fills" },
   strategies: { kind: "stacked", label: "Strategy", series: ["Crypto", "Stocks"] },   // each strategy's result, crypto and stocks stacked
 };
@@ -623,18 +623,18 @@ function renderTiles(k) {
       const scale = currentScale("tile"), r = k.returns || {};
       const value = scale === "1D" ? day.pct : scale === "1W" ? r["7D"] : scale === "1M" ? r["30D"] : r.since_start;
       const label = { "1D": "today", "1W": "7D", "1M": "30D", All: "all" }[scale];
-      return tile(label, isNum(value) ? pct(value, 1, true) : "n/a", scale === "1D" && isNum(day.change) ? usd(day.change) : "",
+      return tile(label, isNum(value) ? pct(value, 1, true) : "n/a", "",
         { key: "Today", valueClass: signClass(value), title: scale === "1D" ? dayChangeLine(day).title : "", chips: scaleChips("tile") });
     })(),
-    tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", bookShares(tables) || (isNum(k.unrealized) ? usd(k.unrealized) : ""),
-      { key: "uPnL", valueClass: signClass(upnl), title: "Open positions against their cost" }),
+    tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", bookShares(tables),
+      { key: "uPnL", valueClass: signClass(upnl), title: isNum(k.unrealized) ? `${usd(k.unrealized)} uPnL` : "" }),
     tile("of cap", isNum(risk) ? pct(risk / RISK_CAP) : "n/a", isNum(risk) ? `${pct(risk)} risk` : "",
       { key: "Risk", valueClass: isNum(risk) && risk / RISK_CAP >= 0.9 ? "neg" : "", title: "Open risk against the 33% cap: the room for new trades" }),
     tile("gross", times(k.gross_leverage), isNum(k.net_leverage) ? `${times(k.net_leverage)} net` : "",
       { key: "Gross leverage", title: "Of trading equity" }),
     tile("", wholeUsd(k.desk_value), "", { key: "Desk value" }),
-    tile("DD", isNum(drawdown) ? pct(drawdown, 1) : "n/a", isNum(invested) ? `of ${usd(invested)} in` : "",
-      { key: "DD", valueClass: drawdown <= -0.10 ? "neg" : "", title: "Drawdown from the money put in, net of withdrawals" }),
+    tile("DD", isNum(drawdown) ? pct(drawdown, 1) : "n/a", "",
+      { key: "DD", valueClass: drawdown <= -0.10 ? "neg" : "", title: isNum(invested) ? `From the ${usd(invested)} put in, net of withdrawals` : "" }),
   ];
   arrangeTiles(document.getElementById("tiles"), tiles);
 }
@@ -739,8 +739,10 @@ function renderHighlights(id, rows, hover = {}) {
   const answered = (rows || []).filter(([area, text]) => !state.deleted.includes(area) && !state.read[area + "|" + text]);
   const folded = answered.filter(([area, text]) => quiet.has(area) && severity(area, text) !== "critical");
   const shown = open ? answered : answered.filter((row) => !folded.includes(row));
-  if (!shown.length && !folded.length) {
-    host.replaceChildren(el("li", {}, el("span", { class: "empty", text: "Nothing to report." })));
+  if (!shown.length && !folded.length) {   // one card holds both lists: say it once, on the first list, when both are empty
+    const other = document.getElementById(id === "hl-attention" ? "hl-well" : "hl-attention");
+    const otherRows = (latest && latest.data && latest.data.highlights && latest.data.highlights[id === "hl-attention" ? "well" : "attention"]) || [];
+    host.replaceChildren(...(id === "hl-attention" && !otherRows.length ? [el("li", {}, el("span", { class: "empty", text: "Nothing to report" }))] : []));
     return;
   }
   const rank = { critical: 0, watch: 1, "": 2 };
@@ -873,9 +875,14 @@ function renderCharts(charts) {
   valueLayout.margin = Object.assign({}, valueLayout.margin, { r: 88 });
   Plotly.react("chart-value", value, valueLayout, CONFIG).then(() => { spreadEndLabels("chart-value"); markNumericNotes(); });
 
+  // The desk is the dotted reference line; the crypto and stocks books in their colours; the benchmarks thin.
+  const lineFor = (s, i) => /^crypto book/i.test(s.name) ? { width: 2.2, color: token("--kind-crypto") }
+    : /^stocks book/i.test(s.name) ? { width: 2.2, color: token("--kind-stocks") }
+    : /^(total|desk)/i.test(s.name) ? { width: 2, dash: "dot", color: token("--ink") }
+    : { width: 1.2, color: colors[i % colors.length] };
   const twr = (charts.twr || []).map((s, i) => ({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
-    line: { width: 2, color: colors[i % colors.length], shape: "linear" },
+    line: Object.assign({ shape: "linear" }, lineFor(s, i)),
     hovertemplate: "%{fullData.name}: %{y:.1f}%<extra></extra>",
   }));
   // % since the start; the desk line ends at the "TW return" tile.

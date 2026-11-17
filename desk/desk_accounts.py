@@ -392,6 +392,16 @@ class DeskAccounts:
                 spy = ib_venue.run_off_event_loop(read)
             except Exception as exc:
                 spy, ib_problem = None, str(exc).split(";")[0].rstrip(".") or type(exc).__name__
+        if spy is None:   # Yahoo is current; the saved research prices stop at their last refresh
+            try:
+                from desk import market_regime
+
+                yahoo = market_regime.yahoo_series("SPY", 800)
+                if len(yahoo):
+                    spy = yahoo.copy()
+                    spy.index = pd.to_datetime(spy.index, utc=True).normalize()
+            except Exception:
+                spy = None
         if spy is None and RESEARCH_PRICES.exists():
             prices = pd.read_csv(RESEARCH_PRICES, parse_dates=["date"]).set_index("date")
             if "SPY" in prices:

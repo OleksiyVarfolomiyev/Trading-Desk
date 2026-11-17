@@ -928,6 +928,13 @@
       .then((series) => series || dailyCandles(SP500, benchmarkDays).then((rows) => rebased("S&P 500 (HL perp)", rows), () => null));
     const benchmarks = await Promise.all([dailyCandles(BTC, benchmarkDays).then((rows) => rebased("BTC", rows), () => null), spy]);
     benchmarks.filter(Boolean).forEach((series) => twr.push(series));
+    Object.entries((bookPerf && bookPerf.series) || {}).forEach(([name, points]) => {   // the crypto and stocks books, rebased
+      const startDay = twr[0] && twr[0].x && twr[0].x[0] ? String(twr[0].x[0]).slice(0, 10) : "";
+      const kept = points.filter(([day, value]) => value !== null && day >= startDay);
+      if (kept.length < 2) return;
+      const base = 1 + kept[0][1];
+      twr.push({ name: `${name} book`, x: kept.map(([day]) => day), y: kept.map(([, value]) => Math.round(10000 * ((1 + value) / base - 1)) / 100) });
+    });
 
     // -- highlights (desk/overview.py and desk/desk_accounts.py rules)
     const well = [], attention = [];

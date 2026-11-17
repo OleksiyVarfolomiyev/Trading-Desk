@@ -75,6 +75,27 @@ def books_by_kind(tables: dict, max_age: float = 3 * 3600) -> None:
         performance["rows"] = rows
 
 
+def book_lines(start) -> list[dict]:
+    """The crypto and stocks books on the return chart, each rebased to 0% on the chart's first day (or its own first day)."""
+    import json as _json
+
+    from desk.web_sync import BOOKS_FILE
+
+    try:
+        series = _json.loads(BOOKS_FILE.read_text()).get("series", {})
+    except (OSError, ValueError):
+        return []
+    lines = []
+    for name, points in series.items():
+        points = [(day, value) for day, value in points if value is not None and day >= start.strftime("%Y-%m-%d")]
+        if len(points) < 2:
+            continue
+        base = 1 + points[0][1]
+        lines.append({"name": f"{name} book", "x": [day for day, _ in points],
+                      "y": [round(100 * ((1 + value) / base - 1), 2) for _, value in points]})
+    return lines
+
+
 def usage_model_now() -> dict:
     try:
         from desk import usage_model
@@ -483,6 +504,8 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
             if len(prices):
                 twr.append({"name": name, "x": [ts.strftime("%Y-%m-%d") for ts in prices.index],
                             "y": (100 * (prices / prices.iloc[0] - 1)).round(2).tolist()})
+
+    twr += book_lines(index.index[0])
 
     from desk import reconcile
 
