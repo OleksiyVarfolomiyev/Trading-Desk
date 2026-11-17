@@ -286,8 +286,8 @@ const CHART_VIEWS = {
   performance: { kind: "grouped", label: "Account", series: ["D", "W", "M", "90d", "Since start"], by: "window" },
   accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
   exposure: { kind: "exposure", books: true, label: "Asset class", long: "Long", short: "Short", net: "Net" },
-  positions: { kind: "bars", label: "Symbol", value: "D", text: "uPnL" },   // today's move in the position's direction (as the highlights), the move on the entry beside it
-  positions_stocks: { kind: "bars", label: "Symbol", value: "D", text: "uPnL" },
+  positions: { kind: "bars", label: "Symbol", value: "uPnL", valueLabel: "ALL", text: "D", textLabel: "D" },
+  positions_stocks: { kind: "bars", label: "Symbol", value: "uPnL", valueLabel: "ALL", text: "D", textLabel: "D" },
   wallets: { kind: "bars", label: "Symbol", value: "% of desk", text: null },
   market_making: { kind: "bars", label: "Coin", value: "Return", text: null },
   strategies: { kind: "bookstack", label: "Strategy" },   // two bars, crypto and stocks, each stacked by strategy
@@ -365,17 +365,17 @@ function renderBarList(id, spec, plan, host) {
   const mixed = list.some((row) => row[plan.value] < 0) && list.some((row) => row[plan.value] > 0);
   const body = el("div", { class: "barlist" }, list.map((row) => {
     const value = row[plan.value], share = Math.min(Math.abs(value), cap) / biggest, kind = kindClass(id, row);
-    const label = String(row[plan.label] ?? ""), figures = [[plan.value, value], ...(plan.text ? [[plan.text, row[plan.text]]] : [])]
-      .filter(([, number]) => number !== null && number !== undefined && number !== "");
+    const label = String(row[plan.label] ?? ""), extra = plan.text ? row[plan.text] : null;
     const width = Math.max(2, share * (mixed ? 50 : 100));
     const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
-    const fig = el("span", { class: "bfig", style: mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)` }, [
-      ...(Math.abs(value) > cap ? [el("span", { text: "» " })] : []),
-      ...figures.flatMap(([key, number], index) => [
-        ...(index ? [el("span", { text: " · " })] : []),
-        el("span", { class: isNum(number) ? signClass(number) : "", text: text(key, number) }),
-      ]),
-    ]);
+    const inside = el("span", { class: "bfig bfig-inside " + signClass(value),
+      style: mixed ? (value < 0 ? "right:calc(50% + 4px);text-align:right" : "left:calc(50% + 4px)") : "left:4px" },
+      `${plan.valueLabel ? plan.valueLabel + " " : ""}${text(plan.value, value)}`);
+    const endStyle = mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)`;
+    const end = plan.text && isNum(extra) ? el("span", { class: "bfig", style: endStyle }, [
+      el("span", { class: signClass(extra), text: `${plan.textLabel ? plan.textLabel + " " : ""}${text(plan.text, extra)}` }),
+    ]) : null;
+    if (Math.abs(value) > cap) inside.prepend(el("span", { text: "» " }));
     const heldSide = (row.__raw && isNum(row.__raw.Value)) ? (row.__raw.Value < 0 ? "short" : "long") : null;   // colour by side, so no long or short word
     const name = el("button", { type: "button", class: "bname name-" + (heldSide || kind), text: friendlyName(label) });
     name.addEventListener("click", () => openAsset(label));
@@ -411,7 +411,7 @@ function renderBarList(id, spec, plan, host) {
       acts.append(b);
     }
     if (row.__link) acts.append(el("a", { class: "row-act symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", title: "Open its page", text: "↗" }));
-    const line = el("div", { class: "brow" + (notable ? " notable" : ""), title: notable || row.__hover || "" }, [name, el("span", { class: "btrack" }, [fill, fig]), acts]);
+    const line = el("div", { class: "brow" + (notable ? " notable" : ""), title: notable || row.__hover || "" }, [name, el("span", { class: "btrack" }, [fill, inside, end]), acts]);
     gestures(line, id in CANDIDATE_TABLES ? {
       dislike: () => { const s = candidateState(); s.refused[row.Coin] = Date.now(); saveCandidates(s); feedback("candidate", "refuse", row.Coin, id); if (lastSpecs[id]) renderTable(id, lastSpecs[id]); },
       like: () => { const s = candidateState(); if (!s.starred.includes(row.Coin)) s.starred.push(row.Coin); saveCandidates(s); feedback("candidate", "bookmark", row.Coin, id); if (lastSpecs[id]) renderTable(id, lastSpecs[id]); },
