@@ -77,7 +77,7 @@ def save(entries: list[dict], path: Path | None = None) -> None:
 
 
 def record_entry(wallet: str, coin: str, side: str, strategy: str, signals: dict | None = None,
-                 opened: str | None = None, path: Path | None = None) -> dict:
+                 opened: str | None = None, path: Path | None = None, thesis: str | None = None) -> dict:
     """Record (or re-tag) the open position in ``coin``: one open entry per wallet and coin.
 
     Adding to a position keeps its first entry time; a new strategy replaces the old tag.
@@ -91,11 +91,15 @@ def record_entry(wallet: str, coin: str, side: str, strategy: str, signals: dict
     if current is None:
         current = {"wallet": key[0], "coin": coin, "side": side.upper(), "strategy": strategy, "opened": now,
                    "signals": signals or {}, "closed": None}
+        if thesis:
+            current["thesis"] = thesis   # why the trade was opened, in the trader's words (the debrief starts from it)
         entries.append(current)
     else:
         current.update(strategy=strategy, side=side.upper())
         if signals:
             current["signals"] = signals
+        if thesis:
+            current["thesis"] = thesis
     save(entries, path)
     return current
 
