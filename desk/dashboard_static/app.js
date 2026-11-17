@@ -365,10 +365,17 @@ function renderBarList(id, spec, plan, host) {
   const mixed = list.some((row) => row[plan.value] < 0) && list.some((row) => row[plan.value] > 0);
   const body = el("div", { class: "barlist" }, list.map((row) => {
     const value = row[plan.value], share = Math.min(Math.abs(value), cap) / biggest, kind = kindClass(id, row);
-    const label = String(row[plan.label] ?? ""), figure = [text(plan.value, value), plan.text ? text(plan.text, row[plan.text]) : ""].filter(Boolean).join(" · ");
+    const label = String(row[plan.label] ?? ""), figures = [[plan.value, value], ...(plan.text ? [[plan.text, row[plan.text]]] : [])]
+      .filter(([, number]) => number !== null && number !== undefined && number !== "");
     const width = Math.max(2, share * (mixed ? 50 : 100));
     const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
-    const fig = el("span", { class: "bfig " + (value < 0 ? "neg" : "pos"), style: mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)` }, [(Math.abs(value) > cap ? "» " : "") + figure]);
+    const fig = el("span", { class: "bfig", style: mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)` }, [
+      ...(Math.abs(value) > cap ? [el("span", { text: "» " })] : []),
+      ...figures.flatMap(([key, number], index) => [
+        ...(index ? [el("span", { text: " · " })] : []),
+        el("span", { class: isNum(number) ? signClass(number) : "", text: text(key, number) }),
+      ]),
+    ]);
     const heldSide = (row.__raw && isNum(row.__raw.Value)) ? (row.__raw.Value < 0 ? "short" : "long") : null;   // colour by side, so no long or short word
     const name = el("button", { type: "button", class: "bname name-" + (heldSide || kind), text: friendlyName(label) });
     name.addEventListener("click", () => openAsset(label));
