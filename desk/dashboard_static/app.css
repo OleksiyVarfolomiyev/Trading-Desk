@@ -448,3 +448,9 @@ html.private td.digits { cursor: pointer; }
 .kind-run.kind-crypto { background: color-mix(in srgb, var(--kind-crypto) 14%, transparent); }
 .kind-run.kind-stocks { background: color-mix(in srgb, var(--kind-stocks) 14%, transparent); }
 .kind-run .kind { margin: 0 4px 0 2px; }
+/* Window tools appear only on hover or focus, everywhere (cards like the key-number tiles); the grip is not drawn, the
+   whole card drags. Touch screens, which cannot hover, keep the tools visible. */
+.card .card-tools { opacity: 0; transition: opacity .12s; }
+.card:hover .card-tools, .card:focus-within .card-tools, .card.card-full .card-tools { opacity: 1; }
+.card-grip { display: none; }
+@media (hover: none) { .card .card-tools, .tile-tools { opacity: 1; } }
