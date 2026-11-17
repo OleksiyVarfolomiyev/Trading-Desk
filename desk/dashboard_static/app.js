@@ -2010,8 +2010,10 @@ function parseCell(text) {   // "-1.8%", "$1.21K", "-$244" -> { value, kind }; "
   if (m[6]) return { value: number / 100, kind: "pct" };
   return m[2] ? { value: number, kind: "usd" } : { value: number, kind: "plain" };
 }
+const WINDOW_LETTERS = { "1D": "D", "7D": "W", "30D": "M", "90D": "Q", "1Y": "Y", "365D": "Y" };   // the desk's period letters
 function publishedTable(tile) {
-  const columns = tile.columns || [], rows = tile.rows || [];
+  const columns = tile.columns || [];
+  const rows = (tile.rows || []).map((row) => (row.Window in WINDOW_LETTERS ? Object.assign({}, row, { Window: WINDOW_LETTERS[row.Window] }) : row));
   const kinds = columns.map((column) => {
     const seen = new Set();
     for (const row of rows) { const cell = parseCell(row[column.key]); if (cell === null) return "text"; if (cell.kind) seen.add(cell.kind); }
@@ -2045,11 +2047,35 @@ function isReturnSeries(traces) {
 }
 function decoratePublishedTraces(traces, layout) {
   const colors = [1, 2, 3, 4, 5].map((i) => token("--series-" + i));
-  const copy = traces.map((trace) => Object.assign({}, trace, { x: decodeNumbers(trace.x), y: decodeNumbers(trace.y) }));
+  let copy = traces.map((trace) => Object.assign({}, trace, { x: decodeNumbers(trace.x), y: decodeNumbers(trace.y) }));
+  // The ahead and behind segments of "Picks added" are one line (two coloured halves that end where the other starts read as a stray line).
+  const ahead = copy.findIndex((t) => /^Picks added: ahead$/i.test(String(t.name))), behind = copy.findIndex((t) => /^Picks added: behind$/i.test(String(t.name)));
+  if (ahead >= 0 && behind >= 0) {
+    const y = copy[ahead].y.map((v, k) => (Number.isFinite(v) ? v : copy[behind].y[k])), last = [...y].reverse().find(Number.isFinite);
+    const good = token("--good-text") || token("--good"), bad = token("--bad-text") || token("--critical");
+    copy[ahead] = Object.assign({}, copy[ahead], { name: "Picks added", y, line: { color: last >= 0 ? good : bad, dash: "dot" } });
+    copy = copy.filter((_, k) => k !== behind);
+  }
+  // The book's own curve starts where it first moves (months of a flat line before its first position say nothing); every
+  // curve is cut there and rebased to 0%, so the benchmarks start level with the book.
+  const main = copy.find((t) => t.type === "scatter" && !BENCHMARK_NAME.test(String(t.name || "")));
+  if (main) {
+    const moved = main.y.findIndex((v, k) => k > 0 && Number.isFinite(v) && Math.abs(v - main.y[0]) > 1e-9);
+    const from = moved > 0 ? new Date(main.x[moved - 1]).getTime() : null;
+    if (from) copy = copy.map((trace) => {
+      const keep = trace.x.map((x, k) => (new Date(x).getTime() >= from ? k : -1)).filter((k) => k >= 0);
+      if (!keep.length) return trace;
+      const x = keep.map((k) => trace.x[k]), y = keep.map((k) => trace.y[k]);
+      if (trace.type !== "scatter") return Object.assign({}, trace, { x, y });
+      const base = 1 + (y.find(Number.isFinite) || 0) / 100;
+      return Object.assign({}, trace, { x, y: y.map((v) => (Number.isFinite(v) ? Math.round(10000 * ((1 + v / 100) / base - 1)) / 100 : v)) });
+    });
+  }
   copy.forEach((trace) => { if (trace.type === "scatter" && BENCHMARK_NAME.test(String(trace.name || ""))) trace.line = Object.assign({}, trace.line, { dash: "dot" }); });
   layout.showlegend = false;
   delete layout.legend;
-  layout.margin = Object.assign({}, layout.margin, { r: 112, t: 30 });
+  layout.margin = Object.assign({}, layout.margin, { r: 150, t: 30 });
+  if (layout.yaxis2) layout.yaxis2 = Object.assign({}, layout.yaxis2, { showticklabels: false, title: { text: "" } });   // the daily bars: the end labels own the right edge
   const lastAt = (trace) => { for (let k = trace.y.length - 1; k >= 0; k--) if (Number.isFinite(trace.y[k])) return k; return -1; };
   layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => trace.type === "scatter" && lastAt(trace) >= 0)
     .map(([trace, i]) => ({ x: trace.x[lastAt(trace)], y: trace.y[lastAt(trace)], xref: "x", yref: "y", showarrow: false, xanchor: "left", xshift: 6,

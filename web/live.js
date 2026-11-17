@@ -54,7 +54,17 @@
     }
     return response.json();
   }
-  const info = (body) => getJSON(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  // HL answers 429 when too many requests come from one address (several tabs, a busy minute): wait and ask again, up to three times.
+  const info = async (body) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await getJSON(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      } catch (error) {
+        if (attempt >= 3 || !/HTTP 429/.test(String(error.message))) throw error;
+        await new Promise((resume) => setTimeout(resume, 1500 * 2 ** attempt + Math.random() * 500));
+      }
+    }
+  };
   const relay = (path) => getJSON(CFG.relay.replace(/\/$/, "") + path, { cache: "no-store" });
   // The wallets, by their last four characters, as the relay lists them.
   async function listWallets() {
