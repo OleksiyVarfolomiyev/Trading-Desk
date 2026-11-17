@@ -175,7 +175,10 @@ const HL_PAGE = "https://app.hyperliquid.xyz/trade/";
 const hlLink = (market) => HL_PAGE + encodeURIComponent(String(market || "")).replace(/%3A/g, ":");
 const stockLink = (symbol) => "https://finance.yahoo.com/quote/" + encodeURIComponent(String(symbol || ""));
 const POSITION_VIEW = {
-  derive: (r) => ({ Symbol: marketName(r.Symbol) }),
+  // The 24h figure is the position's own move (a short whose price fell gained): the highlights' winners and losers, the
+  // chart's bars and this column are green and red together, and the total row (the book's gain) is in the same terms.
+  derive: (r) => ({ Symbol: marketName(r.Symbol),
+    "24h change (%)": r.Symbol && isNum(r["24h change (%)"]) && isNum(r.Value) && r.Value < 0 ? -r["24h change (%)"] : r["24h change (%)"] }),   // the total row has no symbol: it is already the book's gain
   size: (r) => Math.abs(r.Value),   // rows and bars run largest position first
   // A symbol opens its page: HL's trade page for an HL market, a quote page for an IB stock (as on HL).
   link: (r) => (/^IB/.test(String(r.Account || "")) ? stockLink(r.Symbol) : hlLink(r.Symbol)),
@@ -283,8 +286,8 @@ const CHART_VIEWS = {
   performance: { kind: "grouped", label: "Account", series: ["D", "W", "M", "90d", "Since start"], by: "window" },
   accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
   exposure: { kind: "exposure", books: true, label: "Asset class", long: "Long", short: "Short", net: "Net" },
-  positions: { kind: "bars", label: "Symbol", value: "uPnL", text: null },   // the price move on the entry
-  positions_stocks: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
+  positions: { kind: "bars", label: "Symbol", value: "D", text: "uPnL" },   // today's move in the position's direction (as the highlights), the move on the entry beside it
+  positions_stocks: { kind: "bars", label: "Symbol", value: "D", text: "uPnL" },
   wallets: { kind: "bars", label: "Symbol", value: "% of desk", text: null },
   market_making: { kind: "bars", label: "Coin", value: "Return", text: null },
   strategies: { kind: "bookstack", label: "Strategy" },   // two bars, crypto and stocks, each stacked by strategy
