@@ -629,3 +629,7 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .card-resize-x:hover::after { opacity: .8; }
 /* The highlights card is the left column's news, not a banner across the top. */
 #content > .highlights-card, #columns .highlights-card { column-span: none; width: 100%; }
+/* The + asset field and the strip's hide button show only while the pointer is on the strip (or the field has focus). */
+.ticker .tick-add, .ticker .tick-hide { opacity: 0; transition: opacity .12s; }
+.ticker:hover .tick-add, .ticker:hover .tick-hide, .ticker:focus-within .tick-add, .ticker:focus-within .tick-hide { opacity: 1; }
+@media (hover: none) { .ticker .tick-add, .ticker .tick-hide { opacity: 1; } }
