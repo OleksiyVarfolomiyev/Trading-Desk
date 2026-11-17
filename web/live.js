@@ -946,8 +946,8 @@
       const total = ratio(tradePositions);
       [[well, (r) => r >= 0], [attention, (r) => r < 0]].forEach(([list, side]) => {
         const parts = venues.filter(([, r]) => side(r)).map(([name, r]) => `${name} ${percent(r, true)}`);
-        if (fin(total) && side(total)) parts.unshift(`all positions ${percent(total, true)}`);  // not the desk value: open positions only
-        if (parts.length) list.push(["uPnL", parts.join(", ") + "."]);
+        if (fin(total) && side(total)) parts.unshift(percent(total, true));  // all open positions first; the books follow in their colour
+        if (parts.length) list.push(["uPnL", parts.join(" ")]);
       });
       const mover = (p) => `${p.symbol} ${fin(share(p)) ? percent(share(p), true) : "n/a"}`;
       const winnerParts = [], loserParts = [];

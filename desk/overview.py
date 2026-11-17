@@ -802,9 +802,9 @@ class DeskOverview:
             for rows, side in ((well, lambda r: r >= 0), (attention, lambda r: r < 0)):
                 parts = [f"{name} {percent(r, signed=True)}" for name, r in venues if side(r)]
                 if math.isfinite(total) and side(total):
-                    parts.insert(0, f"all positions {percent(total, signed=True)}")  # open positions, not desk value
+                    parts.insert(0, percent(total, signed=True))  # all open positions first; the books follow in their colour
                 if parts:
-                    rows.append(("uPnL", ", ".join(parts) + "."))
+                    rows.append(("uPnL", " ".join(parts)))
             def mover(position):
                 # The % is unrealized PnL over the position's entry value, as in the movers table.
                 share = _pnl_share(position)

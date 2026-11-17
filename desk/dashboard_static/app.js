@@ -658,7 +658,9 @@ function renderHighlights(id, rows, hover = {}) {
     return;
   }
   const rank = { critical: 0, watch: 1, "": 2 };
-  const ordered = shown.map(([area, text]) => [area, text, severity(area, text)])
+  // A dashboard line, not a sentence: one trailing period goes (several sentences keep theirs)
+  const tidy = (text) => (/\.\s+\S/.test(String(text)) ? String(text) : String(text).replace(/\.\s*$/, ""));
+  const ordered = shown.map(([area, text]) => [area, tidy(text), severity(area, text)])
     .sort((a, b) => rank[a[2]] - rank[b[2]]);  // stable: same-level rows keep their order
   const foot = folded.length ? [el("li", {}, [el("button", { type: "button", class: "quiet-toggle", title: "Areas you have dismissed several times: " + [...new Set(folded.map((r) => r[0]))].join(", "),
     text: open ? "hide quiet" : `${folded.length} quiet`, onclick: null })])] : [];
