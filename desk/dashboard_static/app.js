@@ -2075,6 +2075,9 @@ function openMoreMenu(card, button) {
 
 function saveOrder() {
   const state = layoutState(), content = document.getElementById("content"), cols = currentColumns(content);
+  // Every arrangement is kept (the last 12), so the one before can be brought back from the menu.
+  const last = (state.history || [])[0];
+  if (!last || JSON.stringify(last.cols) !== JSON.stringify(cols)) state.history = [{ at: Date.now(), cols }].concat(state.history || []).slice(0, 12);
   state.cols = Object.assign({}, state.cols, { [cols.length]: cols });
   state.order = cols.flat();   // column after column: the fallback for a screen width not arranged yet
   saveLayout(state);
@@ -2278,8 +2281,22 @@ function menuFooter() {
     restore.addEventListener("click", () => { saveHighlightState({ read: {}, deleted: [] }); feedback("highlight", "restore", "all"); redrawHighlights(); });
     out.push(restore);
   }
+  const history = layoutState().history || [];
+  const undo = history.length > 1 ? el("button", { type: "button", class: "sections-reset", text: "Undo last arrangement" }) : null;
+  if (undo) undo.addEventListener("click", () => {   // the arrangement before this one
+    const state = layoutState(), previous = state.history[1];
+    state.history = state.history.slice(1);
+    state.cols = Object.assign({}, state.cols, { [previous.cols.length]: previous.cols });
+    state.order = previous.cols.flat();
+    saveLayout(state);
+    feedback("section", "undo arrangement", "layout");
+    buildColumns(document.getElementById("content"), previous.cols);
+    if (latest && latest.data) renderCharts(latest.data.charts);
+    drawSectionsMenu();
+  });
   const reset = el("button", { type: "button", class: "sections-reset", text: "Reset layout" });
   reset.addEventListener("click", () => { try { localStorage.removeItem(LAYOUT_KEY); } catch (e) {} location.reload(); });
+  if (undo) out.push(undo);
   out.push(reset);
   return out;
 }
