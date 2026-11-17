@@ -108,3 +108,45 @@ def model_tables(dependent: pd.Series, factors: pd.DataFrame, periods: int) -> t
              "t": check["oos_t"], "R²": np.nan, "Verdict": verdict(check["oos_alpha"], check["oos_t"])}]
     rolling = rolling_betas(dependent, factors, ROLLING_DAYS, ROLLING_DAYS - 5)
     return betas, pd.DataFrame(rows), rolling
+
+
+# A few models of the same returns, as portfolio_analytics.ipynb has: the market alone, the market and what the book
+# tilts to, and the full set. Each is fit on the book's actual days (not a hypothetical portfolio).
+MODELS = {
+    "Crypto": {"Market (BTC)": ["BTC"], "Market + alts": ["BTC", "Alts - BTC"], "Full": ["BTC", "Alts - BTC", "BTC momentum"]},
+    "Stocks": {"Market (SPY)": ["SPY"], "Market + growth": ["SPY", "Growth (QQQ - SPY)"],
+               "Full": ["SPY", "Growth (QQQ - SPY)", "Small caps (IWM - SPY)", "Semis (SMH - SPY)"]},
+}
+
+
+def model_comparison(dependent: pd.Series, factors: pd.DataFrame, periods: int, models: dict[str, list[str]]) -> pd.DataFrame:
+    """One row per model: how much of the book it explains and the alpha left, split-sample checked."""
+    rows = []
+    for name, columns in models.items():
+        columns = [c for c in columns if c in factors.columns]
+        if not columns:
+            continue
+        whole = fit(dependent, factors[columns], periods)
+        check = validate(dependent, factors[columns], periods)
+        rows.append({"Model": name, "Factors": len(columns), "R²": whole["r2"], "Alpha (/yr)": whole["alpha"],
+                     "Alpha t": whole["alpha_t"], "Out-of-sample alpha (/yr)": check["oos_alpha"],
+                     "Out-of-sample t": check["oos_t"], "Verdict": verdict(check["oos_alpha"], check["oos_t"])})
+    return pd.DataFrame(rows)
+
+
+def attribution(dependent: pd.Series, factors: pd.DataFrame, periods: int) -> pd.DataFrame:
+    """Daily return split into what each factor explains (its beta times its return) and the specific part (alpha plus
+    the residual), on the days both exist. Columns: each factor, "Specific", "Total"; they add up."""
+    data = pd.concat([dependent.rename("y"), factors], axis=1, sort=True).dropna()
+    whole = fit(data["y"], data[factors.columns], periods)
+    parts = pd.DataFrame({name: data[name] * whole["betas"][name] for name in factors.columns})
+    parts["Specific"] = data["y"] - parts.sum(axis=1)
+    parts["Total"] = data["y"]
+    return parts
+
+
+def cumulative_attribution(parts: pd.DataFrame) -> pd.DataFrame:
+    """The attribution compounded over time as a running sum of daily return shares (they add up to the total's)."""
+    out = pd.DataFrame({"Total": parts["Total"].cumsum(), "Specific": parts["Specific"].cumsum()})
+    out["Factors"] = out["Total"] - out["Specific"]
+    return out[["Total", "Factors", "Specific"]]

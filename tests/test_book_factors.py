@@ -33,3 +33,27 @@ class BookFactorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModelsAndAttribution(unittest.TestCase):
+    def data(self):
+        import numpy as np
+        import pandas as pd
+
+        rng = np.random.default_rng(3)
+        index = pd.date_range("2026-01-01", periods=200, tz="UTC")
+        factors = pd.DataFrame({"BTC": 0.02 * rng.standard_normal(200), "Alts - BTC": 0.01 * rng.standard_normal(200)}, index=index)
+        book = 0.8 * factors["BTC"] - 0.5 * factors["Alts - BTC"] + 0.001 + 0.002 * rng.standard_normal(200)
+        return book, factors
+
+    def test_attribution_adds_up_and_comparison_lists_each_model(self):
+        from desk import book_factors
+
+        book, factors = self.data()
+        parts = book_factors.attribution(book, factors, 365)
+        self.assertTrue(((parts[["BTC", "Alts - BTC", "Specific"]].sum(axis=1) - parts["Total"]).abs() < 1e-12).all())
+        cumulative = book_factors.cumulative_attribution(parts)
+        self.assertAlmostEqual(cumulative["Factors"].iloc[-1] + cumulative["Specific"].iloc[-1], cumulative["Total"].iloc[-1])
+        table = book_factors.model_comparison(book, factors, 365, {"Market": ["BTC"], "Market + alts": ["BTC", "Alts - BTC"]})
+        self.assertEqual(list(table["Model"]), ["Market", "Market + alts"])
+        self.assertGreater(table["R²"].iloc[1], table["R²"].iloc[0])   # the alt factor explains more of this book

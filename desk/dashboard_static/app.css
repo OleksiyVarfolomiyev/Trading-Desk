@@ -707,7 +707,10 @@ th { text-align: center; }
   .tile .tile-tools, .tile .card-foot, .tile:hover .tile-tools, .tile:hover .card-foot, .tile:focus-within .tile-tools { opacity: 0; pointer-events: none; }
 }
 
-.period-chips { opacity: 1; display: flex; justify-content: flex-end; margin: 0 0 2px; }
+.period-chips { position: relative; z-index: 5; display: flex; justify-content: flex-end; height: 0; margin: 0; overflow: visible; opacity: 0; transition: opacity .12s; }   /* D W M Y ALL float over the chart's corner on hover: no row of their own taking the tile's height */
+.period-chips .scale-chip { transform: translateY(4px); }
+.card:hover .period-chips, .period-chips:focus-within { opacity: 1; }
+@media (hover: none) { .period-chips { opacity: 1; } }
 
 /* Trade bar: asset, side, label, plan */
 .trade-bar { display: inline-flex; gap: 4px; align-items: center; }

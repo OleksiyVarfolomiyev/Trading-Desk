@@ -1043,6 +1043,95 @@ def _pct_plain(value) -> str:
 Book.show_factor_model = show_factor_model
 
 
+def _factor_sample(book: "Book"):
+    """(returns, factors, periods) on the book's active days, or None (with the reason printed) when too few."""
+    from desk import book_factors
+
+    returns, factors, periods = _factor_inputs(book)
+    sample = pd.concat([returns, factors], axis=1, sort=True).dropna().index
+    if len(sample) < book_factors.MIN_DAYS:
+        print(f"{len(sample)} active days: too few for a factor model, which needs {book_factors.MIN_DAYS}.")
+        return None
+    return returns, factors, periods
+
+
+def show_factor_models(book: "Book"):
+    """A few models of the book's actual returns side by side (the market alone, plus what it tilts to, the full set):
+    what each explains and the alpha left, checked out of sample."""
+    from desk import book_factors
+
+    inputs = _factor_sample(book)
+    if inputs is None:
+        return
+    returns, factors, periods = inputs
+    table = book_factors.model_comparison(returns, factors, periods, book_factors.MODELS[book.kind])
+    pct_cell = lambda v: "" if not np.isfinite(v) else _pct_plain(v)
+    num = lambda v: "" if not np.isfinite(v) else f"{v:.2f}"
+    book._table(table.fillna({"Verdict": ""}), "FACTOR MODELS",
+                {"R²": num, "Alpha (/yr)": pct_cell, "Alpha t": lambda v: "" if not np.isfinite(v) else f"{v:.1f}",
+                 "Out-of-sample alpha (/yr)": pct_cell, "Out-of-sample t": lambda v: "" if not np.isfinite(v) else f"{v:.1f}"},
+                key={"Out-of-sample alpha (/yr)": None})
+
+
+def show_return_attribution(book: "Book"):
+    """The book's cumulative return split into what the factors explain and the specific part (alpha and residual)."""
+    import plotly.graph_objects as go
+
+    from desk import book_factors
+
+    inputs = _factor_sample(book)
+    if inputs is None:
+        return
+    returns, factors, periods = inputs
+    total = book_factors.cumulative_attribution(book_factors.attribution(returns, factors, periods))
+    path = 100 * total
+    figure = go.Figure()
+    for name, color in (("Total", "#e5e7eb"), ("Factors", "#2563eb"), ("Specific", "#16a34a")):
+        figure.add_trace(go.Scatter(x=path.index, y=path[name], name=name, line={"color": color, "width": 2}))
+    figure.update_layout(title=f"{book.kind} return: factors vs specific (%, since {_since(path.index[0])})", template="plotly_dark",
+                         hovermode="x unified", yaxis_ticksuffix="%")
+    show_chart(figure)
+
+
+def show_rolling_betas(book: "Book"):
+    """The book's betas to its factors over a rolling window."""
+    import plotly.graph_objects as go
+
+    from desk import book_factors
+
+    inputs = _factor_sample(book)
+    if inputs is None:
+        return
+    returns, factors, periods = inputs
+    _, _, rolling = book_factors.model_tables(returns, factors, periods)
+    if rolling.empty:
+        print("Not enough days for rolling betas yet.")
+        return
+    figure = go.Figure([go.Scatter(x=rolling.index, y=rolling[c], name=c) for c in rolling.columns])
+    figure.update_layout(title=f"{book.kind} rolling {book_factors.ROLLING_DAYS}-day betas", template="plotly_dark", hovermode="x unified")
+    show_chart(figure)
+
+
+def show_alpha_check(book: "Book"):
+    """Alpha in and out of sample: the model fit on the first half, its betas carried into the second."""
+    from desk import book_factors
+
+    inputs = _factor_sample(book)
+    if inputs is None:
+        return
+    returns, factors, periods = inputs
+    _, check, _ = book_factors.model_tables(returns, factors, periods)
+    check_fmt = {"Alpha (/yr)": _pct_plain, "t": lambda v: "" if not np.isfinite(v) else f"{v:.1f}",
+                 "R²": lambda v: "" if not np.isfinite(v) else f"{v:.2f}", "Days": "{:.0f}".format}
+    book._table(check.fillna({"Verdict": ""}), "ALPHA IN AND OUT OF SAMPLE", check_fmt, key={"Alpha (/yr)": None})
+
+
+Book.show_factor_models = show_factor_models
+Book.show_return_attribution = show_return_attribution
+Book.show_rolling_betas = show_rolling_betas
+Book.show_alpha_check = show_alpha_check
+
+
 # ----------------------------------------------------------------------------------------------------------------
 # Picks against trading the benchmark itself
 # ----------------------------------------------------------------------------------------------------------------

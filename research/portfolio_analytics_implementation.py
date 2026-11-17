@@ -1539,10 +1539,19 @@ class _FactorModelMixin(_TableStyleMixin):
         for ticker in (self.assets if assets is None else assets):
             if ticker not in self.perp_asset_dex:
                 continue
-            history=fetch_funding_history(
-                ticker.split(':')[-1],self.perp_asset_dex[ticker],start_time=start,allow_empty=True
-            )
-            if not history.empty:
+            history=None
+            for attempt in range(4):   # HL answers 429 when many requests come at once: wait and ask again, then go on without the coin
+                try:
+                    history=fetch_funding_history(
+                        ticker.split(':')[-1],self.perp_asset_dex[ticker],start_time=start,allow_empty=True
+                    )
+                    break
+                except RuntimeError as exc:
+                    if '429' not in str(exc) or attempt == 3:
+                        print(f'{ticker}: funding history unavailable ({exc}); left out of the funding signal.')
+                        break
+                    time.sleep(5*(attempt+1))
+            if history is not None and not history.empty:
                 daily[ticker]=history.set_index('time')['fundingRate'].resample('1D').sum()
         daily=pd.DataFrame(daily)
         signal=daily.rolling(7,min_periods=3).mean().shift(1)
