@@ -176,6 +176,7 @@ const hlLink = (market) => HL_PAGE + encodeURIComponent(String(market || "")).re
 const stockLink = (symbol) => "https://finance.yahoo.com/quote/" + encodeURIComponent(String(symbol || ""));
 const POSITION_VIEW = {
   derive: (r) => ({ Symbol: marketName(r.Symbol) }),
+  size: (r) => Math.abs(r.Value),   // rows and bars run largest position first
   // A symbol opens its page: HL's trade page for an HL market, a quote page for an IB stock (as on HL).
   link: (r) => (/^IB/.test(String(r.Account || "")) ? stockLink(r.Symbol) : hlLink(r.Symbol)),
   // No Side column: Value is signed and coloured (shorts negative, red), which already says the side.
@@ -261,6 +262,7 @@ function applyView(id, spec, context) {
     columnsFor(view).forEach(([from, name]) => { out[name || from] = full[from]; });
     if (view.hover) out.__hover = view.hover(row);
     if (view.link) out.__link = view.link(row);
+    if (view.size) out.__size = view.size(full);
     return out;
   };
   // Derived fields start with _; an aligned table keeps every column, present in its data or not.
@@ -433,8 +435,9 @@ function renderTableChart(id, spec, override) {
       showlegend: false, margin: { r: 90 } };
     height = Math.max(180, rows.length * 44 + 80);
   } else {  // one bar per row, green above zero, red below, ordered by size
+    const bySize = rows.some((row) => isNum(row.__size));
     const order = rows.map((row, index) => index).filter((index) => isNum(rows[index][plan.value]))
-      .sort((a, b) => Math.abs(rows[b][plan.value]) - Math.abs(rows[a][plan.value]));
+      .sort((a, b) => bySize ? (rows[b].__size || 0) - (rows[a].__size || 0) : Math.abs(rows[b][plan.value]) - Math.abs(rows[a][plan.value]));
     const axis = chartAxis(formatOf(plan.value));
     // One holding can dwarf the rest (a $2K token among dust): a bar is drawn at most BAR_CAP times the second largest,
     // marked "»" with its true value in the label, so the small ones stay readable.
@@ -563,6 +566,7 @@ function renderTable(id, spec) {
   }
   const state = sortState[id];
   let rows = spec.rows.slice();
+  if (!state && rows.some((row) => isNum(row.__size))) rows.sort((a, b) => (b.__size || 0) - (a.__size || 0));   // largest position first
   if (id in CANDIDATE_TABLES) {
     const s = candidateState(), week = 7 * 86400000;
     rows = rows.filter((row) => !(s.refused[row.Coin] && Date.now() - s.refused[row.Coin] < week));
