@@ -409,6 +409,7 @@
   // Scenario stress (desk/stress.py): what a correlated shock would cost the whole desk, no stop assumed to help.
   const STRESS_WARN = 0.25, STRESS_BLOCK = 0.35;
   const STRESS = { "alt rally": { alt: 0.25, major: 0.10 }, "equity sell-off": { equity: -0.10 } };
+  const STRESS_TILE = { ...STRESS, "crypto sell-off": { major: -0.10, alt: -0.25 } };
   const STRESS_MAJORS = new Set(["BTC", "ETH", "WBTC", "CBBTC", "WETH", "CBETH", "STETH", "WSTETH"]);
   const STRESS_STABLES = new Set(["USDC", "USDT", "USDE", "DAI", "USDH", "USDBC", "EURC", "GHO", "PYUSD", "FDUSD", "USDS", "SUSDE"]);
   const STRESS_COMMODITIES = new Set(["GOLD", "SILVER", "BRENTOIL", "WTIOIL", "OIL", "CL", "COPPER", "NATGAS", "PLATINUM", "PALLADIUM", "URANIUM", "PAXG", "XAUT"]);
@@ -1203,6 +1204,8 @@
         trading_equity: tradingEquity, wallet_value: walletValue, unrealized, unrealized_share: gross ? unrealized / gross : NaN,
         gross, net, gross_leverage: tradingEquity ? gross / tradingEquity : NaN, net_leverage: tradingEquity ? net / tradingEquity : NaN,
         positions: tradePositions.length,
+        stress: Object.fromEntries(Object.entries(STRESS_TILE).map(([name, shocks]) => [name,
+          deskEquity > 0 ? sum(positionRows.map((r) => (fin(r.Value) ? r.Value * (shocks[stressKind(r["Asset class"], r.Symbol)] || 0) : 0))) / deskEquity : NaN])),
         // The whole desk, wallets included (``headline``); the money-weighted PnL stays HL + IB, since the
         // wallets have no deposit record.
         returns: { since_start: headline.returns.since_start, "7D": headline.returns["7D"], "30D": headline.returns["30D"],
@@ -1230,6 +1233,8 @@
         return out;
       })(),
       horizon_days: research && research.horizon_days,
+      theses: (research && research.theses) || [],
+      execution: (research && research.execution) || {},
       usage_model: usageModel,
       tiles: ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now()),
       charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [] },

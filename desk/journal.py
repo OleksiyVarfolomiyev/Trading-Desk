@@ -352,6 +352,19 @@ def overdue(entries: list[dict], open_positions: set[tuple[str, str]], now: floa
     return rows
 
 
+def thesis_rows(entries: list[dict], open_positions: set[tuple[str, str]], now: float | None = None) -> list[dict]:
+    """The thesis clock: each open trade's coin, side, days held and the thesis written at entry ("" where none)."""
+    now = time.time() if now is None else now
+    rows = []
+    for item in entries:
+        if item.get("closed") or (item["wallet"], item["coin"]) not in open_positions or not item.get("opened"):
+            continue
+        days = (now - pd.Timestamp(item["opened"], tz="UTC").timestamp()) / 86400
+        rows.append({"coin": item["coin"], "side": item["side"], "days": round(days, 1),
+                     "strategy": item.get("strategy"), "thesis": item.get("thesis") or ""})
+    return sorted(rows, key=lambda row: -row["days"])
+
+
 def show_strategies(desk_value: float) -> None:
     """The strategies table for the notebooks: each strategy's PnL as a share of desk value."""
     from desk.hl.account_analytics import display_interactive_table

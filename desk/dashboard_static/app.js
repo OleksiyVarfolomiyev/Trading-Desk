@@ -800,7 +800,7 @@ function dayChangeLine(day) {
   };
 }
 
-function renderTiles(k) {
+function renderTiles(k, theses = [], execution = {}) {
   const r = k.returns || {};
   const mw = k.money_weighted || {};
   const times = (value) => (isNum(value) ? `${Number(value.toFixed(2))}x` : "n/a");   // 1.6x, 1.33x: no trailing zeros
@@ -841,6 +841,27 @@ function renderTiles(k) {
       return tile("risk", word, "", { key: "Risk", valueClass: used > 1 ? "neg" : "",
         title: isNum(risk) ? `Open risk ${pct(risk)} of equity against the 33% cap` : "" });
     })(),
+    (() => {   // the worst of the shocks the book is priced against (alt rally, equity sell-off, crypto sell-off), on hover all
+      const rows = Object.entries(k.stress || {}).filter(([, v]) => isNum(v)).sort((a, b) => a[1] - b[1]);
+      if (!rows.length) return tile("stress", "n/a", "", { key: "Stress" });
+      const [name, worst] = rows[0];
+      return tile("stress", pct(worst, 1, true), name, { key: "Stress", valueClass: worst <= -0.25 ? "neg" : "",
+        title: rows.map(([n, v]) => `${n} ${pct(v, 1, true)}`).join("\n") });
+    })(),
+    (() => {   // the thesis clock: how long the open trades have been held, each with the thesis it was opened on
+      const rows = theses || [];
+      if (!rows.length) return tile("held", "n/a", "", { key: "Held" });
+      const days = rows.map((r) => r.days).sort((a, b) => a - b), median = days[Math.floor(days.length / 2)];
+      const bare = rows.filter((r) => !r.thesis).length;
+      return tile("held", `${Math.round(median)}d`, bare ? `${bare} without thesis` : "", { key: "Held", valueClass: "",
+        title: rows.map((r) => `${r.coin} ${String(r.side).toLowerCase()} ${Math.round(r.days)}d: ${r.thesis || "no thesis written"}`).join("\n") });
+    })(),
+    (() => {   // execution quality: the share of traded money that rested on the book (maker), fees on hover
+      const e = execution || {};
+      if (!isNum(e.maker_share)) return tile("maker", "n/a", "", { key: "Maker" });
+      return tile("maker", pct(e.maker_share), `${e.fee_bps.toFixed(1)} bp fees`, { key: "Maker",
+        title: `${pct(e.maker_share)} of ${usd(e.notional)} traded in ${e.days} days rested as maker\nfees ${usd(e.fees)}; taking cost ${usd(e.taker_excess)} more than the maker rate` });
+    })(),
     tile("gross", times(k.gross_leverage), isNum(k.net_leverage) ? `${times(k.net_leverage)} net` : "",
       { key: "Gross leverage" }),
     tile("", wholeUsd(k.desk_value), "", { key: "Desk value" }),
@@ -856,12 +877,18 @@ function renderTiles(k) {
 }
 // The key-number tiles are windows too: drag one onto another to swap, minimize to label and value, save as an image, hide
 // (the Sections menu brings hidden ones back). Order, minimized and hidden are remembered with the layout.
-const EXTRA_TILES = ["Return 30D", "MW return", "TW return", "Positions"];
+const EXTRA_TILES = ["Return 30D", "MW return", "TW return", "Positions", "Stress", "Held", "Maker"];
 function arrangeTiles(host, tiles) {
   let state = layoutState();
   if (!state.tileExtras) {   // the extra key numbers start hidden, once per browser
     state.tileHidden = [...new Set([...(state.tileHidden || []), ...EXTRA_TILES])];
     state.tileExtras = true;
+    saveLayout(state);
+    state = layoutState();
+  }
+  if (!state.stressTile) {   // the stress tile arrived later: hidden until added, once per browser
+    state.tileHidden = [...new Set([...(state.tileHidden || []), "Stress", "Held", "Maker"])];
+    state.stressTile = true;
     saveLayout(state);
     state = layoutState();
   }
@@ -933,7 +960,7 @@ function arrangeTiles(host, tiles) {
       const row = el("button", { type: "button", class: "sections-row tile-pick" }, [el("b", { text: tile.querySelector(".value").textContent }),
         el("span", { text: tile.querySelector(".label").textContent || label })]);
       row.addEventListener("click", () => { remember((s) => { s.tileHidden = (s.tileHidden || []).filter((x) => x !== label); }); feedback("tile", "add", label);
-        if (latest && latest.data) renderTiles(latest.data.kpis || {}); });
+        if (latest && latest.data) renderTiles(latest.data.kpis || {}, latest.data.theses, latest.data.execution); });
       return row;
     }) : [el("div", { class: "sections-empty", text: "All shown" })]);
     plus.after(menu);
@@ -1251,7 +1278,7 @@ function render(doc) {
   renderAccountStatus(data.accounts_status, now);
   if (lastRendered === doc.status.last_ok) return;   // same data: keep tables, sort and hover as they are
   lastRendered = doc.status.last_ok;
-  renderTiles(data.kpis || {});
+  renderTiles(data.kpis || {}, data.theses, data.execution);
   const hover = (data.highlights && data.highlights.hover) || {};  // headlines around a big move, per alert title
   renderHighlights("hl-well", data.highlights && data.highlights.well, hover);
   renderHighlights("hl-attention", data.highlights && data.highlights.attention, hover);
@@ -1340,7 +1367,7 @@ function setScale(element, scale) {
   try { localStorage.setItem("desk-scales", JSON.stringify(scaleChoices)); } catch (e) {}
   feedback("look", "scale " + element, scaleChoices[element]);
   if (!latest || !latest.data) return;
-  if (element === "tile" || element === "upnl") renderTiles(latest.data.kpis || {});
+  if (element === "tile" || element === "upnl") renderTiles(latest.data.kpis || {}, latest.data.theses, latest.data.execution);
   else if (element === "candidates") { renderTable("candidates", applyView("candidates", latest.data.tables.candidates, {})); drawChartScales(); }
   else if (element === "performance") { renderTable("performance", applyView("performance", latest.data.tables.performance, { deskValue: (latest.data.kpis || {}).desk_value })); drawChartScales(); }
   else { zoomCharts(); drawChartScales(); }
@@ -2581,7 +2608,7 @@ function fillMenuLists() {
   (layoutState().tileHidden || []).filter(menuMatches).forEach((label) => {
     const add = el("button", { type: "button", class: "sections-add", title: "Show " + label, "aria-label": "Show " + label, text: "+" });
     add.addEventListener("click", () => { const s = layoutState(); s.tileHidden = (s.tileHidden || []).filter((x) => x !== label); saveLayout(s);
-      feedback("tile", "show", label); if (latest && latest.data) renderTiles(latest.data.kpis || {}); drawSectionsMenu(); });
+      feedback("tile", "show", label); if (latest && latest.data) renderTiles(latest.data.kpis || {}, latest.data.theses, latest.data.execution); drawSectionsMenu(); });
     addable.push(el("div", { class: "sections-row" }, [el("span", { text: label + " (key number)" }), add]));
   });
   const pulled = new Set([...document.querySelectorAll(".feed .card[data-published]")].map((card) => card.dataset.published));

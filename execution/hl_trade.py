@@ -2739,7 +2739,7 @@ def run_position_reconciliation(
                 try:  # the journal tags the position with its strategy; it never blocks a trade
                     from desk import journal
 
-                    journal.record_entry(wallet, coin, plan.side, plan.action.strategy)
+                    journal.record_entry(wallet, coin, plan.side, plan.action.strategy, thesis=PENDING_THESIS)
                 except Exception as exc:
                     print(f"{coin}: the journal entry was not saved ({type(exc).__name__}: {exc}).")
             elif plan.quantity_delta < 0 and urgent:
@@ -3046,7 +3046,7 @@ def execute_plans(
             try:  # the journal tags the position with its strategy; it never blocks a trade
                 from desk import journal
 
-                journal.record_entry(wallet, plan.coin, plan.side, plan.strategy)
+                journal.record_entry(wallet, plan.coin, plan.side, plan.strategy, thesis=PENDING_THESIS)
             except Exception as exc:
                 print(f"{plan.coin}: the journal entry was not saved ({type(exc).__name__}: {exc}).")
             if plan.conviction:
@@ -3258,6 +3258,9 @@ def urgent_fees(snapshot: AccountSnapshot, urgent: bool) -> AccountSnapshot:
     from dataclasses import replace
 
     return replace(snapshot, maker_fee_rate=snapshot.taker_fee_rate) if urgent else snapshot
+
+
+PENDING_THESIS: str | None = None   # the daemon sets it for a run: why the trade is opened, written to the journal entry
 
 
 def main(argv: list[str] | None = None) -> int:

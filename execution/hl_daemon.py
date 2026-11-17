@@ -1150,6 +1150,12 @@ class Alerts:
             self.dirty = True
         if not old:
             log(f"ALERT {title}: {text}")
+            try:   # a new alert goes to the phone when DESK_PUSH_URL is set (desk/push.py)
+                from desk import push
+
+                push.send(title, daemon_link.mask(text))
+            except Exception:
+                pass
 
     def clear(self, key: str) -> None:
         with self.lock:
@@ -3052,6 +3058,13 @@ class ResearchFeed:
         strategies = json.loads(frame.to_json(orient="records")) + [json.loads(pd.Series(journal.total_row(frame)).to_json())]
         overdue = [{"wallet": item["wallet"], "coin": item["coin"], "side": item["side"], "days": round(item["days"], 1)}
                    for item in journal.overdue(journal.load(), open_pairs)]
+        theses = journal.thesis_rows(journal.load(), open_pairs)
+        try:
+            from desk import execution_quality
+            quality = execution_quality.desk_summary()
+        except Exception as exc:
+            log(f"execution quality failed ({type(exc).__name__}: {exc})")
+            quality = {}
         exposures = [(("tradfi perp" if position.dex and position.dex != "hyna" else "crypto perp"), position.coin,
                       position.quantity * position.mark_price) for position in snapshot.positions]
         exposures += stress.desk_exposures(book) if book is not None else []
@@ -3069,7 +3082,7 @@ class ResearchFeed:
             log(f"screener not refreshed ({type(exc).__name__}: {exc})")
             screen = screener.load()
         payload = {"as_of": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()), "strategies": strategies,
-                   "overdue": overdue, "screener": screen, "horizon_days": journal.horizon_days()}
+                   "overdue": overdue, "theses": theses, "execution": quality, "screener": screen, "horizon_days": journal.horizon_days()}
         if self.path is not None:
             self.path.write_text(json.dumps(payload, indent=1))
         try:
@@ -3492,6 +3505,7 @@ class Daemon:
             return 2
         cap = request.get("max_risk_pct")
         saved_cap = ht.MAX_TOTAL_RISK_PCT
+        ht.PENDING_THESIS = (request.get("thesis") or "").strip() or None   # journalled with the entry
         try:
             if cap is not None:
                 if not 0 < float(cap) <= ht.MAX_RISK_PCT_OVERRIDE_LIMIT:
@@ -3568,6 +3582,7 @@ class Daemon:
             return 0
         finally:
             ht.MAX_TOTAL_RISK_PCT = saved_cap
+            ht.PENDING_THESIS = None
 
     def _refresh_guards(self, wallet: str, plans: list) -> None:
         """After a resize or close, rebuild a guarded coin's guard from its new stop and take-profit."""
@@ -3839,6 +3854,7 @@ def main(argv: list[str] | None = None) -> int:
                        help="post-only limit re-priced every 2s until fully filled (stops if the price runs away)")
     trade.add_argument("--strategy", choices=("directional", "hedge"), default="directional",
                        help="the journal's tag for the position (--conviction tags it conviction)")
+    trade.add_argument("--thesis", help="why the trade is opened, in a sentence: written to the journal and shown on the thesis tile")
     trade.add_argument("--conviction", action="store_true",
                        help="high-conviction entry: no stop, take-profit or loss guard, sized by --conviction-pct")
     from desk.risk import CONVICTION_NOTIONAL_PCT
@@ -3895,7 +3911,8 @@ def main(argv: list[str] | None = None) -> int:
                    "ignore_unreachable": args.ignore_unreachable,
                    "risk_wallets": [item.strip() for item in args.risk_wallets.split(",")] if args.risk_wallets else None,
                    "signals": str(args.signals.resolve()) if args.signals else None,
-                   "actions": str(args.actions.resolve()) if args.actions else None}
+                   "actions": str(args.actions.resolve()) if args.actions else None,
+                   "thesis": args.thesis}
         return call(request)
     if args.command == "ladder":
         return call({"cmd": "ladder", "wallet": args.wallet, "coin": args.coin, "stop": args.stop,

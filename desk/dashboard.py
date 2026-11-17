@@ -56,6 +56,16 @@ STATIC_FILES = {
 }
 
 
+def _stress_profile(overview) -> dict:
+    """What each stress scenario would do to the desk, as a share of equity (desk/stress.py)."""
+    from desk import stress
+    try:
+        exposures = [row for snapshot in overview.snapshots for row in stress.position_exposures(snapshot)]
+        return stress.profile(exposures, overview.desk_equity)
+    except Exception:
+        return {}
+
+
 def intraday_series(desk) -> dict:
     """Hourly points for the return chart's D and W: the HL wallets' PnL and value (``desk``, [t ms, pnl, value]) and BTC and the
     S&P 500 perp's hourly closes ([t ms, close]); the page rebases each to its window. Empty where HL does not answer."""
@@ -412,6 +422,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         "gross_leverage": gross / trading_equity if trading_equity else None,
         "net_leverage": net / trading_equity if trading_equity else None,
         "positions": int(sum(len(snapshot.positions) for snapshot in trading)),
+        "stress": _stress_profile(overview),
         "returns": {"since_start": returns.get("since start"), **{label: returns.get(label) for label in WINDOWS}},
         "money_weighted": desk.money_weighted(),
         "since": headline.index[0],
@@ -592,7 +603,9 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     books_by_kind(tables)
     return {
         "kpis": kpis,
-        "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,   # the open trades' median age
+        "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,
+        "execution": (research.get("execution") if isinstance(research, dict) else None) or {},
+        "theses": (research.get("theses") if isinstance(research, dict) else None) or [],   # the thesis clock   # the open trades' median age
         "intraday": intraday_series(desk),   # the day and week at hourly resolution (the return chart's D and W)
         "moves": position_moves(overview),   # the held positions' price moves over 7 and 30 days
         "usage_model": usage_model_now(),   # what the reader has said is noise (desk/usage_model.py)

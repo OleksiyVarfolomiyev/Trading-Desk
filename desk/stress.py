@@ -25,6 +25,8 @@ SCENARIOS = {
     "alt rally": {"alt": 0.25, "major": 0.10},
     "equity sell-off": {"equity": -0.10},
 }
+# The stress tile also reads a crypto sell-off (BTC and ETH -10%, alts 15 points worse): informational, it never blocks an entry.
+TILE_SCENARIOS = {**SCENARIOS, "crypto sell-off": {"major": -0.10, "alt": -0.25}}
 MAJORS = {"BTC", "ETH", "WBTC", "CBBTC", "WETH", "CBETH", "STETH", "WSTETH"}
 STABLES = {"USDC", "USDT", "USDE", "DAI", "USDH", "USDBC", "EURC", "GHO", "PYUSD", "FDUSD", "USDS", "SUSDE"}
 COMMODITIES = {"GOLD", "SILVER", "BRENTOIL", "WTIOIL", "OIL", "CL", "COPPER", "NATGAS", "PLATINUM", "PALLADIUM",
@@ -55,6 +57,18 @@ def scenario_losses(exposures) -> dict[str, float]:
                 total -= notional * shocks.get(classify(asset_class, symbol), 0.0)
         losses[name] = total
     return losses
+
+
+def profile(exposures, equity: float) -> dict[str, float]:
+    """Each tile scenario's result as a share of ``equity``: negative is a loss, positive a gain."""
+    if not equity or equity <= 0:
+        return {}
+    result = {}
+    for name, shocks in TILE_SCENARIOS.items():
+        pnl = sum(notional * shocks.get(classify(asset_class, symbol), 0.0)
+                  for asset_class, symbol, notional in exposures if notional == notional)
+        result[name] = pnl / equity
+    return result
 
 
 def evaluate(exposures, equity: float) -> list[dict]:
