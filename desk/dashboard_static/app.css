@@ -659,3 +659,9 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .sections-menu .sections-row span:first-child { flex: 1 1 auto; }
 /* Nothing blinks or flashes: no tick animations, no like flash, no transitions on data. */
 .tick .price, .liked { animation: none !important; transition: none !important; }
+/* Notices: only when something went wrong. */
+#notices { position: fixed; right: 10px; bottom: 10px; z-index: 90; display: flex; flex-direction: column; gap: 6px; max-width: min(420px, 92vw); }
+.notice-card { position: relative; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-left: 3px solid var(--critical); border-radius: 8px; padding: 8px 28px 8px 10px; box-shadow: 0 8px 24px rgba(0,0,0,.35); font-size: 12px; }
+.notice-card b { display: block; margin-bottom: 2px; }
+.notice-line { color: var(--ink-2); margin-top: 2px; white-space: pre-wrap; }
+.notice-close { position: absolute; top: 2px; right: 4px; background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; }

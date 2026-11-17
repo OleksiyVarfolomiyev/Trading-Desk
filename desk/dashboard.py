@@ -431,7 +431,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         total["24h change (%)"] = day_change_total(ordered["Value"], ordered["24h change (%)"])
         total["Funding (APR)"] = funding_total(ordered["Value"], ordered["Funding (APR)"])
         return table(ordered, {"Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price", **signed,
-                               "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct",
+                               "ROE (%)": "spct", "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct",
                                "Weight": "pct", "Exposure / equity": "pct"}, total,
                      key={"Weight": "max"})
 

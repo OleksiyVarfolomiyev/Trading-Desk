@@ -57,7 +57,7 @@ class PayloadTests(unittest.TestCase):
         self.assertNotIn("Venue", frame.columns)
         columns = list(frame.columns)
         at = columns.index("uPnL")
-        self.assertEqual(columns[at + 1:at + 3], ["uPnL (%)", "24h change (%)"])
+        self.assertEqual(columns[at + 1:at + 4], ["ROE (%)", "uPnL (%)", "24h change (%)"])
         # A short entered at $10, now $9: +$100 on a $1,000 cost basis.
         self.assertAlmostEqual(frame["uPnL (%)"].iloc[0], 0.10)
         self.assertTrue(pd.isna(frame["uPnL (%)"].iloc[1]))      # no entry price for wallet tokens

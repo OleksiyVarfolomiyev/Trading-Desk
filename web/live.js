@@ -252,7 +252,7 @@
         positions.push({
           venue: "hl", account: wallet.label, symbol: p.coin, coin: p.coin, dex, asset_class: assetClass(p.coin),
           quantity, avg_price: num(p.entryPx), mark_price: Math.abs(num(p.positionValue)) / Math.abs(quantity),
-          unrealized: num(p.unrealizedPnl),
+          unrealized: num(p.unrealizedPnl), margin_usd: num(p.marginUsed),
         });
       }
     }
@@ -717,6 +717,8 @@
       return {
         "Asset class": p.asset_class, "Account": p.account, "Symbol": p.symbol, "Side": p.quantity > 0 ? "LONG" : "SHORT",
         "Quantity": p.quantity, "Avg price": p.avg_price, "Mark": p.mark_price, "Value": v, "uPnL": p.unrealized,
+        // ROE as HL shows it (uPnL over the margin the position uses); over cost where there is no margin
+        "ROE (%)": fin(p.margin_usd) && p.margin_usd > 0 ? p.unrealized / p.margin_usd : (fin(p.avg_price) && cost > 0 ? p.unrealized / cost : NaN),
         "uPnL (%)": fin(p.avg_price) && cost > 0 ? p.unrealized / cost : NaN, "24h change (%)": change,
         // What the position earns (positive) or pays (negative) in funding, annualised; HL perps only.
         "Funding (APR)": p.venue === "hl" && context && fin(context.funding) ? (p.quantity > 0 ? -1 : 1) * context.funding * 24 * 365 : NaN,
@@ -1101,14 +1103,14 @@
       movers_stocks: table(moverRows("Stocks"), ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
         { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
       positions: table(tableRows.filter(isCrypto), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
-        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity"],
+        "uPnL", "ROE (%)", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
-        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct" }),
+        { "ROE (%)": "spct", "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct" }),
       { total: positionTotal(tableRows.filter(isCrypto)), key: { "Weight": "max" } }),
       positions_stocks: table(tableRows.filter((r) => !isCrypto(r)), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
-        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity"],
+        "uPnL", "ROE (%)", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
-        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct" }),
+        { "ROE (%)": "spct", "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct" }),
       { total: positionTotal(tableRows.filter((r) => !isCrypto(r))), key: { "Weight": "max" } }),
       market_making: (() => {  // the ladders, as the trading daemon last sent them (desk/market_making.py)
         const rows = (daemonAlerts && daemonAlerts.market_making) || [];

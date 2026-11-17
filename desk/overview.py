@@ -94,10 +94,16 @@ def with_position_returns(positions: pd.DataFrame, moves: dict[tuple[str, str], 
     day = [(moves or {}).get((account, symbol), float("nan"))
            for account, symbol in zip(frame["Account"], frame["Symbol"])]
     at = frame.columns.get_loc("uPnL") + 1
-    frame.insert(at, "uPnL (%)", upnl_pct)
-    frame.insert(at + 1, "24h change (%)", day)
+    # ROE (%), as HL shows it: the position's uPnL over the margin it uses; over its cost where there is no margin (stocks at IB).
+    margin = frame["Margin"] if "Margin" in frame else pd.Series(float("nan"), index=frame.index)
+    roe = (frame["uPnL"] / margin).where(margin > 0, upnl_pct)
+    frame.insert(at, "ROE (%)", roe)
+    frame.insert(at + 1, "uPnL (%)", upnl_pct)
+    frame = frame.drop(columns="Margin", errors="ignore")
+    day_at = at + 1
+    frame.insert(day_at + 1, "24h change (%)", day)
     # What the position earns (positive) or pays (negative) in funding, annualised; blank off HL.
-    frame.insert(at + 2, "Funding (APR)", [(funding or {}).get((account, symbol), float("nan"))
+    frame.insert(day_at + 2, "Funding (APR)", [(funding or {}).get((account, symbol), float("nan"))
                                          for account, symbol in zip(frame["Account"], frame["Symbol"])])
     return frame
 
@@ -429,7 +435,7 @@ class DeskOverview:
                     # Prices in USD like every other desk value, so no currency column is needed.
                     "Avg price": position.avg_price * position.fx_to_usd,
                     "Mark": position.mark_price * position.fx_to_usd,
-                    "Value": position.notional_usd, "uPnL": position.unrealized_usd,
+                    "Value": position.notional_usd, "uPnL": position.unrealized_usd, "Margin": position.margin_usd,
                     "Exposure / equity": abs(position.notional_usd) / equity if equity else float("nan"),
                 })
         frame = pd.DataFrame(rows)

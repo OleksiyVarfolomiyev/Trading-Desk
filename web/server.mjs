@@ -316,6 +316,21 @@ async function handle(request, response) {
   }
   if (url.pathname === "/feedback" && request.method === "POST") return saveFeedback(request, response);
   if (url.pathname === "/action" && request.method === "POST") return dashboardAction(request, response);
+  if (url.pathname === "/ladder" && request.method === "POST") {   // stop a market-making ladder, or start a neutral one (the confirmations are the click)
+    let body = {};
+    try { body = JSON.parse((await readBody(request)).toString("utf8") || "{}"); } catch (error) { body = {}; }
+    const wallet = String(body.wallet || ""), coin = String(body.coin || "");
+    const send = (status, payload) => { response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); response.end(JSON.stringify(payload)); };
+    if (!/^[0-9a-fA-F]{4}$/.test(wallet) || !/^[A-Za-z0-9:]{1,24}$/.test(coin) || !["stop", "neutral"].includes(body.mode)) return send(400, { error: "bad request" });
+    if (actionRunning) return send(409, { error: "another dashboard action is running" });
+    actionRunning = true;
+    try {
+      const message = { cmd: "ladder", wallet, coin, ...(body.mode === "stop" ? { stop: true } : { neutral: true }) };
+      const { code, text } = await daemonCall(message, (prompt) => (prompt.includes("START LADDER") ? "START LADDER" : ""));
+      await fsp.appendFile(ACTIONS_LOG, JSON.stringify({ at: new Date().toISOString(), ladder: body.mode, coin, wallet, code, result: text.slice(-400) }) + "\n").catch(() => {});
+      return send(200, { code, result: text.slice(-1500) });
+    } finally { actionRunning = false; }
+  }
   if (url.pathname === "/pull" && request.method === "POST") {   // a notebook section onto the dashboard, built by the daemon
     let body = {};
     try { body = JSON.parse((await readBody(request)).toString("utf8") || "{}"); } catch (error) { body = {}; }

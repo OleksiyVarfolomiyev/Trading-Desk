@@ -182,10 +182,10 @@ const POSITION_VIEW = {
   // No Side column: Value is signed and coloured (shorts negative, red), which already says the side.
   // % first; dollars on hover (the row's pop-up); the account is the desk's business
   hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", isNum(r.uPnL) ? `${usd(r.uPnL)} uPnL` : ""].filter(Boolean).join(" · "),
-  columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "D"], ["Funding (APR)"], ["Weight"]],
+  columns: [["Symbol"], ["ROE (%)", "ROE"], ["uPnL (%)", "uPnL"], ["24h change (%)", "D"], ["Funding (APR)"], ["Weight"]],
   // The crypto and the stocks tables sit one above the other: the same columns at the same widths, so Value, uPnL
   // and 24h line up (no column is collapsed or hidden in either).
-  align: { "Symbol": 20, "uPnL": 20, "D": 20, "Funding (APR)": 20, "Weight": 20 },
+  align: { "Symbol": 20, "ROE": 15, "uPnL": 15, "D": 15, "Funding (APR)": 20, "Weight": 15 },
 };
 const VIEWS = {
   performance: {
@@ -217,8 +217,8 @@ const VIEWS = {
   wallets: {
     derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol }),
     hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", r.Chain, r.Note].filter(Boolean).join(" · "),
-    columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "D"], ["Funding (APR)"], ["% of desk"]],
-    align: { "Symbol": 20, "uPnL": 20, "D": 20, "Funding (APR)": 20, "% of desk": 20 },
+    columns: [["Symbol"], ["ROE (%)", "ROE"], ["uPnL (%)", "uPnL"], ["24h change (%)", "D"], ["Funding (APR)"], ["% of desk"]],
+    align: { "Symbol": 20, "ROE": 15, "uPnL": 15, "D": 15, "Funding (APR)": 20, "% of desk": 15 },
   },
   // The "vs BTC" figure over one period at a time (the card's chips: 1D, 1W, 1M), named with its period; the rest as before.
   candidates: { link: (r) => hlLink(r.Coin),
@@ -263,7 +263,7 @@ function applyView(id, spec, context) {
     if (view.hover) out.__hover = view.hover(row);
     if (view.link) out.__link = view.link(row);
     if (view.size) out.__size = view.size(full);
-    out.__raw = { Account: full.Account, Value: full.Value, Symbol: full.Symbol };   // what a row's actions need
+    out.__raw = { Account: full.Account, Value: full.Value, Symbol: full.Symbol, Coin: full.Coin };   // what a row's actions need
     return out;
   };
   // Derived fields start with _; an aligned table keeps every column, present in its data or not.
@@ -283,8 +283,8 @@ const CHART_VIEWS = {
   performance: { kind: "grouped", label: "Account", series: ["D", "W", "M", "90d", "Since start"], by: "window" },
   accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
   exposure: { kind: "exposure", books: true, label: "Asset class", long: "Long", short: "Short", net: "Net" },
-  positions: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
-  positions_stocks: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
+  positions: { kind: "bars", label: "Symbol", value: "ROE", text: null },   // HL's return on equity
+  positions_stocks: { kind: "bars", label: "Symbol", value: "ROE", text: null },
   wallets: { kind: "bars", label: "Symbol", value: "% of desk", text: null },
   market_making: { kind: "bars", label: "Coin", value: "Return", text: null },
   strategies: { kind: "bookstack", label: "Strategy" },   // two bars, crypto and stocks, each stacked by strategy
@@ -377,6 +377,27 @@ function renderBarList(id, spec, plan, host) {
         b.addEventListener("click", (event) => { event.stopPropagation(); runAction(word, change, fraction, { coin: row.__raw.Symbol, wallet: String(row.__raw.Account).slice(-4) }); });
         acts.append(b);
       });
+    }
+    const raw = row.__raw || {};
+    if (!(id in CANDIDATE_TABLES) && !/^HL /.test(String(raw.Account || "")) && id !== "market_making" && isNum(raw.Value)) {   // IB stocks: copy the order
+      [["⅓", `trim ${label} by a third`, `Trim ⅓: ${label} (copied for Claude)`], ["✕", `close ${label}`, `Close ${label} (copied for Claude)`]].forEach(([symbol, sentence, tip]) => {
+        const b = el("button", { type: "button", class: "row-act", title: tip, "aria-label": tip, text: symbol });
+        b.addEventListener("click", (event) => { event.stopPropagation(); copyOrder(b, sentence); });
+        acts.append(b);
+      });
+    }
+    if (id === "market_making" && window.DESK_SOURCE) {
+      const wallet = String(raw.Account || "").trim().slice(-4);
+      if (/^[0-9a-fA-F]{4}$/.test(wallet)) {
+        const b = el("button", { type: "button", class: "row-act", title: "Stop this ladder", "aria-label": `Stop the ${label} ladder`, text: "⏹" });
+        b.addEventListener("click", (event) => { event.stopPropagation(); runLadder("stop", raw.Coin || label, wallet); });
+        acts.append(b);
+      }
+    }
+    if (id === "mm_candidates" && window.DESK_SOURCE) {
+      const b = el("button", { type: "button", class: "row-act", title: "Start a neutral ladder", "aria-label": `Start a neutral ladder on ${label}`, text: "▶" });
+      b.addEventListener("click", (event) => { event.stopPropagation(); runLadder("neutral", row.Coin, "c248"); });
+      acts.append(b);
     }
     if (row.__link) acts.append(el("a", { class: "row-act symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", title: "Open its page", text: "↗" }));
     const line = el("div", { class: "brow" + (notable ? " notable" : ""), title: notable || row.__hover || "" }, [name, el("span", { class: "btrack" }, [fill, fig]), acts]);
@@ -2194,6 +2215,17 @@ function rarelyUsed() {   // tiles shown for a week or more and not touched in t
 // ---------------------------------------------------------------- run an action: plan (the daemon's dry run), then confirm
 // One dialog: the plan with its notices (cap, funding, blocked) on top, then Confirm or Cancel. Confirm sends it live; the
 // result shows in the same dialog and the page refreshes. The server keeps a log of every confirmed action.
+
+// A notice appears only when something went wrong (a successful order says nothing): bottom right, until it is dismissed.
+function notify(lines, title) {
+  let host = document.getElementById("notices");
+  if (!host) { host = el("div", { id: "notices", role: "alert" }); document.body.append(host); }
+  const close = el("button", { type: "button", class: "notice-close", "aria-label": "Dismiss", text: "×" });
+  const note = el("div", { class: "notice-card" }, [close, el("b", { text: title }), ...lines.filter(Boolean).map((line) => el("div", { class: "notice-line", text: line }))]);
+  close.addEventListener("click", () => note.remove());
+  host.append(note);
+}
+
 function actionDialog(title) {
   document.querySelectorAll(".action-dialog").forEach((node) => node.remove());
   const box = el("div", { class: "action-box", role: "dialog", "aria-modal": "true", "aria-label": title });
@@ -2230,15 +2262,14 @@ async function runAction(label, change, fraction, target) {
   const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
   cancel.addEventListener("click", () => { feedback("action", "cancel", marketName(coin), label); overlay.remove(); });
   confirm.addEventListener("click", async () => {
-    confirm.disabled = true; confirm.textContent = "Sending…";
+    overlay.remove();   // gone at once; if something goes wrong a notice appears
     feedback("action", "confirm", marketName(coin), label);
     let result;
     try { result = await post({ stage: "confirm", token: plan.token }); } catch (e) { result = { error: String(e) }; }
-    const lines = planLines(result.result || result.error || "", coin);
-    box.replaceChildren(el("h3", { text: title }),
-      el("p", { class: result.code === 0 ? "pos" : "neg", text: result.code === 0 ? "Done." : "Not completed." }),
-      ...lines.notices.map((line) => el("p", { class: "action-line notice", text: line })),
-      ...lines.mine.map((line) => el("p", { class: "action-line", text: line })), closeButton(overlay));
+    if (result.code !== 0) {
+      const lines = planLines(result.result || result.error || "", coin);
+      notify(lines.notices.concat(lines.mine), `${title}: not completed`);
+    }
     lastRendered = null; load();
   });
   box.replaceChildren(el("h3", { text: title }),
@@ -2272,15 +2303,41 @@ async function runClassAction(kind, change, fraction) {
   const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
   cancel.addEventListener("click", () => { feedback("action", "cancel class", kind, title); overlay.remove(); });
   confirm.addEventListener("click", async () => {
-    confirm.disabled = true; confirm.textContent = "Sending…";
+    overlay.remove();   // gone at once; a notice only for the positions that did not go through
     feedback("action", "confirm class", kind, title);
-    const results = [];
-    for (const [row, plan] of ready) { try { const r = await post(row, { stage: "confirm", token: plan.token }); results.push(`${marketName(row.Symbol)} ${r.code === 0 ? "done" : "not completed"}`); } catch (e) { results.push(`${marketName(row.Symbol)} failed`); } }
-    box.replaceChildren(el("h3", { text: title }), ...results.map((t) => el("p", { class: "action-line", text: t })), closeButton(overlay));
+    const failed = [];
+    for (const [row, plan] of ready) { try { const r = await post(row, { stage: "confirm", token: plan.token }); if (r.code !== 0) failed.push(`${marketName(row.Symbol)} not completed`); } catch (e) { failed.push(`${marketName(row.Symbol)} failed`); } }
+    if (failed.length) notify(failed, title);
     lastRendered = null; load();
   });
   box.replaceChildren(el("h3", { text: title }), ...lines.map(([cls, t]) => el("p", { class: "action-line " + cls, text: t })),
     el("div", { class: "asset-actions" }, [...(ready.length ? [confirm] : []), cancel]));
+}
+
+
+// Ladder actions from the market-making rows: stop one, or start a neutral ladder on a candidate (web page; the server asks the
+// daemon). One small confirm, no plan; a notice only if it did not go through.
+function runLadder(mode, coin, wallet) {
+  const name = marketName(coin), title = mode === "stop" ? `Stop the ${name} ladder` : `Start a neutral ladder on ${name}`;
+  feedback("action", "plan ladder", name, mode);
+  const { overlay, box } = actionDialog(title);
+  const go = el("button", { type: "button", class: "asset-action lead", text: mode === "stop" ? "Confirm: stop" : "Confirm: start" });
+  const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
+  cancel.addEventListener("click", () => overlay.remove());
+  go.addEventListener("click", async () => {
+    overlay.remove();
+    feedback("action", "confirm ladder", name, mode);
+    let result;
+    try { result = await (await fetch("/ladder", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ mode, coin, wallet }) })).json(); } catch (e) { result = { error: String(e) }; }
+    if (result.error || result.code !== 0) notify([String(result.result || result.error || "").split("\n").filter(Boolean).slice(-3).join(" ")], `${title}: not completed`);
+    lastRendered = null; load();
+  });
+  box.replaceChildren(el("h3", { text: title }), el("div", { class: "asset-actions" }, [go, cancel]));
+}
+function copyOrder(button, sentence) {   // positions the dashboard cannot trade (IB): the order is copied for Claude
+  feedback("action", "copy order", sentence);
+  if (navigator.clipboard) navigator.clipboard.writeText(sentence);
+  const old = button.textContent; button.textContent = "✓"; setTimeout(() => { button.textContent = old; }, 1200);
 }
 
 function closeButton(overlay) {
