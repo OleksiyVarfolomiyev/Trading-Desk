@@ -1016,6 +1016,7 @@ function redrawHighlights() {
   const hl = latest.data.highlights || {}, hover = hl.hover || {};
   renderHighlights("hl-well", hl.well, hover);
   renderHighlights("hl-attention", hl.attention, hover);
+  renderAlertStrip(hl.attention, hover);
   if (typeof drawSectionsMenu === "function") drawSectionsMenu();
 }
 const VENUES = /\b(xyz|flx|vntl|hyna|km|abcd|cash|para|mkts|io):/gi;
@@ -1053,6 +1054,13 @@ function gestures(node, { dislike, like }) {
   });
 }
 
+// The Research screen has no highlights card: what needs attention (critical and watch rows) shows in a strip above the tiles there.
+function renderAlertStrip(rows, hover = {}) {
+  const host = document.getElementById("hl-alert");
+  if (!host) return;
+  renderHighlights("hl-alert", (rows || []).filter(([area, text]) => severity(area, text) !== ""), hover);
+  host.hidden = !host.children.length;
+}
 function renderHighlights(id, rows, hover = {}) {
   const host = document.getElementById(id);
   const state = highlightState();
@@ -1282,6 +1290,7 @@ function render(doc) {
   const hover = (data.highlights && data.highlights.hover) || {};  // headlines around a big move, per alert title
   renderHighlights("hl-well", data.highlights && data.highlights.well, hover);
   renderHighlights("hl-attention", data.highlights && data.highlights.attention, hover);
+  renderAlertStrip(data.highlights && data.highlights.attention, hover);
   const context = { deskValue: (data.kpis || {}).desk_value };
   for (const id of TABLES) renderTable(id, applyView(id, withWallets(id, data.tables || {}), context));
   balanceColumns();

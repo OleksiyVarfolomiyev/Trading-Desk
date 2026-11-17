@@ -1150,10 +1150,11 @@ class Alerts:
             self.dirty = True
         if not old:
             log(f"ALERT {title}: {text}")
-            try:   # a new alert goes to the phone when DESK_PUSH_URL is set (desk/push.py)
+            try:   # an urgent new alert goes to the phone when a push topic is set (desk/push.py)
                 from desk import push
 
-                push.send(title, daemon_link.mask(text))
+                if push.urgent(key):
+                    push.send(title, daemon_link.mask(text))
             except Exception:
                 pass
 

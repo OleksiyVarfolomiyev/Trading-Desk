@@ -12,6 +12,12 @@ class PushTests(unittest.TestCase):
             with patch.object(push, "SECRET_FILE", push.Path("/nonexistent/push_url")):
                 self.assertFalse(push.send("t", "x"))
 
+    def test_only_urgent_alerts(self):
+        self.assertTrue(push.urgent("margin:0xabc"))
+        self.assertTrue(push.urgent("read-only"))
+        self.assertFalse(push.urgent("alt_rally"))
+        self.assertFalse(push.urgent("auto:x:1"))
+
     def test_rate_limited(self):
         push._last = 0.0
         with patch.dict(os.environ, {"DESK_PUSH_URL": "http://x"}), patch.object(push, "_post", return_value=True):

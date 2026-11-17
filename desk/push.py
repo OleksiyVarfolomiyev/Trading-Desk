@@ -17,6 +17,15 @@ _lock = threading.Lock()
 SECRET_FILE = Path.home() / ".trading-desk" / "push_url"   # kept out of the repo: the topic name is the secret
 
 
+# Only what needs immediate attention reaches the phone (user: notifications are off everywhere but messengers): money at
+# risk right now or the desk unable to protect or trade. Alert keys by prefix; everything else stays on the dashboard.
+URGENT_PREFIXES = ("margin:", "read-only", "guards", "stale:", "apikey:")
+
+
+def urgent(key: str) -> bool:
+    return str(key).startswith(URGENT_PREFIXES)
+
+
 def url() -> str | None:
     """``DESK_PUSH_URL``, else the first line of ``~/.trading-desk/push_url``."""
     value = (os.environ.get("DESK_PUSH_URL") or "").strip()

@@ -684,3 +684,8 @@ html[data-screen="research"] #columns > .col { min-width: 520px; }
 #columns > .col[hidden] { display: none !important; }
 .name-long { color: var(--good-text) !important; }
 .name-short { color: var(--bad-text) !important; }
+
+/* What needs attention, on the Research screen (the Now screen has the highlights card). */
+.alert-strip { margin: 0 0 8px; }
+html:not([data-screen="research"]) .alert-strip { display: none; }
+.alert-strip[hidden] { display: none !important; }
