@@ -23,6 +23,8 @@ from desk.risk import (
     BookEntry,
     hl_book_entry,
     ib_book_entry,
+    ib_entry_from_relay,
+    ib_source,
     per_position_budget,
 )
 from desk.venues import hl as hl_venue
@@ -324,6 +326,16 @@ class DeskOverview:
             entry, problem = job.result()
             self.book.append(entry) if entry is not None else self.problems.append(problem)
         for account in accounts_for("ib", self.accounts):
+            if ib_source() == "relay":   # the desk server has no TWS: IB as the Mac last sent it to the relay
+                try:
+                    entry, snapshot = ib_entry_from_relay(account)
+                except Exception as exc:
+                    self.problems.append(f"{account.name}: {str(exc) or type(exc).__name__}")
+                    continue
+                if include_risk:
+                    self.book.append(entry)
+                self.snapshots.append(snapshot)
+                continue
             try:
                 ib = ib_venue.connect(account, "overview", readonly=True)
             except Exception as exc:
