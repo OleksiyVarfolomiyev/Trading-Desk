@@ -588,7 +588,7 @@ th, td { padding: 1px 5px; }
 .card h2 { min-height: 0 !important; margin: 0 !important; line-height: 1.2; }
 .card h2:empty { display: none; }
 .card .table-wrap { margin: 0; }
-#chart-value, #chart-twr { height: 340px !important; }
+#chart-value, #chart-twr { height: 420px !important; }
 table { margin: 0; }
 th, td { padding: 0 4px !important; line-height: 1.3; }
 .tile { padding: 1px 5px !important; }
@@ -679,7 +679,7 @@ html[data-screen="research"] .tiles { display: none !important; }
 #screen-dots button { width: 8px; height: 8px; padding: 0; border-radius: 50%; border: 0; background: var(--muted); cursor: pointer; opacity: .5; }
 #screen-dots button[aria-pressed="true"] { opacity: 1; background: var(--ink); }
 /* Research: big charts. Each has height to be read (many lines), and the empty columns are gone so the charts take the width. */
-html[data-screen="research"] #chart-value, html[data-screen="research"] #chart-twr { height: 560px !important; }
+html[data-screen="research"] #chart-value, html[data-screen="research"] #chart-twr { height: 620px !important; }
 html[data-screen="research"] #columns > .col { min-width: 520px; }
 #columns > .col[hidden] { display: none !important; }
 .name-long { color: var(--good-text) !important; }

@@ -1602,7 +1602,23 @@ let draggingCard = null, grabOffset = 0;
 
 // Resize: hovering the bottom edge of a tile shows a grip; dragging it sets the tile's height (kept per tile, a double click
 // returns it to its natural height). Charts inside follow; a table scrolls inside.
+const CHART_MIN_HEIGHT = 380;   // a line chart tile is never shorter than this, whatever size it was left at
+const isChartCard = (card) => Boolean(card.querySelector("#chart-value, #chart-twr"));
+// A line chart is as tall as the tile above it in its column when that tile has a size of its own (never under the minimum), unless
+// the chart's own height was set.
+function matchChartHeights() {
+  document.querySelectorAll("#columns > .col").forEach((col) => {
+    [...col.children].forEach((slot, i, slots) => {
+      const card = slot.firstElementChild;
+      if (!card || !isChartCard(card) || (layoutState().heights || {})[cardId(card)]) return;
+      const above = i > 0 ? slots[i - 1].firstElementChild : null;
+      const size = above && above.dataset.sized ? parseFloat(above.style.getPropertyValue("--card-h")) : 0;
+      applyCardHeight(card, size ? Math.max(size, CHART_MIN_HEIGHT) : 0);
+    });
+  });
+}
 function applyCardHeight(card, height) {
+  if (height && isChartCard(card)) height = Math.max(height, CHART_MIN_HEIGHT);
   if (height) { card.dataset.sized = "1"; card.style.setProperty("--card-h", height + "px"); }
   else { delete card.dataset.sized; card.style.removeProperty("--card-h"); }
   if (typeof Plotly !== "undefined") card.querySelectorAll(".js-plotly-plot").forEach((node) => { try { Plotly.Plots.resize(node); } catch (e) {} });
@@ -1852,6 +1868,7 @@ function buildColumns(content, saved) {
   applyColumnWidths(host);
   const gaps = layoutState().gaps || {};
   slots.forEach((slot) => { const card = slot.firstElementChild, gap = gaps[cardId(card)]; card.style.marginTop = gap ? gap + "px" : ""; });
+  matchChartHeights();
 }
 function wireCardDrop(content) {
   const clear = () => content.querySelectorAll(".drop-before, .drop-after, .drop-end").forEach((n) => n.classList.remove("drop-before", "drop-after", "drop-end"));
@@ -2979,6 +2996,7 @@ function setScreen(name) {
     const visible = [...col.children].some((slot) => slot.firstElementChild && getComputedStyle(slot.firstElementChild).display !== "none");
     col.hidden = !visible;
   });
+  matchChartHeights();
   if (latest && latest.data) renderCharts(latest.data.charts);   // charts that were hidden have no size until now
   requestAnimationFrame(() => document.querySelectorAll(".js-plotly-plot").forEach((node) => { try { Plotly.Plots.resize(node); } catch (e) {} }));
 }
