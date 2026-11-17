@@ -368,10 +368,14 @@ function renderTableChart(id, spec) {
       text: order.map((i) => (clipped(i) ? "» " : "") + (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
       textposition: "outside", cliponaxis: false,
       textfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
-      ...(() => {   // the bar shows value and uPnL; the hover adds only what is not drawn: the 24h move, funding, weight
-        const extra = ["24h", "Funding (APR)", "Weight", "% of desk"].filter((key) => rows.some((row) => isNum(row[key])));
-        const lines = order.map((i) => extra.filter((key) => isNum(rows[i][key])).map((key) => `${text(key, rows[i][key])} ${key === "Funding (APR)" ? "funding" : key === "24h" ? "24h" : "of book"}`).join(" · "));
-        return lines.some(Boolean) ? { hovertext: lines, hoverinfo: "text" } : { hoverinfo: "skip" };
+      ...(() => {   // a pop-up only where there is something to see: a big 24h move or a funding rate that matters
+        const notable = (row) => [
+          isNum(row["24h"]) && Math.abs(row["24h"]) >= 0.05 ? `${text("24h", row["24h"])} 24h` : "",
+          isNum(row["Funding (APR)"]) && Math.abs(row["Funding (APR)"]) >= 0.5 ? `${text("Funding (APR)", row["Funding (APR)"])} funding` : "",
+        ].filter(Boolean).join(" · ");
+        const lines = order.map((i) => notable(rows[i]));
+        return lines.some(Boolean) ? { hovertext: lines, hoverinfo: "text", marker: { color: order.map((i) => (rows[i][plan.value] < 0 ? bad : good)),
+          line: { color: order.map((i) => (lines[order.indexOf(i)] ? token("--warning") : "rgba(0,0,0,0)")), width: 1.5 } } } : { hoverinfo: "skip" };
       })() }];
     // The row's name sits inside its bar, from the zero line outwards (left of zero for a short), not on the axis.
     const inside = order.filter(fits).map((i) => {
