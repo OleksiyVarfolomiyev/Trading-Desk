@@ -1137,10 +1137,11 @@
           : r.Strategy === "Total" ? sum(Object.values(daemonAlerts.strategy_upnl).map(Number)) : Number(daemonAlerts.strategy_upnl[r.Strategy] || 0));
         const view = (r) => {
           const realized = (num(r["Realized PnL 30d"]) + num(r["Funding 30d"])) / deskEquity, unrealized = liveUpnl(r) / deskEquity;
-          return { "Strategy": r.Strategy, "Realized 30d": realized, "uPnL": unrealized, "Total": realized + unrealized };
+          return { "Strategy": r.Strategy, "Crypto": num(r["Crypto PnL"]) / deskEquity, "Stocks": num(r["Stocks PnL"]) / deskEquity,
+            "Realized 30d": realized, "uPnL": unrealized, "Total": realized + unrealized };
         };
-        return table(rows.slice(0, -1).map(view), ["Strategy", "Realized 30d", "uPnL", "Total"],
-          { "Realized 30d": "spct", "uPnL": "spct", "Total": "spct" },
+        return table(rows.slice(0, -1).map(view), ["Strategy", "Crypto", "Stocks", "Realized 30d", "uPnL", "Total"],
+          { "Crypto": "spct", "Stocks": "spct", "Realized 30d": "spct", "uPnL": "spct", "Total": "spct" },
           { total: view(rows[rows.length - 1]), key: { "Total": "abs" } });
       })(),
       candidates: (() => {  // desk/screener.py

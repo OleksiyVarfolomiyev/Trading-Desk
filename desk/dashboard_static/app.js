@@ -306,9 +306,9 @@ function chartPlan(id, spec) {
   return key ? { kind: "bars", label: spec.columns[0].key, value: key.key, text: null } : null;
 }
 
-function renderTableChart(id, spec) {
+function renderTableChart(id, spec, override) {
   const host = document.getElementById("t-" + id);
-  const plan = chartPlan(id, spec);
+  const plan = override || chartPlan(id, spec);
   if (typeof Plotly === "undefined" || !plan) return false;
   const rows = spec.rows.slice();
   const formatOf = (key) => (spec.columns.find((column) => column.key === key) || {}).fmt;
@@ -344,6 +344,8 @@ function renderTableChart(id, spec) {
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
       height = Math.max(180, rows.length * (series.length * 14 + 14) + 80);
     }
+  } else if (plan.kind === "stacked" && !plan.series.some((key) => rows.some((row) => isNum(row[key]) && row[key] !== 0))) {
+    return renderTableChart(id, spec, { kind: "bars", label: plan.label, value: "Total", text: null });   // no split yet: the totals
   } else if (plan.kind === "stacked") {   // one bar per row, its parts stacked in the book colours
     const series = plan.series.filter((key) => rows.some((row) => isNum(row[key]) && row[key] !== 0));
     const axis = chartAxis(formatOf(series[0] || plan.series[0]));
@@ -480,7 +482,9 @@ function renderTable(id, spec) {
   host.replaceChildren();
   // An empty table has nothing to act on: its card is hidden until it has rows.
   const card = host.closest(".card");
-  const empty = !spec || !spec.columns || !spec.columns.length || !(spec.rows || []).length;
+  const numbers = spec && spec.columns ? spec.columns.filter((c) => (FORMATS[c.fmt] || FORMATS.text).num) : [];
+  const allZero = numbers.length && (spec.rows || []).every((row) => numbers.every((c) => !isNum(row[c.key]) || Math.abs(row[c.key]) < 1e-9));
+  const empty = !spec || !spec.columns || !spec.columns.length || !(spec.rows || []).length || allZero;
   if (card) card.hidden = empty;
   if (empty) return;
   if (isChartView() && renderTableChart(id, spec)) return;   // ?view=charts: the table drawn as a chart
