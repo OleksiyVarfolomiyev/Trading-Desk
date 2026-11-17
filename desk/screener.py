@@ -45,12 +45,14 @@ RISK_BUDGET_PCT = 0.80 * 0.05            # 5% of the 80% usable equity (desk/ris
 # (short alts already weak against BTC over 30 days), ranks by that return: the weakest score lowest.
 FALLBACK = {"rel30": 1.0}
 CROWDED_LONG_APR = 0.365                 # longs paying 0.1% a day on average over 7 days: a crowded long (desk/funding_watch.py)
+CORR_WEIGHT = 0.5                        # how far BTC correlation tilts the short ranking (z-score units)
+LOW_CORRELATION = 0.5                    # below this a coin does not follow the market closely: slower to short, flagged in Notes
 CROWDED_SHARE = 0.5                      # shorts paid in more than half the hours of the last 7 days: crowded
 FUNDING_DAYS = 7
 # Research columns only: the stop, the size and the margin are the executor's and the daemon's.
-CANDIDATE_COLUMNS = ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "vs BTC 24h", "From high 60d", "Funding 7d (APR)",
+CANDIDATE_COLUMNS = ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "vs BTC 24h", "Corr BTC 30d", "From high 60d", "Funding 7d (APR)",
                      "OI / volume", "Volume 24h", "Notes"]
-CANDIDATE_FORMATS = {"Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "vs BTC 24h": "spct", "From high 60d": "spct",
+CANDIDATE_FORMATS = {"Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "vs BTC 24h": "spct", "Corr BTC 30d": "num2", "From high 60d": "spct",
                      "Funding 7d (APR)": "spct", "OI / volume": "num2", "Volume 24h": "usd"}
 # Funding for a ladder: the 7-day time-weighted average from the long side (positive: longs pay). The ladder's
 # position swings both ways, so what it pays is that average times its lean; a crowded side is flagged in Notes.
@@ -109,6 +111,8 @@ def latest_signals(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     frame["range_pct"] = ((high - low) / close).rolling(30, min_periods=20).mean().iloc[-1]
     low60, high60 = low.rolling(60, min_periods=30).min(), high.rolling(60, min_periods=30).max()
     frame["range_position"] = ((close - low60) / (high60 - low60)).iloc[-1]
+    returns = close.pct_change(fill_method=None).tail(30)
+    frame["corr_btc"] = returns.corrwith(returns["BTC"]) if "BTC" in returns else np.nan   # how closely the coin follows the market
     return frame
 
 
@@ -148,6 +152,10 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
         return pd.DataFrame(columns=CANDIDATE_COLUMNS)
     z = zscores(frame, usable)
     frame["score"] = sum(weights[name] * z[name] for name in usable) / len(usable)
+    # Coins that follow the market are easier and faster to short: correlation to BTC pulls a coin up the list (a lower
+    # score is a better short), and a coin that barely follows it is flagged.
+    if "corr_btc" in frame and frame["corr_btc"].notna().sum() > 2:
+        frame["score"] = frame["score"] - CORR_WEIGHT * zscores(frame, ["corr_btc"])["corr_btc"].fillna(0.0)
     frame = frame.dropna(subset=["score"]).sort_values("score").head(top)
     budget = RISK_BUDGET_PCT * desk_equity
     rows = []
@@ -157,13 +165,16 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
         _, note = stress.fit_entry(exposures, desk_equity, "crypto perp", coin, -size) if desk_equity > 0 and size == size else (1.0, "")
         apr, paid = crowding(funding_history(coin))
         crowded = ["crowded"] if paid == paid and paid > CROWDED_SHARE else []   # shorts paid in most hours this week
-        notes = crowded + trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else [])
+        corr = row.get("corr_btc")
+        low = ["low correlation"] if corr is not None and corr == corr and corr < LOW_CORRELATION else []
+        notes = low + crowded + trade_rules.entry_notes(coin, "SHORT", size) + ([_stress_note(note)] if note else [])
         volume = live.loc[coin, "volume24h"]
         open_interest = live.loc[coin, "open_interest"] if "open_interest" in live.columns else float("nan")
         day = (live.loc[coin, "mark"] / live.loc[coin, "prev"] - 1) if "prev" in live.columns and live.loc[coin, "prev"] else float("nan")
         btc_day = (live.loc["BTC", "mark"] / live.loc["BTC", "prev"] - 1) if "BTC" in live.index and "prev" in live.columns and live.loc["BTC", "prev"] else float("nan")
         rows.append({"Coin": coin, "Score": row["score"], "Basis": basis, "vs BTC 30d": row.get("rel30"), "vs BTC 7d": row.get("rel7"),
                      "vs BTC 24h": (1 + day) / (1 + btc_day) - 1 if day == day and btc_day == btc_day else float("nan"),
+                     "Corr BTC 30d": row.get("corr_btc"),
                      "From high 60d": row.get("from_high60"), "Funding 7d (APR)": apr,
                      "OI / volume": open_interest / volume if volume else float("nan"), "Volume 24h": volume,
                      "Notes": "; ".join(notes)})
@@ -273,7 +284,7 @@ def _formatters() -> dict:
 
     money = lambda value: usd(value, missing="")
     number = lambda value: "" if value is None or value != value else f"{value:.2f}"
-    return {"Score": number, "vs BTC 30d": percent, "vs BTC 7d": percent, "vs BTC 24h": percent, "From high 60d": percent, "Funding 7d (APR)": percent,
+    return {"Score": number, "vs BTC 30d": percent, "vs BTC 7d": percent, "vs BTC 24h": percent, "Corr BTC 30d": number, "From high 60d": percent, "Funding 7d (APR)": percent,
             "OI / volume": number,
             "Longs pay 7d (APR)": percent,
             "Volume 24h": money,

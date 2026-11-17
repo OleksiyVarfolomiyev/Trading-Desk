@@ -98,3 +98,21 @@ class NumbersTests(unittest.TestCase):
 
         self.assertEqual([usd(v) for v in (0.42, -3.456, 548.9, 1234.5, 12345, 2528475.6, 999950, float("nan"))],
                          ["$0.42", "-$3.46", "$549", "$1.23K", "$12.3K", "$2.53M", "$1M", "n/a"])
+
+
+class CorrelationTilt(unittest.TestCase):
+    def test_a_coin_that_follows_the_market_ranks_higher_and_a_loose_one_is_flagged(self):
+        import numpy as np
+        import pandas as pd
+
+        from desk import screener
+
+        coins = ["A", "B", "C", "D", "E"]
+        signals = pd.DataFrame({"rel30": [0.0, 0.01, 0.02, 0.03, 0.04], "atr_pct": [0.05] * 5, "corr_btc": [0.9, 0.8, 0.7, 0.6, 0.2]}, index=coins)
+        live = pd.DataFrame({"volume24h": 1e7, "open_interest": 1e6, "mark": 1.0, "prev": 1.0}, index=coins + ["BTC"])
+        picks = screener.short_candidates(signals, live, coins, {"rel30": 1.0}, "test", 0.0, [], set(), top=5,
+                                          funding_history=lambda coin: [])
+        self.assertEqual(list(picks["Coin"])[0], "A")
+        self.assertEqual(list(picks["Coin"])[-1], "E")
+        self.assertIn("low correlation", picks.set_index("Coin").loc["E", "Notes"])
+        self.assertNotIn("low correlation", picks.set_index("Coin").loc["A", "Notes"])

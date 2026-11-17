@@ -225,9 +225,9 @@ const VIEWS = {
     columnsNow: () => {
       const scale = currentScale("candidates");
       const pick = { "1D": ["vs BTC 24h", "vs BTC D"], "1W": ["vs BTC 7d", "vs BTC W"], "1M": ["vs BTC 30d", "vs BTC M"], All: ["vs BTC 30d", "vs BTC M"] }[scale];
-      return [["Coin"], pick, ["From high 60d"], ["Funding 7d (APR)", "Funding W (APR)"], ["OI / volume"], ["Volume 24h", "Volume D"], ["Notes"]];
+      return [["Coin"], pick, ["Corr BTC 30d", "Corr BTC"], ["From high 60d"], ["Funding 7d (APR)", "Funding W (APR)"], ["OI / volume"], ["Volume 24h", "Volume D"], ["Notes"]];
     },
-    columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["From high 60d"], ["Funding 7d (APR)"],
+    columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["Corr BTC 30d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
   mm_candidates: { link: (r) => hlLink(r.Coin), columns: [["Coin"], ["Daily range 30d"], ["Longs pay 7d (APR)"], ["Own ladder edge per $1k"], ["Volume 24h"], ["Notes"]] },
   // Live ladders only (stopped ones are research); the ladder's result as a % of what it traded, the rest on hover.
