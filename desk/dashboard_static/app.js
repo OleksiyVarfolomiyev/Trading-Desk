@@ -277,7 +277,7 @@ const CHART_VIEWS = {
   positions_stocks: { kind: "bars", label: "Symbol", value: "uPnL", text: null },
   wallets: { kind: "bars", label: "Symbol", value: "% of desk", text: null },
   market_making: { kind: "bars", label: "Coin", value: "Return", text: null },
-  strategies: { kind: "stacked", label: "Strategy", series: ["Crypto", "Stocks"] },   // each strategy's result, crypto and stocks stacked
+  strategies: { kind: "bookstack", label: "Strategy" },   // two bars, crypto and stocks, each stacked by strategy
 };
 const LABEL_FONT = (size = 12, color) => ({ size, color: color || token("--ink-2") });   // the value next to each bar's end
 const BAR_CAP = 3;   // the longest a bar is drawn, in times the second largest
@@ -361,6 +361,21 @@ function renderTableChart(id, spec, override) {
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
       height = Math.max(180, rows.length * (series.length * 14 + 14) + 80);
     }
+  } else if (plan.kind === "bookstack") {   // the one performance tile: a bar per book, its segments the strategies
+    const list = rows.filter((row) => row.Strategy && !/^total$/i.test(String(row.Strategy)));
+    const axis = chartAxis(formatOf("Crypto"));
+    const books = [["Crypto", token("--kind-crypto")], ["Stocks", token("--kind-stocks")]];
+    traces = list.filter((row) => books.some(([book]) => isNum(row[book]) && row[book] !== 0)).map((row, i) => {
+      const shade = (hex, k) => withAlpha(hex.startsWith("#") ? hex : "#888888", 1 - 0.12 * k);
+      return { type: "bar", orientation: "h", name: String(row.Strategy), y: books.map(([book]) => book), showlegend: false,
+        x: books.map(([book]) => (isNum(row[book]) ? row[book] * axis.mult : 0)),
+        marker: { color: books.map(([, color]) => shade(color, i)), line: { color: token("--surface"), width: 1.5 } },
+        text: books.map(([book]) => (isNum(row[book]) && row[book] !== 0 ? `${row.Strategy} ${text(book, row[book])}` : "")),
+        textposition: "inside", insidetextanchor: "middle", insidetextfont: { size: 11, color: "#ffffff" }, hoverinfo: "skip" };
+    });
+    layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis), uniformtext: { mode: "hide", minsize: 9 } };
+    height = 120;
+    names.splice(0, names.length, ...books.map(([book]) => book));
   } else if (plan.kind === "stacked" && !plan.series.some((key) => rows.some((row) => isNum(row[key]) && row[key] !== 0))) {
     return renderTableChart(id, spec, { kind: "bars", label: plan.label, value: "Total", text: null });   // no split yet: the totals
   } else if (plan.kind === "stacked") {   // one bar per row, its parts stacked in the book colours
@@ -515,7 +530,7 @@ function renderTable(id, spec) {
   const empty = !spec || !spec.columns || !spec.columns.length || !(spec.rows || []).length || allZero;
   if (card) card.hidden = empty;
   if (empty) return;
-  if (isChartView() && renderTableChart(id, spec)) return;   // ?view=charts: the table drawn as a chart
+  if ((isChartView() || id === "strategies") && renderTableChart(id, spec)) return;   // the performance tile is always the stacked bars   // ?view=charts: the table drawn as a chart
   // A text column with the same value in every row is said once, above the table; an empty one is left out.
   const shared = [];
   const align = (VIEWS[id] || {}).align;
