@@ -921,7 +921,7 @@ function renderHighlights(id, rows, hover = {}) {
     };
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
     return el("li", Object.assign(level ? { class: level } : {}, { title: [area, hover[area]].filter(Boolean).join(": ") }), [
-      el("span", { class: "text" }, lineNodes(text)),
+      el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),   // the uPnL lines carry no background
       el("span", { class: "hl-actions" }, [
         ...(window.DESK_SOURCE ? symbolActions(text) : []),   // run it: plan, then confirm
         act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + whole] = Date.now(); feedback("highlight", "read", area, text); }),
@@ -1796,7 +1796,7 @@ function symbolKind(symbol) {   // crypto or stocks, by the table the symbol is 
 
 // A highlight line: the crypto and stocks parts each become one tinted run (the word itself is not shown, only the colour
 // behind what follows, symbols and figures included, to the next break), figures coloured, symbols as buttons.
-function lineNodes(text) {
+function lineNodes(text, tint = true) {
   const source = String(text), found = [];
   KIND_WORDS.lastIndex = 0;
   let match;
@@ -1811,7 +1811,7 @@ function lineNodes(text) {
     const stop = source.slice(item.end, next).search(/[;.](\s|$)/);
     const end = stop >= 0 ? item.end + stop : next;
     const body = source.slice(item.end, end).replace(/^[:\s]+/, "").replace(/,\s*$/, "");
-    if (body) nodes.push(el("span", { class: "kind-run " + (/crypto/i.test(item.word) ? "kind-crypto" : "kind-stocks") }, plain(body)));
+    if (body) nodes.push(tint ? el("span", { class: "kind-run " + (/crypto/i.test(item.word) ? "kind-crypto" : "kind-stocks") }, plain(body)) : el("span", {}, plain(body)));
     const between = source.slice(end, next);
     if (between) nodes.push(...plain(between));
   });
