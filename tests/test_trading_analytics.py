@@ -1792,6 +1792,7 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertFalse(plan.stop_block_reason)
         self.assertFalse(plan.target_block_reason)
 
+    @patch("hl_trade.COUNT_FUNDING_IN_RISK", True)
     def test_adverse_funding_tightens_exchange_stop_distance(self):
         market = Market("BTC", "", 100, 100, 3, 10)
         position = Position(

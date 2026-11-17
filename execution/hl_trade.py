@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from desk.hl.trade_analytics import (
     DEFAULT_HORIZON_DAYS,
     ExpectedPnl,
-    adverse_funding_cost_per_unit,
+    adverse_funding_cost_per_unit as _adverse_funding_cost_per_unit,
     expected_position_pnl,
     fetch_collateral_equity,
     fetch_daily_candles,
@@ -39,6 +39,16 @@ from desk.hl.trade_analytics import (
     side_to_direction,
     wilder_atr,
 )
+
+# Funding does not count against the risk cap (user, 2026-11-17: "funding does not stop us"): the cap bounds the price
+# move (3 x ATR) and fees, the same figure the dashboard's risk tile shows. Set True to reserve a 5-day adverse funding
+# stress per position again.
+COUNT_FUNDING_IN_RISK = False
+
+
+def adverse_funding_cost_per_unit(*args, **kwargs) -> float:
+    return _adverse_funding_cost_per_unit(*args, **kwargs) if COUNT_FUNDING_IN_RISK else 0.0
+
 
 KEYCHAIN_SERVICE = "Hyperliquid API wallet"
 BASE_URL = "https://api.hyperliquid.xyz"
