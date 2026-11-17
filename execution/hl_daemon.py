@@ -3320,7 +3320,8 @@ class Daemon:
                 return 2
             try:   # thesis trades go in without a stop or take-profit (the desk's rule since 2026-11-17)
                 return self.trade({"cmd": "trade", "wallet": wallet, "live": bool(request.get("live")), "signals": str(path),
-                                   "fast": True, "conviction": True, "ignore_unreachable": True}, session)
+                                   "fast": True, "conviction": True, "ignore_unreachable": True,
+                                   "strategy": "fade" if str(request["change"]).lower() == "short" else "directional"}, session)
             finally:
                 self.trade_lock.release()
         if command == "resize":   # the dashboard's actions on an open position: plan (dry run), then live once confirmed there

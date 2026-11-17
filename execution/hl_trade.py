@@ -1243,7 +1243,7 @@ def plan_trades(
             exposures.append((asset_class, coin, notional))
         from desk import trade_rules
 
-        tag = "conviction" if conviction else (strategy or "directional")
+        tag = strategy if conviction and strategy == "fade" else "conviction" if conviction else (strategy or "directional")   # a fade keeps its own tag
         plan = replace(plan, strategy=tag, rule_notes="; ".join(trade_rules.entry_notes(
             coin, signal["side"], plan.quantity * market.mark_price, tag)) if plan.quantity > 0 else "")
         plans.append(plan)
