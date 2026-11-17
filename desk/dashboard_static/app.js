@@ -533,22 +533,33 @@ function renderTiles(k) {
   const r = k.returns || {};
   const mw = k.money_weighted || {};
   const times = (value) => (isNum(value) ? `${Number(value.toFixed(2))}x` : "n/a");   // 1.6x, 1.33x: no trailing zeros
-  // Number first, then a short label the eye learns once; read left to right: what needs attention before the results.
-  // The key (first argument's stand-in for saved order and hiding) keeps the old names, so arranged tiles stay arranged.
+  const tables = (latest && latest.data && latest.data.tables) || {};
+  // uPnL on cost, as the positions tables count it (priced rows of both books)
+  const priced = ["positions", "positions_stocks"].flatMap((id) => ((tables[id] || {}).rows || []))
+    .filter((row) => isNum(row.uPnL) && isNum(row.Value) && isNum(row["uPnL (%)"]));
+  const cost = priced.reduce((sum, row) => sum + Math.abs(row.Value - row.uPnL), 0);
+  const upnl = priced.reduce((sum, row) => sum + row.uPnL, 0);
+  const risk = ((tables.accounts || {}).total || {})["Open risk"];
+  const day = k.day_change || {};
+  // Drawdown from the money put in (what an investment agreement limits), not from a past peak: trading equity against
+  // its net deposits; none while the money made is positive.
+  const invested = (k.trading_equity || k.desk_value) - (mw.pnl || 0);
+  const drawdown = isNum(mw.pnl) && invested > 0 ? Math.min(0, mw.pnl / invested) : NaN;
+  // Number first, a short label after; what is happening now, each tile with its call to act: today and the open
+  // positions (manage them), the risk room under the cap (can a trade be added), exposure, the money, and the agreement's
+  // drawdown last. Returns over windows are history: the performance table below has them.
   const tiles = [
-    tile("drawdown", pct(k.drawdown, 1), k.drawdown < 0 ? `peak ${sinceLabel(k.peak_date)}` : "at peak",
-      { key: "Drawdown now", valueClass: k.drawdown <= -0.10 ? "neg" : "" }),
+    tile("today", isNum(day.pct) ? pct(day.pct, 1, true) : "n/a", isNum(day.change) ? usd(day.change) : "",
+      { key: "Today", valueClass: signClass(day.change), title: dayChangeLine(day).title }),
+    tile("uPnL", cost ? pct(upnl / cost, 1, true) : "n/a", isNum(k.unrealized) ? usd(k.unrealized) : "",
+      { key: "uPnL", valueClass: signClass(upnl), title: "Open positions against their cost" }),
+    tile("of cap", isNum(risk) ? pct(risk / RISK_CAP) : "n/a", isNum(risk) ? `${pct(risk)} risk` : "",
+      { key: "Risk", valueClass: isNum(risk) && risk / RISK_CAP >= 0.9 ? "neg" : "", title: "Open risk against the 33% cap: the room for new trades" }),
     tile("gross", times(k.gross_leverage), isNum(k.net_leverage) ? `${times(k.net_leverage)} net` : "",
       { key: "Gross leverage", title: "Of trading equity" }),
-    tile("", wholeUsd(k.desk_value), "", { key: "Desk value", line: dayChangeLine(k.day_change) }),
-    tile("30D", pct(r["30D"], 1, true), `${pct(r["7D"], 1, true) || "n/a"} 7D · ${pct(r["90D"], 1, true) || "n/a"} 90D`,
-      { key: "Return 30D", valueClass: signClass(r["30D"]) }),
-    // Since start: money-weighted (what the money made) and time-weighted (the strategy, deposits aside).
-    tile("MW", pct(mw.return, 1, true) || "n/a",
-      [isNum(mw.pnl) ? `${usd(mw.pnl)} PnL` : "", isNum(k.unrealized) ? `${usd(k.unrealized)} uPnL` : ""].filter(Boolean).join(" · "),
-      { key: "MW return", valueClass: signClass(mw.return), title: "Money-weighted return since start, HL + IB" }),
-    tile("TW", pct(r.since_start, 1, true), `since ${sinceLabel(k.since)}`,
-      { key: "TW return", valueClass: signClass(r.since_start), title: "Time-weighted return since start, wallets included" }),
+    tile("", wholeUsd(k.desk_value), "", { key: "Desk value" }),
+    tile("DD", isNum(drawdown) ? pct(drawdown, 1) : "n/a", isNum(invested) ? `of ${usd(invested)} in` : "",
+      { key: "DD", valueClass: drawdown <= -0.10 ? "neg" : "", title: "Drawdown from the money put in, net of withdrawals" }),
   ];
   arrangeTiles(document.getElementById("tiles"), tiles);
 }
