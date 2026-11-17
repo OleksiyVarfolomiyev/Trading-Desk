@@ -160,8 +160,14 @@ def evidence(signals: pd.DataFrame, names: list[str]) -> dict:
 # Reading and saved state
 # ---------------------------------------------------------------------------
 
+def _top(rank: float, suffix: str = "") -> str:
+    """" (top 8%)" for a rank, nothing when the share rounds to 0% or 100%: that says nothing (the desk's rule)."""
+    share = f"{1 - rank:.0%}"
+    return "" if share in ("0%", "100%") else f" (top {share}{suffix})"
+
+
 def _describe_alts(row: pd.Series) -> str:
-    return (f"alts {_pct(row['rel7'])} vs BTC over 7 days (top {1 - row['rel7_rank']:.0%} of the year), "
+    return (f"alts {_pct(row['rel7'])} vs BTC over 7 days{_top(row['rel7_rank'], ' of the year')}, "
             f"{row['breadth7']:.0%} of alts beat BTC, {_pct(row['rel30'])} over 30 days")
 
 
@@ -216,7 +222,7 @@ SIGNAL_TEXT = {
     "E1": lambda m: f"SPY {_pct(m['drawdown60'])} from 60d high",
     "E2": lambda m: "SPY below falling 50d avg",
     "E3": lambda m: f"VIX {m['vix']:.1f} ({_pct(m['vix5'])} 5d)",
-    "E4": lambda m: f"10d vol {m['vol10']:.0%} (top {1 - m['vol10_rank']:.0%})",
+    "E4": lambda m: f"10d vol {m['vol10']:.0%}{_top(m['vol10_rank'])}",
 }
 
 

@@ -32,6 +32,13 @@ class AltSeasonTests(unittest.TestCase):
         self.assertNotEqual(level.iloc[-1], "high")
 
 
+class RankTests(unittest.TestCase):
+    def test_a_rank_that_rounds_to_0_or_100_is_left_out(self):
+        self.assertEqual(m._top(0.999), "")      # top 0%
+        self.assertEqual(m._top(0.001), "")      # top 100%
+        self.assertEqual(m._top(0.95), " (top 5%)")
+
+
 class EquityTests(unittest.TestCase):
     def test_a_sell_off_with_a_vix_spike_reads_high(self):
         days = pd.bdate_range("2025-01-01", periods=300)
