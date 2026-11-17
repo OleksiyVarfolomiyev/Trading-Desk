@@ -457,14 +457,14 @@ function renderTableChart(id, spec, override) {
         xshift: value < 0 ? -6 : 6, font: { size: 13, color: INSIDE_INK() } };
     });
     layout = { xaxis: Object.assign({ zeroline: true }, axis), annotations: inside, insideLabels: true };
-    height = Math.max(200, order.length * 34 + 80);   // positions read large: a tall row per bar
+    height = Math.max(90, order.length * 28 + 14);
     // Room at the right for the longest end label (a short bar's label carries its name too).
-    layout.margin = { r: Math.min(320, Math.max(plan.text ? 130 : 90, Math.max(...traces[0].text.map((t) => t.length)) * 7 + 24)) };
+    layout.margin = { r: Math.min(320, Math.max(plan.text ? 100 : 40, Math.max(...traces[0].text.map((t) => t.length)) * 7 + 12)) };
   }
   host.replaceChildren();
   const node = el("div", { class: "chart", id: "tc-" + id, style: `height:${height}px` });
   host.append(node);
-  const margin = Object.assign({ l: 90, r: 90, t: plan.kind === "grouped" ? 30 : 8, b: 36 }, layout.margin || {});
+  const margin = Object.assign({ l: 8, r: 60, t: 2, b: 6 }, layout.margin || {});
   const base = baseLayout(Object.assign({ hovermode: "closest" }, layout, { margin }));
   // Values sit at the bar ends: no x labels, grid, zero line or axis line.
   base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false, showticklabels: false, showgrid: false,
@@ -914,7 +914,7 @@ function baseLayout(extra) {
   return Object.assign({
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     font: { family: token("--font") || "system-ui, -apple-system, Segoe UI, sans-serif", size: 12, color: ink },
-    margin: { l: 56, r: 72, t: 30, b: 36 },
+    margin: { l: 40, r: 56, t: 6, b: 22 },
     hovermode: "x unified",
     hoverlabel: { bgcolor: token("--surface"), bordercolor: axis, font: { color: token("--ink") } },
     // The chart tools: no band behind them, icons in the page's muted ink, the active one in its full ink.
@@ -1193,10 +1193,16 @@ function drawChartScales() {   // the value charts' and the performance table's 
 function rebaseReturns(node, days) {
   node._orig = node._orig || node.data.map((trace) => ({ x: trace.x.slice(), y: trace.y.slice() }));
   const start = days ? Date.now() - days * 86400000 : null;
+  let baseTime = start;
   const ys = node._orig.map((trace) => {
     if (!start) return trace.y;
-    const first = trace.x.findIndex((x) => new Date(x).getTime() >= start);
+    // the base is the last point at or before the window's start (daily points: yesterday's close for a day), so a
+    // short window shows the move from there to now, not a flat line
+    let first = -1;
+    trace.x.forEach((x, i) => { if (new Date(x).getTime() <= start) first = i; });
+    if (first < 0) first = trace.x.findIndex((x) => new Date(x).getTime() >= start);
     if (first < 0) return trace.y;
+    baseTime = Math.min(baseTime, new Date(trace.x[first]).getTime());
     const base = 1 + trace.y[first] / 100;
     return trace.y.map((y) => Math.round(10000 * ((1 + y / 100) / base - 1)) / 100);
   });
@@ -1210,6 +1216,7 @@ function rebaseReturns(node, days) {
     note.text = note.text.replace(/-?[\d.]+%$/, readablePct(y[y.length - 1] / 100));
   });
   Plotly.relayout(node, { annotations: notes });
+  return baseTime;
 }
 function zoomCharts() {   // the value charts show the chosen window (All: the whole history)
   if (typeof Plotly === "undefined") return;
@@ -1217,9 +1224,9 @@ function zoomCharts() {   // the value charts show the chosen window (All: the w
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id);
     if (!node || !node.data) return;
-    if (id === "chart-twr") rebaseReturns(node, days);
+    const rebasedFrom = id === "chart-twr" ? rebaseReturns(node, days) : null;
     if (!days) { Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }).then(() => spreadEndLabels(id)); return; }
-    const end = Date.now(), start = end - days * 86400000;
+    const end = Date.now(), start = Math.min(end - days * 86400000, rebasedFrom || Infinity);
     const ys = node.data.flatMap((trace) => (trace.x || []).map((x, i) => [new Date(x).getTime(), trace.y && trace.y[i]]))
       .filter(([t, y]) => t >= start && isNum(y)).map(([, y]) => y);
     const update = { "xaxis.range": [new Date(start).toISOString(), new Date(end).toISOString()] };
