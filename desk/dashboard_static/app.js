@@ -372,8 +372,8 @@ function renderBarList(id, spec, plan, host) {
     const acts = el("span", { class: "bacts" }, []);
     if (id in CANDIDATE_TABLES) candidateRowButtons(id, row).forEach((b) => acts.append(b));
     else if (window.DESK_SOURCE && /^HL /.test(String((row.__raw || {}).Account || "")) && isNum((row.__raw || {}).Value)) {
-      [["Trim ⅓", "reduce", 1 / 3], ["Close", "close", 1]].forEach(([word, change, fraction]) => {
-        const b = el("button", { type: "button", class: "row-act", title: `${word}: ${label}`, "aria-label": `${word} ${label}`, text: change === "close" ? "✕" : "⅓" });
+      [["Trim ⅓", "reduce", 1 / 3], ["Raise ⅓", "add", 1 / 3], ["Close", "close", 1]].forEach(([word, change, fraction]) => {
+        const b = el("button", { type: "button", class: "row-act", title: `${word}: ${label}`, "aria-label": `${word} ${label}`, text: change === "close" ? "✕" : change === "add" ? "▲" : "⅓" });
         b.addEventListener("click", (event) => { event.stopPropagation(); runAction(word, change, fraction, { coin: row.__raw.Symbol, wallet: String(row.__raw.Account).slice(-4) }); });
         acts.append(b);
       });
@@ -2008,7 +2008,7 @@ function symbolActions(text) {
     const menu = el("div", { class: "more-menu" }, targets.flatMap(({ symbol, rows }) => {
       const hl = rows.find((r) => /^HL /.test(String(r.Account || "")));
       const target = { coin: hl.Symbol, wallet: String(hl.Account).slice(-4) };
-      return [["Trim ⅓", "reduce", 1 / 3], ["Close", "close", 1]].map(([label, change, fraction]) => {
+      return [["Trim ⅓", "reduce", 1 / 3], ["Raise ⅓", "add", 1 / 3], ["Close", "close", 1]].map(([label, change, fraction]) => {
         const row = el("button", { type: "button", class: "sections-row tile-pick" }, [el("b", { text: symbol }), el("span", { text: label })]);
         row.addEventListener("click", () => { menu.remove(); runAction(label, change, fraction, target); });
         return row;
@@ -2085,7 +2085,7 @@ function assetAdvice(rows) {   // where it stands, and what is sensible
   const side = value < 0 ? "short" : "long", name = marketName(held[0].Symbol);
   const line = `${side}, ${usd(Math.abs(value))}, uPnL ${isNum(share) ? pct(share) : "n/a"}`;
   const trim = [`Trim a third`, `trim ${name} by a third`, "reduce", 1 / 3], close = [`Close`, `close ${name}`, "close", 1],
-    add = [`Add a third`, `add a third to the ${name} ${side}`, "add", 1 / 3];
+    add = [`Raise a third`, `raise the ${name} ${side} by a third`, "add", 1 / 3];
   const actions = share >= 0.1 ? [trim, close, add] : share <= -0.1 ? [close, trim, add] : [trim, add, close];
   // On the web dashboard an HL position's actions run through the daemon (plan, then confirm); IB and the local page copy.
   const hl = held.find((row) => /^HL /.test(String(row.Account || "")));
@@ -2676,6 +2676,31 @@ function outlierAssets() {
   const spread = Math.sqrt(moves.reduce((a, b) => a + (b - mean) ** 2, 0) / moves.length) || 1;
   return rows.filter((row) => Math.abs(row["24h change (%)"]) >= 0.04 && Math.abs(row["24h change (%)"] - mean) / spread >= 2).map((row) => row.Symbol);
 }
+
+// A chip on the pulse bar is actionable on hover: for a position held on HL, trim a third, raise a third (add to it: poker's
+// "raise"; craps calls it a "press") or close; for an asset not held, short or long it (a conviction entry). The web page
+// plans each with the daemon and asks once; the local page copies the order.
+function chipActions(asset) {
+  const rows = assetRows(asset).filter((row) => /^HL /.test(String(row.Account || "")) && isNum(row.Value)), name = friendlyName(asset);
+  const buttons = [];
+  const add = (text, label, run, sentence) => {
+    const b = el("button", { type: "button", class: "tick-act", title: label, "aria-label": `${label} ${name}`, text });
+    b.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); if (window.DESK_SOURCE) run(); else copyOrder(b, sentence); });
+    buttons.push(b);
+  };
+  if (rows.length) {
+    const target = { coin: rows[0].Symbol, wallet: String(rows[0].Account).slice(-4) };
+    add("⅓", "Trim a third", () => runAction("Trim ⅓", "reduce", 1 / 3, target), `trim ${name} by a third`);
+    add("▲", "Raise a third", () => runAction("Raise ⅓", "add", 1 / 3, target), `raise the ${name} by a third`);
+    add("✕", "Close", () => runAction("Close", "close", 1, target), `close ${name}`);
+  } else if (universeMap[asset.toLowerCase()] || asset) {
+    const market = universeMap[asset.toLowerCase()] || asset;
+    add("S", "Short it", () => runAction("Short", "short", 1, { coin: market, wallet: "07f2" }), `short ${name}`);
+    add("L", "Long it", () => runAction("Long", "long", 1, { coin: market, wallet: "07f2" }), `long ${name}`);
+  }
+  return el("span", { class: "tick-pop" }, buttons);
+}
+
 async function refreshTicker() {
   const state = tickerState();
   let strip = document.getElementById("ticker");
@@ -2748,7 +2773,7 @@ async function refreshTicker() {
     return el("a", { class: "tick " + direction + (auto.includes(asset) ? " auto-asset" : ""), href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
       el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }),
       el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }),   // the move first, the price after
-      el("span", { class: "price", text: priceText(context.price) }), ...(auto.includes(asset) ? [] : [dropper(asset)])]);
+      el("span", { class: "price", text: priceText(context.price) }), ...(auto.includes(asset) ? [] : [dropper(asset)]), chipActions(asset)]);
   })(), asset)).concat([addBox, hideStrip]));
 }
 setInterval(refreshTicker, 5000);
@@ -2842,7 +2867,7 @@ function openReport() {
 // A symbol's page opens in a window of its own (not a tab), the same window for the next symbol, so the dashboard stays in view.
 document.addEventListener("click", (event) => {
   const link = event.target.closest && event.target.closest("a.symbol-link, a.tick, a.asset-action[href]");
-  if (!link || event.metaKey || event.ctrlKey || event.shiftKey || !link.href) return;
+  if (!link || event.metaKey || event.ctrlKey || event.shiftKey || !link.href || event.target.closest("button")) return;
   event.preventDefault();
   const page = window.open(link.href, "desk-symbol-page", "popup=yes,width=1280,height=860,noopener=no");
   if (page) page.focus(); else window.location.assign(link.href);

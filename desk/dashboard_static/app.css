@@ -665,3 +665,9 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .notice-card b { display: block; margin-bottom: 2px; }
 .notice-line { color: var(--ink-2); margin-top: 2px; white-space: pre-wrap; }
 .notice-close { position: absolute; top: 2px; right: 4px; background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 15px; }
+/* Pulse chips act on hover: a small row of buttons under the chip. */
+.tick { position: relative; }
+.tick-pop { display: none; position: absolute; top: 100%; left: 0; z-index: 40; gap: 2px; padding: 2px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 16px rgba(0,0,0,.3); }
+.tick:hover .tick-pop, .tick:focus-within .tick-pop { display: inline-flex; }
+.tick-act { background: transparent; border: 0; color: var(--ink-2); cursor: pointer; font: inherit; font-size: 12px; padding: 1px 7px; border-radius: 4px; }
+.tick-act:hover { color: var(--ink); background: var(--border); }
