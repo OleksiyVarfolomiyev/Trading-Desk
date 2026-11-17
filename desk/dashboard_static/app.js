@@ -2252,7 +2252,11 @@ async function refreshTicker() {
     saveTicker(s); feedback("look", "price strip add", asset); refreshTicker();
   };
   addBox.firstChild.addEventListener("keydown", (event) => { if (event.key === "Enter") addAsset(); });
-  addBox.firstChild.addEventListener("change", () => {   // a suggestion picked from the list adds at once
+  addBox.firstChild.addEventListener("input", (event) => {   // a suggestion picked from the list (not a typed letter) adds at once
+    if (event.inputType && event.inputType !== "insertReplacementText") return;
+    if (universeMap[addBox.firstChild.value.trim().toLowerCase()]) addAsset();
+  });
+  addBox.firstChild.addEventListener("change", () => {   // and when the field is left with a known name in it
     const value = addBox.firstChild.value.trim();
     if (universeMap[value.toLowerCase()]) addAsset();
   });
