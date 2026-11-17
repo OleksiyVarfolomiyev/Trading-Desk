@@ -594,6 +594,7 @@
     const regime = await every("regime", 30 * 60000, () => relay("/regime")).catch(() => null);
     const daemonAlerts = await every("alerts", 60000, () => relay("/alerts")).catch(() => null);
     const tileFeed = await every("tiles", 60000, () => relay("/tiles")).catch(() => null);
+    const usageModel = await every("usage_model", 600000, () => fetch("/usage_model").then((r) => r.json())).catch(() => ({}));
     const catalogEntries = await every("catalog", 3600000, () => fetch("/catalog.json").then((r) => r.json()).then((c) => c.entries || [])).catch(() => []);   // published from the notebooks (desk/tile_feed.py)
     const syncRun = await every("sync", 30 * 60000, () => relay("/sync")).catch(() => null);
     const research = await every("research", 15 * 60000, () => relay("/research")).catch(() => null);
@@ -1183,6 +1184,7 @@
         .filter((a) => a.context).map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), a.context])) },
       tables,
       catalog: catalogEntries,
+      usage_model: usageModel,
       tiles: ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now()),
       charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [] },
       problems, notes,

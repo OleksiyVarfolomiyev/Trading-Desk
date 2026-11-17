@@ -644,14 +644,22 @@ function redrawHighlights() {
 function renderHighlights(id, rows, hover = {}) {
   const host = document.getElementById(id);
   const state = highlightState();
-  const shown = (rows || []).filter(([area, text]) => !state.deleted.includes(area) && !state.read[area + "|" + text]);
-  if (!shown.length) {
+  // Areas the reader has dismissed over and over (desk/usage_model.py) are folded away, never a critical row.
+  const quiet = new Set((((latest && latest.data && latest.data.usage_model) || {}).quiet) || []);
+  const open = host.dataset.showQuiet === "1";
+  const answered = (rows || []).filter(([area, text]) => !state.deleted.includes(area) && !state.read[area + "|" + text]);
+  const folded = answered.filter(([area, text]) => quiet.has(area) && severity(area, text) !== "critical");
+  const shown = open ? answered : answered.filter((row) => !folded.includes(row));
+  if (!shown.length && !folded.length) {
     host.replaceChildren(el("li", {}, el("span", { class: "empty", text: "Nothing to report." })));
     return;
   }
   const rank = { critical: 0, watch: 1, "": 2 };
   const ordered = shown.map(([area, text]) => [area, text, severity(area, text)])
     .sort((a, b) => rank[a[2]] - rank[b[2]]);  // stable: same-level rows keep their order
+  const foot = folded.length ? [el("li", {}, [el("button", { type: "button", class: "quiet-toggle", title: "Areas you have dismissed several times: " + [...new Set(folded.map((r) => r[0]))].join(", "),
+    text: open ? "hide quiet" : `${folded.length} quiet`, onclick: null })])] : [];
+  if (foot.length) foot[0].firstChild.addEventListener("click", () => { host.dataset.showQuiet = open ? "0" : "1"; redrawHighlights(); });
   host.replaceChildren(...ordered.map(([area, text, level]) => {
     const act = (label, symbol, change) => {
       const button = el("button", { type: "button", class: "hl-act", title: label, "aria-label": `${label}: ${area}`, text: symbol });
@@ -665,7 +673,7 @@ function renderHighlights(id, rows, hover = {}) {
         act("Not important: stop showing this", "×", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
       ]),
     ]);
-  }));
+  }), ...foot);
 }
 
 // ---------------------------------------------------------------- charts

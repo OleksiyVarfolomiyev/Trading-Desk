@@ -56,6 +56,15 @@ STATIC_FILES = {
 }
 
 
+def usage_model_now() -> dict:
+    try:
+        from desk import usage_model
+
+        return usage_model.current()
+    except Exception:
+        return {}
+
+
 def catalog_entries() -> list[dict]:
     try:
         from desk import tile_catalog
@@ -462,6 +471,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     return {
         "kpis": kpis,
+        "usage_model": usage_model_now(),   # what the reader has said is noise (desk/usage_model.py)
         "tiles": published_tiles(),
         "catalog": catalog_entries(),   # the notebook sections that can be pulled onto the dashboard (desk/tile_catalog.py)   # charts and tables published from the notebooks (desk/tile_feed.py)
         "highlights": {"well": [list(row) for row in well], "attention": [list(row) for row in attention],

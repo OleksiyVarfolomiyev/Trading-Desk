@@ -2990,6 +2990,23 @@ class ResearchFeed:
             scope.add(account[-4:].lower())
             open_pairs |= {(account[-4:].lower(), str(item.get("symbol"))) for item in positions if float(item.get("quantity") or 0)}
         journal.close_missing(open_pairs, scope=scope)
+        try:   # learn from what was done on the dashboard: quiet highlight areas, unused tiles (desk/usage_model.py)
+            from desk import usage_model
+
+            usage_model.refresh()
+        except Exception as exc:
+            log(f"usage model not refreshed ({type(exc).__name__}: {exc})")
+        try:   # what the data sources add, remove or change (desk/source_watch.py), once a day
+            if time.time() - getattr(self, "watched_at", 0) > 86400:
+                self.watched_at = time.time()
+                from desk import source_watch
+
+                findings = source_watch.run(held=set(self.daemon.state.held_coins()))
+                log(f"source watch: {len(findings)} change{'s' if len(findings) != 1 else ''}" + (": " + " | ".join(findings)[:400] if findings else ""))
+                if findings:
+                    self.daemon.alerts.set("sources", "Data sources changed", " ".join(findings)[:600], ttl=86400)
+        except Exception as exc:
+            log(f"source watch failed ({type(exc).__name__}: {exc})")
         frame = journal.strategy_frame()
         strategies = json.loads(frame.to_json(orient="records")) + [json.loads(pd.Series(journal.total_row(frame)).to_json())]
         overdue = [{"wallet": item["wallet"], "coin": item["coin"], "side": item["side"], "days": round(item["days"], 1)}

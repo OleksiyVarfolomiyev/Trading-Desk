@@ -428,3 +428,5 @@ html.private td.digits { cursor: pointer; }
 .asset-action.lead { border-color: var(--series-1); color: var(--ink); }
 .sections-button.has-suggestion { position: relative; }
 .sections-button.has-suggestion::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--series-2); }
+.quiet-toggle { background: transparent; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: 11px; padding: 0; text-decoration: underline dotted; }
+.quiet-toggle:hover { color: var(--ink); }

@@ -245,6 +245,13 @@ async function handle(request, response) {
     return;
   }
   if (url.pathname === "/feedback" && request.method === "POST") return saveFeedback(request, response);
+  if (url.pathname === "/usage_model" && request.method === "GET") {   // fitted hourly by the daemon from the feedback log (desk/usage_model.py)
+    let text = '{"areas":{},"tiles":{},"quiet":[]}';
+    try { text = await fsp.readFile(path.join(HOME, ".trading-desk", "usage_model.json"), "utf8"); } catch (error) { /* none yet */ }
+    response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+    response.end(text);
+    return;
+  }
   if (request.method === "GET") {
     const file = await staticFile(url.pathname);
     if (file) {
