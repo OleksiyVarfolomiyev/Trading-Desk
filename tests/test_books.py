@@ -100,3 +100,18 @@ class StatementFillTests(unittest.TestCase):
         self.assertEqual(fills.iloc[0]["side"], "BOT")
         self.assertTrue(fills.iloc[0]["time"].startswith("2026-11-09 14:30"))   # 09:30 New York is 14:30 UTC
         self.assertEqual(str(covered.date()), "2026-11-14")
+
+
+class ChartReturns(unittest.TestCase):
+    def book(self, kind):
+        days = pd.date_range("2026-01-01", periods=6, tz="UTC")
+        coins = pd.DataFrame({"day": days, "value": [100.0, 100.0, 0.0, 0.0, 100.0, 100.0]})
+        return SimpleNamespace(kind=kind, days=days, coins=coins, equity=pd.Series(100.0, index=days),
+                               returns=pd.Series(0.01, index=days[1:]))
+
+    def test_stocks_skip_the_days_after_holding_nothing(self):
+        out = books.chart_returns(self.book("Stocks"))
+        self.assertEqual(list(out.index.day), [2, 3, 6])   # days 4 and 5 follow a flat close; day 6 follows a held one
+
+    def test_crypto_untouched(self):
+        self.assertEqual(len(books.chart_returns(self.book("Crypto"))), 5)

@@ -867,7 +867,8 @@ class Book:
         # a few dollars of positions make no book.
         active = active_days(self)
         start = active.min() if len(active) else self.days[0]
-        returns = self.returns[self.returns.index >= start]
+        returns = chart_returns(self)
+        returns = returns[returns.index >= start]
         if returns.empty:
             return
         path = 100 * ((1 + returns).cumprod() - 1)
@@ -973,6 +974,17 @@ def active_days(book: "Book", threshold: float = ACTIVE_GROSS) -> pd.DatetimeInd
                 gross = gross + value
     share = (gross / book.equity.where(book.equity > 0)).shift(1)
     return share.index[share >= threshold]
+
+
+def chart_returns(book: "Book") -> pd.Series:
+    """The book's daily returns for its performance line. Stocks skip the days it held under 1% of equity (IB all
+    cash, 2026-03-30 to 2026-05-11): a flat stretch is no performance, and the line should read as the stocks held."""
+    returns = book.returns
+    if book.kind != "Stocks":
+        return returns
+    gross = book.coins.assign(gross=book.coins["value"].abs()).groupby("day")["gross"].sum().reindex(book.days).fillna(0.0)
+    share = (gross / book.equity.where(book.equity > 0)).shift(1).reindex(returns.index)
+    return returns[~(share < 0.01)]
 
 
 def _factor_inputs(book: "Book") -> tuple[pd.Series, pd.DataFrame, int]:

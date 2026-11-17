@@ -188,7 +188,7 @@ BOOKS_EVERY_SECONDS = 3600
 def books_payload() -> dict:
     """Each book's return on trading equity over 1, 7, 30 and 90 days (desk/books.py, the notebooks' numbers), for the
     dashboards' performance table: the books, not the accounts."""
-    from desk.books import Book
+    from desk.books import Book, chart_returns
 
     rows, series = [], {}
     for kind, options in (("Crypto", {}), ("Stocks", {"since": "2025-01-13"})):
@@ -197,7 +197,7 @@ def books_payload() -> dict:
         last = book.returns.iloc[-1] if len(book.returns) else float("nan")
         rows.append({"Account": kind.lower(), "Return 24h": _clean(float(last)),
                      **{f"Return {w}": _clean(float(table.at[w, "Return (on equity)"])) for w in table.index}})
-        growth = (1 + book.returns.dropna()).cumprod()
+        growth = (1 + chart_returns(book).dropna()).cumprod()
         series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(round(float(value) - 1, 5))] for day, value in growth.items()]
     return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series}
 
