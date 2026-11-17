@@ -689,3 +689,6 @@ html[data-screen="research"] #columns > .col { min-width: 520px; }
 .alert-strip { margin: 0 0 8px; }
 html:not([data-screen="research"]) .alert-strip { display: none; }
 .alert-strip[hidden] { display: none !important; }
+
+/* Highlights: the grouping is enough, no background behind the crypto and stocks parts. */
+.highlights .kind-run, .highlights .kind-run.kind-crypto, .highlights .kind-run.kind-stocks { background: none; padding: 0; }
