@@ -1,4 +1,5 @@
-import sys; sys.path.insert(0,'/Users/admin/trading-desk/research'); sys.path.insert(0,'/Users/admin/trading-desk')
+"""Fading the dump phase: a coin that ran up and is now off its 24h high, shorted, net of costs (run research/pump_study.py fetch first)."""
+import sys; from pathlib import Path; sys.path.insert(0, str(Path(__file__).resolve().parent)); sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np, pandas as pd
 import pump_study as ps
 frame=pd.read_csv(ps.FILE, parse_dates=["time"])
