@@ -487,6 +487,8 @@ function renderTable(id, spec) {
       const link = el("a", { class: "symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", text });
       return el("td", { class: classes }, [link]);
     }
+    if (!format.num && KIND_WORDS.test(text)) { KIND_WORDS.lastIndex = 0; return el("td", { class: classes }, kindMarks(text)); }
+    KIND_WORDS.lastIndex = 0;
     return el("td", { class: classes + withDigits, text: ZERO_TEXT.test(text) ? "" : text });
   };
   const body = el("tbody", {}, rows.map((row, index) => el("tr", row.__hover ? { title: row.__hover } : {},
@@ -667,7 +669,7 @@ function renderHighlights(id, rows, hover = {}) {
       return button;
     };
     return el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [
-      el("span", { class: "area", text: (level === "critical" ? "⚠ " : "") + area }), el("span", { class: "text" }, linkSymbols(text)),
+      el("span", { class: "area", text: (level === "critical" ? "⚠ " : "") + area }), el("span", { class: "text" }, linkSymbols(text).flatMap((part) => (typeof part === "string" ? kindMarks(part) : [part]))),
       el("span", { class: "hl-actions" }, [
         act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + text] = Date.now(); feedback("highlight", "read", area, text); }),
         act("Not important: stop showing this", "×", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
@@ -1007,6 +1009,7 @@ function adoptCard(card) {
     CARDS[cardId(card)] = card;
     const title = card.querySelector("h2");
     if (!title || card.dataset.adopted) return;
+    markKinds(title);
     card.dataset.adopted = "1";
     const grip = el("span", { class: "card-grip", title: "Drag anywhere on the tile (outside the chart) to move it", "aria-label": "Move " + cardTitle(card), text: "⠿" });
     // The whole tile drags, except from a chart, a field, a button or a link (those keep their own mouse behaviour).
@@ -1127,6 +1130,34 @@ function knownSymbols() {
   ["market_making", "candidates", "mm_candidates"].forEach((id) => ((tables[id] || {}).rows || []).forEach((row) => row.Coin && found.add(marketName(row.Coin))));
   return found;
 }
+
+// Crypto and stocks are a colour, not a word: an orange dot for crypto, a blue one for stocks and tradfi, wherever the
+// words would appear (titles, highlights, table cells). The word stays for screen readers and shows on hover.
+const KIND_WORDS = /\b(crypto|stocks and tradfi|stocks & commodities|stocks|tradfi)\b/gi;
+function kindMarks(text) {
+  const parts = [];
+  let last = 0, match;
+  const source = String(text);
+  KIND_WORDS.lastIndex = 0;
+  while ((match = KIND_WORDS.exec(source)) !== null) {
+    if (match.index > last) parts.push(source.slice(last, match.index));
+    const crypto = /crypto/i.test(match[1]);
+    parts.push(el("span", { class: "kind " + (crypto ? "kind-crypto" : "kind-stocks"), role: "img", "aria-label": match[1], title: match[1] }));
+    last = match.index + match[0].length;
+  }
+  if (last < source.length) parts.push(source.slice(last));
+  return parts.length ? parts : [source];
+}
+function markKinds(node) {   // replace the words in a heading's text nodes, keeping its buttons and icons
+  [...node.childNodes].forEach((child) => {
+    if (child.nodeType === 3 && KIND_WORDS.test(child.textContent)) {
+      KIND_WORDS.lastIndex = 0;
+      child.replaceWith(...kindMarks(child.textContent.replace(/:\s*$/, " ")));
+    }
+    KIND_WORDS.lastIndex = 0;
+  });
+}
+
 function linkSymbols(text) {   // the text with each known symbol as a button that opens its tile
   const symbols = [...knownSymbols()].filter((s) => s.length >= 2).sort((a, b) => b.length - a.length);
   if (!symbols.length) return [text];
