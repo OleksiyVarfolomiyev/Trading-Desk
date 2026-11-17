@@ -1339,7 +1339,7 @@ drawModes();
 // places. A card is hidden with its eye button and brought back from the Sections menu. Order and hidden cards are
 // remembered in the browser (touch screens have no drag: use the menu there).
 const LAYOUT_KEY = "desk-layout";
-const LAYOUT_VERSION = 3;   // 3: now first, history and the account view last; an arrangement saved on an older page is dropped
+const LAYOUT_VERSION = 4;   // 3: now first, history and the account view last; an arrangement saved on an older page is dropped
 function layoutState() {
   let state = {};
   try { state = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (e) { return {}; }
@@ -1482,33 +1482,82 @@ function nearestCard(x, y, skip) {
   });
   return best;
 }
+// Explicit columns: as many as the screen holds (420 px each). A tile belongs to a column and stays there; dropping a tile in
+// another column puts it at the spot between that column's tiles and the others do not move. Arrangements are kept per
+// number of columns.
+const COLUMN_WIDTH = 420;
+function columnCount(content) { return Math.max(1, Math.min(4, Math.floor((content.clientWidth || window.innerWidth) / COLUMN_WIDTH))); }
+const columnSlots = (content) => [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest(".feed") && !slot.querySelector(":scope > .highlights-card"));
+function currentColumns(content) { return [...content.querySelectorAll("#columns > .col")].map((col) => [...col.children].map((slot) => cardId(slot.firstElementChild))); }
+function buildColumns(content, saved) {
+  const count = columnCount(content), state = layoutState();
+  let host = document.getElementById("columns");
+  const slots = columnSlots(content), byCard = new Map(slots.map((slot) => [cardId(slot.firstElementChild), slot]));
+  const flat = saved ? saved.flat() : (state.order || slots.map((slot) => cardId(slot.firstElementChild)));
+  const known = (state.cols || {})[count];
+  if (!host) {
+    host = el("div", { id: "columns" });
+    const anchor = (content.querySelector(".highlights-card") || {}).parentElement || content.querySelector(".tiles");
+    anchor.after(host);
+  }
+  host.replaceChildren(...Array.from({ length: count }, () => el("div", { class: "col" })));
+  const cols = [...host.children], placed = new Set();
+  const put = (id, index) => { const slot = byCard.get(id); if (!slot || placed.has(id)) return; placed.add(id); cols[index].append(slot); };
+  if (known && known.length === count) known.forEach((ids, index) => ids.forEach((id) => put(id, index)));
+  else flat.forEach((id, i) => put(id, i % count));   // no arrangement for this width yet: the order dealt out in turn
+  slots.forEach((slot) => {   // new tiles go to the shortest column
+    const id = cardId(slot.firstElementChild);
+    if (placed.has(id)) return;
+    placed.add(id);
+    cols.reduce((best, c) => (c.scrollHeight < best.scrollHeight ? c : best)).append(slot);
+  });
+  host.dataset.count = String(count);
+}
 function wireCardDrop(content) {
-  const clear = () => content.querySelectorAll(".drop-before, .drop-after").forEach((n) => n.classList.remove("drop-before", "drop-after"));
+  const clear = () => content.querySelectorAll(".drop-before, .drop-after, .drop-end").forEach((n) => n.classList.remove("drop-before", "drop-after", "drop-end"));
+  // Where the pointer would drop: a column and the tile it goes before (null: the end of that column).
+  const target = (x, y) => {
+    const cols = [...content.querySelectorAll("#columns > .col")];
+    if (!cols.length) return null;
+    const col = cols.reduce((best, c) => { const r = c.getBoundingClientRect(); const d = Math.max(r.left - x, 0, x - r.right); return d < best.d ? { c, d } : best; }, { c: cols[0], d: Infinity }).c;
+    const cards = [...col.children].map((slot) => slot.firstElementChild).filter((card) => card && card !== draggingCard && !card.classList.contains("card-off"));
+    const before = cards.find((card) => { const r = card.getBoundingClientRect(); return y < r.top + r.height / 2; }) || null;
+    return { col, before };
+  };
   content.addEventListener("dragover", (event) => {
     if (!draggingCard) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
-    const hit = nearestCard(event.clientX, event.clientY, draggingCard);
     clear();
-    if (hit) hit.card.classList.add(event.clientY < hit.box.top + hit.box.height / 2 ? "drop-before" : "drop-after");
+    if (draggingCard.dataset.published || draggingCard.dataset.asset) {   // published tiles: beside the nearest one
+      const hit = nearestCard(event.clientX, event.clientY, draggingCard);
+      if (hit) hit.card.classList.add(event.clientY < hit.box.top + hit.box.height / 2 ? "drop-before" : "drop-after");
+      return;
+    }
+    const spot = target(event.clientX, event.clientY);
+    if (!spot) return;
+    if (spot.before) spot.before.classList.add("drop-before"); else spot.col.classList.add("drop-end");
   });
   content.addEventListener("dragleave", (event) => { if (!content.contains(event.relatedTarget)) clear(); });
   content.addEventListener("drop", (event) => {
     if (!draggingCard) return;
     event.preventDefault();
-    const hit = nearestCard(event.clientX, event.clientY, draggingCard);
     clear();
-    if (!hit) return;
-    const moving = draggingCard, card = hit.card;
-    if (Boolean(moving.dataset.published || moving.dataset.asset) !== Boolean(card.dataset.published || card.dataset.asset)) return;   // published tiles stay among themselves
-    const before = event.clientY < hit.box.top + hit.box.height / 2;
-    if (before) card.parentElement.before(moving.parentElement); else card.parentElement.after(moving.parentElement);
+    const moving = draggingCard;
+    if (moving.dataset.published || moving.dataset.asset) {
+      const hit = nearestCard(event.clientX, event.clientY, moving);
+      if (!hit || !(hit.card.dataset.published || hit.card.dataset.asset)) return;
+      if (event.clientY < hit.box.top + hit.box.height / 2) hit.card.parentElement.before(moving.parentElement); else hit.card.parentElement.after(moving.parentElement);
+    } else {
+      const spot = target(event.clientX, event.clientY);
+      if (!spot) return;
+      if (spot.before) spot.before.parentElement.before(moving.parentElement); else spot.col.append(moving.parentElement);
+    }
     saveOrder();
-    feedback("section", "move", cardTitle(moving), (before ? "before " : "after ") + cardTitle(card));
+    feedback("section", "move", cardTitle(moving), "column drop");
     if (latest && latest.data) renderCharts(latest.data.charts);
   });
 }
-
 function setupSections() {
   const content = document.getElementById("content");
   if (!content) return;
@@ -1516,17 +1565,19 @@ function setupSections() {
   wireCardDrop(content);
   const byId = CARDS;
   const state = layoutState();
-  const slots = [...content.querySelectorAll(".slot")].filter((slot) => !slot.closest(".feed"));
-  if (state.order) {   // the saved order of the cards: the slots follow in that sequence, after the highlights
-    let previous = content.querySelector(".tiles");
-    state.order.forEach((id) => {
-      const card = byId[id], slot = card && card.parentElement;
-      if (!slot || card.closest(".feed") || !previous) return;
-      if (slot === previous || slot.contains(previous)) { previous = slot; return; }   // already in place (the first card holds the anchor)
-      previous.after(slot);
-      previous = slot;
-    });
-  }
+  buildColumns(content, null);
+  let width = columnCount(content), timer = null;
+  window.addEventListener("resize", () => {   // another number of columns: the arrangement for it (or the order dealt out again)
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (columnCount(content) === width) return;
+      const now = currentColumns(content);
+      saveOrder();
+      width = columnCount(content);
+      buildColumns(content, now);
+      if (latest && latest.data) renderCharts(latest.data.charts);
+    }, 200);
+  });
   if (!state.defaultsOff) {   // cards hidden until asked for (the account views: backend detail), once per browser
     const ids = [...content.querySelectorAll(".card[data-default-off]")].map(cardId);
     state.hidden = [...new Set([...(state.hidden || []), ...ids])];
@@ -1974,8 +2025,9 @@ function openMoreMenu(card, button) {
 }
 
 function saveOrder() {
-  const state = layoutState();
-  state.order = [...document.querySelectorAll("#content .slot")].filter((slot) => !slot.closest(".feed")).map((slot) => cardId(slot.firstElementChild));
+  const state = layoutState(), content = document.getElementById("content"), cols = currentColumns(content);
+  state.cols = Object.assign({}, state.cols, { [cols.length]: cols });
+  state.order = cols.flat();   // column after column: the fallback for a screen width not arranged yet
   saveLayout(state);
 }
 function setHidden(id, hidden) {
