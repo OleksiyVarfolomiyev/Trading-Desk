@@ -895,7 +895,7 @@ function renderHighlights(id, rows, hover = {}) {
     };
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
     return el("li", Object.assign(level ? { class: level } : {}, { title: [area, hover[area]].filter(Boolean).join(": ") }), [
-      el("span", { class: "text" }, linkSymbols(text).flatMap((part) => (typeof part === "string" ? kindMarks(part).flatMap((piece) => (typeof piece === "string" ? coloredNumbers(piece) : [piece])) : [part]))),
+      el("span", { class: "text" }, lineNodes(text)),
       el("span", { class: "hl-actions" }, [
         ...(window.DESK_SOURCE ? symbolActions(text) : []),   // run it: plan, then confirm
         act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + whole] = Date.now(); feedback("highlight", "read", area, text); }),
@@ -1619,7 +1619,7 @@ function kindMarks(text) {   // each crypto or stocks part becomes one tinted ru
     const end = stop >= 0 ? item.end + stop : next;
     const crypto = /crypto/i.test(item.word);
     const words = source.slice(item.end, end).replace(/^[:\s]+/, "").replace(/,\s*$/, "");
-    parts.push(el("span", { class: "kind-run " + (crypto ? "kind-crypto" : "kind-stocks"), title: item.word }, coloredNumbers(words)));
+    if (words) parts.push(el("span", { class: "kind-run " + (crypto ? "kind-crypto" : "kind-stocks") }, coloredNumbers(words)));
     const between = source.slice(end, next);
     if (between) parts.push(between);
     else if (i + 1 < found.length) parts.push(" ");   // two runs side by side keep a gap
@@ -1668,6 +1668,31 @@ function symbolKind(symbol) {   // crypto or stocks, by the table the symbol is 
   if (((tables.positions_stocks || {}).rows || []).some((row) => marketName(row.Symbol).toLowerCase() === name)) return "stocks";
   return /^(spy|s&p500|nasdaq100)$/.test(name) ? "stocks" : "crypto";
 }
+
+// A highlight line: the crypto and stocks parts each become one tinted run (the word itself is not shown, only the colour
+// behind what follows, symbols and figures included, to the next break), figures coloured, symbols as buttons.
+function lineNodes(text) {
+  const source = String(text), found = [];
+  KIND_WORDS.lastIndex = 0;
+  let match;
+  while ((match = KIND_WORDS.exec(source)) !== null) found.push({ at: match.index, end: match.index + match[0].length, word: match[1] });
+  KIND_WORDS.lastIndex = 0;
+  const plain = (piece) => linkSymbols(piece).flatMap((part) => (typeof part === "string" ? coloredNumbers(part) : [part]));
+  if (!found.length) return plain(source);
+  const nodes = [];
+  if (found[0].at > 0) nodes.push(...plain(source.slice(0, found[0].at)));
+  found.forEach((item, i) => {
+    const next = i + 1 < found.length ? found[i + 1].at : source.length;
+    const stop = source.slice(item.end, next).search(/[;.](\s|$)/);
+    const end = stop >= 0 ? item.end + stop : next;
+    const body = source.slice(item.end, end).replace(/^[:\s]+/, "").replace(/,\s*$/, "");
+    if (body) nodes.push(el("span", { class: "kind-run " + (/crypto/i.test(item.word) ? "kind-crypto" : "kind-stocks") }, plain(body)));
+    const between = source.slice(end, next);
+    if (between) nodes.push(...plain(between));
+  });
+  return nodes;
+}
+
 function linkSymbols(text) {   // the text with each known symbol as a button that opens its tile
   const symbols = [...knownSymbols()].filter((s) => s.length >= 2).sort((a, b) => b.length - a.length);
   if (!symbols.length) return [text];
