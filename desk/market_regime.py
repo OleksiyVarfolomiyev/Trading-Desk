@@ -240,7 +240,8 @@ def notices(state: dict | None) -> list[tuple[str, str]]:
             continue
         signals = part.get("signals", {})
         on = [_signal(code, part.get("measures") or {}) for code, value in signals.items() if value]
-        text = f"{name} {level} {len(on)}/{len(signals) or 4}: {', '.join(on)}"
+        # The level shows only when it is high (a notice is the regime starting: the signals say it)
+        text = f"{name}{' high' if level == 'high' else ''} {len(on)}/{len(signals) or 4}: {', '.join(on)}"
         proof = part.get("evidence") or {}
         if proof.get("days") and proof.get("hit") == proof.get("hit"):
             text += f"; evidence {proof['hit']:.0%} vs {proof['base']:.0%} base ({proof['days']} days)"

@@ -818,8 +818,9 @@ function renderHighlights(id, rows, hover = {}) {
       button.addEventListener("click", () => { const s = highlightState(); change(s); saveHighlightState(s); redrawHighlights(); });
       return button;
     };
-    return el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [
-      el("span", { class: "area", text: (level === "critical" ? "⚠ " : "") + area }), el("span", { class: "text" }, linkSymbols(text).flatMap((part) => (typeof part === "string" ? kindMarks(part) : [part]))),
+    // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
+    return el("li", Object.assign(level ? { class: level } : {}, { title: [area, hover[area]].filter(Boolean).join(": ") }), [
+      el("span", { class: "text" }, linkSymbols(text).flatMap((part) => (typeof part === "string" ? kindMarks(part) : [part]))),
       el("span", { class: "hl-actions" }, [
         act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + text] = Date.now(); feedback("highlight", "read", area, text); }),
         act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),   // stays; tells the model this area earns its place
