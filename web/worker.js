@@ -411,7 +411,7 @@ async function ingest(request, env, kind, id, wallets) {
   } catch (error) {
     return reply({ error: "the body is not JSON" }, 400);
   }
-  if (kind === "ib" || kind === "wallets" || kind === "regime" || kind === "alerts" || kind === "research") {
+  if (kind === "ib" || kind === "wallets" || kind === "regime" || kind === "alerts" || kind === "research" || kind === "tiles") {
     const text = JSON.stringify(body);
     if (/(?:DU|U)\d{5,}/.test(text) || Object.values(wallets).some((a) => text.toLowerCase().includes(a.slice(2).toLowerCase()))) {
       return reply({ error: "refused: the body holds a full account identifier" }, 400);
@@ -496,6 +496,10 @@ export default {
     if (kind === "regime" && !id) {  // the market regime reading, sent by the Mac (POST /ingest/regime)
       const saved = env.DESK ? await env.DESK.get("regime", "json") : null;
       return saved ? reply(saved, 200, CACHE_SECONDS) : reply({ error: "no regime reading has been sent yet" }, 404);
+    }
+    if (kind === "tiles" && !id) {  // charts and tables published from the notebooks (POST /ingest/tiles); none is an empty list
+      const saved = env.DESK ? await env.DESK.get("tiles", "json") : null;
+      return reply(saved || { tiles: [] }, 200, 30);
     }
     if (kind === "walletperf" && !id) {  // the wallets' token performance, sent by the desk's Mac
       const saved = env.DESK ? await env.DESK.get("walletperf", "json") : null;

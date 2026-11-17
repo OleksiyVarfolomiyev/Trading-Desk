@@ -56,6 +56,15 @@ STATIC_FILES = {
 }
 
 
+def published_tiles() -> list[dict]:
+    try:
+        from desk import tile_feed
+
+        return tile_feed.tiles()
+    except Exception:   # the feed must never break the dashboard
+        return []
+
+
 FEEDBACK_FILE = Path(__file__).resolve().parents[1] / "data" / "feedback.jsonl"
 
 
@@ -444,6 +453,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     return {
         "kpis": kpis,
+        "tiles": published_tiles(),   # charts and tables published from the notebooks (desk/tile_feed.py)
         "highlights": {"well": [list(row) for row in well], "attention": [list(row) for row in attention],
                        "hover": daemon_alerts.hovers(daemon_alerts.read())},  # headlines around a big move
         "tables": tables,

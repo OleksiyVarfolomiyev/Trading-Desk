@@ -350,3 +350,11 @@ html.has-full { overflow: hidden; }
 .hl-act { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 7px; border-radius: 4px; }
 .hl-act:hover { color: var(--ink); background: var(--border); }
 @media (max-width: 600px) { .highlights li { grid-template-columns: 1fr; } .hl-actions { opacity: 1; } }
+/* Privacy: numbers blurred until a number (or the eye) is clicked again. */
+.privacy-eye { background: transparent; border: 0; color: var(--muted); cursor: pointer; border-radius: 6px; }
+.privacy-eye[aria-pressed="true"] { color: var(--ink); background: var(--border); }
+.tile .value, td.num, .highlights .text, .tile .sub, .js-plotly-plot .textpoint { cursor: pointer; }
+html.private .tile .value, html.private .tile .sub, html.private .tile .line, html.private td.num,
+html.private .highlights .text, html.private .table-note,
+html.private .js-plotly-plot .textpoint, html.private .js-plotly-plot .xtick text, html.private .js-plotly-plot .ytick text,
+html.private .js-plotly-plot .numeric-note { filter: blur(7px); user-select: none; }

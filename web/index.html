@@ -36,6 +36,7 @@
     if (asked("mode") || asked("style") || (theme && theme !== "viridis")) {
       try { localStorage.setItem("desk-mode", mode); localStorage.setItem("desk-style", style); } catch (e) {}
     }
+    if (stored("desk-private") === "1") root.classList.add("private");   // numbers hidden (click a number to show them)
     view = view || stored("desk-view");
     if (view === "charts" || view === "tables") {
       root.setAttribute("data-view", view);

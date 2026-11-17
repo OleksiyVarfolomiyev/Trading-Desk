@@ -387,7 +387,7 @@ function renderTableChart(id, spec) {
     base.margin = Object.assign({}, base.margin, { l: shorts ? 150 : 12 });
     delete base.insideLabels;
   }
-  Plotly.newPlot(node, traces, base, CONFIG);
+  Plotly.newPlot(node, traces, base, CONFIG).then(markNumericNotes);
   return true;
 }
 
@@ -694,7 +694,7 @@ function renderCharts(charts) {
   });
   valueLayout.annotations = (valueLayout.annotations || []).concat(valueEnds);
   valueLayout.margin = Object.assign({}, valueLayout.margin, { r: 88 });
-  Plotly.react("chart-value", value, valueLayout, CONFIG).then(() => spreadEndLabels("chart-value"));
+  Plotly.react("chart-value", value, valueLayout, CONFIG).then(() => { spreadEndLabels("chart-value"); markNumericNotes(); });
 
   const twr = (charts.twr || []).map((s, i) => ({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
@@ -708,7 +708,7 @@ function renderCharts(charts) {
     shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }],
   });
   twrLayout.yaxis = Object.assign({}, twrLayout.yaxis, { ticksuffix: "%" });
-  Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => spreadEndLabels("chart-twr"));
+  Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => { spreadEndLabels("chart-twr"); markNumericNotes(); });
 }
 
 // ---------------------------------------------------------------- page
@@ -1084,5 +1084,38 @@ function drawSectionsMenu() {
   menu.replaceChildren(...rows, ...(restore ? [restore] : []), reset);
 }
 setupSections();
+
+// ---------------------------------------------------------------- privacy: click a number and the numbers hide (as in IB)
+// Click any number (a tile value, a table figure, a highlight) to blur every number on the page; click one again to
+// show them. Remembered in the browser; the eye next to the title does the same.
+function markNumericNotes() {   // chart notes that carry a number (end values) blur with the rest; names do not
+  document.querySelectorAll(".js-plotly-plot .annotation-text").forEach((node) => node.classList.toggle("numeric-note", /\d/.test(node.textContent)));
+}
+function setPrivate(on) {
+  document.documentElement.classList.toggle("private", on);
+  try { localStorage.setItem("desk-private", on ? "1" : "0"); } catch (e) {}
+  const eye = document.getElementById("privacy-eye");
+  if (eye) { eye.setAttribute("aria-pressed", on ? "true" : "false"); eye.title = on ? "Show numbers" : "Hide numbers"; }
+  markNumericNotes();
+  feedback("look", "numbers", on ? "hidden" : "shown");
+}
+document.addEventListener("click", (event) => {
+  if (event.target.closest && event.target.closest(".tile .value, .tile .sub, td.num, .highlights .text, .js-plotly-plot .textpoint")) {
+    setPrivate(!document.documentElement.classList.contains("private"));
+  }
+});
+(function addEye() {
+  const title = document.querySelector(".topbar h1");
+  if (!title) return;
+  const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+  [["viewBox", "0 0 16 16"], ["width", "16"], ["height", "16"], ["fill", "none"], ["stroke", "currentColor"], ["stroke-width", "1.5"],
+    ["stroke-linecap", "round"], ["aria-hidden", "true"]].forEach(([k, v]) => svg.setAttribute(k, v));
+  ["M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z", "M8 6.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z"]
+    .forEach((d) => { const p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.append(p); });
+  const eye = el("button", { type: "button", class: "icon-button privacy-eye", id: "privacy-eye", "aria-label": "Hide or show numbers" }, [svg]);
+  eye.addEventListener("click", () => setPrivate(!document.documentElement.classList.contains("private")));
+  title.after(eye);
+  setPrivate(document.documentElement.classList.contains("private"));
+})();
 
 poll();
