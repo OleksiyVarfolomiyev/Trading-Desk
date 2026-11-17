@@ -379,7 +379,15 @@ function renderBarList(id, spec, plan, host) {
       });
     }
     if (row.__link) acts.append(el("a", { class: "row-act symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", title: "Open its page", text: "↗" }));
-    return el("div", { class: "brow" + (notable ? " notable" : ""), title: notable || row.__hover || "" }, [name, el("span", { class: "btrack" }, [fill, fig]), acts]);
+    const line = el("div", { class: "brow" + (notable ? " notable" : ""), title: notable || row.__hover || "" }, [name, el("span", { class: "btrack" }, [fill, fig]), acts]);
+    gestures(line, id in CANDIDATE_TABLES ? {
+      dislike: () => { const s = candidateState(); s.refused[row.Coin] = Date.now(); saveCandidates(s); feedback("candidate", "refuse", row.Coin, id); if (lastSpecs[id]) renderTable(id, lastSpecs[id]); },
+      like: () => { const s = candidateState(); if (!s.starred.includes(row.Coin)) s.starred.push(row.Coin); saveCandidates(s); feedback("candidate", "bookmark", row.Coin, id); if (lastSpecs[id]) renderTable(id, lastSpecs[id]); },
+    } : {
+      dislike: () => { feedback("position", "dislike", label, id); line.style.opacity = ""; line.style.transform = ""; },   // a position stays; the verdict is logged
+      like: () => feedback("position", "like", label, id),
+    });
+    return line;
   }));
   host.replaceChildren(body);
   return true;
@@ -964,6 +972,38 @@ function redrawHighlights() {
 const VENUES = /\b(xyz|flx|vntl|hyna|km|abcd|cash|para|mkts|io):/gi;
 const cleanLine = (text) => String(text).replace(VENUES, "").replace(/\bSP500\b/g, "S&P500");   // the venue is the desk's business
 const sentences = (text) => String(text).split(/(?<=[.;?])\s+(?=[A-Z])/).map((part) => part.trim()).filter(Boolean);   // each thought its own line
+
+// Gestures on a line or a row: swipe left = hide it / dislike it, double tap (or double click) = like it. The swipe is for touch
+// and pen (a mouse keeps its drag and click behaviour); a line that was swiped slides away before it goes.
+function gestures(node, { dislike, like }) {
+  node.style.touchAction = "manipulation";   // a double tap is a double tap, not a zoom
+  let startX = 0, startY = 0, tracking = false;
+  node.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1 || event.target.closest("button, a, input")) return;
+    tracking = true; startX = event.touches[0].clientX; startY = event.touches[0].clientY;
+  }, { passive: true });
+  node.addEventListener("touchmove", (event) => {
+    if (!tracking) return;
+    const dx = event.touches[0].clientX - startX, dy = event.touches[0].clientY - startY;
+    if (Math.abs(dy) > Math.abs(dx)) { tracking = false; node.style.transform = ""; return; }   // a scroll, not a swipe
+    if (dx < 0) node.style.transform = `translateX(${Math.max(dx, -140)}px)`;
+  }, { passive: true });
+  node.addEventListener("touchend", (event) => {
+    if (!tracking) return;
+    tracking = false;
+    const dx = (event.changedTouches[0] || {}).clientX - startX;
+    if (dx < -70) { node.style.transition = "transform .15s, opacity .15s"; node.style.transform = "translateX(-100%)"; node.style.opacity = "0"; setTimeout(dislike, 150); }
+    else node.style.transform = "";
+  });
+  node.addEventListener("dblclick", (event) => {
+    if (event.target.closest("button, a, input")) return;
+    event.preventDefault();
+    like();
+    node.classList.add("liked");
+    setTimeout(() => node.classList.remove("liked"), 700);
+  });
+}
+
 function renderHighlights(id, rows, hover = {}) {
   const host = document.getElementById(id);
   const state = highlightState();
@@ -996,7 +1036,7 @@ function renderHighlights(id, rows, hover = {}) {
       return button;
     };
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
-    return el("li", Object.assign(level ? { class: level } : {}, { title: [area, hover[area]].filter(Boolean).join(": ") }), [
+    const item = el("li", Object.assign(level ? { class: level } : {}, { title: [area, hover[area]].filter(Boolean).join(": ") }), [
       el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),   // the uPnL lines carry no background
       el("span", { class: "hl-actions" }, [
         ...(window.DESK_SOURCE ? symbolActions(text) : []),   // run it: plan, then confirm
@@ -1005,6 +1045,11 @@ function renderHighlights(id, rows, hover = {}) {
         act("Not important: stop showing this", "👎", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
       ]),
     ]);
+    gestures(item, {
+      dislike: () => { const s = highlightState(); if (!s.deleted.includes(area)) s.deleted.push(area); saveHighlightState(s); feedback("highlight", "not important", area, text); redrawHighlights(); },
+      like: () => feedback("highlight", "useful", area, text),
+    });
+    return item;
   }), ...foot);
 }
 

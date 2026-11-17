@@ -661,3 +661,5 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .card-tool.kind-btn-stocks { color: var(--kind-stocks); }
 .sections-remove { color: var(--bad-text); }
 .sections-menu .sections-row span:first-child { flex: 1 1 auto; }
+.highlights li, .brow { transition: background .2s; }
+.liked { background: color-mix(in srgb, var(--good) 22%, transparent) !important; }
