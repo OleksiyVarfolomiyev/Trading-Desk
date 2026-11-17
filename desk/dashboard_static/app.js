@@ -923,6 +923,7 @@ function setupSections() {
     };
     const tools = el("span", { class: "card-tools" }, [
       tool("card-minimize", "Minimize", "–", () => setMinimized(cardId(card), !card.classList.contains("card-min"))),
+      tool("card-save", "Save as image", "⤓", () => saveTile(card)),
       tool("card-fullscreen", "Full screen", "⤢", () => setFull(cardId(card), !card.classList.contains("card-full"))),
       tool("card-hide", "Hide", "×", () => setHidden(cardId(card), true)),
     ]);
@@ -969,6 +970,55 @@ function setHidden(id, hidden) {
   saveLayout(state);
   drawSectionsMenu();
   if (!hidden && latest && latest.data) renderCharts(latest.data.charts);   // a chart drawn while hidden has no size
+}
+// Save a tile as a PNG (as Plotly's camera does): a tile with a chart is saved through Plotly, on the card's own colour;
+// a table or highlight list is drawn from its page styles into an image (an SVG with the card's HTML inside).
+async function saveTile(card) {
+  const title = cardTitle(card) || "tile";
+  const name = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${new Date().toISOString().slice(0, 10)}`;
+  feedback("section", "save image", title);
+  const chart = card.querySelector(".js-plotly-plot");
+  if (chart && typeof Plotly !== "undefined") {
+    const background = token("--surface");
+    try {
+      await Plotly.relayout(chart, { paper_bgcolor: background, plot_bgcolor: background });
+      await Plotly.downloadImage(chart, { format: "png", filename: name, scale: 2 });
+    } finally {
+      Plotly.relayout(chart, { paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)" });
+    }
+    return;
+  }
+  const rect = card.getBoundingClientRect();
+  const copy = card.cloneNode(true);
+  const inline = (from, to) => {   // the computed look of every element, so the image needs no stylesheet
+    const style = getComputedStyle(from);
+    to.setAttribute("style", Array.from(style).map((property) => `${property}:${style.getPropertyValue(property)}`).join(";"));
+    Array.from(from.children).forEach((child, i) => inline(child, to.children[i]));
+  };
+  inline(card, copy);
+  copy.querySelectorAll(".card-tools, .card-grip").forEach((node) => node.remove());
+  copy.style.margin = "0";
+  const xml = new XMLSerializer().serializeToString(copy);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${rect.width}" height="${rect.height}">`
+    + `<foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${xml}</div></foreignObject></svg>`;
+  const image = new Image();
+  image.onload = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = rect.width * 2; canvas.height = rect.height * 2;
+    const context = canvas.getContext("2d");
+    context.scale(2, 2);
+    context.fillStyle = token("--surface");
+    context.fillRect(0, 0, rect.width, rect.height);
+    context.drawImage(image, 0, 0);
+    canvas.toBlob((blob) => {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = name + ".png";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    });
+  };
+  image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 function setMinimized(id, minimized) {
   const card = document.getElementById(id) && document.getElementById(id).closest(".card");
