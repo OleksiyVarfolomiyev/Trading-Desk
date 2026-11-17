@@ -80,6 +80,7 @@ class DailySyncTests(unittest.TestCase):
                 patch.object(web_sync, "push_ib", return_value={"ok": True}) as push, \
                 patch.object(web_sync, "push_nav_only", return_value={"ok": True}) as nav_only, \
                 patch("desk.day_change.position_changes", return_value={}), \
+                patch("desk.market_caps.refresh", return_value=0), \
                 patch.object(web_sync, "sync_ib_data", return_value="IB data: sent to the server"), \
                 patch.object(web_sync, "backup_server_state", return_value="state backup: 9 of 9 server files saved"):
             report = web_sync.daily_sync("data")
@@ -91,7 +92,7 @@ class DailySyncTests(unittest.TestCase):
         flex.assert_called_once()
         push.assert_not_called()
         nav_only.assert_called_once()
-        self.assertIn("daily NAV sent", report[-6])
+        self.assertIn("daily NAV sent", report[-7])
         self.assertNotIn(ACCOUNT, " ".join(report))
         self.assertNotIn(WALLET, " ".join(report))
 
@@ -104,7 +105,7 @@ class DailySyncTests(unittest.TestCase):
                                   "IB 6543: Flex NAV saved", "IB 6543: sent to the relay (2 positions)",
                                   "research: 1 perps' candles saved; validated signals: 7-day return vs BTC",
                                   "regime: reading sent to the relay", "wallets: performance sent to the relay",
-                                  "IB data: sent to the server", "state backup: 9 of 9 server files saved"])
+                                  "market caps: already saved today", "IB data: sent to the server", "state backup: 9 of 9 server files saved"])
 
     def test_the_state_backup_copies_into_a_dated_folder_and_keeps_thirty_days(self):
         import tempfile

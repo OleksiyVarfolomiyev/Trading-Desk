@@ -886,6 +886,25 @@ class _MarketDataMixin:
         else:
             market = pd.DataFrame(index=pd.DatetimeIndex([], tz='UTC', name='date'))
 
+        # The desk's daily market cap and volume (desk/market_caps.py: one bulk request a day for every HL perp) fill the
+        # newest days, so a perp whose cap and volume are saved through yesterday needs no CoinGecko request of its own.
+        from desk import market_caps
+
+        try:
+            market_caps.refresh()
+        except Exception as exc:
+            warnings.append(f'Daily market caps not refreshed ({type(exc).__name__}); asking CoinGecko per coin.')
+        for ticker in coins:
+            daily = market_caps.history(ticker)
+            if daily.empty:
+                continue
+            market = market.reindex(market.index.union(daily.index)).sort_index()
+            for source, column in (('market_cap', f'{ticker}_market_cap'), ('volume', f'{ticker}_volume')):
+                if column not in market:
+                    market[column] = np.nan
+                market[column] = market[column].combine_first(daily[source].reindex(market.index))
+        yesterday = pd.Timestamp.now(tz='UTC').normalize() - pd.Timedelta(days=1)
+
         updated = {}
         for ticker, coin_id in coins.items():
             if ticker not in prices:
@@ -895,6 +914,9 @@ class _MarketDataMixin:
             cap_col, volume_col = f'{ticker}_market_cap', f'{ticker}_volume'
             latest = [market[c].dropna().index.max() for c in (cap_col,volume_col)
                       if c in market and market[c].notna().any()]
+            if len(latest)==2 and ticker in self.perp_asset_dex and min(latest)>=yesterday:
+                updated[ticker]=0   # a perp's closes come from HL candles; its cap and volume are already saved
+                continue
             if len(latest)==2:
                 market_start=(min(latest)-pd.Timedelta(days=1)).to_pydatetime()
             elif not saved.empty:

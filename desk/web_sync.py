@@ -334,6 +334,13 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
         report.append("wallets: performance sent to the relay")
     except Exception as exc:
         report.append(f"wallets: performance not sent ({type(exc).__name__}: {exc})")
+    try:   # the desk's market cap and volume, once a day (desk/market_caps.py)
+        from desk import market_caps
+
+        added = market_caps.refresh()
+        report.append(f"market caps: {added} symbols saved" if added else "market caps: already saved today")
+    except Exception as exc:
+        report.append(f"market caps: not refreshed ({type(exc).__name__}: {exc})")
     report.append(sync_ib_data())
     report.append(backup_server_state())
     return report
