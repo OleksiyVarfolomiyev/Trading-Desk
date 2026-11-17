@@ -966,8 +966,8 @@
         if (winners.length) winnerParts.push(`${kind.toLowerCase()}: ${winners.map(mover).join(", ")}`);
         if (losers.length) loserParts.push(`${kind.toLowerCase()}: ${losers.map(mover).join(", ")}`);
       });
-      if (winnerParts.length) well.push(["Largest winners", winnerParts.join("; ") + "."]);
-      if (loserParts.length) attention.push(["Largest losers", loserParts.join("; ") + "."]);
+      if (winnerParts.length) well.push(["Largest winners", "uPnL " + winnerParts.join("; ") + "."]);
+      if (loserParts.length) attention.push(["Largest losers", "uPnL " + loserParts.join("; ") + "."]);
       const largest = tradePositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
       const concentration = tradingEquity ? Math.abs(value(largest)) / tradingEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {

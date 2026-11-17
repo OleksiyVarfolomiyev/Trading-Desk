@@ -819,9 +819,9 @@ class DeskOverview:
                 if losers:
                     loser_parts.append(f"{kind.lower()}: " + ", ".join(mover(p) for _, p in losers))
             if winner_parts:
-                well.append(("Largest winners", "; ".join(winner_parts) + "."))
+                well.append(("Largest winners", "uPnL " + "; ".join(winner_parts) + "."))
             if loser_parts:
-                attention.append(("Largest losers", "; ".join(loser_parts) + "."))
+                attention.append(("Largest losers", "uPnL " + "; ".join(loser_parts) + "."))
             label, largest = max(positions, key=lambda item: abs(item[1].notional_usd))
             share = abs(largest.notional_usd) / self.trading_equity if self.trading_equity else float("nan")
             if share > CONCENTRATION_PCT:
