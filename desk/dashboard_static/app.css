@@ -678,3 +678,7 @@ html[data-screen="research"] .tiles { display: none !important; }
 #screen-dots { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 50; display: flex; gap: 8px; padding: 4px 8px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 85%, transparent); }
 #screen-dots button { width: 8px; height: 8px; padding: 0; border-radius: 50%; border: 0; background: var(--muted); cursor: pointer; opacity: .5; }
 #screen-dots button[aria-pressed="true"] { opacity: 1; background: var(--ink); }
+/* Research: big charts. Each has height to be read (many lines), and the empty columns are gone so the charts take the width. */
+html[data-screen="research"] #chart-value, html[data-screen="research"] #chart-twr { height: 460px !important; }
+html[data-screen="research"] #columns > .col { min-width: 520px; }
+#columns > .col[hidden] { display: none !important; }

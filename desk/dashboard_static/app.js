@@ -2881,7 +2881,7 @@ document.addEventListener("click", (event) => {
 // value and return charts and the analytics pulled from the notebooks). The dots sit at the bottom; the choice is remembered.
 const SCREENS = ["now", "research"];
 // Research keeps the research items in: the candidates (short and market-making), the strategy result, the long charts, and whatever is pulled from the notebooks.
-const SCREEN_OF = { now: ["hl-attention", "t-positions", "t-positions_stocks", "t-exposure", "t-strategies", "t-candidates", "t-market_making", "t-mm_candidates", "chart-twr"],
+const SCREEN_OF = { now: ["hl-attention", "t-positions", "t-positions_stocks", "t-exposure", "t-market_making", "chart-twr"],   // what is happening; the candidates and the strategy result are research
   research: ["t-candidates", "t-mm_candidates", "t-strategies", "chart-value", "chart-twr"] };
 function screensFor(card) {
   const id = cardId(card);
@@ -2896,7 +2896,14 @@ function setScreen(name) {
   try { localStorage.setItem("desk-screen", name); } catch (e) {}
   document.querySelectorAll("#screen-dots button").forEach((dot) => dot.setAttribute("aria-pressed", dot.dataset.screen === name ? "true" : "false"));
   feedback("look", "screen", name);
+  // Columns with nothing to show on this screen give their width to the others (Research: a few big charts, not strips).
+  document.querySelectorAll("#columns > .col").forEach((col) => {
+    col.hidden = false;
+    const visible = [...col.children].some((slot) => slot.firstElementChild && getComputedStyle(slot.firstElementChild).display !== "none");
+    col.hidden = !visible;
+  });
   if (latest && latest.data) renderCharts(latest.data.charts);   // charts that were hidden have no size until now
+  requestAnimationFrame(() => document.querySelectorAll(".js-plotly-plot").forEach((node) => { try { Plotly.Plots.resize(node); } catch (e) {} }));
 }
 function stepScreen(direction) {
   const at = SCREENS.indexOf(document.documentElement.dataset.screen || "now");
