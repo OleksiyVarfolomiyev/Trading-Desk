@@ -1153,8 +1153,8 @@ class Alerts:
             try:   # an urgent new alert goes to the phone when a push topic is set (desk/push.py)
                 from desk import push
 
-                if push.urgent(key):
-                    push.send(title, daemon_link.mask(text))
+                if push.urgent(key) and push.send(title, daemon_link.mask(text)):
+                    log(f"PUSH sent: {title}")
             except Exception:
                 pass
 
