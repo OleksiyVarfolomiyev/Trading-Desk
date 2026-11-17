@@ -80,6 +80,7 @@ class DailySyncTests(unittest.TestCase):
                 patch.object(web_sync, "push_ib", return_value={"ok": True}) as push, \
                 patch.object(web_sync, "push_nav_only", return_value={"ok": True}) as nav_only, \
                 patch("desk.day_change.position_changes", return_value={}), \
+                patch.object(web_sync, "sync_ib_data", return_value="IB data: sent to the server"), \
                 patch.object(web_sync, "backup_server_state", return_value="state backup: 9 of 9 server files saved"):
             report = web_sync.daily_sync("data")
         return report, hl_history, flex, push, nav_only

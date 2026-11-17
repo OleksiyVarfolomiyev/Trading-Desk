@@ -307,6 +307,7 @@ def daily_sync(data_dir: Path | str = REPO / "data") -> list[str]:
         report.append("wallets: performance sent to the relay")
     except Exception as exc:
         report.append(f"wallets: performance not sent ({type(exc).__name__}: {exc})")
+    report.append(sync_ib_data())
     report.append(backup_server_state())
     return report
 
@@ -318,6 +319,17 @@ SERVER_STATE = (".trading-desk/ladder.json", ".trading-desk/ladders.json", ".tra
                 "trading-desk/data/trade_journal.json", "trading-desk/data/market_events.jsonl",
                 "trading-desk/data/supply_history.json")   # never relay.json: it holds the sign-in secrets
 STATE_BACKUP_DAYS = 30
+
+
+def sync_ib_data(folder: Path | None = None) -> str:
+    """Copy the IB data folder (activity statements, Flex NAV, fills) to the server: it builds the books and the pulled
+    tiles there, and without IB's history the stocks book reads as flat until its last weeks."""
+    if Path("/home/desk").exists():
+        return "IB data: skipped on the server (the Mac's daily job sends it)"
+    folder = folder or ib_data_dir()
+    result = subprocess.run(["rsync", "-a", "-e", "ssh -o ConnectTimeout=15", f"{folder}/", f"{SERVER}:trading-desk-data/ib/"],
+                            capture_output=True, text=True)
+    return "IB data: sent to the server" if not result.returncode else f"IB data: not sent ({result.stderr.strip()[:120] or result.returncode})"
 
 
 def backup_server_state(target: Path = STATE_BACKUP_DIR, today: str | None = None) -> str:
