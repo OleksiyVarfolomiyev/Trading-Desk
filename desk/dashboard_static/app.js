@@ -1481,8 +1481,7 @@ async function openAsset(symbol) {
   // HL markets: live price and 7 days of hourly closes, with the entry price marked.
   try {
     await loadUniverse();
-    const list = document.getElementById("tick-universe");
-    const hlName = list && [...list.options].map((o) => o.value).find((value) => marketName(value).toLowerCase() === name.toLowerCase());
+    const hlName = universeMap[name.toLowerCase()];
     if (!hlName) return;
     const contexts = await tickerContexts([hlName]);
     const context = contexts[hlName];
@@ -1851,6 +1850,10 @@ async function tickerContexts(assets) {   // name -> {price, previous} for the m
 }
 // Suggestions for the "+ asset" field: every HL market (main DEX and the xyz stocks and commodities), loaded once.
 let universeLoaded = false;
+// The names people type (no venue prefix; a few markets by their common name) and the HL market each one means.
+const MARKET_ALIASES = { SP500: "S&P500", XYZ100: "Nasdaq100" };
+const universeMap = {};   // lower-case typed name -> HL market ("amd" -> "xyz:AMD", "s&p500" -> "xyz:SP500")
+const friendlyName = (market) => { const bare = marketName(market); return MARKET_ALIASES[bare] || bare; };
 async function loadUniverse() {
   if (universeLoaded) return;
   universeLoaded = true;
@@ -1864,7 +1867,13 @@ async function loadUniverse() {
   }
   let list = document.getElementById("tick-universe");
   if (!list) { list = el("datalist", { id: "tick-universe" }); document.body.append(list); }
-  list.replaceChildren(...names.sort().map((name) => el("option", { value: name })));
+  const friendly = [];
+  names.forEach((market) => {   // the main DEX wins a name both carry
+    const name = friendlyName(market), key = name.toLowerCase();
+    if (!universeMap[key] || !market.includes(":")) { if (!universeMap[key]) friendly.push(name); universeMap[key] = market; }
+    universeMap[marketName(market).toLowerCase()] = universeMap[marketName(market).toLowerCase()] || market;
+  });
+  list.replaceChildren(...friendly.sort().map((name) => el("option", { value: name })));
 }
 async function refreshTicker() {
   const state = tickerState();
@@ -1886,9 +1895,8 @@ async function refreshTicker() {
     const name = addBox.firstChild.value.trim();
     if (!name) return;
     const s = tickerState();
-    const list = document.getElementById("tick-universe");   // the market's own spelling (kPEPE, xyz:AMD) when it is known
-    const known = list && [...list.options].find((option) => option.value.toLowerCase() === name.toLowerCase());
-    const asset = known ? known.value : name.includes(":") ? name.replace(/^([A-Za-z0-9]+):(.*)$/, (m, dex, coin) => dex.toLowerCase() + ":" + coin.toUpperCase()) : name.toUpperCase();
+    const known = universeMap[name.toLowerCase()];   // the typed name's market (AMD -> xyz:AMD, S&P500 -> xyz:SP500)
+    const asset = known ? known : name.includes(":") ? name.replace(/^([A-Za-z0-9]+):(.*)$/, (m, dex, coin) => dex.toLowerCase() + ":" + coin.toUpperCase()) : name.toUpperCase();
     if (!s.assets.includes(asset)) s.assets.push(asset);
     addBox.firstChild.value = "";
     saveTicker(s); feedback("look", "price strip add", asset); refreshTicker();
@@ -1896,8 +1904,7 @@ async function refreshTicker() {
   addBox.firstChild.addEventListener("keydown", (event) => { if (event.key === "Enter") addAsset(); });
   addBox.firstChild.addEventListener("change", () => {   // a suggestion picked from the list adds at once
     const value = addBox.firstChild.value.trim();
-    const list = document.getElementById("tick-universe");
-    if (list && [...list.options].some((option) => option.value.toLowerCase() === value.toLowerCase())) addAsset();
+    if (universeMap[value.toLowerCase()]) addAsset();
   });
   const dropper = (asset) => {
     const x = el("button", { type: "button", class: "tick-x", title: "Remove " + asset, "aria-label": "Remove " + asset, text: "×" });
@@ -1924,12 +1931,12 @@ async function refreshTicker() {
   strip.replaceChildren(...state.assets.map((asset) => reorderable((() => {
     const context = contexts[asset];
     if (!context || !isFinite(context.price)) return el("a", { class: "tick", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
-      [el("b", { text: marketName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
+      [el("b", { text: friendlyName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
     const change = context.previous ? context.price / context.previous - 1 : NaN;
     const direction = lastPrices[asset] === undefined || lastPrices[asset] === context.price ? "" : context.price > lastPrices[asset] ? "up" : "down";
     lastPrices[asset] = context.price;
     return el("a", { class: "tick " + direction, href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
-      el("b", { text: marketName(asset) }), el("span", { class: "price", text: priceText(context.price) }),
+      el("b", { text: friendlyName(asset) }), el("span", { class: "price", text: priceText(context.price) }),
       el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }), dropper(asset)]);
   })(), asset)).concat([addBox, hideStrip]));
 }
