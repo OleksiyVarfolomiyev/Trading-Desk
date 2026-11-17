@@ -1,20 +1,29 @@
 {
- "ts": "2026-11-11T14:32:42.629886+00:00",
+ "ts": "2026-11-14T21:48:41.101927+00:00",
  "metrics": {
-  "Assets analysed": 7,
-  "Assets in Kelly": 7,
-  "Kelly Sharpe (in-sample)": 3.48965017967425,
-  "Kelly beta (btc)": -0.0012044501038288586,
-  "IB book (actual): alpha (/yr)": -0.3528860974778887,
-  "IB book (actual): alpha t-stat": -1.0189194317327626
+  "Assets analysed": 15,
+  "Assets in Kelly": 15,
+  "Kelly Sharpe (in-sample)": 5.194365678499542,
+  "Kelly beta (btc)": 0.37340600340929625,
+  "Kelly beta (spy)": 1.5952380820775653,
+  "IB book (actual): alpha (/yr)": -0.3730503576400128,
+  "IB book (actual): alpha t-stat": -2.1635189580983996
  },
  "assets": [
-  "TRX",
-  "TRUMP",
+  "CRV",
+  "DOT",
+  "NEAR",
+  "VVV",
+  "BERA",
+  "ZORA",
+  "xyz:INTC",
+  "xyz:MSFT",
+  "xyz:AMD",
   "HYPE",
   "BTC",
+  "ETH",
   "MELANIA",
-  "DPI",
-  "VVV"
+  "xyz:SP500",
+  "DPI"
  ]
 }

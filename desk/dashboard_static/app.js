@@ -659,7 +659,7 @@ function renderHighlights(id, rows, hover = {}) {
       return button;
     };
     return el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [
-      el("span", { class: "area", text: (level === "critical" ? "⚠ " : "") + area }), el("span", { class: "text", text }),
+      el("span", { class: "area", text: (level === "critical" ? "⚠ " : "") + area }), el("span", { class: "text" }, linkSymbols(text)),
       el("span", { class: "hl-actions" }, [
         act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + text] = Date.now(); feedback("highlight", "read", area, text); }),
         act("Not important: stop showing this", "×", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
@@ -1037,7 +1037,7 @@ function adoptCard(card) {
       event.preventDefault();
       card.classList.remove("drop-target");
       const moving = CARDS[event.dataTransfer.getData("text/plain")];
-      if (!moving || moving === card || Boolean(moving.dataset.published) !== Boolean(card.dataset.published)) return;   // published tiles swap among themselves
+      if (!moving || moving === card || Boolean(moving.dataset.published || moving.dataset.asset) !== Boolean(card.dataset.published || card.dataset.asset)) return;   // published tiles swap among themselves
       const from = moving.parentElement, to = card.parentElement;
       to.append(moving);
       from.append(card);
@@ -1106,6 +1106,170 @@ function applyCardState(card) {   // the remembered minimized and hidden state o
   const state = layoutState(), id = cardId(card);
   if ((state.hidden || []).includes(id)) card.classList.add("card-off");
   if ((state.minimized || []).includes(id)) card.classList.add("card-min");
+}
+
+
+// ---------------------------------------------------------------- an asset as a tile: price, your position, what to do about it
+// A symbol in a highlight (or the strip) opens the asset as a tile at the top of the page: price and 7-day chart (HL markets),
+// your position in it, links to its page, and the sensible actions for where it stands. The action buttons do not trade:
+// they copy the order as a sentence, to paste to Claude, which runs it with the usual confirmation (or the pop-up).
+function knownSymbols() {
+  const found = new Set(), tables = (latest && latest.data && latest.data.tables) || {};
+  ["positions", "positions_stocks", "wallets"].forEach((id) => ((tables[id] || {}).rows || []).forEach((row) => row.Symbol && found.add(marketName(row.Symbol))));
+  ["market_making", "candidates", "mm_candidates"].forEach((id) => ((tables[id] || {}).rows || []).forEach((row) => row.Coin && found.add(marketName(row.Coin))));
+  return found;
+}
+function linkSymbols(text) {   // the text with each known symbol as a button that opens its tile
+  const symbols = [...knownSymbols()].filter((s) => s.length >= 2).sort((a, b) => b.length - a.length);
+  if (!symbols.length) return [text];
+  const escaped = symbols.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp("(^|[^A-Za-z0-9])(" + escaped.join("|") + ")(?![A-Za-z0-9])", "g");
+  const parts = [];
+  let last = 0, match;
+  while ((match = pattern.exec(text)) !== null) {
+    const start = match.index + match[1].length;
+    if (start > last) parts.push(text.slice(last, start));
+    const symbol = match[2];
+    const button = el("button", { type: "button", class: "symbol-chip", title: "Open " + symbol + " as a tile", text: symbol });
+    button.addEventListener("click", (event) => { event.stopPropagation(); openAsset(symbol); });
+    parts.push(button);
+    last = start + symbol.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+function assetRows(symbol) {   // your rows in this asset, from the positions tables
+  const tables = (latest && latest.data && latest.data.tables) || {}, name = marketName(symbol).toLowerCase();
+  const rows = [];
+  ["positions", "positions_stocks", "wallets"].forEach((id) => ((tables[id] || {}).rows || []).forEach((row) => {
+    if (row.Symbol && marketName(row.Symbol).toLowerCase() === name) rows.push(Object.assign({ _table: id }, row));
+  }));
+  return rows;
+}
+function assetAdvice(rows) {   // where it stands, and what is sensible
+  const held = rows.filter((row) => isNum(row.Value) && row._table !== "wallets");
+  if (!held.length) return { line: "Not held.", actions: [["Open a position", "short or long it: say which and how big"]] };
+  const value = held.reduce((sum, row) => sum + row.Value, 0), pnl = held.reduce((sum, row) => sum + (row.uPnL || 0), 0);
+  const costs = held.reduce((sum, row) => sum + Math.abs(row.Value - (row.uPnL || 0)), 0), share = costs ? pnl / costs : NaN;
+  const side = value < 0 ? "short" : "long", name = marketName(held[0].Symbol);
+  const line = `${side}, ${usd(Math.abs(value))}, uPnL ${isNum(share) ? pct(share) : "n/a"}`;
+  const trim = [`Trim a third`, `trim ${name} by a third`], close = [`Close`, `close ${name}`], add = [`Add a third`, `add a third to the ${name} ${side}`];
+  const actions = share >= 0.1 ? [trim, close, add] : share <= -0.1 ? [close, trim, add] : [trim, add, close];
+  return { line, actions, lead: share >= 0.1 ? "Winner: take part of it" : share <= -0.1 ? "Loser: decide" : "" };
+}
+async function openAsset(symbol) {
+  const name = marketName(symbol), key = "asset-" + name.replace(/[^A-Za-z0-9]/g, "_");
+  feedback("asset", "open", name);
+  let feed = document.getElementById("feed");
+  if (!feed) { renderPublished([]); feed = document.getElementById("feed"); }
+  feed.hidden = false;
+  let card = feed.querySelector(`.card[data-asset="${key}"]`);
+  if (card) { card.classList.remove("card-off", "card-min"); card.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+  else {
+    card = el("div", { class: "card asset-card", "data-asset": key }, [el("h2", { text: name }), el("div", { class: "asset-body", id: key })]);
+    feed.prepend(card);
+    adoptCard(card);
+  }
+  const body = card.querySelector(".asset-body");
+  const rows = assetRows(symbol), advice = assetAdvice(rows);
+  const external = rows.some((row) => /^IB/.test(String(row.Account || ""))) ? stockLink(name) : hlLink(rows[0] && rows[0].Symbol || symbol);
+  const copy = (sentence, button) => {
+    const done = () => { button.textContent = "copied: paste to Claude"; setTimeout(() => drawAsset(), 2500); feedback("asset", "action", name, sentence); };
+    if (navigator.clipboard) navigator.clipboard.writeText(sentence).then(done, done); else done();
+  };
+  function drawAsset() {
+    body.replaceChildren(
+      el("div", { class: "asset-line" }, [el("span", { class: "asset-price", id: key + "-price" }), el("span", { text: advice.line })]),
+      el("div", { class: "chart asset-chart", id: key + "-chart", hidden: true }),
+      advice.lead ? el("div", { class: "asset-lead", text: advice.lead }) : null,
+      el("div", { class: "asset-actions" }, [
+        ...advice.actions.map(([label, sentence], i) => { const b = el("button", { type: "button", class: "asset-action" + (i === 0 && advice.lead ? " lead" : ""), title: "Copies: " + sentence, text: label });
+          b.addEventListener("click", () => copy(sentence, b)); return b; }),
+        el("a", { class: "asset-action", href: external, target: "_blank", rel: "noopener noreferrer", title: "Open the asset's page", text: "Page ↗" })]));
+    const strip = el("button", { type: "button", class: "asset-action", title: "Show it in the price strip", text: "+ strip" });
+    strip.addEventListener("click", () => { const s = tickerState(); if (!s.assets.includes(name)) s.assets.push(name); s.on = true; saveTicker(s); refreshTicker(); drawModes(); strip.textContent = "added"; });
+    body.querySelector(".asset-actions").append(strip);
+  }
+  drawAsset();
+  // HL markets: live price and 7 days of hourly closes, with the entry price marked.
+  try {
+    await loadUniverse();
+    const list = document.getElementById("tick-universe");
+    const hlName = list && [...list.options].map((o) => o.value).find((value) => marketName(value).toLowerCase() === name.toLowerCase());
+    if (!hlName) return;
+    const contexts = await tickerContexts([hlName]);
+    const context = contexts[hlName];
+    if (context) {
+      const change = context.previous ? context.price / context.previous - 1 : NaN;
+      const price = document.getElementById(key + "-price");
+      if (price) price.textContent = `${priceText(context.price)} ${isNum(change) ? pct(change) : ""} · `;
+    }
+    const end = Date.now(), dex = hlName.includes(":") ? hlName.split(":")[0] : "";
+    const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ type: "candleSnapshot", req: { coin: hlName.split(":").pop(), interval: "1h", startTime: end - 7 * 86400000, endTime: end } }, dex ? { dex } : {})) });
+    const candles = await response.json();
+    const chart = document.getElementById(key + "-chart");
+    if (!chart || !candles.length || typeof Plotly === "undefined") return;
+    chart.hidden = false;
+    const entry = rows.map((row) => row["Avg price"]).find(isNum);
+    const layout = baseLayout({ hovermode: "x unified", margin: { l: 48, r: 12, t: 6, b: 28 }, showlegend: false });
+    layout.shapes = entry ? [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: entry, y1: entry, line: { color: token("--muted"), dash: "dot", width: 1 } }] : [];
+    layout.xaxis = Object.assign({}, layout.xaxis, { showspikes: false });
+    Plotly.newPlot(chart, [{ type: "scatter", mode: "lines", x: candles.map((c) => new Date(c.t)), y: candles.map((c) => Number(c.c)),
+      line: { color: token("--series-1"), width: 1.6 }, hovertemplate: "%{y}<extra></extra>" }], layout, CONFIG);
+  } catch (e) { /* no chart: the facts and actions are there */ }
+}
+
+
+// ---------------------------------------------------------------- learning from use: what is read, what is never touched
+// Each tile counts the clicks and the seconds the pointer rests on it (kept in the browser, one hourly line per tile sent
+// to the feedback log). A tile that has been on the page for a week and was not touched in two is offered in the Sections
+// menu as "rarely used: hide?" (and a dot on the menu icon says so): the dashboard shrinks to what is actually used.
+const USAGE_KEY = "desk-usage";
+const USAGE_WINDOW_DAYS = 14, USAGE_MIN_AGE_DAYS = 7;
+function usageState() { try { return JSON.parse(localStorage.getItem(USAGE_KEY)) || {}; } catch (e) { return {}; } }
+function saveUsage(state) { try { localStorage.setItem(USAGE_KEY, JSON.stringify(state)); } catch (e) {} }
+function noteUse(id, kind, amount) {
+  if (!id) return;
+  const state = usageState(), now = Date.now();
+  const entry = state[id] || (state[id] = { first: now, clicks: 0, seconds: 0, last: 0, sent: 0 });
+  entry[kind] += amount;
+  entry.last = now;
+  if (now - entry.sent > 3600_000) {   // one line an hour per tile is enough to learn from
+    entry.sent = now;
+    feedback("use", kind === "clicks" ? "click" : "hover", id, `${entry.clicks} clicks, ${Math.round(entry.seconds)} s in all`);
+  }
+  saveUsage(state);
+}
+function watchUse() {
+  const content = document.getElementById("content");
+  if (!content) return;
+  content.addEventListener("click", (event) => {
+    const card = event.target.closest && event.target.closest(".card, .tile");
+    if (!card || event.target.closest(".card-tools, .tile-tools, .card-grip")) return;   // moving a tile around is not using it
+    noteUse(card.classList.contains("tile") ? "tile:" + card.dataset.label : cardId(card), "clicks", 1);
+  });
+  let over = null, since = 0;
+  const leave = () => { if (over && Date.now() - since > 1500) noteUse(over, "seconds", (Date.now() - since) / 1000); over = null; };
+  content.addEventListener("mouseover", (event) => {
+    const card = event.target.closest && event.target.closest(".card, .tile");
+    const id = card ? (card.classList.contains("tile") ? "tile:" + card.dataset.label : cardId(card)) : null;
+    if (id === over) return;
+    leave();
+    over = id; since = Date.now();
+  });
+  content.addEventListener("mouseleave", leave);
+}
+function rarelyUsed() {   // tiles shown for a week or more and not touched in the last two
+  const state = usageState(), now = Date.now(), day = 86400000, out = [];
+  document.querySelectorAll("#content .card:not(.card-off)").forEach((card) => {
+    const id = cardId(card);
+    if (!id || card.dataset.asset || card.dataset.published || /^hl-/.test(id)) return;   // highlights are never pushed away
+    const entry = state[id] || (state[id] = { first: now, clicks: 0, seconds: 0, last: 0, sent: 0 });
+    if (now - entry.first >= USAGE_MIN_AGE_DAYS * day && now - entry.last >= USAGE_WINDOW_DAYS * day) out.push({ card, id, age: Math.round((now - entry.first) / day) });
+  });
+  saveUsage(state);
+  return out;
 }
 
 function saveOrder() {
@@ -1269,7 +1433,15 @@ function fillMenuLists() {
     addable.push(el("div", { class: "sections-row", title: entry.description || entry.call }, [
       el("span", { text: (score ? "★ " : "") + entry.title }), button]));
   });
-  lists.replaceChildren(heading("On the dashboard"), ...rows, ...(rows.length ? [] : [el("div", { class: "sections-empty", text: "No match" })]),
+  const rare = rarelyUsed().filter(({ card }) => menuMatches(cardTitle(card)));
+  const suggestions = rare.length ? [heading("Rarely used: hide?"), ...rare.map(({ card, id, age }) => {
+    const hide = el("button", { type: "button", class: "sections-add", title: `Not touched in ${USAGE_WINDOW_DAYS} days (on the page ${age} days): hide it`, "aria-label": "Hide " + cardTitle(card), text: "×" });
+    hide.addEventListener("click", () => { feedback("use", "hide unused", id); setHidden(id, true); });
+    return el("div", { class: "sections-row" }, [el("span", { text: cardTitle(card) }), hide]);
+  })] : [];
+  const button = document.getElementById("sections-button");
+  if (button) button.classList.toggle("has-suggestion", rarelyUsed().length > 0);
+  lists.replaceChildren(...suggestions, heading("On the dashboard"), ...rows, ...(rows.length ? [] : [el("div", { class: "sections-empty", text: "No match" })]),
     heading(`Available to add${menuQuery ? "" : ` (${addable.length})`}`), ...addable, ...(addable.length ? [] : [el("div", { class: "sections-empty", text: "Nothing more to add" })]),
     ...menuFooter());
 }
@@ -1497,7 +1669,7 @@ function setPrivate(on) {
   feedback("look", "numbers", on ? "hidden" : "shown");
 }
 document.addEventListener("click", (event) => {
-  if (event.target.closest && event.target.closest(".tile .value, .tile .sub, td.num, td.digits, tfoot td, .highlights .text, .js-plotly-plot .textpoint, .js-plotly-plot .bartext")) {
+  if (event.target.closest && event.target.closest(".tile .value, .tile .sub, td.num, td.digits, tfoot td, .js-plotly-plot .textpoint, .js-plotly-plot .bartext")) {
     setPrivate(!document.documentElement.classList.contains("private"));
   }
 });
@@ -1515,5 +1687,6 @@ document.addEventListener("click", (event) => {
   setPrivate(document.documentElement.classList.contains("private"));
 })();
 
+watchUse();
 setupSections();   // after every const above is defined (the Sections menu reads the price strip's)
 poll();

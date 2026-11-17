@@ -42,7 +42,10 @@ def summary(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
         table = highlights.pivot_table(index="target", columns="action", values="at", aggfunc="count", fill_value=0)
         table["total"] = table.sum(axis=1)
         out["Highlights by area (what the reader answered)"] = table.sort_values("total", ascending=False)
-    for kind, title in (("section", "Sections"), ("look", "Look")):
+    used = frame[frame["kind"] == "use"]
+    if len(used):   # what is clicked and rested on, by tile, and the tiles marked unused
+        out["Use by tile (hourly lines)"] = used.groupby(["target", "action"]).size().rename("lines").reset_index().sort_values("lines", ascending=False)
+    for kind, title in (("section", "Sections"), ("tile", "Key-number tiles"), ("asset", "Assets opened"), ("look", "Look")):
         part = frame[frame["kind"] == kind]
         if len(part):
             out[title] = part.groupby(["target", "action"]).size().rename("count").reset_index().sort_values("count", ascending=False)
