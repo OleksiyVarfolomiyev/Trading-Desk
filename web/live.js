@@ -963,7 +963,7 @@
       const largest = tradePositions.reduce((a, b) => (Math.abs(value(b)) > Math.abs(value(a)) ? b : a));
       const concentration = tradingEquity ? Math.abs(value(largest)) / tradingEquity : NaN;
       if (concentration > CONCENTRATION_PCT) {
-        attention.push(["Concentration", `${largest.symbol} ${largest.quantity > 0 ? "long" : "short"} (${largest.account}) ${percent(concentration, false, 0)} of equity.`]);
+        attention.push(["Concentration", `${largest.symbol} ${largest.quantity > 0 ? "long" : "short"} ${percent(concentration, false, 0)} of equity.`]);
       }
       // Positions paying funding fast enough to matter (desk/funding_watch.py).
       const dailyCost = (r) => -r["Funding (APR)"] * Math.abs(r.Value) / 365;
@@ -1052,7 +1052,7 @@
         const match = title === "Funding" && /^\.\.\.(\w+) (\S+) (long|short) (-?[\d.]+)% avg APR over (\d+) hrs/.exec(text);
         if (match) {
           const coin = match[2].split(":").pop(), account = match[1].slice(-4);
-          sustained.set(`${coin} ${account}`, { name: `${coin} ${match[3]} (${account})`, apr: Number(match[4]) / 100 });
+          sustained.set(`${coin} ${account}`, { name: `${coin} ${match[3]}`, apr: Number(match[4]) / 100 });
           hours = Number(match[5]);
         } else if (!(title === "Funding" && text === "")) {
           kept.push([title, text]);
@@ -1063,7 +1063,7 @@
       if (at >= 0) {
         const worstFirst = (items) => items.sort((a, b) => a.apr - b.apr).map((i) => `${i.name} ${percent(i.apr)}`).join(", ");
         const onlyNow = fundingNow.filter((i) => !sustained.has(`${i.coin} ${i.account}`))
-          .map((i) => ({ name: `${i.coin} ${i.side} (${i.account})`, apr: i.apr }));
+          .map((i) => ({ name: `${i.coin} ${i.side}`, apr: i.apr }));
         const parts = [];
         if (sustained.size) parts.push(`${worstFirst([...sustained.values()])} avg APR over ${hours} hrs`);
         if (onlyNow.length) parts.push(`${worstFirst(onlyNow)} APR now`);

@@ -2692,7 +2692,8 @@ class AutoTrader:
             if size <= 0:
                 continue
             response = self.daemon.exchanges[wallet].market_close(coin, size)
-            done.append(f"...{wallet[-4:]} {coin} {size:g} ({response.get('status', response)})")
+            status = response.get("status", response) if isinstance(response, dict) else response
+            done.append(f"{coin} {size:g}" + ("" if status == "ok" else f" ({status})"))   # the account is the desk's business
         return "; ".join(done) or "nothing to reduce"
 
     def bank_shorts(self, coin: str, text: str) -> None:

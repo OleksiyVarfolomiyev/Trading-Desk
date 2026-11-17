@@ -757,7 +757,7 @@ class DeskOverview:
         if largest:
             label, position = largest
             rows.append(("Largest position", f"{position.symbol} {position.side.lower()} "
-                                             f"{_pct(abs(position.notional_usd) / desk)} of desk ({label})" if desk else "n/a"))
+                                             f"{_pct(abs(position.notional_usd) / desk)} of desk" if desk else "n/a"))
         if self.book:
             equity = sum(entry.equity_usd for entry in self.book)
             used = sum(entry.risk_usd for entry in self.book)
@@ -825,7 +825,7 @@ class DeskOverview:
             label, largest = max(positions, key=lambda item: abs(item[1].notional_usd))
             share = abs(largest.notional_usd) / self.trading_equity if self.trading_equity else float("nan")
             if share > CONCENTRATION_PCT:
-                attention.append(("Concentration", f"{largest.symbol} {largest.side.lower()} ({label}) {share:.0%} of equity."))
+                attention.append(("Concentration", f"{largest.symbol} {largest.side.lower()} {share:.0%} of equity."))
             # Positions paying funding fast enough to matter (desk/funding_watch.py).
             from desk import funding_watch
 
@@ -836,7 +836,7 @@ class DeskOverview:
                     funding = position_funding(self.snapshots)
                 except Exception:  # no funding row then; the rest of the highlights stand
                     funding = {}
-            row = funding_watch.attention_row([(f"{p.symbol} {p.side.lower()} ({label})", funding[label, p.symbol],
+            row = funding_watch.attention_row([(f"{p.symbol} {p.side.lower()}", funding[label, p.symbol],
                                                 p.notional_usd) for label, p in positions if (label, p.symbol) in funding])
             if row:
                 attention.append(row)
@@ -887,7 +887,7 @@ class DeskOverview:
                    "Wallet holdings": (wallet_value, "usd"), "Unrealized PnL": (unrealized, "usd"),
                    "Gross exposure": (gross, "usd"), "Net exposure": (net, "usd"),
                    "Open risk": (risk_used, "usd"), "Open positions": (len(positions), "int")}
-        items = {"Positions": [f"{p.symbol} {p.side.lower()} ({label})" for label, p in positions]}
+        items = {"Positions": sorted({f"{p.symbol} {p.side.lower()}" for label, p in positions})}
         return well, attention, metrics, items
 
     def show_highlights(self):
