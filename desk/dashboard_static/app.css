@@ -523,3 +523,17 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 .card h2 .card-tools { position: absolute; right: 0; top: 50%; transform: translateY(-50%); margin-left: 0; }
 .card h2 .scale-chips { position: absolute; left: 0; top: 50%; transform: translateY(-50%); margin-left: 0; }
 .card h2 .card-filter-box { position: absolute; right: 150px; top: 50%; transform: translateY(-50%); margin-left: 0; }
+/* Margins only separate things: tight cards, headings, tables and gaps. */
+main { padding: 4px 4px 24px; gap: 4px; }
+#content:not([hidden]) { gap: 4px; }
+.grid.two, .stack, .tiles { gap: 4px; }
+.card { padding: 4px 6px; border-radius: 6px; }
+.tile { padding: 3px 6px; border-radius: 6px; }
+.card h2 { margin: 0 0 1px; min-height: 16px; font-size: 12px; }
+th, td { padding: 2px 6px; }
+table { font-size: 12.5px; }
+.highlights { gap: 2px; margin: 0; }
+.highlights li { gap: 8px; }
+.chart { height: 280px; }
+.topbar { padding: 4px 6px; gap: 8px; }
+.ticker { padding: 2px 6px; }
