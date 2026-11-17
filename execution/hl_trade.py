@@ -50,6 +50,10 @@ def adverse_funding_cost_per_unit(*args, **kwargs) -> float:
     return _adverse_funding_cost_per_unit(*args, **kwargs) if COUNT_FUNDING_IN_RISK else 0.0
 
 
+# A thesis (conviction) entry may use the risk estimate's own error margin beyond the 33% cap: 3 points of desk equity
+# (user, 2026-11-17: "we can be flexible on statistical boundaries of caps"). Everything else keeps the cap as is.
+CONVICTION_CAP_FLEX = 0.03
+
 KEYCHAIN_SERVICE = "Hyperliquid API wallet"
 BASE_URL = "https://api.hyperliquid.xyz"
 # Sizing rules are shared with every other venue's executor.
@@ -1177,7 +1181,7 @@ def plan_trades(
             stop_price=nearest_stop(position, stops),
         )
 
-    total_risk_cap = snapshot.desk_equity * MAX_TOTAL_RISK_PCT
+    total_risk_cap = snapshot.desk_equity * (MAX_TOTAL_RISK_PCT + (CONVICTION_CAP_FLEX if conviction else 0.0))
     risk_headroom = total_risk_cap - current_risk
     available_margin = max(
         0.0,
