@@ -1367,7 +1367,7 @@ function drawModes() {
   const root = document.documentElement.dataset;
   const mode = root.mode === "light" ? "light" : "dark", style = root.style || "indie";
   const views = el("div", { class: "switch", role: "group", "aria-label": "Numbers or charts" });
-  VIEW_CHOICES.forEach(([value, name, shape]) => {
+  VIEW_CHOICES.filter(([value]) => value !== (root.view === "charts" ? "charts" : "tables")).forEach(([value, name, shape]) => {   // only the other view
     const button = el("button", { type: "button", class: "icon-button", title: name, "aria-label": name,
       "aria-pressed": value === (root.view === "charts" ? "charts" : "tables") ? "true" : "false" }, [icon(shape)]);
     button.addEventListener("click", () => setLook("view", value));
@@ -1379,14 +1379,14 @@ function drawModes() {
       "aria-pressed": "false" }, [icon(next === "light" ? "sun" : "moon")])]);
   toggle.firstChild.addEventListener("click", () => setLook("mode", next));
   const styles = el("div", { class: "switch", role: "group", "aria-label": "Style" });
-  STYLE_CHOICES.forEach(([value, name, dot]) => {
+  STYLE_CHOICES.filter(([value]) => value !== style).forEach(([value, name, dot]) => {   // only the other styles
     const button = el("button", { type: "button", class: "style-button", title: name, "aria-pressed": value === style ? "true" : "false",
       "aria-label": name + " style", style: `--dot:${dot}` }, [el("i")]);
     button.addEventListener("click", () => setLook("style", value));
     styles.append(button);
   });
   const units = el("div", { class: "switch", role: "group", "aria-label": "uPnL in percent or dollars" });
-  [["pct", "%"], ["usd", "$"]].forEach(([value, name]) => {
+  [["pct", "%"], ["usd", "$"]].filter(([value]) => value !== pnlUnit).forEach(([value, name]) => {   // only the other unit
     const button = el("button", { type: "button", class: "unit-button", title: value === "pct" ? "uPnL in % of cost" : "uPnL in dollars",
       "aria-pressed": value === pnlUnit ? "true" : "false", text: name });
     button.addEventListener("click", () => setUnit(value));
@@ -1399,6 +1399,7 @@ function drawModes() {
   strip.addEventListener("click", () => { const s = tickerState(); s.on = !s.on; saveTicker(s); feedback("look", "price strip", s.on ? "on" : "off"); drawModes(); refreshTicker(); });
   report.addEventListener("click", openReport);
   host.replaceChildren(views, units, toggle, styles, strip, report);
+  host.querySelectorAll(".switch").forEach((group) => group.classList.add("choices"));
 }
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
 // switch redraws the tables; mode and style are CSS for the tables, so only the Plotly charts (which read the colours and
@@ -2415,15 +2416,21 @@ function fillMenuLists() {
   const lists = document.getElementById("sections-lists");
   if (!lists) return;
   const heading = (text) => el("div", { class: "sections-head", text });
-  const present = [...document.querySelectorAll("#content .slot")].map((slot) => slot.firstElementChild).filter(Boolean);
-  const rows = present.filter((card) => menuMatches(cardTitle(card))).map((card) => {
-    const box = el("input", { type: "checkbox", id: "show-" + cardId(card) });
-    box.checked = !card.classList.contains("card-off");
-    box.addEventListener("change", () => setHidden(cardId(card), !box.checked));
-    return el("label", { class: "sections-row" }, [box, el("span", { text: cardTitle(card).trim() })]);
+  // Ordered by how much each tile is used (clicks, and the time the pointer rests on it), most used first.
+  const usage = usageState(), used = (card) => { const u = usage[cardId(card)] || {}; return (u.clicks || 0) + (u.seconds || 0) / 30; };
+  const present = [...document.querySelectorAll("#content .slot")].map((slot) => slot.firstElementChild).filter(Boolean)
+    .sort((a, b) => used(b) - used(a));
+  const rows = present.filter((card) => !card.classList.contains("card-off") && menuMatches(cardTitle(card))).map((card) => {
+    const remove = el("button", { type: "button", class: "sections-add sections-remove", title: "Remove from the screen", "aria-label": "Remove " + cardTitle(card), text: "−" });
+    remove.addEventListener("click", () => setHidden(cardId(card), true));
+    return el("div", { class: "sections-row" }, [el("span", { text: cardTitle(card).trim() }), remove]);
   });
   // Available to add: key-number tiles that were hidden, and the notebook sections that can be pulled onto the dashboard.
-  const addable = [];
+  const addable = present.filter((card) => card.classList.contains("card-off") && menuMatches(cardTitle(card))).map((card) => {   // tiles taken off the screen
+    const add = el("button", { type: "button", class: "sections-add", title: "Back on the screen", "aria-label": "Show " + cardTitle(card), text: "+" });
+    add.addEventListener("click", () => setHidden(cardId(card), false));
+    return el("div", { class: "sections-row" }, [el("span", { text: cardTitle(card).trim() }), add]);
+  });
   (layoutState().tileHidden || []).filter(menuMatches).forEach((label) => {
     const add = el("button", { type: "button", class: "sections-add", title: "Show " + label, "aria-label": "Show " + label, text: "+" });
     add.addEventListener("click", () => { const s = layoutState(); s.tileHidden = (s.tileHidden || []).filter((x) => x !== label); saveLayout(s);

@@ -659,3 +659,5 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .card-tool.card-kind { font-size: 13px; padding: 0 5px; }
 .card-tool.kind-btn-crypto { color: var(--kind-crypto); }
 .card-tool.kind-btn-stocks { color: var(--kind-stocks); }
+.sections-remove { color: var(--bad-text); }
+.sections-menu .sections-row span:first-child { flex: 1 1 auto; }
