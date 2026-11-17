@@ -1049,7 +1049,7 @@ async function loadHighlightState() {
       const local = highlightState();
       const merged = { read: Object.assign({}, shared.read, local.read), deleted: [...new Set([...(shared.deleted || []), ...(local.deleted || [])])] };
       try { localStorage.setItem(HIGHLIGHTS_KEY, JSON.stringify(merged)); } catch (e) {}
-      if (Object.keys(merged.read).length !== Object.keys(shared.read).length || merged.deleted.length !== shared.deleted.length) {
+      if (JSON.stringify(merged) !== JSON.stringify(shared)) {
         const url = window.DESK_SOURCE ? "/highlight_state" : "/api/highlight_state";
         fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify(merged) }).catch(() => {});
       }
