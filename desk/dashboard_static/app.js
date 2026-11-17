@@ -311,14 +311,14 @@ function renderTableChart(id, spec) {
         x: series.map((key) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
         text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false,
         textfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
-        hovertext: series.map((key) => `${names[i]}, ${key}: ${text(key, row[key])}`), hoverinfo: "text+y" }));
+        hoverinfo: "skip" }));   // the value is on the bar
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
     } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
       text: rows.map((row) => text(key, row[key])), textposition: "outside", cliponaxis: false,
       textfont: LABEL_FONT(12, rows.map((row) => (row[key] < 0 ? bad : good))),
-      hovertext: rows.map((row) => `${key}: ${text(key, row[key])}`), hoverinfo: "text+y" }));
+      hoverinfo: "skip" }));   // the value is on the bar
     if (plan.by !== "window") {
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
       height = Math.max(180, rows.length * (series.length * 14 + 14) + 80);
@@ -334,13 +334,13 @@ function renderTableChart(id, spec) {
       x: rows.map((row) => (isNum(row[key]) ? Math.abs(row[key]) * axis.mult * (key === plan.short ? -1 : 1) : null)),
       text: rows.map((row, i) => (carrier[i] === key && !roomy[i] ? `${names[i]} · ` : "") + text(key, row[key])),
       textposition: "outside", cliponaxis: false, textfont: LABEL_FONT(12, color),
-      hovertext: rows.map((row) => `${title}: ${text(key, row[key])}`), hoverinfo: "text+y" });
+      hoverinfo: "skip" });   // the value is on the bar
     traces = [bar(plan.long, good, "Long"), bar(plan.short, bad, "Short"),
       { type: "scatter", mode: "markers+text", name: "Net", y: names, textposition: "middle right",
         textfont: LABEL_FONT(12, rows.map((row) => (row[plan.net] < 0 ? bad : good))),
         text: rows.map((row) => text(plan.net, row[plan.net])), marker: { color: token("--ink"), symbol: "diamond", size: 10 },
         x: rows.map((row) => (isNum(row[plan.net]) ? row[plan.net] * axis.mult : null)),
-        hovertext: rows.map((row) => `Net: ${text(plan.net, row[plan.net])}`), hoverinfo: "text+y" }];
+        hoverinfo: "skip" }];
     traces.forEach((trace) => { trace.showlegend = false; });
     const inside = rows.map((row, i) => (roomy[i] ? { x: 0, y: names[i], text: names[i], showarrow: false,
       xanchor: carrier[i] === plan.short ? "right" : "left", xshift: carrier[i] === plan.short ? -6 : 6,
@@ -368,8 +368,11 @@ function renderTableChart(id, spec) {
       text: order.map((i) => (clipped(i) ? "» " : "") + (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
       textposition: "outside", cliponaxis: false,
       textfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
-      hovertext: order.map((i) => `${plan.value}: ${text(plan.value, rows[i][plan.value])}`
-        + (plan.text ? `, ${plan.text}: ${text(plan.text, rows[i][plan.text])}` : "")), hoverinfo: "text+y" }];
+      ...(() => {   // the bar shows value and uPnL; the hover adds only what is not drawn: the 24h move, funding, weight
+        const extra = ["24h", "Funding (APR)", "Weight", "% of desk"].filter((key) => rows.some((row) => isNum(row[key])));
+        const lines = order.map((i) => extra.filter((key) => isNum(rows[i][key])).map((key) => `${text(key, rows[i][key])} ${key === "Funding (APR)" ? "funding" : key === "24h" ? "24h" : "of book"}`).join(" · "));
+        return lines.some(Boolean) ? { hovertext: lines, hoverinfo: "text" } : { hoverinfo: "skip" };
+      })() }];
     // The row's name sits inside its bar, from the zero line outwards (left of zero for a short), not on the axis.
     const inside = order.filter(fits).map((i) => {
       const value = rows[i][plan.value] * axis.mult;
