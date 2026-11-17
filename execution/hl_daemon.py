@@ -3269,6 +3269,8 @@ class Daemon:
             coin = str(request.get("coin", "")).strip()
             coin = coin if ":" in coin else coin.upper()
             return self.trails.stop(wallet, coin) if request.get("stop") else self.trails.start(wallet, coin, float(request["pct"]))
+        if command == "unprotect":
+            return self.unprotect(request)
         if command == "resize":   # the dashboard's actions on an open position: plan (dry run), then live once confirmed there
             wallet = self.wallet(str(request.get("wallet", "")))
             coin = str(request.get("coin", "")).strip()
@@ -3297,6 +3299,52 @@ class Daemon:
             return self.stop_request(session)
         print(f"Unknown command {command!r}.")
         return 2
+
+    def unprotect(self, request: dict) -> int:
+        """Directional positions trade on their thesis, not on tight orders (user, 2026-11-17): drop their stop-loss and
+        take-profit orders, the daemon's net-loss guards and the held take-profits. Ladders and the positions they quote
+        around are left alone; the account margin guard and the alerts stay as the protection for extraordinary events.
+        Without ``live`` it only lists what it would remove."""
+        live = bool(request.get("live"))
+        coins = {coin if ":" in coin else coin.upper() for coin in (request.get("coins") or []) if coin}
+        wallets = [self.wallet(item) for item in (request.get("wallets") or []) if item] or list(self.exchanges)
+        laddered = set(self.ladders.ladders)
+        done: list[str] = []
+        for wallet in wallets:
+            with self.state.lock:
+                states = dict(self.state.states.get(wallet, {}))
+            dexes = [dex for dex, state in states.items() if state.get("assetPositions")]
+            held = {item["position"]["coin"] for state in states.values() for item in state.get("assetPositions", [])
+                    if float(item.get("position", {}).get("szi") or 0)}
+            targets = {coin for coin in held if (wallet, coin) not in laddered and (not coins or coin in coins)}
+            for order in ht.fetch_open_orders(wallet, dexes or [""]):
+                coin = order["coin"]
+                if coin not in targets or not order.get("reduceOnly") or str(order.get("cloid") or "").startswith(LADDER_CLOID_PREFIX):
+                    continue
+                kind = "stop" if order.get("isTrigger") else "take-profit"
+                done.append(f"{coin}: cancel the {kind} at {order.get('triggerPx') or order.get('limitPx')}")
+                if live:
+                    self.exchanges[wallet].cancel(coin, int(order["oid"]))
+            for coin in sorted(targets):
+                if (wallet, coin) in self.guards.entries:
+                    done.append(f"{coin}: drop the net-loss guard")
+                    if live:
+                        self.guards.remove((wallet, coin), f"guard ...{wallet[-4:]} {coin}: dropped (a thesis trade, no tight orders)")
+            with self.held.lock:
+                drop = [item for item in self.held.items if item["wallet"] == wallet and item["coin"] in targets]
+            for item in drop:
+                done.append(f"{item['coin']}: drop the held take-profit at {item['price']:g}")
+                if live:
+                    if item.get("oid"):
+                        self.exchanges[wallet].cancel(item["coin"], item["oid"])
+                    with self.held.lock:
+                        if item in self.held.items:
+                            self.held.items.remove(item)
+            if live:
+                self.held.save()
+        print("\n".join(done) or "Nothing to remove.")
+        print("Removed. The margin guard and the alerts stay." if live else "Dry run: nothing removed (add --live).")
+        return 0
 
     def book(self, wallets: list[str]) -> dict | None:
         wallets = [wallet.lower() for wallet in wallets]
@@ -3795,6 +3843,10 @@ def main(argv: list[str] | None = None) -> int:
     trail.add_argument("--coin", required=True)
     trail.add_argument("--pct", type=float, default=TRAIL_DEFAULT_PCT * 100, help="percent behind the best price (default 1.5)")
     trail.add_argument("--stop", action="store_true", help="remove the trailing stop (the position stays)")
+    unprotect = commands.add_parser("unprotect", help="drop SL/TP orders and loss guards on directional positions (ladders untouched)")
+    unprotect.add_argument("--wallets", help="comma-separated wallets (default: every trading wallet)")
+    unprotect.add_argument("--coins", help="comma-separated coins (default: every directional position)")
+    unprotect.add_argument("--live", action="store_true")
     buildup = commands.add_parser("buildup", help="grow a small position to its full risk budget as the desk caps allow, or --stop it")
     buildup.add_argument("--wallet", required=True)
     buildup.add_argument("--coin", required=True)
@@ -3824,6 +3876,8 @@ def main(argv: list[str] | None = None) -> int:
                      "force": args.force})
     if args.command == "trail":
         return call({"cmd": "trail", "wallet": args.wallet, "coin": args.coin, "pct": args.pct / 100, "stop": args.stop})
+    if args.command == "unprotect":
+        return call({"cmd": "unprotect", "live": args.live, "wallets": (args.wallets or "").split(","), "coins": (args.coins or "").split(",")})
     if args.command == "buildup":
         return call({"cmd": "buildup", "wallet": args.wallet, "coin": args.coin, "side": args.side, "stop": args.stop})
     if args.command == "reattach":
