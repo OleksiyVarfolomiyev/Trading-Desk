@@ -533,22 +533,23 @@ function renderTiles(k) {
   const r = k.returns || {};
   const mw = k.money_weighted || {};
   const tiles = [
+    // Read left to right: what needs attention (drawdown, leverage) before the results.
+    tile("Drawdown now", pct(k.drawdown, 1), k.drawdown < 0 ? `peak ${sinceLabel(k.peak_date)}` : "at peak",
+      { valueClass: k.drawdown <= -0.10 ? "neg" : "" }),
+    tile("Gross leverage", isNum(k.gross_leverage) ? k.gross_leverage.toFixed(2) + "×" : "n/a",
+      isNum(k.net_leverage) ? `net ${k.net_leverage.toFixed(2)}×` : "", { title: "Of trading equity." }),
+
     tile("Desk value", wholeUsd(k.desk_value), "", { line: dayChangeLine(k.day_change) }),
+    tile("Return 30D", pct(r["30D"], 1, true),
+      `7D ${pct(r["7D"], 1, true) || "n/a"} · 90D ${pct(r["90D"], 1, true) || "n/a"}`,
+      { valueClass: signClass(r["30D"]) }),
     // The two returns since start, with the dollars under them: money-weighted (what the money made, a loss on a
     // small balance and a gain on a large one net out) and time-weighted (the strategy, deposits aside).
     tile("MW return", pct(mw.return, 1, true) || "n/a",
       [isNum(mw.pnl) ? `PnL ${usd(mw.pnl)}` : "", isNum(k.unrealized) ? `uPnL ${usd(k.unrealized)}` : ""].filter(Boolean).join(" · "),
       { valueClass: signClass(mw.return), title: "Money-weighted return since start, HL + IB; PnL net of deposits and withdrawals." }),
     tile("TW return", pct(r.since_start, 1, true), `since ${sinceLabel(k.since)}`,
-      { valueClass: signClass(r.since_start), title: "Time-weighted return since start, wallets included." }),
-    tile("Return 30D", pct(r["30D"], 1, true),
-      `7D ${pct(r["7D"], 1, true) || "n/a"} · 90D ${pct(r["90D"], 1, true) || "n/a"}`,
-      { valueClass: signClass(r["30D"]) }),
-    tile("Drawdown now", pct(k.drawdown, 1), k.drawdown < 0 ? `peak ${sinceLabel(k.peak_date)}` : "at peak",
-      { valueClass: k.drawdown <= -0.10 ? "neg" : "" }),
-    tile("Gross leverage", isNum(k.gross_leverage) ? k.gross_leverage.toFixed(2) + "×" : "n/a",
-      isNum(k.net_leverage) ? `net ${k.net_leverage.toFixed(2)}×` : "", { title: "Of trading equity." }),
-  ];
+      { valueClass: signClass(r.since_start), title: "Time-weighted return since start, wallets included." }),  ];
   arrangeTiles(document.getElementById("tiles"), tiles);
 }
 // The key-number tiles are windows too: drag one onto another to swap, minimize to label and value, save as an image, hide
