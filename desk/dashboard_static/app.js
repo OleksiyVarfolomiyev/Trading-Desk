@@ -617,6 +617,7 @@ function renderTableChart(id, spec, override) {
     base.yaxis.showticklabels = false;
     base.margin = Object.assign({}, base.margin, { l: 12 });
   }
+  traces = traces.map(colorHover);
   whenVisible(host, () => Plotly.newPlot(node, traces, base, CONFIG).then(markNumericNotes));
   return true;
 }
@@ -1247,6 +1248,13 @@ function baseLayout(extra) {
 // Chart tools on hover (zoom, pan, reset, save), as Plotly's own bar; a click on a legend item hides or shows that series.
 // Plotly's own tool bar is off: drag zooms, and the tile's hover tools carry reset and pan (save is the tile's save).
 const CONFIG = { displayModeBar: false, displaylogo: false, responsive: true };
+function colorHover(trace) {
+  const color = trace.line && trace.line.color || trace.marker && trace.marker.color;
+  if (typeof color !== "string" && !Array.isArray(color)) return trace;
+  trace.hoverlabel = Object.assign({}, trace.hoverlabel, { bgcolor: token("--surface"), bordercolor: color,
+    font: Object.assign({}, trace.hoverlabel && trace.hoverlabel.font, { color, weight: 600 }) });
+  return trace;
+}
 
 function endLabels(series, format) {
   return series.filter((s) => s.y.length).map((s) => ({
@@ -1281,7 +1289,7 @@ function spreadEndLabels(id) {
 function renderCharts(charts) {
   if (typeof Plotly === "undefined" || !charts) return;
   const colors = [1, 2, 3, 4, 5].map((i) => token("--series-" + i));
-  const value = (charts.value || []).map((s, i) => ({
+  const value = (charts.value || []).map((s, i) => colorHover({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y, stackgroup: "value",
     line: { width: 2, color: colors[i % colors.length] }, fillcolor: withAlpha(colors[i % colors.length], 0.18),
     hovertemplate: "%{fullData.name}: $%{y:,.0f}<extra></extra>",
@@ -1291,9 +1299,9 @@ function renderCharts(charts) {
   const withWallets = charts.value_with_wallets;
   if (withWallets && withWallets.x.length) {
     const note = withWallets.note ? `<br><span style="font-size:11px">${withWallets.note}</span>` : "";
-    value.push({ type: "scatter", mode: "lines", name: withWallets.name, x: withWallets.x, y: withWallets.y,
+    value.push(colorHover({ type: "scatter", mode: "lines", name: withWallets.name, x: withWallets.x, y: withWallets.y,
       line: { width: 2, dash: "dot", color: token("--ink-2") },
-      hovertemplate: `%{fullData.name}: $%{y:,.0f}${note}<extra></extra>` });
+      hovertemplate: `%{fullData.name}: $%{y:,.0f}${note}<extra></extra>` }));
   }
   // Collapse stretches with no trading on any account, as the HL account charts do, and say so.
   const idle = charts.value_idle || [];
@@ -1330,7 +1338,7 @@ function renderCharts(charts) {
     : /^(total|desk)/i.test(s.name) ? { width: 2.6, color: token("--ink") }
     : /^btc/i.test(s.name) ? { width: 1.4, dash: "dot", color: token("--kind-crypto") }
     : { width: 1.4, dash: "dot", color: token("--kind-stocks") };
-  const twr = (charts.twr || []).map((s, i) => ({
+  const twr = (charts.twr || []).map((s, i) => colorHover({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
     line: Object.assign({ shape: "linear" }, lineFor(s, i)),
     hovertemplate: "%{fullData.name}: %{y:.1f}%<extra></extra>",
@@ -1563,7 +1571,7 @@ function drawIntraday(node, days) {
   const sp = rebased(data["S&P500"] || [], (row) => row[1]);
   if (sp) lines.push(["S&P500", sp, { width: 1.4, dash: "dot", color: colorFor("S&P500") }]);
   if (!lines.length) return false;
-  const traces = lines.map(([name, line, style]) => ({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
+  const traces = lines.map(([name, line, style]) => colorHover({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
     hovertemplate: "%{fullData.name}: %{y:.2f}%<extra></extra>" }));
   const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ xref: "paper", x: 1, y: line.y[line.y.length - 1], xanchor: "right", xshift: -4,
     showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color } })), xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null }),
@@ -1583,9 +1591,9 @@ function drawIntradayValue(node, days) {
     if (rows.length < 3) return null;
     const match = source.findIndex((series) => series.name === account.name);
     const color = token(`--series-${(match < 0 ? i : match) % 5 + 1}`);
-    return { type: "scatter", mode: "lines", name: account.name, x: rows.map(([t]) => new Date(t)), y: rows.map(([, value]) => value),
+    return colorHover({ type: "scatter", mode: "lines", name: account.name, x: rows.map(([t]) => new Date(t)), y: rows.map(([, value]) => value),
       stackgroup: "value", line: { width: 2, color }, fillcolor: withAlpha(color, 0.18),
-      hovertemplate: "%{fullData.name}: $%{y:,.0f}<extra></extra>" };
+      hovertemplate: "%{fullData.name}: $%{y:,.0f}<extra></extra>" });
   }).filter(Boolean);
   if (!traces.length) return false;
   const annotations = [];
@@ -2449,7 +2457,7 @@ function renderPublished(tiles) {
       });
       const node = document.getElementById("pub-" + tile.key);
       const series = isReturnSeries(tile.data || []);
-      const data = series ? decoratePublishedTraces(tile.data || [], layout) : decoratePublishedBars(tile.data || [], layout);
+      const data = (series ? decoratePublishedTraces(tile.data || [], layout) : decoratePublishedBars(tile.data || [], layout)).map(colorHover);
       if (node) whenVisible(node, () => Plotly.react(node, data, layout, CONFIG).then(() => {
         markNumericNotes();
         if (isTimeSeriesChart(tile.data || [])) {
@@ -2705,8 +2713,8 @@ async function openAsset(symbol) {
     const layout = baseLayout({ hovermode: "x unified", margin: { l: 48, r: 12, t: 6, b: 28 }, showlegend: false });
     layout.shapes = entry ? [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: entry, y1: entry, line: { color: token("--muted"), dash: "dot", width: 1 } }] : [];
     layout.xaxis = Object.assign({}, layout.xaxis, { showspikes: false });
-    Plotly.newPlot(chart, [{ type: "scatter", mode: "lines", x: candles.map((c) => new Date(c.t)), y: candles.map((c) => Number(c.c)),
-      line: { color: token("--series-1"), width: 1.6 }, hovertemplate: "%{y}<extra></extra>" }], layout, CONFIG);
+    Plotly.newPlot(chart, [colorHover({ type: "scatter", mode: "lines", x: candles.map((c) => new Date(c.t)), y: candles.map((c) => Number(c.c)),
+      line: { color: token("--series-1"), width: 1.6 }, hovertemplate: "%{y}<extra></extra>" })], layout, CONFIG);
   } catch (e) { /* no chart: the facts and actions are there */ }
 }
 
