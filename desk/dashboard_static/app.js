@@ -484,7 +484,7 @@ function renderTableChart(id, spec, override) {
         text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false,
         outsidetextfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
         hoverinfo: "skip" }));   // the value is on the bar
-      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true, autorange: true, rangemode: "tozero" }, axis), margin: { l: 8, r: 88, t: 2, b: 6 } };
+      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true, autorange: true, rangemode: "tozero" }, axis), margin: { l: 64, r: 88, t: 2, b: 6 } };
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
     } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
@@ -598,7 +598,7 @@ function renderTableChart(id, spec, override) {
   host.replaceChildren();
   const node = el("div", { class: "chart", id: "tc-" + id, style: `height:${height}px` });
   host.append(node);
-  const margin = Object.assign({ l: 8, r: 60, t: 2, b: 6 }, layout.margin || {});
+  const margin = Object.assign({ l: 56, r: 88, t: 2, b: 6 }, layout.margin || {});
   const base = baseLayout(Object.assign({ hovermode: "closest" }, layout, { margin }));
   // Values sit at the bar ends: no x labels, grid, zero line or axis line.
   base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false, showticklabels: false, showgrid: false,
