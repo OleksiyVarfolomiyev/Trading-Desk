@@ -1155,7 +1155,7 @@ async function loadHighlightState() {
 function redrawHighlights() {
   if (!latest || !latest.data) return;
   const hl = latest.data.highlights || {}, hover = hl.hover || {};
-  for (const kind of ["crypto", "stocks"]) {
+  for (const kind of ["crypto", "stocks", "desk"]) {
     renderHighlights(`hl-${kind}-well`, highlightsForKind(hl.well, kind), hover);
     renderHighlights(`hl-${kind}-attention`, highlightsForKind(hl.attention, kind), hover);
   }
@@ -1181,11 +1181,13 @@ function highlightsForKind(rows, kind) {
         kind: /^crypto$/i.test(match[1]) ? "crypto" : "stocks",
         text: text.slice(match.index, i + 1 < tagged.length ? tagged[i + 1].index : text.length).trim(),
       })).filter((piece) => piece.kind === kind);
+      if (kind === "desk") return /\d/.test(prefix) ? [[area, prefix]] : [];
       return pieces.map((piece) => [area, [prefix, piece.text].filter(Boolean).join(" ")]);
     }
     if (hasCrypto && !hasStocks) return kind === "crypto" ? [[area, text]] : [];
     if (hasStocks && !hasCrypto) return kind === "stocks" ? [[area, text]] : [];
-    return [[area, text]];  // desk-wide signals belong in both tiles
+    if (hasCrypto || hasStocks) return kind === "desk" ? [[area, text]] : [];
+    return kind === "desk" ? [[area, text]] : [];
   });
 }
 const VENUES = /\b(xyz|flx|vntl|hyna|km|abcd|cash|para|mkts|io):/gi;
@@ -1241,7 +1243,7 @@ function renderHighlights(id, rows, hover = {}) {
   const folded = answered.filter(([area, text]) => quiet.has(area) && severity(area, text) !== "critical");
   const shown = open ? answered : answered.filter((row) => !folded.includes(row));
   if (!shown.length && !folded.length) {   // one card holds both lists: say it once, on the first list, when both are empty
-    const match = id.match(/^hl-(crypto|stocks)-(attention|well)$/);
+    const match = id.match(/^hl-(crypto|stocks|desk)-(attention|well)$/);
     const otherRows = match && latest && latest.data && latest.data.highlights
       ? highlightsForKind(latest.data.highlights[match[2] === "attention" ? "well" : "attention"], match[1]) : [];
     host.replaceChildren(...(match && match[2] === "attention" && !otherRows.length
@@ -3543,7 +3545,7 @@ document.addEventListener("click", (event) => {
 // value and return charts and the analytics pulled from the notebooks). The dots sit at the bottom; the choice is remembered.
 const SCREENS = ["now", "research"];
 // Research keeps the research items in: the candidates (short and market-making), the strategy result, the long charts, and whatever is pulled from the notebooks.
-const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr"],
+const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "hl-desk-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr"],
   research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr"] };
 function screensFor(card) {
   const id = cardId(card);
