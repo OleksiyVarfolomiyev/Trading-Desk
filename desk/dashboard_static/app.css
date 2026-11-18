@@ -779,10 +779,18 @@ th { text-align: center; }
 .card:hover .period-chips, .period-chips:focus-within { opacity: 1; }
 @media (hover: none) { .period-chips { opacity: 1; } }
 
+/* Pulse prices scroll independently of the asset controls. */
+.pulse-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; background: var(--surface); border-bottom: 1px solid var(--border); }
+.pulse-bar .ticker { grid-column: 1; min-width: 0; border-bottom: 0; justify-content: safe center; }
+.pulse-actions { grid-column: 2; display: flex; gap: 4px; padding: 2px 6px; }
+.pulse-action[aria-expanded="true"] { background: var(--border); color: var(--ink); }
+.pulse-menu { grid-column: 1 / -1; justify-self: end; padding: 4px 6px; max-width: 100%; }
+.pulse-menu[hidden] { display: none; }
+.pulse-menu .trade-bar { flex-wrap: wrap; justify-content: flex-end; }
+
 /* Trade bar: asset, side, label, plan */
-.trade-bar { display: inline-flex; gap: 4px; align-items: center; }
-.trade-asset-wrap { position: relative; }
-.trade-suggestions { position: absolute; z-index: 30; top: calc(100% + 5px); left: 0; width: 190px; max-height: 260px; overflow-y: auto; padding: 4px; border: 1px solid var(--line, #8886); border-radius: 8px; background: var(--surface, #20242b); box-shadow: 0 8px 24px #0005; }
+.trade-bar { position: relative; display: inline-flex; gap: 4px; align-items: center; }
+.trade-suggestions { position: absolute; z-index: 30; top: calc(100% + 5px); right: 0; width: min(190px, calc(100vw - 12px)); max-height: 260px; overflow-y: auto; padding: 4px; border: 1px solid var(--line, #8886); border-radius: 8px; background: var(--surface, #20242b); box-shadow: 0 8px 24px #0005; }
 .trade-suggestions[hidden] { display: none; }
 .trade-suggestions button { display: block; width: 100%; padding: 6px 8px; border: 0; border-radius: 5px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .trade-suggestions button:hover, .trade-suggestions button:focus { background: var(--well, #8882); outline: none; }

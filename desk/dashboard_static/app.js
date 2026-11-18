@@ -1943,7 +1943,7 @@ function setLook(kind, value) {
 }
 // Trade bar: asset, side, an optional strategy tag, then ▶ plans the entry and asks ✓ / ✗ (runAction). On the local page
 // the order is copied for Claude, as everywhere else the dashboard cannot trade.
-let tradeBarNode = null, tradeSide = "long";
+let tradeSide = "long";
 function tradeAssets() {
   const tables = (latest && latest.data && latest.data.tables) || {};
   const names = new Set();
@@ -1951,32 +1951,62 @@ function tradeAssets() {
     for (const row of ((tables[id] || {}).rows || [])) { const n = row.Symbol || row.Coin; if (n) names.add(String(n)); }
   return [...names].sort();
 }
-function tradeBar() {
-  if (tradeBarNode) { tradeBarNode.querySelector("datalist").replaceChildren(...tradeAssets().map((n) => el("option", { value: n }))); return tradeBarNode; }
-  const asset = el("input", { class: "trade-input", type: "text", placeholder: "asset", autocomplete: "off",
-    spellcheck: "false", "aria-label": "Asset" });
-  const suggestions = el("div", { class: "trade-suggestions", role: "listbox", "aria-label": "Tradable assets", hidden: true });
+function assetPicker(label, submit, selectToSubmit = false) {
+  const asset = el("input", { class: "trade-input", type: "text", placeholder: "Asset", autocomplete: "off",
+    spellcheck: "false", "aria-label": label });
+  const suggestions = el("div", { class: "trade-suggestions", "aria-label": "Matching assets", hidden: true });
+  let selected;
+  const run = () => {
+    const raw = asset.value.trim();
+    if (!raw) { asset.focus(); return; }
+    const market = selected || universeMap[raw.toLowerCase()] ||
+      raw.toUpperCase().replace(/^[A-Z0-9]+:/, (prefix) => prefix.toLowerCase());
+    suggestions.hidden = true;
+    submit(market);
+  };
   const refreshSuggestions = () => {
     const query = asset.value.trim().toLowerCase();
     const assets = new Map();
     tradeAssets().forEach((name) => assets.set(name.toLowerCase(), universeMap[name.toLowerCase()] || name));
-    Object.keys(universeMap).filter((name) => name === friendlyName(universeMap[name]).toLowerCase())
-      .forEach((name) => assets.set(name, universeMap[name]));
-    const names = [...assets.keys()]
-      .filter((name) => !query || name.startsWith(query) || name.includes(query)).sort();
+    Object.entries(universeMap).filter(([name, market]) => market && name === friendlyName(market).toLowerCase())
+      .forEach(([name, market]) => assets.set(name, market));
+    const names = [...assets.keys()].filter((name) => name.includes(query)).sort();
     suggestions.replaceChildren(...(names.length ? names.map((name) => {
       const market = assets.get(name);
-      const button = el("button", { type: "button", role: "option", text: friendlyName(market) });
+      const button = el("button", { type: "button", text: friendlyName(market), title: market });
       button.addEventListener("mousedown", (event) => event.preventDefault());
-      button.addEventListener("click", () => { asset.value = friendlyName(market); suggestions.hidden = true; asset.focus(); });
+      button.addEventListener("click", () => {
+        selected = market;
+        asset.value = friendlyName(market);
+        if (selectToSubmit) run();
+        else { asset.focus(); suggestions.hidden = true; }
+      });
       return button;
     }) : [el("div", { class: "trade-suggestion-empty", text: query ? "No matching assets" : "Loading markets…" })]));
     suggestions.hidden = false;
   };
-  asset.addEventListener("focus", () => { refreshSuggestions(); loadUniverse().then(refreshSuggestions); });
-  asset.addEventListener("input", refreshSuggestions);
-  asset.addEventListener("keydown", (event) => { if (event.key === "Escape") suggestions.hidden = true; });
-  asset.addEventListener("blur", () => setTimeout(() => { suggestions.hidden = true; }, 120));
+  const wrap = el("div", { class: "trade-asset-wrap" }, [asset, suggestions]);
+  asset.addEventListener("focus", () => {
+    refreshSuggestions();
+    loadUniverse().then(() => {
+      if (document.activeElement === asset && !suggestions.hidden) refreshSuggestions();
+    });
+  });
+  asset.addEventListener("input", () => { selected = null; refreshSuggestions(); });
+  asset.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); run(); }
+    if (event.key === "ArrowDown" && !suggestions.hidden) {
+      event.preventDefault();
+      suggestions.querySelector("button")?.focus();
+    }
+  });
+  wrap.addEventListener("focusout", (event) => {
+    if (!wrap.contains(event.relatedTarget)) suggestions.hidden = true;
+  });
+  return { asset, wrap, run };
+}
+
+function tradeBar(close) {
   const sides = [["long", "▲", "Long"], ["short", "▼", "Short"]].map(([value, glyph, name]) => {
     const b = el("button", { type: "button", class: "trade-side " + value, text: glyph, title: name, "aria-label": name, "aria-pressed": String(value === tradeSide) });
     b.addEventListener("click", () => { tradeSide = value; sides.forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
@@ -1985,20 +2015,56 @@ function tradeBar() {
   const strat = el("select", { class: "trade-input", "aria-label": "Strategy", title: "Strategy tag (optional)" },
     [["", "strat"], ["directional", "directional"], ["conviction", "conviction"], ["hedge", "hedge"], ["fade", "fade"]]
       .map(([value, text]) => el("option", { value, text })));
-  const go = el("button", { type: "button", class: "trade-go", text: "▶", title: "Plan the entry", "aria-label": "Plan the entry" });
-  const run = () => {
-    const raw = asset.value.trim();
-    if (!raw) { asset.focus(); return; }
-    const coin = universeMap[raw.toLowerCase()] || (/^[a-z0-9]+:/i.test(raw) ? raw.toLowerCase().replace(/^([a-z0-9]+):(.*)$/, (m, d, c) => d + ":" + c.toUpperCase()) : raw.toUpperCase());
+  const picker = assetPicker("Asset to trade", (coin) => {
+    close();
     feedback("trade", "plan", coin, tradeSide + (strat.value ? " " + strat.value : ""));
     if (window.DESK_SOURCE) runAction(tradeSide === "short" ? "Short" : "Long", tradeSide, 1, { coin, wallet: "07f2", label: strat.value || undefined });
     else if (navigator.clipboard) navigator.clipboard.writeText(`${tradeSide} ${coin}${strat.value ? " as " + strat.value : ""}`);
+  });
+  const go = el("button", { type: "button", class: "trade-go", text: "▶", title: "Plan the entry", "aria-label": "Plan the entry" });
+  go.addEventListener("click", picker.run);
+  return el("div", { class: "trade-bar", role: "group", "aria-label": "Trade" }, [picker.wrap, ...sides, strat, go]);
+}
+
+function pulseBar(strip) {
+  const menus = el("div", { class: "pulse-menu", hidden: true });
+  const controls = el("div", { class: "pulse-actions", role: "group", "aria-label": "Asset actions" });
+  const bar = el("div", { class: "pulse-bar" }, [strip, controls, menus]);
+  let active;
+  const close = (focus = true) => {
+    if (!active) return;
+    menus.hidden = true;
+    active.setAttribute("aria-expanded", "false");
+    if (focus) active.focus();
+    active = null;
   };
-  go.addEventListener("click", run);
-  asset.addEventListener("keydown", (event) => { if (event.key === "Enter") run(); });
-  tradeBarNode = el("div", { class: "trade-bar", role: "group", "aria-label": "Trade" },
-    [el("div", { class: "trade-asset-wrap" }, [asset, suggestions]), ...sides, strat, go, el("datalist", { id: "trade-assets" }, tradeAssets().map((n) => el("option", { value: n })))]);
-  return tradeBarNode;
+  const chartPicker = assetPicker("Asset to chart", (market) => { close(); openAsset(market); }, true);
+  const show = el("button", { type: "button", class: "icon-button", title: "Open chart", "aria-label": "Open chart" }, [icon("chart")]);
+  show.addEventListener("click", chartPicker.run);
+  const chart = el("div", { class: "trade-bar", role: "group", "aria-label": "Chart" }, [chartPicker.wrap, show]);
+
+  for (const [label, content, face] of [
+    ["Trade", tradeBar(close), "Trade"],
+    ["Chart", chart, icon("chart")],
+  ]) {
+    const button = el("button", { type: "button", class: "icon-button pulse-action", title: label, "aria-label": label,
+      "aria-expanded": "false" }, [face]);
+    button.addEventListener("click", () => {
+      if (active === button) { close(); return; }
+      close(false);
+      active = button;
+      menus.replaceChildren(content);
+      menus.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+      content.querySelector("input")?.focus();
+    });
+    controls.append(button);
+  }
+  bar.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && active) { event.stopPropagation(); close(); }
+  });
+  document.addEventListener("click", (event) => { if (active && !bar.contains(event.target)) close(false); });
+  return bar;
 }
 function drawModes() {
   const host = document.getElementById("modes");
@@ -2037,7 +2103,7 @@ function drawModes() {
     "aria-label": "Live price strip", "aria-pressed": tickerOn ? "true" : "false" }, [icon("pulse")]);
   strip.addEventListener("click", () => { const s = tickerState(); s.on = !s.on; saveTicker(s); feedback("look", "price strip", s.on ? "on" : "off"); drawModes(); refreshTicker(); });
   report.addEventListener("click", openReport);
-  host.replaceChildren(tradeBar(), views, units, toggle, styles, strip, report);
+  host.replaceChildren(views, units, toggle, styles, strip, report);
   host.querySelectorAll(".switch").forEach((group) => group.classList.add("choices"));
 }
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
@@ -3743,13 +3809,12 @@ function chipActions(asset) {
 async function refreshTicker() {
   const state = tickerState();
   let strip = document.getElementById("ticker");
-  if (!state.on) { if (strip) strip.hidden = true; return; }
   if (!strip) {
     strip = el("div", { class: "ticker", id: "ticker", "aria-label": "Live prices" });
-    const bar = document.querySelector(".topbar");
-    bar.after(strip);
+    document.querySelector(".topbar").after(pulseBar(strip));
   }
-  strip.hidden = false;
+  strip.hidden = !state.on;
+  if (!state.on) return;
   await loadUniverse();
   universeMap.spy = universeMap.spy || universeMap["s&p500"] || universeMap.sp500;   // SPY on the strip is HL's S&P 500 perp
   const marketOf = (asset) => universeMap[asset.toLowerCase()] || asset;
