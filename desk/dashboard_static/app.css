@@ -729,7 +729,7 @@ html[data-screen="research"] #columns > .col { min-width: 520px; }
 .name-long { color: var(--good-text) !important; }
 .name-short { color: var(--bad-text) !important; }
 td.name-net { color: var(--series-1); }
-td.correlation-cell { color: var(--ink); background-color: var(--correlation-tint); }
+td.correlation-cell { color: var(--correlation-ink); background-color: var(--correlation-tint); }
 
 /* What needs attention, on the Research screen (the Now screen has the highlights card). */
 .alert-strip { margin: 0 0 8px; }
