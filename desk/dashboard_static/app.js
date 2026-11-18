@@ -386,7 +386,7 @@ function renderBarList(id, spec, plan, host) {
     const clipped = Math.abs(value) > cap, width = Math.max(2, share * (mixed ? 50 : 100));
     const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
     const endStyle = mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)`;
-    const figures = (plan.text ? [[plan.text, extra]] : (plan.zeroCentered || id === "pub-desk_crypto-picks-vs-btc") ? [[plan.value, value]] : [])
+    const figures = [[plan.value, value], ...(plan.text && plan.text !== plan.value ? [[plan.text, extra]] : [])]
       .filter(([, number]) => number !== null && number !== undefined && number !== "");
     const end = figures.length ? el("span", { class: "bfig", style: endStyle }, [
       ...(clipped ? [el("span", { class: signClass(value), text: "» " })] : []),
@@ -488,8 +488,8 @@ function renderTableChart(id, spec, override) {
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
     } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
-      text: rows.map((row) => text(key, row[key])), textposition: "auto", insidetextanchor: "end", cliponaxis: false, insidetextfont: { size: 12, color: "#ffffff" },
-      textfont: LABEL_FONT(12, rows.map((row) => (row[key] < 0 ? bad : good))),
+      text: rows.map((row) => text(key, row[key])), textposition: "outside", cliponaxis: false,
+      outsidetextfont: LABEL_FONT(12, rows.map((row) => (row[key] < 0 ? bad : good))),
       hoverinfo: "skip" }));   // the value is on the bar
     if (plan.by !== "window") {
       layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
@@ -505,10 +505,10 @@ function renderTableChart(id, spec, override) {
         x: books.map(([book]) => (isNum(row[book]) ? row[book] * axis.mult : 0)),
         marker: { color: books.map(([, color]) => shade(color, i)), line: { color: token("--surface"), width: 1.5 } },
         text: books.map(([book]) => (isNum(row[book]) && row[book] !== 0 ? `${row.Strategy} ${text(book, row[book])}` : "")),
-        textposition: "inside", insidetextanchor: "middle", insidetextfont: { size: 11, color: "#ffffff" },
+        textposition: "inside", insidetextanchor: "middle", insidetextfont: { size: 9, color: "#ffffff" },
         hovertext: books.map(([book]) => (isNum(row[book]) && row[book] !== 0 ? `${row.Strategy} ${text(book, row[book])}` : "")), hoverinfo: "text" };
     });
-    layout = { barmode: "relative", bargap: 0.1, hovermode: "closest", xaxis: Object.assign({ zeroline: true }, axis), uniformtext: { mode: "hide", minsize: 9 } };
+    layout = { barmode: "relative", bargap: 0.1, hovermode: "closest", xaxis: Object.assign({ zeroline: true }, axis), uniformtext: { mode: "show", minsize: 8 } };
     height = 170;
     names.splice(0, names.length, ...books.map(([book]) => book));
   } else if (plan.kind === "stacked" && !plan.series.some((key) => rows.some((row) => isNum(row[key]) && row[key] !== 0))) {
@@ -521,7 +521,7 @@ function renderTableChart(id, spec, override) {
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)),
       text: rows.map((row) => (isNum(row[key]) && row[key] !== 0 ? text(key, row[key]) : "")), textposition: "inside", insidetextanchor: "middle",
       textfont: LABEL_FONT(11, "#ffffff"), hoverinfo: "skip", showlegend: false }));
-    layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis) };
+    layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis), uniformtext: { mode: "show", minsize: 8 } };
     height = Math.max(160, rows.length * 34 + 70);
   } else if (plan.kind === "exposure" && plan.books) {   // two bars, crypto and stocks: net exposure to equity, in their colours
     const sum = (list, key) => list.reduce((total, row) => total + (isNum(row[key]) ? row[key] : 0), 0);
@@ -529,7 +529,7 @@ function renderTableChart(id, spec, override) {
     const data = [["Crypto", sum(crypto, plan.net), token("--kind-crypto")], ["Stocks", sum(stocks, plan.net), token("--kind-stocks")]].filter(([, v]) => v !== 0);
     const axis = chartAxis(formatOf(plan.net));
     traces = [{ type: "bar", orientation: "h", y: data.map(([n]) => n), x: data.map(([, v]) => v * axis.mult), marker: { color: data.map(([, , c]) => c) },
-      text: data.map(([, v]) => text(plan.net, v)), textposition: "auto", insidetextanchor: "end", insidetextfont: { size: 13, color: "#ffffff" },
+      text: data.map(([, v]) => text(plan.net, v)), textposition: "outside",
       outsidetextfont: LABEL_FONT(13), cliponaxis: false, hoverinfo: "skip", showlegend: false }];
     layout = { xaxis: Object.assign({ zeroline: true }, axis) };
     height = Math.max(120, data.length * 52 + 30);
@@ -544,7 +544,7 @@ function renderTableChart(id, spec, override) {
     const bar = (key, color, title) => ({ type: "bar", orientation: "h", name: title, y: names, marker: { color },
       x: rows.map((row) => (isNum(row[key]) ? Math.abs(row[key]) * axis.mult * (key === plan.short ? -1 : 1) : null)),
       text: rows.map((row, i) => (carrier[i] === key && !roomy[i] ? `${names[i]} · ` : "") + text(key, row[key])),
-      textposition: "auto", insidetextanchor: "end", cliponaxis: false, insidetextfont: { size: 12, color: "#ffffff" }, outsidetextfont: LABEL_FONT(12, color),
+      textposition: "outside", cliponaxis: false, outsidetextfont: LABEL_FONT(12, color),
       hoverinfo: "skip" });   // the value is on the bar
     traces = [bar(plan.long, good, "Long"), bar(plan.short, bad, "Short")];
     traces.forEach((trace) => { trace.showlegend = false; });
@@ -573,8 +573,7 @@ function renderTableChart(id, spec, override) {
       marker: { color: order.map((i) => kindColor(id, rows[i])) }, showlegend: false,
       // A short bar has no room for its name inside: the name joins the figures at its end instead of overlapping them.
       text: order.map((i) => (clipped(i) ? "» " : "") + (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
-      textposition: "auto", insidetextanchor: "end", cliponaxis: false,   // inside the bar's end when it fits
-      insidetextfont: { size: 13, color: INSIDE_INK() },
+      textposition: "outside", cliponaxis: false,
       outsidetextfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
       ...(() => {   // a pop-up only where there is something to see: a big 24h move or a funding rate that matters
         const notable = (row) => [
@@ -2221,6 +2220,43 @@ function addPeriodChips(node) {
   node._chips = row;
   node.before(row);
 }
+
+function decoratePublishedBars(traces, layout) {
+  const good = token("--good-text") || token("--good"), bad = token("--bad-text") || token("--critical");
+  let horizontal = false;
+  const data = traces.map((source) => {
+    if (source.type !== "bar") return source;
+    const trace = Object.assign({}, source);
+    horizontal = horizontal || trace.orientation === "h";
+    const key = trace.orientation === "h" ? "x" : "y";
+    const values = decodeNumbers(trace[key]);
+    if (!values.length || !values.some(isNum)) return trace;
+    const axis = layout[trace.orientation === "h" ? "xaxis" : "yaxis"] || {};
+    const format = String(axis.tickformat || "");
+    const label = (value) => {
+      if (!isNum(value)) return "";
+      if (format.includes("%")) return readablePct(value);
+      if (axis.ticksuffix === "%") return number(value) + "%";
+      if (format.includes("$") || axis.tickprefix === "$") return usd(value);
+      return (axis.tickprefix || "") + number(value) + (axis.ticksuffix || "");
+    };
+    const old = Array.isArray(trace.text) ? trace.text : values.map(() => trace.text || "");
+    const text = values.map((value, i) => {
+      const numberLabel = label(value), prior = String(old[i] || "").trim();
+      return prior && !prior.includes(numberLabel) ? `${prior} · ${numberLabel}` : numberLabel;
+    });
+    const colors = values.map((value) => !isNum(value) || value === 0 ? token("--ink-2") : value > 0 ? good : bad);
+    return Object.assign(trace, { [key]: values, text, textposition: "outside", cliponaxis: false,
+      outsidetextfont: LABEL_FONT(12, colors) });
+  });
+  if (data.some((trace, i) => trace !== traces[i] && trace.type === "bar")) {
+    layout.margin = Object.assign({}, layout.margin, horizontal
+      ? { l: Math.max(64, Number(layout.margin && layout.margin.l) || 0), r: Math.max(88, Number(layout.margin && layout.margin.r) || 0) }
+      : { t: Math.max(42, Number(layout.margin && layout.margin.t) || 0) });
+  }
+  return data;
+}
+
 function rebasePublished(node, days) {
   node._orig = node._orig || node.data.map((trace) => ({ x: Array.from(trace.x || []), y: Array.from(trace.y || []) }));
   const last = Math.max(...node._orig.filter((t) => t.x.length).map((t) => new Date(t.x[t.x.length - 1]).getTime()));
@@ -2290,7 +2326,7 @@ function renderPublished(tiles) {
       PUBLISHED_AXES.forEach((key) => { if (base[key] || (tile.layout || {})[key]) layout[key] = Object.assign({}, base[key] || {}, (tile.layout || {})[key] || {}); });
       const node = document.getElementById("pub-" + tile.key);
       const series = isReturnSeries(tile.data || []);
-      const data = series ? decoratePublishedTraces(tile.data || [], layout) : tile.data || [];
+      const data = series ? decoratePublishedTraces(tile.data || [], layout) : decoratePublishedBars(tile.data || [], layout);
       if (node) whenVisible(node, () => Plotly.react(node, data, layout, CONFIG).then(() => {
         markNumericNotes();
         if (series) { node._orig = null; addPeriodChips(node); }
