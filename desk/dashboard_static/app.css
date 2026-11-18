@@ -439,11 +439,20 @@ html.private td.digits { cursor: pointer; }
 .sections-menu { min-width: 300px; }
 /* Symbols in highlights are buttons; an asset tile shows price, chart, your position and the actions. */
 .symbol-chip { background: transparent; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
-.symbol-chip:hover, .symbol-chip:focus-visible { color: var(--series-1) !important; }
-.asset-line { display: flex; gap: 6px; align-items: baseline; font-size: 13px; color: var(--ink-2); margin-bottom: 4px; }
-.asset-price { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
-.asset-chart { height: 150px; }
-.asset-lead { margin: 4px 0 2px; font-size: 12px; color: var(--muted); }
+.symbol-chip:hover, .symbol-chip:focus-visible { color: var(--series-1) !important; text-decoration: underline; }
+.asset-plot { position: relative; }
+.asset-line { position: absolute; inset: 6px max(52px, 12%) auto 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); pointer-events: none; }
+.asset-line > span, .asset-line .chart-act { background-color: var(--surface); }
+.asset-line .chart-act { pointer-events: auto; }
+.asset-line .chart-act:hover { background-color: var(--border); }
+.asset-plot .asset-chart:not(:has(canvas)) { display: grid; place-items: center; }
+.asset-price { font-weight: 600; color: var(--good-text); font-variant-numeric: tabular-nums; }
+.chart.asset-chart { height: 220px; }
+.card.asset-card h2 .card-name { opacity: 1; }
+.asset-body .asset-scales { opacity: 1; margin: 0 0 4px; flex-wrap: wrap; }
+.asset-change { font-weight: 600; font-variant-numeric: tabular-nums; }
+.asset-trade-actions { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.asset-position:empty, .asset-change:empty, .asset-price:empty { display: none; }
 .asset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .asset-action { background: transparent; border: 1px solid var(--border); color: var(--ink-2); border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; text-decoration: none; }
 .asset-action:hover { color: var(--ink); background: var(--border); }
@@ -512,6 +521,7 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 .scale-chips { display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s; order: 5; margin-left: auto; }
 .tile:hover .scale-chips, .card:hover .scale-chips, .scale-chips:focus-within { opacity: 1; }
 .scale-chip { background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 11px; padding: 1px 5px; border-radius: 4px; cursor: pointer; position: relative; }
+.scale-chips.table-periods { display: flex; flex-wrap: wrap; opacity: 1; order: 0; margin: 0 0 4px; }
 .scale-chip.on { color: var(--ink); background: var(--border); }
 .scale-chip.auto::after { content: ""; position: absolute; top: 1px; right: 1px; width: 3px; height: 3px; border-radius: 50%; background: var(--series-1); }
 .card h2 .scale-chips { margin-left: auto; font-weight: 400; }
@@ -673,7 +683,9 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .barlist.wide-labels .brow { grid-template-columns: minmax(0, 132px) minmax(0, 1fr) auto; }
 .brow:hover { background: var(--border); }
 .brow.notable { box-shadow: inset 2px 0 0 var(--warning); }
-.bname { background: transparent; border: 0; font: inherit; font-weight: 600; text-align: left; padding: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.bname { cursor: pointer; }
+button.bname:hover, button.bname:focus-visible { text-decoration: underline; }
+.bname { background: transparent; border: 0; font: inherit; font-weight: 600; text-align: left; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btrack { position: relative; height: 16px; min-width: 0; }
 .barlist.zero-centered .btrack::after { content: ""; position: absolute; z-index: 1; left: 50%; top: 1px; bottom: 1px; width: 1px; background: var(--axis); pointer-events: none; }
 .bfill { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; }
@@ -727,6 +739,9 @@ html:not([data-screen="research"]) .alert-strip { display: none; }
 
 .asset-actions .asset-action.lead, .asset-actions .asset-action { min-width: 56px; font-size: 20px; line-height: 1; padding: 8px 16px; }
 .asset-actions .asset-action.lead { color: var(--good-text); }
+.asset-links { display: flex; gap: 4px; margin-top: 4px; }
+.asset-card .chart-act { opacity: 1; min-width: 24px; text-align: center; line-height: 1.5; }
+.asset-card .chart-act.lead { color: var(--series-1); }
 
 /* A hidden tile stays hidden even when it has a size of its own (the sized rule is !important). */
 #content .card.card-off, #columns .card.card-off { display: none !important; }

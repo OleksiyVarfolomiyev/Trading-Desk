@@ -192,7 +192,7 @@ const POSITION_VIEW = {
 };
 const VIEWS = {
   performance: {
-    // One window at a time, as the charts: the window's chips appear on the card's hover.
+    // One window at a time, selected in the table toolbar.
     columnsNow: () => {
       const window = { "1D": ["Return 24h", "D"], "1W": ["Return 7D", "W"], "1M": ["Return 30D", "M"], All: ["Return since inception", "since start"] }[currentScale("performance")];
       return [["Account", " "], window];
@@ -402,8 +402,10 @@ function renderBarList(id, spec, plan, host) {
       ]),
     ]) : null;
     const heldSide = (row.__raw && isNum(row.__raw.Value)) ? (row.__raw.Value < 0 ? "short" : "long") : null;   // colour by side, so no long or short word
-    const name = el("button", { type: "button", class: "bname name-" + (heldSide || kind), text: friendlyName(label) });
-    name.addEventListener("click", () => openAsset(label));
+    const market = (row.__raw && (row.__raw.Symbol || row.__raw.Coin)) || row[plan.label];
+    const name = isAssetColumn(plan.label)
+      ? assetButton(market, friendlyName(label), "bname name-" + (heldSide || kind))
+      : el("span", { class: "bname name-" + (heldSide || kind), text: friendlyName(label) });
     const notable = [isNum(row["D"]) && Math.abs(row["D"]) >= 0.05 ? `${text("D", row["D"])} D` : "", isNum(row["Funding (APR)"]) && Math.abs(row["Funding (APR)"]) >= 0.5 ? `${text("Funding (APR)", row["Funding (APR)"])} funding` : ""].filter(Boolean).join(" · ");
     const acts = el("span", { class: "bacts" }, []);
     if (id in CANDIDATE_TABLES) candidateRowButtons(id, row).forEach((b) => acts.append(b));
@@ -700,6 +702,40 @@ function signalMarks(value) {
   return marks;
 }
 
+function tableWindow(id, host, spec) {
+  const windows = [...new Set(spec.rows.map((row) => row.Window).filter((window) => TABLE_WINDOWS.includes(window)))];
+  const previous = host.previousElementSibling;
+  const toolbar = previous?.classList.contains("table-periods") ? previous : null;
+  if (windows.length < 2) {
+    toolbar?.remove();
+    return spec;
+  }
+  windows.sort((a, b) => TABLE_WINDOWS.indexOf(a) - TABLE_WINDOWS.indexOf(b));
+  const key = "table:" + id;
+  const selected = windows.includes(scaleChoices[key]) ? scaleChoices[key] : "";
+  const controls = toolbar || el("div", { class: "scale-chips table-periods", role: "group", "aria-label": "Table period" });
+  if (controls.dataset.windows !== windows.join(",")) {
+    controls.dataset.windows = windows.join(",");
+    controls.replaceChildren(...["", ...windows].map((window) => {
+      const button = el("button", { type: "button", class: "scale-chip", "data-window": window, text: window || "Compare" });
+      button.addEventListener("click", () => {
+        scaleChoices[key] = window;
+        saveScaleChoices();
+        feedback("table", "period", id, window || "Compare");
+        renderTable(id, lastSpecs[id]);
+      });
+      return button;
+    }));
+  }
+  if (!toolbar) host.before(controls);
+  for (const button of controls.children) {
+    const active = button.dataset.window === selected;
+    button.classList.toggle("on", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  return selected ? { ...spec, rows: spec.rows.filter((row) => row.Window === selected), total: null } : spec;
+}
+
 function renderTable(id, spec) {
   const original = spec;
   lastSpecs[id] = spec;
@@ -713,6 +749,7 @@ function renderTable(id, spec) {
   const empty = !spec || !spec.columns || !spec.columns.length || !(spec.rows || []).length || allZero;
   if (card) card.hidden = empty;
   if (empty) return;
+  if (id.startsWith("pub-")) spec = tableWindow(id, host, spec);
   if ((isChartView() || id === "strategies") && renderTableChart(id, spec)) return;   // the performance tile is always the stacked bars   // ?view=charts: the table drawn as a chart
   // A text column with the same value in every row is said once, above the table; an empty one is left out.
   const shared = [];
@@ -788,12 +825,11 @@ function renderTable(id, spec) {
     const classes = [format.num ? "num" : "", tone, key].filter(Boolean).join(" ");
     const text = format.text(value);
     // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
-    const withDigits = column.key !== "Symbol" && column.key !== "Coin" && /\d/.test(text) ? " digits" : "";
-    if ((column.key === "Symbol" || column.key === "Coin") && text && !/^total$/i.test(text)) {   // every asset symbol opens its dashboard tile; ↗ remains the external page
-      const symbol = el("button", { type: "button", class: "symbol-chip table-symbol name-" + (symbolSide(text) || symbolKind(text)),
-        text });
-      symbol.addEventListener("click", (event) => { event.stopPropagation(); openAsset(text); });
-      return el("td", { class: classes }, [symbol]);
+    const withDigits = !isAssetColumn(column.key) && /\d/.test(text) ? " digits" : "";
+    if (isAssetColumn(column.key) && text && !/^(?:net\/)?total$/i.test(text) && !ZERO_TEXT.test(text)) {
+      const market = (row.__raw && row.__raw[column.key]) || value;
+      return el("td", { class: classes }, [assetButton(market, marketName(text),
+        "symbol-chip table-symbol name-" + (symbolSide(market) || symbolKind(market)))]);
     }
     if (/^notes?$/i.test(column.key)) return el("td", { class: classes + withDigits + " signal-notes" }, signalMarks(value));
     if (!format.num && KIND_WORDS.test(text)) { KIND_WORDS.lastIndex = 0; return el("td", { class: classes }, kindMarks(text)); }
@@ -1568,9 +1604,12 @@ function autoScale() {
   return !isNum(days) ? "1D" : days < 2 ? "1D" : days < 10 ? "1W" : days < 60 ? "1M" : "All";
 }
 function currentScale(element = "tile") { const choice = scaleChoices[element] || "auto"; return choice === "auto" ? (element === "tile" ? "1D" : autoScale()) : choice; }
+function saveScaleChoices() {
+  try { localStorage.setItem("desk-scales", JSON.stringify(scaleChoices)); } catch (e) {}
+}
 function setScale(element, scale) {
   scaleChoices[element] = (scaleChoices[element] || "auto") === scale ? "auto" : scale;
-  try { localStorage.setItem("desk-scales", JSON.stringify(scaleChoices)); } catch (e) {}
+  saveScaleChoices();
   feedback("look", "scale " + element, scaleChoices[element]);
   if (!latest || !latest.data) return;
   if (element === "tile" || element === "upnl") renderTiles(latest.data.kpis || {}, latest.data.theses);
@@ -1586,12 +1625,30 @@ function scaleChips(element) {   // the element's own scale buttons, shown on it
     return chip;
   }));
 }
-function drawChartScales() {   // the value charts' and the performance table's cards carry their scale chips in the heading
-  [["performance", "t-performance"], ["candidates", "t-candidates"]].forEach(([element, hostId]) => {
-    const host = document.getElementById(hostId), heading = host && host.closest(".card") && host.closest(".card").querySelector("h2");
-    if (!heading) return;
-    const chips = scaleChips(element), old = heading.querySelector(".scale-chips");
-    if (old) old.replaceWith(chips); else { const tools = heading.querySelector(".card-tools"); if (tools) tools.before(chips); else heading.append(chips); }
+function drawChartScales() {
+  ["performance", "candidates"].forEach((element) => {
+    const host = document.getElementById("t-" + element);
+    if (!host) return;
+    const old = host.previousElementSibling;
+    const controls = old?.classList.contains("table-periods") ? old
+      : el("div", { class: "scale-chips table-periods", role: "group", "aria-label": "Table period" });
+    if (controls !== old) {
+      host.before(controls);
+      for (const [name] of SCALES) {
+        if (element === "candidates" && name === "All") continue;
+        const label = { "1D": "D", "1W": "W", "1M": "M" }[name] || name;
+        const button = el("button", { type: "button", class: "scale-chip", "data-window": name, text: label });
+        button.addEventListener("click", () => setScale(element, name));
+        controls.append(button);
+      }
+    }
+    const scale = currentScale(element);
+    const selected = element === "candidates" && scale === "All" ? "1M" : scale;
+    for (const button of controls.children) {
+      const active = button.dataset.window === selected;
+      button.classList.toggle("on", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
   });
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id), title = node && node.closest(".card") && node.closest(".card").querySelector("h2");
@@ -2285,7 +2342,9 @@ function publishedTitles(tiles) {
     while (parts.length > 1 && parts[parts.length - 1].toLowerCase() === parts[parts.length - 2].toLowerCase()) parts.pop();
     return parts.join(": ");
   };
-  const names = new Map(tiles.map((tile) => [tile.key, clean(tile.title)]));
+  const names = new Map(tiles.map((tile) => [tile.key,
+    /^(?:hl[-_: ]+)?top[-_ ]+(?:pnl[-_ ]+contributors|w\/l)$/i.test(clean(tile.title)) ||
+      /(?:^|[-:])top-pnl-contributors$/.test(tile.key) ? "Top W/L" : clean(tile.title)]));
   const charts = new Set(tiles.filter((tile) => tile.kind === "chart").map((tile) => names.get(tile.key)));
   tiles.forEach((tile) => {
     if (tile.kind === "table" && charts.has(names.get(tile.key))) {
@@ -2306,6 +2365,7 @@ function parseCell(text) {   // "-1.8%", "$1.21K", "-$244" -> { value, kind }; "
   if (m[6]) return { value: number / 100, kind: "pct" };
   return m[2] ? { value: number, kind: "usd" } : { value: number, kind: "plain" };
 }
+const TABLE_WINDOWS = ["D", "W", "M", "Q", "Y", "Active days", "Since start", "All"];
 const WINDOW_LETTERS = { "1D": "D", "7D": "W", "30D": "M", "90D": "Q", "1Y": "Y", "365D": "Y" };   // the desk's period letters
 function publishedTable(tile) {
   const columns = tile.columns || [];
@@ -2570,7 +2630,15 @@ function applyCardState(card) {   // the remembered minimized and hidden state o
 
 
 // ---------------------------------------------------------------- an asset as a tile: price, your position, what to do about it
-// A symbol in a highlight (or the strip) opens the asset as a tile at the top of the page: price and 7-day chart (HL markets),
+const isAssetColumn = (column) => /^(symbol|coin|asset)$/i.test(column);
+function assetButton(market, label, className) {
+  const button = el("button", { type: "button", class: className, text: label,
+    title: `Open ${marketName(market)} chart`, "aria-label": `Open ${label} chart` });
+  button.addEventListener("click", (event) => { event.stopPropagation(); openAsset(market); });
+  return button;
+}
+const CANDLE_INTERVALS = [["1m", 1], ["5m", 5], ["15m", 15], ["1h", 60], ["4h", 240], ["1d", 1440], ["1w", 10080]];
+// A symbol in a highlight (or the strip) opens the asset as a tile at the top of the page: price and candles (HL markets),
 // your position in it, links to its page, and the sensible actions for where it stands. The action buttons do not trade:
 // they copy the order as a sentence, to paste to Claude, which runs it with the usual confirmation (or the pop-up).
 function knownSymbols() {
@@ -2704,9 +2772,7 @@ function linkSymbols(text) {   // the text with each known symbol as a button th
     const start = match.index + match[1].length;
     if (start > last) parts.push(text.slice(last, start));
     const symbol = match[2], side = (match[3] || symbolSide(symbol) || "").toLowerCase();
-    const button = el("button", { type: "button", class: "symbol-chip " + (side ? "name-" + side : "name-" + symbolKind(symbol)), text: symbol });
-    button.addEventListener("click", (event) => { event.stopPropagation(); openAsset(symbol); });
-    parts.push(button);
+    parts.push(assetButton(symbol, symbol, "symbol-chip name-" + (side || symbolKind(symbol))));
     last = match.index + match[0].length;
   }
   if (last < text.length) parts.push(text.slice(last));
@@ -2722,13 +2788,13 @@ function assetRows(symbol) {   // your rows in this asset, from the positions ta
 }
 function assetAdvice(rows) {   // where it stands, and what is sensible
   const held = rows.filter((row) => isNum(row.Value) && row._table !== "wallets");
-  if (!held.length) return { line: "Not held.", actions: [["Open a position", "short or long it: say which and how big"]] };
+  if (!held.length) return null;
   const value = held.reduce((sum, row) => sum + row.Value, 0), pnl = held.reduce((sum, row) => sum + (row.uPnL || 0), 0);
   const costs = held.reduce((sum, row) => sum + Math.abs(row.Value - (row.uPnL || 0)), 0), share = costs ? pnl / costs : NaN;
   const side = value < 0 ? "short" : "long", name = marketName(held[0].Symbol);
   const line = `${side}, ${usd(Math.abs(value))}, uPnL ${isNum(share) ? pct(share) : "n/a"}`;
-  const trim = [`Trim a third`, `trim ${name} by a third`, "reduce", 1 / 3], close = [`Close`, `close ${name}`, "close", 1],
-    add = [`Raise a third`, `raise the ${name} ${side} by a third`, "add", 1 / 3];
+  const trim = ["Trim", `trim ${name} by a third`, "reduce", 1 / 3], close = [`Close`, `close ${name}`, "close", 1],
+    add = ["Raise", `raise the ${name} ${side} by a third`, "add", 1 / 3];
   const actions = share >= 0.1 ? [trim, close, add] : share <= -0.1 ? [close, trim, add] : [trim, add, close];
   // On the web dashboard an HL position's actions run through the daemon (plan, then confirm); IB and the local page copy.
   const hl = held.find((row) => /^HL /.test(String(row.Account || "")));
@@ -2736,89 +2802,174 @@ function assetAdvice(rows) {   // where it stands, and what is sensible
     target: hl && window.DESK_SOURCE ? { coin: hl.Symbol, wallet: String(hl.Account).slice(-4) } : null };
 }
 async function openAsset(symbol) {
-  const name = marketName(symbol), key = "asset-" + name.replace(/[^A-Za-z0-9]/g, "_");
+  const name = friendlyName(symbol), rows = assetRows(symbol);
+  const market = String(symbol).includes(":") ? symbol : rows.find((row) => /^HL /.test(String(row.Account || "")))?.Symbol || symbol;
+  const key = "asset-" + String(market).toUpperCase().replace(/[^A-Z0-9]/g, "_");
   feedback("asset", "open", name);
   let feed = document.getElementById("feed");
   if (!feed) { renderPublished([]); feed = document.getElementById("feed"); }
+  if (!feed) return;
   feed.hidden = false;
-  let card = feed.querySelector(`.card[data-asset="${key}"]`);
-  if (card) { card.classList.remove("card-off", "card-min"); card.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
-  else {
-    card = el("div", { class: "card asset-card", "data-asset": key }, [el("h2", { text: name }), el("div", { class: "asset-body", id: key })]);
-    feed.prepend(card);
-    adoptCard(card);
-    requestAnimationFrame(() => card.scrollIntoView({ behavior: "smooth", block: "center" }));
+  const existing = document.getElementById(key)?.closest(".asset-card");
+  if (existing) {
+    existing.classList.remove("card-off", "card-min");
+    existing.refreshPosition();
+    existing.scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
   }
-  const body = card.querySelector(".asset-body");
-  const rows = assetRows(symbol), advice = assetAdvice(rows);
-  const external = rows.some((row) => /^IB/.test(String(row.Account || ""))) ? stockLink(name) : hlLink(rows[0] && rows[0].Symbol || symbol);
+  const body = el("div", { class: "asset-body", id: key });
+  const card = el("div", { class: "card asset-card", "data-asset": key }, [el("h2", { text: name }), body]);
+  feed.prepend(card);
+  adoptCard(card);
+  requestAnimationFrame(() => card.scrollIntoView({ behavior: "smooth", block: "center" }));
+  const external = rows.some((row) => /^IB/.test(String(row.Account || ""))) ? stockLink(name) : hlLink(market);
+  const chart = el("div", { class: "chart asset-chart", text: "Loading candles…" });
+  const price = el("span", { class: "asset-price" });
+  const scales = el("div", { class: "scale-chips asset-scales", role: "group", "aria-label": "Candle interval" });
   const copy = (sentence, button) => {
-    const done = () => { button.textContent = "copied: paste to Claude"; setTimeout(() => drawAsset(), 2500); feedback("asset", "action", name, sentence); };
-    if (navigator.clipboard) navigator.clipboard.writeText(sentence).then(done, done); else done();
+    const label = button.textContent;
+    button.disabled = true;
+    Promise.resolve().then(() => navigator.clipboard.writeText(sentence)).then(() => {
+      button.textContent = "✓";
+      feedback("asset", "action", name, sentence);
+    }, () => { button.textContent = "!"; }).finally(() => {
+      setTimeout(() => { button.textContent = label; button.disabled = false; }, 2500);
+    });
   };
-  function drawAsset() {
-    const oldChart = document.getElementById(key + "-chart");
-    if (oldChart && oldChart._lightweightChart) { oldChart._lightweightChart.remove(); oldChart._lightweightChart = null; }
-    body.replaceChildren(
-      el("div", { class: "asset-line" }, [el("span", { class: "asset-price", id: key + "-price" }), el("span", { text: advice.line })]),
-      el("div", { class: "chart asset-chart", id: key + "-chart", text: "Loading candles…" }),
-      advice.lead ? el("div", { class: "asset-lead", text: advice.lead }) : null,
-      el("div", { class: "asset-actions" }, [
-        ...advice.actions.map(([label, sentence, change, fraction], i) => {
-          const runs = advice.target && change;
-          const b = el("button", { type: "button", class: "asset-action" + (i === 0 && advice.lead ? " lead" : ""),
-            title: runs ? `Plan it, then confirm: ${sentence}` : "Copies: " + sentence, text: label });
-          b.addEventListener("click", () => (runs ? runAction(label, change, fraction, advice.target) : copy(sentence, b)));
-          return b;
-        }),
-        el("a", { class: "asset-action", href: external, target: "_blank", rel: "noopener noreferrer", title: "Open the asset's page", text: "Page ↗" })]));
-    const strip = el("button", { type: "button", class: "asset-action", title: "Show it in the price strip", text: "+ strip" });
-    strip.addEventListener("click", () => { const s = tickerState(); if (!s.assets.includes(name)) s.assets.push(name); s.on = true; saveTicker(s); refreshTicker(); drawModes(); strip.textContent = "added"; });
-    body.querySelector(".asset-actions").append(strip);
+  const move = el("span", { class: "asset-change", title: "24h price change" });
+  const position = el("span", { class: "asset-position" });
+  const tradeActions = el("div", { class: "asset-trade-actions", role: "group", "aria-label": `Position actions for ${name}` });
+  let hlName;
+  card.refreshPosition = () => {
+    const advice = assetAdvice(assetRows(symbol));
+    position.textContent = advice?.line || "";
+    if (!advice) {
+      const open = el("button", { type: "button", class: "row-act chart-act lead", text: "▶", title: `Open ${name}`, "aria-label": `Open ${name}` });
+      open.addEventListener("click", () => {
+        if (assetAdvice(assetRows(symbol))) { card.refreshPosition(); return; }
+        const title = `Open ${name}`;
+        const { overlay, box } = actionDialog(title);
+        const sides = ["Long", "Short"].map((label) => {
+          const side = label.toLowerCase();
+          const button = el("button", { type: "button", class: "asset-action", text: label });
+          button.addEventListener("click", () => {
+            if (window.DESK_SOURCE && hlName) {
+              overlay.remove();
+              runAction(label, side, 1, { coin: hlName, wallet: "07f2" });
+            } else {
+              copy(`${side} ${hlName || market}`, button);
+            }
+          });
+          return button;
+        });
+        box.replaceChildren(el("h3", { text: title }), el("div", { class: "asset-actions" }, sides), closeButton(overlay));
+      });
+      tradeActions.replaceChildren(open);
+      return;
+    }
+    tradeActions.replaceChildren(...advice.actions.map(([label, sentence, change, fraction], i) => {
+      const button = el("button", { type: "button", class: "row-act chart-act" + (i === 0 && advice.lead ? " lead" : ""),
+        title: advice.target ? `Plan it, then confirm: ${sentence}` : `Copy: ${sentence}`,
+        "aria-label": `${label} ${name}`, text: { reduce: "⅓", add: "▲", close: "✕" }[change] });
+      button.addEventListener("click", () => {
+        const current = assetAdvice(assetRows(symbol));
+        const action = current?.actions.find(([, , type]) => type === change);
+        if (!action) { card.refreshPosition(); return; }
+        if (current.target) runAction(label, change, fraction, current.target);
+        else copy(action[1], button);
+      });
+      return button;
+    }));
+  };
+  card.refreshPosition();
+  const strip = el("button", { type: "button", class: "row-act chart-act", title: "Add to price strip", "aria-label": `Add ${name} to price strip`, text: "+" });
+  strip.addEventListener("click", () => { const s = tickerState(); if (!s.assets.includes(name)) s.assets.push(name); s.on = true; saveTicker(s); refreshTicker(); drawModes(); strip.textContent = "✓"; });
+  body.replaceChildren(
+    scales,
+    el("div", { class: "asset-plot" }, [
+      chart,
+      el("div", { class: "asset-line" }, [price, move, position, tradeActions]),
+    ]),
+    el("div", { class: "asset-links" }, [
+      el("a", { class: "row-act chart-act symbol-link", href: external, target: "_blank", rel: "noopener noreferrer",
+        title: "Open market page", "aria-label": `Open ${name} market page`, text: "↗" }),
+      strip,
+    ]));
+  await loadUniverse();
+  hlName = String(market).includes(":") ? market : universeMap[String(market).toLowerCase()];
+  if (!hlName) {
+    chart.textContent = "No Hyperliquid market found for this asset.";
+    return;
   }
-  drawAsset();
-  // HL markets: live price and 7 days of hourly candles, with the entry price marked.
-  try {
-    await loadUniverse();
-    const hlName = universeMap[name.toLowerCase()];
-    const chart = document.getElementById(key + "-chart");
-    if (!hlName) { if (chart) chart.textContent = "No Hyperliquid market found for this asset."; return; }
-    const contexts = await tickerContexts([hlName]);
+  tickerContexts([hlName]).then((contexts) => {
     const context = contexts[hlName];
     if (context) {
       const change = context.previous ? context.price / context.previous - 1 : NaN;
-      const price = document.getElementById(key + "-price");
-      if (price) price.textContent = `${priceText(context.price)} ${isNum(change) ? pct(change) : ""} · `;
+      if (isNum(context.price)) price.textContent = priceText(context.price);
+      if (isNum(change)) {
+        move.textContent = pct(change, 1, true);
+        move.className = `asset-change ${signClass(change)}`;
+      }
     }
-    const end = Date.now(), dex = hlName.includes(":") ? hlName.split(":")[0] : "";
-    const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(Object.assign({ type: "candleSnapshot", req: { coin: hlName.split(":").pop(), interval: "1h", startTime: end - 7 * 86400000, endTime: end } }, dex ? { dex } : {})) });
-    const candles = await response.json();
-    if (!chart || !candles.length || !window.LightweightCharts) { if (chart) chart.textContent = "Candles are unavailable for this asset."; return; }
-    chart.replaceChildren();
-    const entry = rows.map((row) => row["Avg price"]).find(isNum);
-    const border = token("--grid"), ink = token("--ink-2"), up = token("--good-text"), down = token("--bad-text");
-    const instance = LightweightCharts.createChart(chart, {
-      autoSize: true,
-      layout: { background: { type: "solid", color: token("--surface") }, textColor: ink, attributionLogo: true },
-      grid: { vertLines: { color: border }, horzLines: { color: border } },
-      rightPriceScale: { borderColor: border, scaleMargins: { top: 0.12, bottom: 0.12 } },
-      timeScale: { borderColor: border, timeVisible: true, secondsVisible: false, rightOffset: 2 },
-      crosshair: { vertLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") },
-        horzLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") } },
-      handleScroll: true, handleScale: true,
-    });
-    chart._lightweightChart = instance;
-    const series = instance.addSeries(LightweightCharts.CandlestickSeries, {
-      upColor: up, downColor: down, borderUpColor: up, borderDownColor: down,
-      wickUpColor: up, wickDownColor: down, priceLineVisible: false,
-    });
-    series.setData(candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c) }))
-      .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close)));
-    if (isNum(entry)) series.createPriceLine({ price: entry, color: token("--muted"), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
-      axisLabelVisible: true, title: "Entry" });
-    instance.timeScale().fitContent();
-  } catch (e) { const chart = document.getElementById(key + "-chart"); if (chart) chart.textContent = "Candles could not be loaded."; }
+  });
+
+  let request;
+  async function loadCandles(interval, minutes) {
+    request?.abort();
+    const controller = new AbortController();
+    request = controller;
+    for (const chip of scales.children) {
+      const active = chip.textContent === interval;
+      chip.classList.toggle("on", active);
+      chip.setAttribute("aria-pressed", String(active));
+    }
+    chart._lightweightChart?.remove();
+    chart._lightweightChart = null;
+    chart.textContent = "Loading candles…";
+    try {
+      const end = Date.now();
+      const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+        body: JSON.stringify({ type: "candleSnapshot", req: { coin: hlName, interval, startTime: end - 168 * minutes * 60000, endTime: end } }) });
+      if (!response.ok) throw new Error("Candle request failed");
+      const candles = await response.json();
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(candles) || !candles.length || !window.LightweightCharts) {
+        chart.textContent = "Candles are unavailable for this asset.";
+        return;
+      }
+      chart.replaceChildren();
+      const entry = rows.map((row) => row["Avg price"]).find(isNum);
+      const border = token("--grid"), ink = token("--ink-2"), up = token("--good-text"), down = token("--bad-text");
+      const instance = LightweightCharts.createChart(chart, {
+        autoSize: true,
+        layout: { background: { type: "solid", color: token("--surface") }, textColor: ink, attributionLogo: true },
+        grid: { vertLines: { color: border }, horzLines: { color: border } },
+        rightPriceScale: { borderColor: border, scaleMargins: { top: 0.35, bottom: 0.12 } },
+        timeScale: { borderColor: border, timeVisible: minutes < 1440, secondsVisible: false, rightOffset: 2 },
+        crosshair: { vertLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") },
+          horzLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") } },
+        handleScroll: true, handleScale: true,
+      });
+      chart._lightweightChart = instance;
+      const series = instance.addSeries(LightweightCharts.CandlestickSeries, {
+        upColor: up, downColor: down, borderUpColor: up, borderDownColor: down,
+        wickUpColor: up, wickDownColor: down, priceLineVisible: false,
+      });
+      series.setData(candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c) }))
+        .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close)));
+      if (isNum(entry)) series.createPriceLine({ price: entry, color: token("--muted"), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
+        axisLabelVisible: true, title: "Entry" });
+      instance.timeScale().fitContent();
+    } catch (error) {
+      if (!controller.signal.aborted) chart.textContent = "Candles could not be loaded.";
+    }
+  }
+  for (const [interval, minutes] of CANDLE_INTERVALS) {
+    const chip = el("button", { type: "button", class: "scale-chip", text: interval });
+    chip.addEventListener("click", () => loadCandles(interval, minutes));
+    scales.append(chip);
+  }
+  return loadCandles("1h", 60);
 }
 
 
@@ -3336,21 +3487,23 @@ async function tickerContexts(assets) {   // name -> {price, previous} for the m
   return out;
 }
 // Suggestions for the "+ asset" field: every HL market (main DEX and the xyz stocks and commodities), loaded once.
-let universeLoaded = false;
+let universeRequest;
 // The names people type (no venue prefix; a few markets by their common name) and the HL market each one means.
 const MARKET_ALIASES = { SP500: "S&P500", XYZ100: "Nasdaq100" };
 const universeMap = {};   // lower-case typed name -> HL market ("amd" -> "xyz:AMD", "s&p500" -> "xyz:SP500")
 const friendlyName = (market) => { const bare = marketName(market); return MARKET_ALIASES[bare] || bare; };
 async function loadUniverse() {
-  if (universeLoaded) return;
-  universeLoaded = true;
+  if (!universeRequest) universeRequest = fetchUniverse();
+  return universeRequest;
+}
+async function fetchUniverse() {
   const names = [];
   for (const dex of ["", "xyz"]) {
     try {
       const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(Object.assign({ type: "meta" }, dex ? { dex } : {})) });
       (await response.json()).universe.forEach((asset) => { if (!asset.isDelisted) names.push(asset.name); });
-    } catch (e) { universeLoaded = false; }
+    } catch (e) { universeRequest = null; }
   }
   let list = document.getElementById("tick-universe");
   if (!list) { list = el("datalist", { id: "tick-universe" }); document.body.append(list); }
@@ -3462,12 +3615,12 @@ async function refreshTicker() {
   hideStrip.addEventListener("click", () => { const s = tickerState(); s.on = false; saveTicker(s); feedback("look", "price strip", "off"); drawModes(); refreshTicker(); });
   strip.replaceChildren(...shownAssets.map((asset) => reorderable((() => {
     const context = contexts[marketOf(asset)];
-    if (!context || !isFinite(context.price)) return el("a", { class: "tick", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
+    if (!context || !isFinite(context.price)) return el("a", { class: "tick", "data-market": marketOf(asset), title: "Open " + friendlyName(asset) + " chart", href: hlLink(asset), target: "_blank", rel: "noopener noreferrer" },
       [el("b", { class: "name-" + symbolKind(asset), text: friendlyName(asset) }), el("span", { class: "muted", text: "n/a" }), dropper(asset)]);
     const change = context.previous ? context.price / context.previous - 1 : NaN;
     const direction = "";   // no flashing on a price tick
     lastPrices[asset] = context.price;
-    return el("a", { class: "tick " + direction + (auto.includes(asset) ? " auto-asset" : ""), href: hlLink(asset), target: "_blank", rel: "noopener noreferrer", title: asset }, [
+    return el("a", { class: "tick " + direction + (auto.includes(asset) ? " auto-asset" : ""), href: hlLink(asset), "data-market": marketOf(asset), target: "_blank", rel: "noopener noreferrer", title: "Open " + friendlyName(asset) + " chart" }, [
       el("b", { class: "name-" + (symbolSide(asset) || symbolKind(asset)), text: friendlyName(asset) }),
       el("span", { class: "change " + signClass(change), text: isNum(change) ? pct(change) : "" }),   // the move first, the price after
       el("span", { class: "price", text: priceText(context.price) }), ...(auto.includes(asset) ? [] : [dropper(asset)]), chipActions(asset)]);
@@ -3561,11 +3714,12 @@ function openReport() {
 }
 
 
-// A symbol's page opens in a window of its own (not a tab), the same window for the next symbol, so the dashboard stays in view.
+// Price-strip symbols open chart tiles. Explicit page links share a separate window.
 document.addEventListener("click", (event) => {
   const link = event.target.closest && event.target.closest("a.symbol-link, a.tick, a.asset-action[href]");
   if (!link || event.metaKey || event.ctrlKey || event.shiftKey || !link.href || event.target.closest("button")) return;
   event.preventDefault();
+  if (link.matches(".tick")) { openAsset(link.dataset.market); return; }
   const page = window.open(link.href, "desk-symbol-page", "popup=yes,width=1280,height=860,noopener=no");
   if (page) page.focus(); else window.location.assign(link.href);
 });
