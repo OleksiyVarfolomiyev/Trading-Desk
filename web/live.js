@@ -45,14 +45,21 @@
   const riskCoin = (symbol) => symbol.split(" (")[0].replace(/^s(?=[A-Z]{2})/, "").replace(/^(W|cb)(?=ETH|BTC)/, "");
 
   // ------------------------------------------------------------------ requests
+  const REQUEST_TIMEOUT_MS = 15000;
   async function getJSON(url, options) {
-    const response = await fetch(url, options);
-    if (!response.ok) {
-      let detail = "";
-      try { detail = (await response.json()).error || ""; } catch (error) { /* not JSON */ }
-      throw new Error(`${new URL(url, location.href).host} answered HTTP ${response.status}${detail ? ": " + detail : ""}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, Object.assign({}, options, { signal: controller.signal }));
+      if (!response.ok) {
+        let detail = "";
+        try { detail = (await response.json()).error || ""; } catch (error) { /* not JSON */ }
+        throw new Error(`${new URL(url, location.href).host} answered HTTP ${response.status}${detail ? ": " + detail : ""}`);
+      }
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
     }
-    return response.json();
   }
   // HL answers 429 when too many requests come from one address (several tabs, a busy minute): wait and ask again, up to three times.
   const info = async (body) => {
@@ -611,8 +618,8 @@
     const daemonAlerts = await every("alerts", 60000, () => relay("/alerts")).catch(() => null);
     const tileFeed = await every("tiles", 60000, () => relay("/tiles")).catch(() => null);
     const bookPerf = await every("books", 15 * 60000, () => relay("/books")).catch(() => null);   // each book's performance (the Mac, hourly)
-    const usageModel = await every("usage_model", 600000, () => fetch("/usage_model").then((r) => r.json())).catch(() => ({}));
-    const catalogEntries = await every("catalog", 3600000, () => fetch("/catalog.json").then((r) => r.json()).then((c) => c.entries || [])).catch(() => []);   // published from the notebooks (desk/tile_feed.py)
+    const usageModel = await every("usage_model", 600000, () => getJSON("/usage_model")).catch(() => ({}));
+    const catalogEntries = await every("catalog", 3600000, () => getJSON("/catalog.json").then((c) => c.entries || [])).catch(() => []);   // published from the notebooks (desk/tile_feed.py)
     const syncRun = await every("sync", 30 * 60000, () => relay("/sync")).catch(() => null);
     const research = await every("research", 15 * 60000, () => relay("/research")).catch(() => null);
     const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];

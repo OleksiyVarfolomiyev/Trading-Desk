@@ -1467,7 +1467,10 @@ function render(doc) {
   const now = new Date(doc.server_time || Date.now());
   renderBanners(doc, now);
   const data = doc.data;
-  if (!data) return;
+  if (!data) {
+    if (doc.status && doc.status.error) document.getElementById("loading").hidden = true;
+    return;
+  }
   document.getElementById("loading").hidden = true;
   document.getElementById("content").hidden = false;
   renderAccountStatus(data.accounts_status, now);
