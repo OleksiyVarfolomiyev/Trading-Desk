@@ -1703,11 +1703,13 @@ function balanceColumns() {
 
 const BENCHMARK_HOUR = 3600000;
 const BENCHMARK_DAY = 24 * BENCHMARK_HOUR;
+const REGIME_WINDOWS = { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" };
 const BENCHMARK_WINDOWS = {
   "benchmark-intraday": { periods: [["D", 1], ["W", 7]], initial: "W" },
   "benchmark-history": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
   "benchmark-attribution": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
-  "benchmark-regimes": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
+  "benchmark-regimes": REGIME_WINDOWS,
+  "benchmark-regime-drivers": REGIME_WINDOWS,
 };
 
 function benchmarkCounts(pairs) {
@@ -1937,14 +1939,14 @@ function regimeBeatTable(data) {
   };
 }
 
-function renderRegimeDrivers(data) {
+function renderRegimeDrivers(data, period) {
   const id = "benchmark-regime-drivers";
   const host = document.getElementById("t-" + id);
   if (!host) return;
   const selection = scaleChoices[id] || "both_down";
   let toolbar = host.previousElementSibling;
-  if (!toolbar?.classList.contains("table-periods")) {
-    toolbar = el("div", { class: "scale-chips table-periods", role: "group", "aria-label": "Market direction" });
+  if (!toolbar?.classList.contains("market-directions")) {
+    toolbar = el("div", { class: "scale-chips table-periods market-directions", role: "group", "aria-label": "Market direction" });
     for (const [key, text, title] of MARKET_REGIMES) {
       const button = el("button", { type: "button", class: "scale-chip", "data-window": key, text, title, "aria-label": title });
       button.addEventListener("click", () => {
@@ -1987,7 +1989,7 @@ function renderRegimeDrivers(data) {
     ],
     total: { Factor: "Excess return", ...values((result) => result.portfolio - result.index),
       __hover: "Compounded book or desk return minus the index return across the selected sessions. Excludes the RM replay." },
-    note: regime?.sessions ? `${regime.sessions} matched sessions · Same window as Beat rates by market direction`
+    note: regime?.sessions ? `${regime.sessions} matched sessions · ${period}`
       : "No matched sessions for this market direction and window",
   });
 }
@@ -1997,32 +1999,36 @@ function renderBenchmarkTables(doc) {
   for (const [id, { periods, initial }] of Object.entries(BENCHMARK_WINDOWS)) {
     const host = document.getElementById("t-" + id);
     if (!host) continue;
-    const selected = periods.find(([label]) => label === scaleChoices[id]) || periods.find(([label]) => label === initial);
-    let toolbar = host.previousElementSibling;
+    const periodKey = id === "benchmark-regime-drivers" ? id + "-period" : id;
+    const preference = scaleChoices[periodKey] || (id === "benchmark-regime-drivers" ? scaleChoices["benchmark-regimes"] : initial);
+    const selected = periods.find(([label]) => label === preference) || periods.find(([label]) => label === initial);
+    const previous = host.previousElementSibling;
+    const anchor = previous?.classList.contains("market-directions") ? previous : host;
+    let toolbar = anchor.previousElementSibling;
     if (!toolbar?.classList.contains("table-periods")) {
       toolbar = el("div", { class: "scale-chips table-periods", role: "group", "aria-label": "Table period" });
       for (const [label, days] of periods) {
         const button = el("button", { type: "button", class: "scale-chip", "data-window": label, text: label,
           title: days ? (days === 1 ? "Last 24 hours" : `Last ${days} days`) : "All available history" });
         button.addEventListener("click", () => {
-          scaleChoices[id] = label;
+          scaleChoices[periodKey] = label;
           saveScaleChoices();
           feedback("table", "period", id, label);
           if (latest?.data) renderBenchmarkTables(latest);
         });
         toolbar.append(button);
       }
-      host.before(toolbar);
+      anchor.before(toolbar);
     }
     for (const button of toolbar.children) {
       const active = selected[0] === button.dataset.window;
       button.classList.toggle("on", active);
       button.setAttribute("aria-pressed", String(active));
     }
-    if (id === "benchmark-regimes") {
+    if (id === "benchmark-regimes" || id === "benchmark-regime-drivers") {
       const data = doc.data.book_comparison?.regimes?.[selected[0]] || {};
-      renderTable(id, { ...regimeBeatTable(data), keepColumns: true, tableOnly: true });
-      renderRegimeDrivers(data);
+      if (id === "benchmark-regimes") renderTable(id, { ...regimeBeatTable(data), keepColumns: true, tableOnly: true });
+      else renderRegimeDrivers(data, selected[0]);
       continue;
     }
     const table = id === "benchmark-intraday"
