@@ -283,7 +283,7 @@ function applyView(id, spec, context) {
 // ?view=charts draws every table as a chart (?view=tables returns): the same builders, rows and formats, so the two
 // views always agree. Percent and money axes follow the cell format; hover carries the table's own text.
 const CHART_VIEWS = {
-  performance: { kind: "grouped", label: "Account", series: ["D", "W", "M", "90d", "Since start"], by: "window" },
+  performance: { kind: "grouped", label: " ", series: ["D", "W", "M", "90d", "Since start"], by: "window" },
   accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
   exposure: { kind: "exposure", books: true, label: "Asset class", long: "Long", short: "Short", net: "Net" },
   positions: { kind: "bars", label: "Symbol", value: "uPnL", text: null, zeroCentered: true },
@@ -476,10 +476,11 @@ function renderTableChart(id, spec, override) {
     const series = plan.series.filter((key) => rows.some((row) => isNum(row[key])));
     const axis = chartAxis(formatOf(series[0]));
     if (plan.by === "window") {   // one group per window, one bar per book (crypto, stocks) inside it, in the book's colour
-      const kept = rows.map((row, i) => [row, i]).filter(([row]) => /^(crypto|stocks)$/i.test(String(row.Book || row.Account)));
+      const book = (row) => String(row.Book || row.Account || row[plan.label] || (row.__raw || {}).Account || "");
+      const kept = rows.map((row, i) => [row, i]).filter(([row]) => /^(crypto|stocks)$/i.test(book(row)));
       traces = kept.map(([row, i]) => ({ type: "bar", orientation: "h", name: names[i], y: series, showlegend: false,
         x: series.map((key) => (isNum(row[key]) ? row[key] * axis.mult : null)),
-        marker: { color: /crypto/i.test(String(row.Book || row.Account)) ? token("--kind-crypto") : token("--kind-stocks") },
+        marker: { color: /crypto/i.test(book(row)) ? token("--kind-crypto") : token("--kind-stocks") },
         text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false,
         outsidetextfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
         hoverinfo: "skip" }));   // the value is on the bar
