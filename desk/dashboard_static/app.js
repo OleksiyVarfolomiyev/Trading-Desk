@@ -365,7 +365,7 @@ function renderBarList(id, spec, plan, host) {
   const labelCounts = new Map();
   list.forEach((row) => { const label = String(row[plan.label] ?? ""); labelCounts.set(label, (labelCounts.get(label) || 0) + 1); });
   const labelSeen = new Map();
-  const windowName = { "1D": "24h", D: "24h", "7D": "7D", W: "7D", "30D": "30D", M: "30D", "90D": "90D", Q: "90D", "1Y": "1Y", "365D": "1Y", Y: "1Y" };
+  const windowName = { "1D": "D", D: "D", "7D": "W", W: "W", "30D": "M", M: "M", "90D": "Q", Q: "Q", "1Y": "Y", "365D": "Y", Y: "Y" };
   const rowLabel = (row) => {
     const label = String(row[plan.label] ?? "");
     // This published dashboard tile compares the same book leg over several windows.
