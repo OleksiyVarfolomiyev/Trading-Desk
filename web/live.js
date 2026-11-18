@@ -45,10 +45,14 @@
   const riskCoin = (symbol) => symbol.split(" (")[0].replace(/^s(?=[A-Z]{2})/, "").replace(/^(W|cb)(?=ETH|BTC)/, "");
 
   // ------------------------------------------------------------------ requests
-  const REQUEST_TIMEOUT_MS = 15000;
+  const REQUEST_TIMEOUT_MS = 15000, BUILD_TIMEOUT_MS = 45000;
+  let buildSignal = null;
   async function getJSON(url, options) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const abortBuild = () => controller.abort();
+    if (buildSignal && buildSignal.aborted) abortBuild();
+    else if (buildSignal) buildSignal.addEventListener("abort", abortBuild, { once: true });
     try {
       const response = await fetch(url, Object.assign({}, options, { signal: controller.signal }));
       if (!response.ok) {
@@ -59,6 +63,7 @@
       return await response.json();
     } finally {
       clearTimeout(timeout);
+      if (buildSignal) buildSignal.removeEventListener("abort", abortBuild);
     }
   }
   // HL answers 429 when too many requests come from one address (several tabs, a busy minute): wait and ask again, up to three times.
@@ -1397,14 +1402,22 @@
   function refresh() {
     if (running) return running;
     const attempt = new Date().toISOString();
+    const controller = new AbortController();
+    buildSignal = controller.signal;
+    const deadline = setTimeout(() => controller.abort(), BUILD_TIMEOUT_MS);
     doc = Object.assign({}, doc, { status: Object.assign({}, doc.status, { refreshing: true, last_attempt: attempt }) });
     running = build().then((data) => {
       doc = { data, status: { refreshing: false, last_ok: new Date().toISOString(), last_attempt: attempt, error: null,
         interval_s: CFG.refreshSeconds } };
     }, (error) => {
       console.error(error);
-      doc = Object.assign({}, doc, { status: Object.assign({}, doc.status, { refreshing: false, error: String(error.message || error) }) });
-    }).finally(() => { running = null; });
+      const message = controller.signal.aborted ? `Live data refresh timed out after ${BUILD_TIMEOUT_MS / 1000} seconds` : String(error.message || error);
+      doc = Object.assign({}, doc, { status: Object.assign({}, doc.status, { refreshing: false, error: message }) });
+    }).finally(() => {
+      clearTimeout(deadline);
+      if (buildSignal === controller.signal) buildSignal = null;
+      running = null;
+    });
     return running;
   }
   window.DESK_SOURCE = async () => Object.assign({}, doc, { server_time: new Date().toISOString() });
