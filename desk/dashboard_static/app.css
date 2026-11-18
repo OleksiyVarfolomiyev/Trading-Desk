@@ -333,6 +333,8 @@ tr.total td.key { background: rgba(59, 130, 246, 0.12); }
 .sections-menu[hidden] { display: none; }
 .sections-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--ink-2); }
 .sections-row:hover { background: var(--border); }
+.sections-row.is-picked { color: var(--ink); background: color-mix(in srgb, var(--series-1) 18%, transparent); }
+.sections-row:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
 .sections-reset { margin: 6px 8px 4px; background: transparent; border: 1px solid var(--border); color: var(--ink-2); border-radius: 6px;
   padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
 .sections-reset:hover { color: var(--ink); }
@@ -658,7 +660,6 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .card-tool.card-kind { font-size: 13px; padding: 0 5px; }
 .card-tool.kind-btn-crypto { color: var(--kind-crypto); }
 .card-tool.kind-btn-stocks { color: var(--kind-stocks); }
-.sections-remove { color: var(--bad-text); }
 .sections-menu .sections-row span:first-child { flex: 1 1 auto; }
 /* Nothing blinks or flashes: no tick animations, no like flash, no transitions on data. */
 .tick .price, .liked { animation: none !important; transition: none !important; }

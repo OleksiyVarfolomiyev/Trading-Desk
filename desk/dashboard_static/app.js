@@ -2992,48 +2992,59 @@ function fillMenuLists() {
   const lists = document.getElementById("sections-lists");
   if (!lists) return;
   const heading = (text) => el("div", { class: "sections-head", text });
+  const item = (text, selected, action, title = "") => {
+    const row = el("div", { class: "sections-row" + (selected ? " is-picked" : ""), role: "checkbox", tabindex: "0",
+      "aria-checked": String(selected), text, title });
+    row.addEventListener("click", action);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); action(); }
+    });
+    return row;
+  };
   // Ordered by how much each tile is used (clicks, and the time the pointer rests on it), most used first.
   const usage = usageState(), used = (card) => { const u = usage[cardId(card)] || {}; return (u.clicks || 0) + (u.seconds || 0) / 30; };
   const present = [...document.querySelectorAll("#content .slot")].map((slot) => slot.firstElementChild).filter(Boolean)
+    .filter((card) => !card.classList.contains("published"))
     .sort((a, b) => used(b) - used(a));
-  const rows = present.filter((card) => !card.classList.contains("card-off") && menuMatches(cardTitle(card))).map((card) => {
-    const remove = el("button", { type: "button", class: "sections-add sections-remove", title: "Remove from the screen", "aria-label": "Remove " + cardTitle(card), text: "−" });
-    remove.addEventListener("click", () => setHidden(cardId(card), true));
-    return el("div", { class: "sections-row" }, [el("span", { text: cardTitle(card).trim() }), remove]);
-  });
+  const rows = present.filter((card) => !card.classList.contains("card-off") && menuMatches(cardTitle(card)))
+    .map((card) => item(cardTitle(card).trim(), true, () => setHidden(cardId(card), true)));
   // Available to add: key-number tiles that were hidden, and the notebook sections that can be pulled onto the dashboard.
-  const addable = present.filter((card) => card.classList.contains("card-off") && menuMatches(cardTitle(card))).map((card) => {   // tiles taken off the screen
-    const add = el("button", { type: "button", class: "sections-add", title: "Back on the screen", "aria-label": "Show " + cardTitle(card), text: "+" });
-    add.addEventListener("click", () => setHidden(cardId(card), false));
-    return el("div", { class: "sections-row" }, [el("span", { text: cardTitle(card).trim() }), add]);
+  const addable = present.filter((card) => card.classList.contains("card-off") && menuMatches(cardTitle(card)))
+    .map((card) => item(cardTitle(card).trim(), false, () => setHidden(cardId(card), false)));
+  [...document.querySelectorAll("#tiles .tile")].filter((tile) => menuMatches(tile.dataset.label || "")).forEach((tile) => {
+    const label = tile.dataset.label;
+    rows.push(item(label, true, () => {
+      const state = layoutState(); state.tileHidden = [...new Set([...(state.tileHidden || []), label])]; saveLayout(state);
+      feedback("tile", "hide", label); if (latest && latest.data) renderTiles(latest.data.kpis || {}, latest.data.theses); drawSectionsMenu();
+    }));
   });
   (layoutState().tileHidden || []).filter(menuMatches).forEach((label) => {
-    const add = el("button", { type: "button", class: "sections-add", title: "Show " + label, "aria-label": "Show " + label, text: "+" });
-    add.addEventListener("click", () => { const s = layoutState(); s.tileHidden = (s.tileHidden || []).filter((x) => x !== label); saveLayout(s);
-      feedback("tile", "show", label); if (latest && latest.data) renderTiles(latest.data.kpis || {}, latest.data.theses); drawSectionsMenu(); });
-    addable.push(el("div", { class: "sections-row" }, [el("span", { text: label + " (key number)" }), add]));
+    addable.push(item(label, false, () => { const s = layoutState(); s.tileHidden = (s.tileHidden || []).filter((x) => x !== label); saveLayout(s);
+      feedback("tile", "show", label); if (latest && latest.data) renderTiles(latest.data.kpis || {}, latest.data.theses); drawSectionsMenu(); }, "Key number"));
   });
-  const pulled = new Set([...document.querySelectorAll(".feed .card[data-published]")].map((card) => card.dataset.published));
   const attention = ((latest && latest.data && latest.data.highlights && latest.data.highlights.attention) || []).map((row) => row.join(" ")).join(" ").toLowerCase();
   const catalog = ((latest && latest.data && latest.data.catalog) || []).filter((entry) => menuMatches(entry.title + " " + entry.description + " " + entry.keywords))
     .map((entry) => ({ entry, score: entry.keywords.split(/\s+/).filter((word) => word && attention.includes(word)).length }))
     .sort((a, b) => b.score - a.score);
   catalog.forEach(({ entry, score }) => {
-    const made = [...pulled].some((key) => key.startsWith(entry.id.replace(":", "-")));
-    const button = el("button", { type: "button", class: "sections-add", title: made ? "On the dashboard" : "Pull onto the dashboard", "aria-label": "Add " + entry.title, text: made ? "✓" : "+" });
-    if (!made) button.addEventListener("click", () => pullTile(entry, button));
-    addable.push(el("div", { class: "sections-row", title: entry.description || entry.call }, [
-      el("span", { text: (score ? "★ " : "") + entry.title }), button]));
+    const prefix = entry.id.replace(":", "-");
+    const matches = [...document.querySelectorAll(".feed .card[data-published]")].filter((card) => card.dataset.published.startsWith(prefix));
+    const selected = matches.some((card) => !card.classList.contains("card-off"));
+    const row = item((score ? "★ " : "") + entry.title, selected, () => {
+      if (!matches.length) { pullTile(entry, null); return; }
+      const show = !selected;
+      matches.forEach((card) => card.classList.toggle("card-off", !show));
+      const state = layoutState(); state.hidden = [...document.querySelectorAll("#content .card-off")].map(cardId); saveLayout(state);
+      document.querySelectorAll(".feed").forEach((feed) => { feed.hidden = !feed.querySelector(".card:not(.card-off)"); });
+      feedback("section", show ? "show" : "hide", entry.title);
+      drawSectionsMenu();
+      if (show && latest && latest.data) renderCharts(latest.data.charts);
+    }, entry.description || entry.call);
+    (selected ? rows : addable).push(row);
   });
-  const rare = rarelyUsed().filter(({ card }) => menuMatches(cardTitle(card)));
-  const suggestions = rare.length ? [heading("Rarely used: hide?"), ...rare.map(({ card, id, age }) => {
-    const hide = el("button", { type: "button", class: "sections-add", title: `Not touched in ${USAGE_WINDOW_DAYS} days (on the page ${age} days): hide it`, "aria-label": "Hide " + cardTitle(card), text: "×" });
-    hide.addEventListener("click", () => { feedback("use", "hide unused", id); setHidden(id, true); });
-    return el("div", { class: "sections-row" }, [el("span", { text: cardTitle(card) }), hide]);
-  })] : [];
   const button = document.getElementById("sections-button");
   if (button) button.classList.toggle("has-suggestion", rarelyUsed().length > 0);
-  lists.replaceChildren(...suggestions, heading("On the dashboard"), ...rows, ...(rows.length ? [] : [el("div", { class: "sections-empty", text: "No match" })]),
+  lists.replaceChildren(heading("On the dashboard"), ...rows, ...(rows.length ? [] : [el("div", { class: "sections-empty", text: "No match" })]),
     heading(`Available to add${menuQuery ? "" : ` (${addable.length})`}`), ...addable, ...(addable.length ? [] : [el("div", { class: "sections-empty", text: "Nothing more to add" })]),
     ...menuFooter());
 }
