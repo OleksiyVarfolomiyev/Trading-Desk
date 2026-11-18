@@ -362,7 +362,8 @@ function renderBarList(id, spec, plan, host) {
   const sizes = list.map((row) => Math.abs(row[plan.value])).sort((a, b) => b - a);
   const cap = sizes.length > 2 ? sizes[1] * BAR_CAP : Infinity;   // one dominant bar is drawn at most 3x the second
   const biggest = Math.min(sizes[0] || 1, cap) || 1;
-  const mixed = list.some((row) => row[plan.value] < 0) && list.some((row) => row[plan.value] > 0);
+  const mixed = id === "positions" || id === "positions_stocks"
+    || (list.some((row) => row[plan.value] < 0) && list.some((row) => row[plan.value] > 0));
   const body = el("div", { class: "barlist" }, list.map((row) => {
     const value = row[plan.value], share = Math.min(Math.abs(value), cap) / biggest, kind = kindClass(id, row);
     const label = String(row[plan.label] ?? ""), extra = plan.text ? row[plan.text] : null;
