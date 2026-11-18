@@ -735,7 +735,7 @@ td.name-net { color: var(--series-1); }
 td.correlation-cell { white-space: nowrap; }
 td.correlation-cell::before {
   content: ""; display: inline-block; width: 7px; height: 7px; margin-inline-end: 5px;
-  border: 1px solid var(--border); border-radius: 50%; background: var(--correlation-color);
+  border: 1px solid var(--border); border-radius: 50%; background: color-mix(in srgb, var(--series-1) var(--correlation-strength), var(--grid));
 }
 
 /* What needs attention, on the Research screen (the Now screen has the highlights card). */

@@ -736,20 +736,6 @@ function tableWindow(id, host, spec) {
   return selected ? { ...spec, rows: spec.rows.filter((row) => row.Window === selected), total: null } : spec;
 }
 
-// The reversed RdBu scale used by the portfolio notebook’s correlation matrix.
-const CORRELATION_COLORS = [
-  [5, 48, 97], [33, 102, 172], [67, 147, 195], [146, 197, 222], [209, 229, 240],
-  [247, 247, 247], [253, 219, 199], [244, 165, 130], [214, 96, 77], [178, 24, 43], [103, 0, 31],
-];
-function correlationColor(value) {
-  const range = CORRELATION_COLORS.length - 1;
-  const stop = (Math.max(-1, Math.min(1, value)) + 1) * range / 2;
-  const lower = Math.min(Math.floor(stop), range - 1);
-  const rgb = CORRELATION_COLORS[lower].map((channel, i) =>
-    Math.round(channel + (CORRELATION_COLORS[lower + 1][i] - channel) * (stop - lower)));
-  return `rgb(${rgb.join(",")})`;
-}
-
 function renderTable(id, spec) {
   const original = spec;
   lastSpecs[id] = spec;
@@ -863,7 +849,8 @@ function renderTable(id, spec) {
       ]);
     }
     if (/^corr(?:elation)?\s+(?:to\s+)?btc(?:\s+30d)?$/i.test(column.key) && isNum(value)) {
-      return el("td", { class: classes + withDigits + " correlation-cell", style: `--correlation-color:${correlationColor(value)}`, text });
+      const strength = Math.min(1, Math.abs(value)) * 100;
+      return el("td", { class: classes + withDigits + " correlation-cell", style: `--correlation-strength:${strength}%`, text });
     }
     if (isAssetColumn(column.key) && text && !/^(?:net\/)?total$/i.test(text) && !ZERO_TEXT.test(text)) {
       const market = (row.__raw && row.__raw[column.key]) || value;

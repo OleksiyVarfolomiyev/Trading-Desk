@@ -1157,7 +1157,11 @@ class _CorrelationPlotMixin(_TableStyleMixin):
         rows, columns = len(corr.index), len(corr.columns)
         fig=go.Figure(go.Heatmap(
             z=corr.to_numpy(),x=corr.columns.tolist(),y=corr.index.tolist(),
-            zmin=-1,zmax=1,colorscale='RdBu',reversescale=True,
+            # Color shows absolute correlation. The cell text preserves direction.
+            zmin=-1,zmax=1,colorscale=[
+                (0, '#3d7096'), (0.25, '#2d4d66'), (0.5, '#202a33'),
+                (0.75, '#2d4d66'), (1, '#3d7096'),
+            ],
             text=np.round(corr.to_numpy(),2),texttemplate='%{text:.2f}',
             hovertemplate='%{y} vs %{x}: %{z:.2f}<extra></extra>',
             showscale=False,
