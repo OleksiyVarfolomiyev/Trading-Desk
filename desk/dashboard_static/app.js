@@ -1573,9 +1573,9 @@ function setScale(element, scale) {
   else { zoomCharts(); drawChartScales(); }
 }
 function scaleChips(element) {   // the element's own scale buttons, shown on its hover
-  const active = currentScale(element), auto = (scaleChoices[element] || "auto") === "auto";
-  return el("span", { class: "scale-chips" }, SCALES.map(([name]) => {
-    const chip = el("button", { type: "button", class: "scale-chip" + (name === active ? " on" : "") + (auto && name === active ? " auto" : ""), text: { "1D": "D", "1W": "W", "1M": "M" }[name] || name });
+  const active = currentScale(element);
+  return el("span", { class: "scale-chips" }, SCALES.filter(([name]) => name !== active).map(([name]) => {
+    const chip = el("button", { type: "button", class: "scale-chip", text: { "1D": "D", "1W": "W", "1M": "M" }[name] || name });
     chip.addEventListener("click", (event) => { event.stopPropagation(); setScale(element, name); });
     return chip;
   }));
@@ -2390,8 +2390,8 @@ function addPeriodChips(node) {
     try { return JSON.parse(localStorage.getItem("desk-published-periods") || "{}")[key] || "ALL"; } catch (e) { return "ALL"; }
   };
   const row = node._chips || el("span", { class: "scale-chips published-period-chips" });
-  row.replaceChildren(...periods.map(([label, days]) => {
-    const button = el("button", { type: "button", class: "scale-chip" + (current() === label ? " on" : ""), text: label });
+  row.replaceChildren(...periods.filter(([label]) => label !== current()).map(([label, days]) => {
+    const button = el("button", { type: "button", class: "scale-chip", text: label });
     button.addEventListener("click", () => {
       const choices = (() => { try { return JSON.parse(localStorage.getItem("desk-published-periods") || "{}"); } catch (e) { return {}; } })();
       choices[key] = label;
