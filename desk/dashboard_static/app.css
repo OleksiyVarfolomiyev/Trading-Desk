@@ -508,6 +508,8 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 .card h2 { position: relative; }
 .more-menu { position: absolute; top: 100%; right: 0; z-index: 30; min-width: 260px; max-height: 50vh; overflow: auto; background: var(--surface);
   border: 1px solid var(--border); border-radius: 10px; padding: 6px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); font-size: 13px; font-weight: 400; }
+.more-menu-group { padding: 8px 8px 3px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.more-menu-group:not(:first-child) { margin-top: 4px; border-top: 1px solid var(--border); }
 .tiles { position: relative; }
 .tile-add-wrap { position: relative; display: flex; align-items: center; }
 .tile-add { background: transparent; border: 1px dashed var(--border); color: var(--muted); border-radius: 8px; width: 28px; height: 28px; cursor: pointer; opacity: 0; transition: opacity .12s; }

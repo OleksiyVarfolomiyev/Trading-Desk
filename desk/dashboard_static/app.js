@@ -2933,7 +2933,15 @@ function openMoreMenu(card, button) {
     const q = field.value.trim().toLowerCase();
     const rows = catalog.filter((entry) => !q || (entry.title + " " + entry.keywords).toLowerCase().includes(q))
       .map((entry) => ({ entry, s: score(entry) })).sort((a, b) => b.s - a.s);
-    list.replaceChildren(...rows.map(({ entry, s }) => {
+    const selectedFor = ({ entry }) => {
+      const prefix = entry.id.replace(":", "-");
+      const matches = [...document.querySelectorAll(".feed .card[data-published]")].filter((tile) => tile.dataset.published.startsWith(prefix));
+      return matches.some((tile) => !tile.classList.contains("card-off"));
+    };
+    const selected = rows.filter(selectedFor);
+    const favorites = rows.filter((row) => row.s > 0 && !selectedFor(row));
+    const moreRows = rows.filter((row) => row.s === 0 && !selectedFor(row));
+    const makeRow = ({ entry, s }) => {
       const prefix = entry.id.replace(":", "-");
       const matches = [...document.querySelectorAll(".feed .card[data-published]")].filter((tile) => tile.dataset.published.startsWith(prefix));
       const selected = matches.some((tile) => !tile.classList.contains("card-off"));
@@ -2952,7 +2960,9 @@ function openMoreMenu(card, button) {
       row.addEventListener("click", toggle);
       row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
       return row;
-    }));
+    };
+    const group = (label, items) => items.length ? [el("div", { class: "more-menu-group", text: label }), ...items.map(makeRow)] : [];
+    list.replaceChildren(...group("Favorites", favorites), ...group("Selected", selected), ...group("More", moreRows));
   };
   field.addEventListener("input", fill);
   menu.append(field, list);
