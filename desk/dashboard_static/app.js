@@ -1177,7 +1177,7 @@ function renderAccountStatus(rows, now) {
 // How loud a highlight is (desk/notebook_highlights.py ``severity``): "critical" rows call for action now and sit
 // first in a red band; "watch" rows get an amber marker.
 const CRITICAL_TITLES = /cut gross|margin guard|margin reserve breached|not reporting|over cap|liquidat|^major hack$|^squeeze|^stress:.*\(block\)$|^data flow down$|^unreadable accounts$/i;
-const WATCH_TITLES = /^alt rally$|^stock dip$|^equity sell[- ]off$|^stress:.*\(warn\)$|^available margin low$|near cap|^hack$|^burn approaching$|^burn$|^unlock$/i;
+const WATCH_TITLES = /^alt rally$|^stock dip$|^equity sell[- ]off$|^stress:.*\(warn\)$|^available margin low$|near cap|^hack$|^burn approaching$|^burn$|^unlock$|^benchmark watch · /i;
 function severity(title, text) {
   if (CRITICAL_TITLES.test(title) || (/^regime$/i.test(title) && /\bhigh\b/.test(text))) return "critical";
   if (WATCH_TITLES.test(title) || /^regime$/i.test(title)) return "watch";
@@ -1232,12 +1232,17 @@ async function loadHighlightState() {
 }
 function redrawHighlights() {
   if (!latest || !latest.data) return;
-  const hl = latest.data.highlights || {}, hover = hl.hover || {};
+  const hl = latest.data.highlights || {}, watch = benchmarkWatch(latest.data.book_comparison?.regimes || {});
+  const hover = { ...hl.hover, ...watch.hover };
   for (const kind of ["crypto", "stocks", "desk"]) {
-    renderHighlights(`hl-${kind}-well`, highlightsForKind(hl.well, kind), hover);
-    renderHighlights(`hl-${kind}-attention`, highlightsForKind(hl.attention, kind), hover);
+    renderHighlights(`hl-${kind}-well`, [
+      ...(kind === "desk" ? watch.well : []), ...highlightsForKind(hl.well, kind),
+    ], hover);
+    renderHighlights(`hl-${kind}-attention`, [
+      ...(kind === "desk" ? watch.attention : []), ...highlightsForKind(hl.attention, kind),
+    ], hover);
   }
-  renderAlertStrip(hl.attention, hover);
+  renderAlertStrip([...(hl.attention || []), ...watch.attention], hover);
   if (typeof drawSectionsMenu === "function") drawSectionsMenu();
 }
 function highlightsForKind(rows, kind) {
@@ -1359,6 +1364,22 @@ function alertResponseOptions(area, text, monitor) {
       if (card.classList.contains("card-min")) setMinimized(id, false);
       card.scrollIntoView({ behavior: "smooth", block: "center" });
     };
+    const regime = /^Benchmark watch · ([a-z_]+) · /.exec(area)?.[1];
+    if (regime) {
+      panel.replaceChildren(el("div", { class: "highlight-option-row" }, [
+        option("↗", "Review benchmark drivers", () => {
+          close();
+          scaleChoices["benchmark-regime-drivers"] = regime;
+          scaleChoices["benchmark-regimes"] = "Q";
+          saveScaleChoices();
+          if (latest?.data) renderBenchmarkTables(latest);
+          setScreen("research");
+          reviewBenchmarkDrivers();
+        }),
+        option("✓", "Monitor for changes", monitor),
+      ]));
+      return;
+    }
     const trims = el("div", { class: "highlight-trims", hidden: true, role: "group", "aria-label": "Stock and TradFi long trims" });
     const trimToggle = option("⅓", "Review long trims", () => {
       trims.hidden = !trims.hidden;
@@ -1839,6 +1860,46 @@ const MARKET_REGIMES = [
 const REGIME_COMPARISONS = [
   ["crypto", "Crypto vs BTC"], ["stocks", "Stocks vs SPY"], ["desk_btc", "Desk vs BTC"], ["desk_spy", "Desk vs SPY"],
 ];
+
+function benchmarkWatch(regimes) {
+  const watch = { well: [], attention: [], hover: {} };
+  const results = [];
+  for (const [key, , label] of MARKET_REGIMES) {
+    const recent = regimes.M?.[key], quarter = regimes.Q?.[key];
+    if (!(recent?.sessions >= 5 && quarter?.sessions >= 12)) continue;
+    for (const [comparison, name] of REGIME_COMPARISONS) {
+      const m = recent.comparisons?.[comparison], q = quarter.comparisons?.[comparison];
+      if (!m || !q) continue;
+      const monthGap = m.portfolio - m.index, quarterGap = q.portfolio - q.index;
+      const strength = quarterGap > 0 && q.beat > quarter.sessions / 2;
+      const positive = strength && monthGap > 0 && m.beat > recent.sessions / 2;
+      const fading = strength && monthGap < 0;
+      const weakness = quarterGap < 0 && monthGap < 0 && q.beat < quarter.sessions / 2 && m.beat < recent.sessions / 2;
+      if (!positive && !fading && !weakness) continue;
+      results.push({ key, label, name, positive, fading, monthGap, quarterGap, m, q,
+        monthN: recent.sessions, quarterN: quarter.sessions });
+    }
+  }
+  const strength = results.filter((row) => row.positive).sort((a, b) => b.monthGap - a.monthGap)[0];
+  const concern = results.filter((row) => !row.positive).sort((a, b) => Number(b.fading) - Number(a.fading) || a.monthGap - b.monthGap)[0];
+  const points = (value) => `${value > 0 ? "+" : ""}${(100 * value).toFixed(1)} pp`;
+  for (const row of [strength, concern].filter(Boolean)) {
+    const area = `Benchmark watch · ${row.key} · ${row.name}`;
+    const summary = `${row.label}: ${row.name} ${points(row.monthGap)} over 30d and ${points(row.quarterGap)} over 90d`;
+    (row.positive ? watch.well : watch.attention).push([area, `Benchmark ${row.positive ? "strength" : row.fading ? "edge fading" : "weakness"} · ${summary}`]);
+    watch.hover[area] = `Matched sessions won: ${row.m.beat}/${row.monthN} over 30d, ${row.q.beat}/${row.quarterN} over 90d. Windows overlap. Excess returns compound only matching sessions.`;
+  }
+  return watch;
+}
+
+function reviewBenchmarkDrivers() {
+  const id = "t-benchmark-regime-drivers";
+  const card = document.getElementById(id)?.closest(".card");
+  if (!card) return;
+  if (card.classList.contains("card-off")) setHidden(id, false);
+  if (card.classList.contains("card-min")) setMinimized(id, false);
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+}
 
 function regimeBeatTable(data) {
   return {
