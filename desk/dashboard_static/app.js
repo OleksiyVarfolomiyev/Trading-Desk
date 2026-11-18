@@ -484,7 +484,7 @@ function renderTableChart(id, spec, override) {
         text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false,
         outsidetextfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
         hoverinfo: "skip" }));   // the value is on the bar
-      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true, autorange: true, rangemode: "tozero" }, axis), margin: { l: 64, r: 88, t: 2, b: 6 } };
+      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true, autorange: true, rangemode: "tozero" }, axis), margin: { l: 52, r: 64, t: 2, b: 6 } };
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
     } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
@@ -593,12 +593,12 @@ function renderTableChart(id, spec, override) {
     layout = { xaxis: Object.assign({ zeroline: true }, axis), annotations: inside, insideLabels: true };
     height = Math.max(90, order.length * 28 + 14);
     // Room at the right for the longest end label (a short bar's label carries its name too).
-    layout.margin = { r: Math.min(320, Math.max(plan.text ? 100 : 40, Math.max(...traces[0].text.map((t) => t.length)) * 7 + 12)) };
+    layout.margin = { r: Math.min(320, Math.max(plan.text ? 90 : 36, Math.max(...traces[0].text.map((t) => t.length)) * 7 + 8)) };
   }
   host.replaceChildren();
   const node = el("div", { class: "chart", id: "tc-" + id, style: `height:${height}px` });
   host.append(node);
-  const margin = Object.assign({ l: 56, r: 88, t: 2, b: 6 }, layout.margin || {});
+  const margin = Object.assign({ l: 40, r: 56, t: 2, b: 6 }, layout.margin || {});
   const base = baseLayout(Object.assign({ hovermode: "closest" }, layout, { margin }));
   // Values sit at the bar ends: no x labels, grid, zero line or axis line.
   base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false, showticklabels: false, showgrid: false,
@@ -607,12 +607,13 @@ function renderTableChart(id, spec, override) {
   const shown = traces[0] && traces[0].y ? traces[0].y : names;
   base.yaxis = Object.assign({}, base.yaxis, { type: "category", autorange: "reversed", automargin: true, showgrid: false, zeroline: false, showline: false,
     tickmode: "array", tickvals: shown, ticktext: shown, tickfont: { color: token("--ink-2"), size: plan.kind === "bars" ? 13 : 11 } });
+  if (plan.kind === "exposure" && plan.books) Object.assign(base.yaxis, { showticklabels: false, tickvals: [], ticktext: [], automargin: false });
   if (layout.insideLabels) {   // names are in the bars: no axis labels; the left margin only holds a short's end text
     base.yaxis.showticklabels = false;
     const shorts = traces.some((trace) => trace.type === "bar" && (trace.x || []).some((value) => value < 0));
     base.margin = Object.assign({}, base.margin, { l: shorts ? 150 : 12 });
     delete base.insideLabels;
-  } else if (plan.kind === "bookstack") {   // the book colours distinguish the two rows
+  } else if (plan.kind === "bookstack" || (plan.kind === "exposure" && plan.books)) {   // the bar colours distinguish the two books
     base.yaxis.showticklabels = false;
     base.margin = Object.assign({}, base.margin, { l: 12 });
   }
@@ -1626,8 +1627,30 @@ function tradeAssets() {
 }
 function tradeBar() {
   if (tradeBarNode) { tradeBarNode.querySelector("datalist").replaceChildren(...tradeAssets().map((n) => el("option", { value: n }))); return tradeBarNode; }
-  const asset = el("input", { class: "trade-input", type: "text", list: "trade-assets", placeholder: "asset", autocomplete: "off",
+  const asset = el("input", { class: "trade-input", type: "text", placeholder: "asset", autocomplete: "off",
     spellcheck: "false", "aria-label": "Asset" });
+  const suggestions = el("div", { class: "trade-suggestions", role: "listbox", "aria-label": "Tradable assets", hidden: true });
+  const refreshSuggestions = () => {
+    const query = asset.value.trim().toLowerCase();
+    const assets = new Map();
+    tradeAssets().forEach((name) => assets.set(name.toLowerCase(), universeMap[name.toLowerCase()] || name));
+    Object.keys(universeMap).filter((name) => name === friendlyName(universeMap[name]).toLowerCase())
+      .forEach((name) => assets.set(name, universeMap[name]));
+    const names = [...assets.keys()]
+      .filter((name) => !query || name.startsWith(query) || name.includes(query)).sort().slice(0, 12);
+    suggestions.replaceChildren(...(names.length ? names.map((name) => {
+      const market = assets.get(name);
+      const button = el("button", { type: "button", role: "option", text: friendlyName(market) });
+      button.addEventListener("mousedown", (event) => event.preventDefault());
+      button.addEventListener("click", () => { asset.value = friendlyName(market); suggestions.hidden = true; asset.focus(); });
+      return button;
+    }) : [el("div", { class: "trade-suggestion-empty", text: query ? "No matching assets" : "Loading markets…" })]));
+    suggestions.hidden = false;
+  };
+  asset.addEventListener("focus", () => { refreshSuggestions(); loadUniverse().then(refreshSuggestions); });
+  asset.addEventListener("input", refreshSuggestions);
+  asset.addEventListener("keydown", (event) => { if (event.key === "Escape") suggestions.hidden = true; });
+  asset.addEventListener("blur", () => setTimeout(() => { suggestions.hidden = true; }, 120));
   const sides = [["long", "▲", "Long"], ["short", "▼", "Short"]].map(([value, glyph, name]) => {
     const b = el("button", { type: "button", class: "trade-side " + value, text: glyph, title: name, "aria-label": name, "aria-pressed": String(value === tradeSide) });
     b.addEventListener("click", () => { tradeSide = value; sides.forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
@@ -1640,7 +1663,7 @@ function tradeBar() {
   const run = () => {
     const raw = asset.value.trim();
     if (!raw) { asset.focus(); return; }
-    const coin = /^[a-z0-9]+:/i.test(raw) ? raw.toLowerCase().replace(/^([a-z0-9]+):(.*)$/, (m, d, c) => d + ":" + c.toUpperCase()) : raw.toUpperCase();
+    const coin = universeMap[raw.toLowerCase()] || (/^[a-z0-9]+:/i.test(raw) ? raw.toLowerCase().replace(/^([a-z0-9]+):(.*)$/, (m, d, c) => d + ":" + c.toUpperCase()) : raw.toUpperCase());
     feedback("trade", "plan", coin, tradeSide + (label.value ? " " + label.value : ""));
     if (window.DESK_SOURCE) runAction(tradeSide === "short" ? "Short" : "Long", tradeSide, 1, { coin, wallet: "07f2", label: label.value || undefined });
     else if (navigator.clipboard) navigator.clipboard.writeText(`${tradeSide} ${coin}${label.value ? " as " + label.value : ""}`);
@@ -1648,7 +1671,7 @@ function tradeBar() {
   go.addEventListener("click", run);
   asset.addEventListener("keydown", (event) => { if (event.key === "Enter") run(); });
   tradeBarNode = el("div", { class: "trade-bar", role: "group", "aria-label": "Trade" },
-    [asset, ...sides, label, go, el("datalist", { id: "trade-assets" }, tradeAssets().map((n) => el("option", { value: n })))]);
+    [el("div", { class: "trade-asset-wrap" }, [asset, suggestions]), ...sides, label, go, el("datalist", { id: "trade-assets" }, tradeAssets().map((n) => el("option", { value: n })))]);
   return tradeBarNode;
 }
 function drawModes() {
@@ -2813,7 +2836,7 @@ function openMoreMenu(card, button) {
   const fill = () => {
     const q = field.value.trim().toLowerCase();
     const rows = catalog.filter((entry) => !q || (entry.title + " " + entry.keywords).toLowerCase().includes(q))
-      .map((entry) => ({ entry, s: score(entry) })).sort((a, b) => b.s - a.s).slice(0, 14);
+      .map((entry) => ({ entry, s: score(entry) })).sort((a, b) => b.s - a.s);
     list.replaceChildren(...rows.map(({ entry, s }) => {
       const add = el("button", { type: "button", class: "sections-add", text: "+" });
       add.addEventListener("click", () => pullTile(entry, add, cardId(card)));

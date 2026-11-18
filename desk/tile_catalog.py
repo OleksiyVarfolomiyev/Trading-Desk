@@ -20,9 +20,9 @@ NOTEBOOKS = {"desk_crypto": "Crypto", "desk_stocks": "Stocks", "desk_overview": 
 # These notebooks are mostly what the dashboard already has: only the sections listed here are offered (their calls are
 # ``overview.`` and ``analytics.``).
 ONLY_SECTIONS = {"desk_overview": ("Exposure by asset class",),
-                 "hl_accounts": ("Daily realized and unrealized PnL", "Cumulative PnL", "Weekly return distribution",
-                                 "Traded volume vs realized PnL chart", "Net funding APR over time", "Top PnL contributors",
-                                 "Latest trades")}
+                 "hl_accounts": ("Account charts", "Daily realized and unrealized PnL", "Cumulative PnL",
+                                 "Weekly return distribution", "Account vs BTC", "Traded volume vs realized PnL chart",
+                                 "Net funding APR over time", "Top PnL contributors", "Latest trades")}
 # What each section answers, for matching against what the dashboard is flagging right now.
 # Sections that change with the market (positions, exposure, risk, today's PnL) are live: they can sit at the top. The rest
 # (closed-trade returns, factor models, tie-outs, performance history) are report material: they go to the bottom.
