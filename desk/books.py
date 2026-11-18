@@ -611,7 +611,7 @@ class Book:
 
     # -- realized --------------------------------------------------------------------------------------------------
     def performance(self) -> pd.DataFrame:
-        """PnL and return over 7, 30 and 90 days: the book, its parts, and its benchmark."""
+        """PnL and return over 1, 7, 30 and 90 completed days: the book, its parts, and its benchmark."""
         rows = []
         end = self.days[-1]
         hl = self.coins[self.coins["venue"] == "hl"]
@@ -620,14 +620,16 @@ class Book:
             parts = {"Perps": perps.reindex(self.days, fill_value=0.0)}
         else:
             parts = {"HL": hl.groupby("day")["pnl"].sum(), "IB": self.ib_daily}
-        for label, days in WINDOWS.items():
+        closes = self.benchmark_closes
+        if not closes.empty:
+            closes = closes[closes.index <= end]
+        for label, days in {"1D": 1, **WINDOWS}.items():
             cut = end - pd.Timedelta(days=days)
             window = self.returns[self.returns.index > cut]
-            row = {"Window": label, "PnL": window_sum(self.pnl, days),
+            row = {"Window": label, "PnL": window_sum(self.pnl, days, end=end),
                    "Return (on equity)": float((1 + window).prod() - 1) if len(window) else np.nan}
             for name, series in parts.items():
-                row[f"{name} PnL"] = window_sum(series, days)
-            closes = self.benchmark_closes
+                row[f"{name} PnL"] = window_sum(series, days, end=end)
             if len(closes):
                 start = closes[closes.index <= cut]
                 row[self.benchmark] = float(closes.iloc[-1] / start.iloc[-1] - 1) if len(start) else np.nan
