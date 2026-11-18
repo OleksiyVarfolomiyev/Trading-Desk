@@ -199,14 +199,15 @@ def trade_stats_now() -> dict | None:
         return None
 
 
-def book_attribution_now() -> dict:
-    """Benchmark contribution estimates from the same cached report as the book curves."""
+def book_comparison_now() -> dict:
+    """The invested asset-class curves and attribution from the cached book report."""
     import json as _json
 
     from desk.web_sync import BOOKS_FILE
 
     try:
-        return _json.loads(BOOKS_FILE.read_text()).get("attribution", {})
+        payload = _json.loads(BOOKS_FILE.read_text())
+        return {key: payload.get(key, {}) for key in ("attribution", "class_series")}
     except (OSError, ValueError):
         return {}
 
@@ -656,7 +657,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     index = _daily(headline)
     index.index = index.index.normalize()
     twr = [{"name": "Total" if headline is not desk.index else "Desk (HL + IB)",
-            "x": [ts.strftime("%Y-%m-%d") for ts in index.index],
+            "x": [ts.strftime("%Y-%m-%d") for ts in index.index], "levels": index.tolist(),
             "y": (100 * (index / headline.iloc[0] - 1)).round(2).tolist()}]
     for name in ("BTC", "SPY"):
         if name in desk.benchmarks:
@@ -678,7 +679,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         "kpis": kpis,
         "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,
         "theses": (research.get("theses") if isinstance(research, dict) else None) or [],   # the thesis clock   # the open trades' median age
-        "book_attribution": book_attribution_now(),
+        "book_comparison": book_comparison_now(),
         "intraday": intraday_series(desk),   # the day and week at hourly resolution (the return chart's D and W)
         "moves": position_moves(overview),   # the held positions' price moves over 7 and 30 days
         "usage_model": usage_model_now(),   # what the reader has said is noise (desk/usage_model.py)

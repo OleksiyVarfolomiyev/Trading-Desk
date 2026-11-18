@@ -1744,16 +1744,23 @@ function benchmarkLevels(lines, name, today) {
   }));
 }
 
-function historicalBenchmarkTable(lines, days, now) {
+function historicalBenchmarkTable(lines, classSeries, days, now) {
   const today = Math.floor(now / BENCHMARK_DAY) * BENCHMARK_DAY;
-  const specs = [["Crypto", "crypto", "BTC", "btc"], ["Stocks", "stocks", "SPY", "spy"]];
+  const desk = benchmarkLevels(lines, String(lines[0]?.name || "").toLowerCase(), today);
+  const assetClass = (key) => new Map((classSeries[key] || []).flatMap(([day, level]) => {
+    const time = Date.parse(day);
+    return time < today && isNum(level) && level >= 0 ? [[time, level]] : [];
+  }));
+  const specs = [
+    ["Whole desk", desk, "BTC", "btc"], ["Whole desk", desk, "SPY", "spy"],
+    ["Crypto book", assetClass("crypto"), "BTC", "btc"], ["Stocks book", assetClass("stocks"), "SPY", "spy"],
+  ];
   const percent = (value, count) => count ? value / count : null;
   return {
-    columns: [{ key: "Book", fmt: "text" }, { key: "Beat", fmt: "pct" }, { key: "Lagged", fmt: "pct" },
+    columns: [{ key: "Comparison", fmt: "text" }, { key: "Beat", fmt: "pct" }, { key: "Lagged", fmt: "pct" },
       { key: "Beat on down days", fmt: "pct" }, { key: "Book vs bench (%)", fmt: "spct" },
-      { key: "$10k book", fmt: "wholeusd" }, { key: "$10k index", fmt: "wholeusd" }],
-    rows: specs.map(([bookName, bookKey, benchmarkName, benchmarkKey]) => {
-      const book = benchmarkLevels(lines, bookKey, today);
+      { key: "$10k desk/book", fmt: "wholeusd" }, { key: "$10k index", fmt: "wholeusd" }],
+    rows: specs.map(([bookName, book, benchmarkName, benchmarkKey]) => {
       const bench = benchmarkLevels(lines, benchmarkKey, today);
       const dates = [...bench.keys()].sort((a, b) => a - b);
       const oldest = days === null ? -Infinity : today - days * BENCHMARK_DAY;
@@ -1761,7 +1768,7 @@ function historicalBenchmarkTable(lines, days, now) {
       let start, end;
       for (let i = 1; i < dates.length; i++) {
         const from = dates[i - 1], to = dates[i];
-        if (to < oldest || !book.has(from) || !book.has(to)) continue;
+        if (to < oldest || !(book.get(from) > 0) || !book.has(to)) continue;
         if (benchmarkKey === "btc" && to - from !== BENCHMARK_DAY) continue;
         if (start === undefined) start = from;
         end = to;
@@ -1772,15 +1779,15 @@ function historicalBenchmarkTable(lines, days, now) {
       const date = (stamp) => new Date(stamp).toISOString().slice(0, 10);
       const bookEnd = n ? 10000 * book.get(end) / book.get(start) : null;
       const benchmarkEnd = n ? 10000 * bench.get(end) / bench.get(start) : null;
-      return { Book: `${bookName} vs ${benchmarkName}`, Beat: percent(beat, n), Lagged: percent(lag, n),
+      return { Comparison: `${bookName} vs ${benchmarkName}`, Beat: percent(beat, n), Lagged: percent(lag, n),
         "Beat on down days": percent(down.beat, down.n),
         "Book vs bench (%)": benchmarkEnd > 0 ? bookEnd / benchmarkEnd - 1 : null,
-        "$10k book": bookEnd,
+        "$10k desk/book": bookEnd,
         "$10k index": benchmarkEnd,
         __hover: n ? `${beat}/${n} beat · ${tie} tied · ${down.beat}/${down.n} on down days · ${date(start)} to ${date(end)}`
           : "No matched book and benchmark closes in this window" };
     }),
-    note: "Matched closes for win rates · $10k held across each row’s paired dates",
+    note: "Whole desk uses time-weighted returns. Books use PnL per dollar of prior gross exposure, excluding days below 1% of trading equity.",
   };
 }
 
@@ -1800,7 +1807,7 @@ function benchmarkAttributionTable(data, period) {
     rows: definitions.map(([label, description]) => ({ Factor: label, "Crypto vs BTC": crypto?.parts?.[label],
       "Stocks vs SPY": stocks?.parts?.[label], __hover: description })),
     total: { Factor: "Excess return", "Crypto vs BTC": crypto?.excess, "Stocks vs SPY": stocks?.excess },
-    note: crypto || stocks ? "Estimated contributions in percentage points · Risk management requires a separate replay"
+    note: crypto || stocks ? "Percentage points on desk trading equity · Risk management requires a separate replay"
       : "Attribution data is unavailable for this period",
   };
 }
@@ -1835,8 +1842,8 @@ function renderBenchmarkTables(doc) {
     const table = id === "benchmark-intraday"
       ? intradayBenchmarkTable(doc.data.intraday || {}, selected[1], now)
       : id === "benchmark-history"
-        ? historicalBenchmarkTable(doc.data.charts?.twr || [], selected[1], now)
-        : benchmarkAttributionTable(doc.data.book_attribution || {}, selected[0]);
+        ? historicalBenchmarkTable(doc.data.charts?.twr || [], doc.data.book_comparison?.class_series || {}, selected[1], now)
+        : benchmarkAttributionTable(doc.data.book_comparison?.attribution || {}, selected[0]);
     renderTable(id, { ...table, keepColumns: true, tableOnly: true });
   }
 }

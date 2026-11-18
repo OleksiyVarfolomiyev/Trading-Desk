@@ -941,7 +941,7 @@
     const chartIndex = headline.series || index, chartStart = headline.start;
     const indexDays = dailyLast(chartIndex, "v");
     const firstLevel = chartIndex.length ? chartIndex[0].v : 1;
-    const twr = [{ name: headline.series ? "Total" : "Desk (HL + IB)", x: [...indexDays.keys()],
+    const twr = [{ name: headline.series ? "Total" : "Desk (HL + IB)", x: [...indexDays.keys()], levels: [...indexDays.values()],
       y: [...indexDays.values()].map((v) => Math.round(1e4 * (v / firstLevel - 1)) / 1e2) }];
     const benchmarkDays = Math.ceil((now - chartStart) / DAY_MS) + 2;
     const rebased = (name, rows) => {  // rows: [{t, c}] daily closes
@@ -1269,7 +1269,7 @@
       tables,
       catalog: catalogEntries,
       intraday,
-      book_attribution: bookPerf?.attribution || {},
+      book_comparison: { attribution: bookPerf?.attribution || {}, class_series: bookPerf?.class_series || {} },
       moves: (() => {   // each held position's price move over 7 and 30 days (the uPnL tile's periods)
         const out = {}, now = Date.now();
         const at = (rows, days) => { let c = null; rows.forEach((r) => { if (r.t <= now - days * DAY_MS) c = r.c; }); return c; };

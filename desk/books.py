@@ -984,13 +984,24 @@ def active_days(book: "Book", threshold: float = ACTIVE_GROSS) -> pd.DatetimeInd
     return share.index[share >= threshold]
 
 
+def gross_market_exposure(book: "Book") -> pd.Series:
+    return book.coins["value"].abs().groupby(book.coins["day"]).sum().reindex(book.days).fillna(0.0)
+
+
+def invested_class_returns(book: "Book") -> pd.Series:
+    """Book PnL per dollar of prior gross exposure, for an index comparison on invested notional."""
+    gross = gross_market_exposure(book)
+    capital = gross.where((gross > 0) & (gross >= 0.01 * book.equity) & (book.equity > 0))
+    return (book.pnl / capital.shift(1)).reindex(book.returns.index).dropna()
+
+
 def chart_returns(book: "Book") -> pd.Series:
     """The book's daily returns for its performance line. Stocks skip the days it held under 1% of equity (IB all
     cash, 2026-03-30 to 2026-05-11): a flat stretch is no performance, and the line should read as the stocks held."""
     returns = book.returns
     if book.kind != "Stocks":
         return returns
-    gross = book.coins.assign(gross=book.coins["value"].abs()).groupby("day")["gross"].sum().reindex(book.days).fillna(0.0)
+    gross = gross_market_exposure(book)
     share = (gross / book.equity.where(book.equity > 0)).shift(1).reindex(returns.index)
     return returns[~(share < 0.01)]
 
