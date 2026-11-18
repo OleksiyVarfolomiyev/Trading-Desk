@@ -3081,7 +3081,6 @@ function menuMatches(text) {
 function fillMenuLists() {
   const lists = document.getElementById("sections-lists");
   if (!lists) return;
-  const heading = (text) => el("div", { class: "sections-head", text });
   const item = (text, selected, action, title = "") => {
     const row = el("div", { class: "sections-row" + (selected ? " is-picked" : ""), role: "checkbox", tabindex: "0",
       "aria-checked": String(selected), text, title });
@@ -3134,9 +3133,8 @@ function fillMenuLists() {
   });
   const button = document.getElementById("sections-button");
   if (button) button.classList.toggle("has-suggestion", rarelyUsed().length > 0);
-  lists.replaceChildren(heading("On the dashboard"), ...rows, ...(rows.length ? [] : [el("div", { class: "sections-empty", text: "No match" })]),
-    heading(`Available to add (${addable.length})`), ...addable, ...(addable.length ? [] : [el("div", { class: "sections-empty", text: "Nothing more to add" })]),
-    ...menuFooter());
+  lists.replaceChildren(...rows, ...addable,
+    ...(rows.length || addable.length ? [] : [el("div", { class: "sections-empty", text: "No match" })]), ...menuFooter());
 }
 async function pullTile(entry, button, anchor) {   // the section is built (the Mac for the local page, the server for the web) and published
   feedback("tile", "pull", entry.title);
