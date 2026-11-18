@@ -199,6 +199,18 @@ def trade_stats_now() -> dict | None:
         return None
 
 
+def book_attribution_now() -> dict:
+    """Benchmark contribution estimates from the same cached report as the book curves."""
+    import json as _json
+
+    from desk.web_sync import BOOKS_FILE
+
+    try:
+        return _json.loads(BOOKS_FILE.read_text()).get("attribution", {})
+    except (OSError, ValueError):
+        return {}
+
+
 def book_lines(start) -> list[dict]:
     """The crypto and stocks books on the return chart, each rebased to 0% on the chart's first day (or its own first day)."""
     import json as _json
@@ -666,6 +678,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         "kpis": kpis,
         "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,
         "theses": (research.get("theses") if isinstance(research, dict) else None) or [],   # the thesis clock   # the open trades' median age
+        "book_attribution": book_attribution_now(),
         "intraday": intraday_series(desk),   # the day and week at hourly resolution (the return chart's D and W)
         "moves": position_moves(overview),   # the held positions' price moves over 7 and 30 days
         "usage_model": usage_model_now(),   # what the reader has said is noise (desk/usage_model.py)

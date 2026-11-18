@@ -58,6 +58,11 @@ const FORMATS = {
   usd: { text: usd, num: true },
   susd: { text: signedUsd, num: true, signed: true },
   wholeusd: { text: (value) => isNum(value) ? wholeUsd(value) : "", num: true },
+  spp: { text: (value) => {
+    if (!isNum(value)) return "";
+    const points = Number((value * 100).toFixed(1));
+    return `${points > 0 ? "+" : ""}${points.toFixed(1)} pp`;
+  }, num: true, signed: true },
   // Coloured by sign without a "+" prefix (holdings, values).
   vusd: { text: usd, num: true, signed: true },
   vpct: { text: (v) => pct(v, 1), num: true, signed: true },
@@ -1673,6 +1678,7 @@ const BENCHMARK_DAY = 24 * BENCHMARK_HOUR;
 const BENCHMARK_WINDOWS = {
   "benchmark-intraday": { periods: [["D", 1], ["W", 7]], initial: "W" },
   "benchmark-history": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
+  "benchmark-attribution": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
 };
 
 function benchmarkCounts(pairs) {
@@ -1774,6 +1780,27 @@ function historicalBenchmarkTable(lines, days, now) {
   };
 }
 
+function benchmarkAttributionTable(data, period) {
+  const crypto = data.crypto?.[period], stocks = data.stocks?.[period];
+  const definitions = [
+    ["Picks", "Equal-size holdings within each side versus the same signed exposure in the benchmark"],
+    ["Sizing", "Actual position weights versus equal sizing within each side"],
+    ["Timing", "Changes in daily net exposure plus fills marked to the daily close"],
+    ["Market exposure", "Average net exposure versus a fully invested benchmark"],
+    ["Fees & funding", "Recorded fees and funding"],
+    ["Unattributed", "PnL that could not be linked to the position marks, including unallocated IB results"],
+    ["Risk management", "Requires a replay of the same trades without stops, trims and other risk controls"],
+  ];
+  return {
+    columns: [{ key: "Factor", fmt: "text" }, { key: "Crypto vs BTC", fmt: "spp" }, { key: "Stocks vs SPY", fmt: "spp" }],
+    rows: definitions.map(([label, description]) => ({ Factor: label, "Crypto vs BTC": crypto?.parts?.[label],
+      "Stocks vs SPY": stocks?.parts?.[label], __hover: description })),
+    total: { Factor: "Excess return", "Crypto vs BTC": crypto?.excess, "Stocks vs SPY": stocks?.excess },
+    note: crypto || stocks ? "Estimated contributions in percentage points · Risk management requires a separate replay"
+      : "Attribution data is unavailable for this period",
+  };
+}
+
 function renderBenchmarkTables(doc) {
   const now = new Date(doc.server_time || Date.now()).getTime();
   for (const [id, { periods, initial }] of Object.entries(BENCHMARK_WINDOWS)) {
@@ -1803,7 +1830,9 @@ function renderBenchmarkTables(doc) {
     }
     const table = id === "benchmark-intraday"
       ? intradayBenchmarkTable(doc.data.intraday || {}, selected[1], now)
-      : historicalBenchmarkTable(doc.data.charts?.twr || [], selected[1], now);
+      : id === "benchmark-history"
+        ? historicalBenchmarkTable(doc.data.charts?.twr || [], selected[1], now)
+        : benchmarkAttributionTable(doc.data.book_attribution || {}, selected[0]);
     renderTable(id, { ...table, keepColumns: true, tableOnly: true });
   }
 }
@@ -4178,7 +4207,7 @@ document.addEventListener("click", (event) => {
 const SCREENS = ["now", "research"];
 // Research keeps the research items in: the candidates (short and market-making), the strategy result, the long charts, and whatever is pulled from the notebooks.
 const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "hl-desk-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr", "t-benchmark-intraday"],
-  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr", "t-benchmark-history"] };
+  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr", "t-benchmark-history", "t-benchmark-attribution"] };
 function screensFor(card) {
   const id = cardId(card);
   if (card.dataset.published) return "research";

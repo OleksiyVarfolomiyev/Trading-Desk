@@ -222,18 +222,20 @@ def trade_stats() -> dict | None:
 def books_payload() -> dict:
     """Each book's return on trading equity over 1, 7, 30 and 90 days (desk/books.py, the notebooks' numbers), for the
     dashboards' performance table: the books, not the accounts."""
-    from desk.books import Book, chart_returns
+    from desk.books import Book, chart_returns, decision_attribution
 
-    rows, series = [], {}
+    rows, series, attribution = [], {}, {}
     for kind, options in (("Crypto", {}), ("Stocks", {"since": "2025-01-13"})):
         book = Book(kind, **options).fetch_data()
         table = book.performance().set_index("Window")
         rows.append({"Account": kind.lower(),
                      **{f"Return {'24h' if window == '1D' else window}": _clean(float(value))
                         for window, value in table["Return (on equity)"].items()}})
-        growth = (1 + chart_returns(book).dropna()).cumprod()
+        returns = chart_returns(book).dropna()
+        growth = (1 + returns).cumprod()
+        attribution[kind.lower()] = decision_attribution(book, returns)
         series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(round(float(value) - 1, 5))] for day, value in growth.items()]
-    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series, "stats": trade_stats()}
+    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series, "attribution": attribution, "stats": trade_stats()}
 
 
 def push_books(force: bool = False) -> dict | None:

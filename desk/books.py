@@ -1143,6 +1143,76 @@ Book.show_alpha_check = show_alpha_check
 PICKS_MIN_HELD = 0.01   # a day counts when the leg holds at least 1% of equity
 
 
+def decision_attribution(book: "Book", returns: pd.Series) -> dict:
+    """Explain compounded book excess return on matched benchmark endpoints.
+
+    Picks compare equal dollar positions within each day's long and short sides against the
+    same signed exposure in the benchmark. Sizing is actual versus equal dollar marks.
+    Exposure is the window's average net weight versus a fully invested index. Timing is the
+    daily deviation from that average plus fills marked to the close. Costs and unmatched
+    PnL are separate. Risk decisions need a replay with those decisions disabled.
+    """
+    if returns.empty or book.benchmark_closes.empty:
+        return {}
+    closes = book.benchmark_closes.copy()
+    closes.index = pd.to_datetime(closes.index, utc=True).normalize()
+    closes = closes.dropna().sort_index()
+    closes = closes[~closes.index.duplicated(keep="last")]
+    closes = closes[(closes > 0) & (closes.index <= returns.index.max())]
+    dates = closes.index
+    edges = [(prior, day) for prior, day in zip(dates[:-1], dates[1:])
+             if prior in returns.index and day in returns.index
+             and (book.benchmark != "BTC" or day - prior == pd.Timedelta(days=1))]
+    if not edges:
+        return {}
+
+    names = book.coins.sort_values("day").copy()
+    keys = ["account", "kind", "asset"]
+    names["before"] = names.groupby(keys)["value"].shift(1).fillna(0.0)
+    held = names.loc[names["before"].abs() > 0.01].copy()
+    held["side"] = np.sign(held["before"])
+    # Count each distinct market once per side even if several wallets hold it.
+    holdings = held.groupby(["day", "side", "kind", "asset"])[["before", "price"]].sum()
+    holdings["gross"] = holdings["before"].abs()
+    holdings["return"] = holdings["price"] / holdings["gross"]
+    side = holdings.groupby(level=["day", "side"]).agg(gross=("gross", "sum"), mean_return=("return", "mean"))
+    equal_price = (side["gross"] * side["mean_return"]).groupby(level="day").sum()
+
+    marks = names.groupby("day")[["before", "price", "trading", "fees", "funding"]].sum()
+    marks["equal_price"] = equal_price
+    marks = marks.reindex(book.days).fillna(0.0)
+    equity = book.equity.shift(1).reindex(book.days)
+    per_equity = marks.div(equity.where(equity > 0), axis=0).fillna(0.0)
+    bench = closes.pct_change(fill_method=None).reindex(book.days).fillna(0.0)
+    actual = returns.reindex(book.days).fillna(0.0)
+    result = {}
+    for label, days in {"W": 7, "M": 30, "Q": 90, "Y": 365, "All": None}.items():
+        selected = [(prior, day) for prior, day in edges if days is None or
+                    day >= book.days[-1] - pd.Timedelta(days=days - 1)]
+        if not selected:
+            continue
+        start, end = selected[0][0], selected[-1][1]
+        index = book.days[(book.days > start) & (book.days <= end)]
+        weights = per_equity.loc[index]
+        reference = weights["before"].mean()
+        b, r = bench.loc[index], actual.loc[index]
+        parts = pd.DataFrame({
+            "Picks": weights["equal_price"] - weights["before"] * b,
+            "Sizing": weights["price"] - weights["equal_price"],
+            "Timing": (weights["before"] - reference) * b + weights["trading"],
+            "Market exposure": (reference - 1) * b,
+            "Fees & funding": weights["fees"] + weights["funding"],
+        }, index=index)
+        parts["Unattributed"] = r - b - parts.sum(axis=1)
+        # Telescope from benchmark to book. Prior days have book returns, later days benchmark returns.
+        prefix = (1 + r).cumprod().shift(fill_value=1)
+        suffix = (1 + b).iloc[::-1].cumprod().shift(fill_value=1).iloc[::-1]
+        total = parts.mul(prefix * suffix, axis=0).sum()
+        result[label] = {"parts": total.to_dict(), "excess": float((1 + r).prod() - (1 + b).prod()),
+                         "start": start.strftime("%Y-%m-%d"), "end": end.strftime("%Y-%m-%d")}
+    return result
+
+
 def versus_benchmark(book: "Book") -> pd.DataFrame:
     """What the book's markets earned against the same dollars in its benchmark: each day, the exposure held going in
     (per leg, short and long) times the benchmark's move. The gap is what picking the names added or cost; funding and
