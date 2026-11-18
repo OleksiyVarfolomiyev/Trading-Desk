@@ -1016,7 +1016,9 @@ function renderTiles(k, theses = []) {
     (() => { const s = k.trade_stats || {};
       return tile("W / L", isNum(s.avg_win) && isNum(s.avg_loss) ? `${pct(s.avg_win, 1)} / ${pct(s.avg_loss, 1)}` : "n/a", "", { key: "Avg W/L", title: "Average winning and losing close, as a share of its notional" }); })(),
     (() => { const s = k.trade_stats || {};
-      return tile("EV", isNum(s.ev) ? pct(s.ev, 1, true) : "n/a", "", { key: "EV/close", valueClass: signClass(s.ev), title: "Expected value of a close, as a share of its notional" }); })(),
+      const title = isNum(s.ev) ? "Expected value per close as a share of notional" : "Closed-trade statistics are unavailable";
+      return tile("EV", isNum(s.ev) ? pct(s.ev, 1, true) : "n/a", "", { key: "EV/close", valueClass: signClass(s.ev),
+        title: s.as_of && isNum(s.ev) ? `${title}. Updated ${ago(s.as_of, new Date())}.` : title }); })(),
     (() => { const s = k.trade_stats || {};
       return tile("liq", isNum(s.liquidations) ? String(s.liquidations) : "n/a", isNum(s.closes) ? `of ${s.closes} closes` : "", { key: "Liquidations", valueClass: s.liquidations > 0 ? "neg" : "" }); })(),
     tile("DD", isNum(drawdown) ? pct(drawdown, 1) : "n/a", "",

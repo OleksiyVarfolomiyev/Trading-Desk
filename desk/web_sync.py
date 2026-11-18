@@ -191,24 +191,31 @@ def trade_stats() -> dict | None:
     liquidations. None when the fills cannot be read."""
     try:
         from desk.accounts import hl_wallets
-        from desk.hl.account_analytics import liquidation_stats, realized_pnl_stats, split_realized_fills
-        from desk.hl.multi_account_analytics import MultiWalletAnalytics
+        from desk.hl.account_analytics import (
+            fetch_user_fills, liquidation_stats, normalize_fills, realized_pnl_stats, split_realized_fills,
+        )
 
-        analytics = MultiWalletAnalytics(hl_wallets(), data_dir="data")
-        analytics.fetch_data()
-        data = analytics.data
-        perp, _ = split_realized_fills(data.realized_df)
+        fills = []
+        for wallet in dict.fromkeys(hl_wallets()):
+            frame = normalize_fills(fetch_user_fills(wallet), wallet)
+            if not frame.empty:
+                fills.append(frame.assign(wallet=short_id(wallet)))
+        if not fills:
+            return None
+        perp, _ = split_realized_fills(pd.concat(fills, ignore_index=True))
         if perp.empty:
             return None
-        stats = realized_pnl_stats(perp, funding_history=data.funding_history_df, funding_events=data.funding_df)
+        stats = realized_pnl_stats(perp)
         closes = perp[perp["grossPnl"] != 0]
         notional = float(closes["notional"].mean()) if len(closes) else float("nan")
-        liquidations = liquidation_stats(perp, funding_history=data.funding_history_df)
+        liquidations = liquidation_stats(perp)
         return {"hit_rate": _clean(float(stats["win_p"])), "avg_win": _clean(float(stats["avg_win_pct"]) / 100),
                 "avg_loss": _clean(float(stats["avg_loss_pct"]) / 100),
                 "ev": _clean(float(stats["ev"]) / notional if notional else float("nan")),
-                "liquidations": int(liquidations["liquidations"]), "closes": int(liquidations["closes"])}
-    except Exception:
+                "liquidations": int(liquidations["liquidations"]), "closes": int(liquidations["closes"]),
+                "as_of": pd.Timestamp.now(tz="UTC").isoformat()}
+    except Exception as error:
+        print(f"Trade stats unavailable ({type(error).__name__}).", file=sys.stderr)
         return None
 
 
@@ -237,6 +244,13 @@ def push_books(force: bool = False) -> dict | None:
     if not force and BOOKS_FILE.exists() and time.time() - BOOKS_FILE.stat().st_mtime < BOOKS_EVERY_SECONDS:
         return None
     payload = books_payload()
+    if payload["stats"] is None:
+        try:
+            previous = json.loads(BOOKS_FILE.read_text())
+            if previous.get("stats"):
+                payload["stats"] = {"as_of": previous.get("as_of"), **previous["stats"]}
+        except (OSError, ValueError):
+            pass
     BOOKS_FILE.parent.mkdir(parents=True, exist_ok=True)
     BOOKS_FILE.write_text(json.dumps(payload))
     return _post("/ingest/books", payload)
