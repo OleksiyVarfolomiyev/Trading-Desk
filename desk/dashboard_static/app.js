@@ -1782,42 +1782,42 @@ function historicalBenchmarkTable(lines, comparison, days, now) {
   const desk = returns(comparison.desk_series);
   const books = comparison.class_series || {};
   const specs = [
-    ["crypto", returns(books.crypto), "BTC", "btc"], ["Desk", desk, "BTC", "btc"],
-    ["stocks", returns(books.stocks), "SPY", "spy"], ["Desk", desk, "SPY", "spy"],
+    ["crypto", returns(books.crypto), "BTC", "btc"],
+    ["stocks", returns(books.stocks), "SPY", "spy"],
   ];
+  const oldest = days === null ? -Infinity : today - days * BENCHMARK_DAY;
   const percent = (value, count) => count ? value / count : null;
   return {
     columns: [{ key: "Comparison", fmt: "text" }, { key: "Beat", fmt: "pct" }, { key: "Lagged", fmt: "pct" },
       { key: "Beat on down days", fmt: "pct" }, { key: "Book vs bench (%)", fmt: "spct" },
       { key: "$10k desk/book", fmt: "wholeusd" }, { key: "$10k index", fmt: "wholeusd" }],
-    rows: specs.map(([bookName, book, benchmarkName, benchmarkKey]) => {
+    rows: specs.flatMap(([bookName, book, benchmarkName, benchmarkKey]) => {
       const bench = benchmarkLevels(lines, benchmarkKey, today);
       const dates = [...bench.keys()].sort((a, b) => a - b);
-      const oldest = days === null ? -Infinity : today - days * BENCHMARK_DAY;
-      const pairs = [];
-      let start, end;
+      const sessions = [];
       for (let i = 1; i < dates.length; i++) {
         const from = dates[i - 1], to = dates[i];
-        if (to < oldest || !(book.get(from) > 0) || !book.has(to)) continue;
-        if (benchmarkKey === "btc" && to - from !== BENCHMARK_DAY) continue;
-        if (start === undefined) start = from;
-        end = to;
-        pairs.push([book.get(to) / book.get(from) - 1, bench.get(to) / bench.get(from) - 1]);
+        if (to < oldest || (benchmarkKey === "btc" && to - from !== BENCHMARK_DAY)) continue;
+        if (!(book.get(from) > 0 && desk.get(from) > 0) || !book.has(to) || !desk.has(to)) continue;
+        sessions.push([from, to]);
       }
-      const { n, beat, lag, tie } = benchmarkCounts(pairs);
-      const down = benchmarkCounts(pairs.filter(([, index]) => index < 0));
+      const start = sessions[0]?.[0], end = sessions.at(-1)?.[1];
+      const benchmarkEnd = sessions.length ? 10000 * bench.get(end) / bench.get(start) : null;
       const date = (stamp) => new Date(stamp).toISOString().slice(0, 10);
-      const bookEnd = n ? 10000 * book.get(end) / book.get(start) : null;
-      const benchmarkEnd = n ? 10000 * bench.get(end) / bench.get(start) : null;
-      return { Comparison: `${bookName} vs ${benchmarkName}`, Beat: percent(beat, n), Lagged: percent(lag, n),
-        "Beat on down days": percent(down.beat, down.n),
-        "Book vs bench (%)": benchmarkEnd > 0 ? bookEnd / benchmarkEnd - 1 : null,
-        "$10k desk/book": bookEnd,
-        "$10k index": benchmarkEnd,
-        __hover: n ? `${beat}/${n} beat · ${tie} tied · ${down.beat}/${down.n} on down days · ${date(start)} to ${date(end)}`
-          : "No matched book and benchmark closes in this window" };
+      return [[bookName, book], ["Desk", desk]].map(([name, levels]) => {
+        const pairs = sessions.map(([from, to]) => [levels.get(to) / levels.get(from) - 1, bench.get(to) / bench.get(from) - 1]);
+        const { n, beat, lag, tie } = benchmarkCounts(pairs);
+        const down = benchmarkCounts(pairs.filter(([, index]) => index < 0));
+        const bookEnd = n ? 10000 * levels.get(end) / levels.get(start) : null;
+        return { Comparison: `${name} vs ${benchmarkName}`, Beat: percent(beat, n), Lagged: percent(lag, n),
+          "Beat on down days": percent(down.beat, down.n),
+          "Book vs bench (%)": benchmarkEnd > 0 ? bookEnd / benchmarkEnd - 1 : null,
+          "$10k desk/book": bookEnd, "$10k index": benchmarkEnd,
+          __hover: n ? `${beat}/${n} beat · ${tie} tied · ${down.beat}/${down.n} on down days · ${date(start)} to ${date(end)}`
+            : "No sessions with book, desk, and index closes in this window" };
+      });
     }),
-    note: "Combined rows use the trading desk’s time-weighted return. Single books use prior gross exposure, excluding days below 1% of trading equity.",
+    note: "Rows for the same index share dates. Desk uses time-weighted returns. Single books use prior gross exposure, excluding days below 1% of trading equity.",
   };
 }
 
