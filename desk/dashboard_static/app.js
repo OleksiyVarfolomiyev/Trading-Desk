@@ -484,7 +484,7 @@ function renderTableChart(id, spec, override) {
         text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false,
         outsidetextfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
         hoverinfo: "skip" }));   // the value is on the bar
-      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true, autorange: true, rangemode: "tozero" }, axis), margin: { l: 52, r: 64, t: 2, b: 6 } };
+    layout = { barmode: "group", xaxis: Object.assign({ zeroline: true, autorange: true, rangemode: "tozero" }, axis), margin: { l: 48, r: 40, t: 2, b: 6 } };
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
     } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
@@ -540,7 +540,7 @@ function renderTableChart(id, spec, override) {
     const biggest = Math.max(...rows.map((row) => Math.max(size(row, plan.long), size(row, plan.short)))) || 1;
     // Each class's name goes inside its larger bar when that bar has room, else it joins that bar's figure.
     const carrier = rows.map((row) => (size(row, plan.long) >= size(row, plan.short) ? plan.long : plan.short));
-    const roomy = rows.map((row, i) => nameFits(size(row, carrier[i]) / biggest, names[i], host, 90));
+    const roomy = rows.map((row, i) => nameFits(size(row, carrier[i]) / biggest, names[i], host, 44));
     const bar = (key, color, title) => ({ type: "bar", orientation: "h", name: title, y: names, marker: { color },
       x: rows.map((row) => (isNum(row[key]) ? Math.abs(row[key]) * axis.mult * (key === plan.short ? -1 : 1) : null)),
       text: rows.map((row, i) => (carrier[i] === key && !roomy[i] ? `${names[i]} · ` : "") + text(key, row[key])),
@@ -552,7 +552,7 @@ function renderTableChart(id, spec, override) {
       xanchor: carrier[i] === plan.short ? "right" : "left", xshift: carrier[i] === plan.short ? -6 : 6,
       font: { size: 13, color: INSIDE_INK() } } : null)).filter(Boolean);
     layout = { barmode: "relative", xaxis: Object.assign({ zeroline: true }, axis), annotations: inside, insideLabels: true,
-      showlegend: false, margin: { r: 90 } };
+      showlegend: false, margin: { r: 36 } };
     height = Math.max(180, rows.length * 44 + 80);
   } else {  // one bar per row, green above zero, red below, ordered by size
     const bySize = rows.some((row) => isNum(row.__size));
@@ -568,7 +568,7 @@ function renderTableChart(id, spec, override) {
     const biggest = Math.max(...order.map((i) => Math.abs(drawn(i)))) || 1;
     const figures = (i) => [text(plan.value, rows[i][plan.value]), plan.text ? text(plan.text, rows[i][plan.text]) : ""]
       .filter(Boolean).join(" · ");
-    const fits = (i) => nameFits(Math.abs(drawn(i)) / biggest, names[i] + "   " + figures(i), host, plan.text ? 130 : 90);
+    const fits = (i) => nameFits(Math.abs(drawn(i)) / biggest, names[i] + "   " + figures(i), host, plan.text ? 72 : 44);
     traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => drawn(i) * axis.mult),
       marker: { color: order.map((i) => kindColor(id, rows[i])) }, showlegend: false,
       // A short bar has no room for its name inside: the name joins the figures at its end instead of overlapping them.
@@ -593,12 +593,12 @@ function renderTableChart(id, spec, override) {
     layout = { xaxis: Object.assign({ zeroline: true }, axis), annotations: inside, insideLabels: true };
     height = Math.max(90, order.length * 28 + 14);
     // Room at the right for the longest end label (a short bar's label carries its name too).
-    layout.margin = { r: Math.min(320, Math.max(plan.text ? 90 : 36, Math.max(...traces[0].text.map((t) => t.length)) * 7 + 8)) };
+    layout.margin = { r: Math.min(76, Math.max(plan.text ? 48 : 28, Math.max(...traces[0].text.map((t) => t.length)) * 5 + 6)) };
   }
   host.replaceChildren();
   const node = el("div", { class: "chart", id: "tc-" + id, style: `height:${height}px` });
   host.append(node);
-  const margin = Object.assign({ l: 40, r: 56, t: 2, b: 6 }, layout.margin || {});
+  const margin = Object.assign({ l: 40, r: 32, t: 2, b: 6 }, layout.margin || {});
   const base = baseLayout(Object.assign({ hovermode: "closest" }, layout, { margin }));
   // Values sit at the bar ends: no x labels, grid, zero line or axis line.
   base.xaxis = Object.assign({}, base.xaxis, layout.xaxis || {}, { showspikes: false, showticklabels: false, showgrid: false,
@@ -1232,7 +1232,7 @@ function baseLayout(extra) {
   return Object.assign({
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     font: { family: token("--font") || "system-ui, -apple-system, Segoe UI, sans-serif", size: 12, color: ink },
-    margin: { l: 40, r: 56, t: 6, b: 22 },
+    margin: { l: 40, r: 32, t: 6, b: 22 },
     hovermode: "x unified",
     hoverlabel: { bgcolor: token("--surface"), bordercolor: axis, font: { color: token("--ink") } },
     // The chart tools: no band behind them, icons in the page's muted ink, the active one in its full ink.
@@ -1250,7 +1250,7 @@ const CONFIG = { displayModeBar: false, displaylogo: false, responsive: true };
 
 function endLabels(series, format) {
   return series.filter((s) => s.y.length).map((s) => ({
-    x: s.x[s.x.length - 1], y: s.y[s.y.length - 1], xanchor: "left", xshift: 6, showarrow: false,
+    xref: "paper", x: 1, y: s.y[s.y.length - 1], xanchor: "right", xshift: -4, showarrow: false,
     text: format(s.y[s.y.length - 1]), font: { color: token("--ink-2"), size: 11 },
   }));
 }
@@ -1265,7 +1265,7 @@ function spreadEndLabels(id) {
   const [low, high] = axis.range.map(Number);
   const scale = axis._length / (high - low || 1);
   const annotations = (gd.layout.annotations || []).map((a) => Object.assign({}, a));
-  const ends = annotations.filter((a) => a.xshift === 6 && a.xanchor === "left" && typeof a.y === "number")
+  const ends = annotations.filter((a) => a.xshift === -4 && a.xanchor === "right" && typeof a.y === "number")
     .map((a) => ({ a, at: (a.y - low) * scale })).sort((p, q) => q.at - p.at);
   let changed = false;
   ends.forEach((label, i) => {
@@ -1316,11 +1316,11 @@ function renderCharts(charts) {
   const valueEnds = value.filter((trace) => trace.y && trace.y.length).map((trace) => {
     const own = trace.y[trace.y.length - 1];
     const y = trace.stackgroup ? (stackTop += own) : own;
-    return { x: trace.x[trace.x.length - 1], y, xanchor: "left", xshift: 6, showarrow: false, text: money(own),
+    return { xref: "paper", x: 1, y, xanchor: "right", xshift: -4, showarrow: false, text: money(own),
              font: { color: trace.line.color, size: 11 } };
   });
   valueLayout.annotations = (valueLayout.annotations || []).concat(valueEnds);
-  valueLayout.margin = Object.assign({}, valueLayout.margin, { r: 88 });
+  valueLayout.margin = Object.assign({}, valueLayout.margin, { r: 32 });
   Plotly.react("chart-value", value, valueLayout, CONFIG).then(() => { spreadEndLabels("chart-value"); markNumericNotes(); });
 
   // The desk is the dotted reference line; the crypto and stocks books in their colours; the benchmarks thin.
@@ -1534,7 +1534,7 @@ function rebaseReturns(node, days) {
   Plotly.restyle(node, { y: ys });
   const notes = (node.layout.annotations || []).map((note) => Object.assign({}, note));
   const drawn = ys.map((y, i) => [y, i]).filter(([y]) => y.length);
-  notes.filter((note) => note.xshift === 6).forEach((note, k) => {
+  notes.filter((note) => note.xshift === -4).forEach((note, k) => {
     const [y, i] = drawn[k] || [];
     if (!y) return;
     note.y = y[y.length - 1];
@@ -1565,7 +1565,7 @@ function drawIntraday(node, days) {
   if (!lines.length) return false;
   const traces = lines.map(([name, line, style]) => ({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
     hovertemplate: "%{fullData.name}: %{y:.2f}%<extra></extra>" }));
-  const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ x: line.x[line.x.length - 1], y: line.y[line.y.length - 1], xanchor: "left", xshift: 6,
+  const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ xref: "paper", x: 1, y: line.y[line.y.length - 1], xanchor: "right", xshift: -4,
     showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color } })), xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null }),
     yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }) });
   node._orig = null;
@@ -1592,13 +1592,13 @@ function drawIntradayValue(node, days) {
   let stack = 0;
   traces.forEach((trace) => {
     const own = trace.y[trace.y.length - 1]; stack += own;
-    annotations.push({ x: trace.x[trace.x.length - 1], y: stack, xanchor: "left", xshift: 6, showarrow: false, text: usd(own),
+    annotations.push({ xref: "paper", x: 1, y: stack, xanchor: "right", xshift: -4, showarrow: false, text: usd(own),
       font: { color: trace.line.color, size: 11 } });
   });
   const layout = Object.assign({}, node.layout, { annotations,
     xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null, rangebreaks: [] }),
     yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }),
-    margin: Object.assign({}, node.layout.margin, { r: 88 }) });
+    margin: Object.assign({}, node.layout.margin, { r: 32 }) });
   node._orig = null; node._intraday = true;
   Plotly.react(node, traces, layout, CONFIG).then(() => { spreadEndLabels(node.id); markNumericNotes(); });
   return true;
@@ -1640,7 +1640,7 @@ function setLook(kind, value) {
   drawModes();
   redrawLook(kind);
 }
-// Trade bar: asset, side, an optional journal label, then ▶ plans the entry and asks ✓ / ✗ (runAction). On the local page
+// Trade bar: asset, side, an optional strategy tag, then ▶ plans the entry and asks ✓ / ✗ (runAction). On the local page
 // the order is copied for Claude, as everywhere else the dashboard cannot trade.
 let tradeBarNode = null, tradeSide = "long";
 function tradeAssets() {
@@ -1681,22 +1681,22 @@ function tradeBar() {
     b.addEventListener("click", () => { tradeSide = value; sides.forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
     return b;
   });
-  const label = el("select", { class: "trade-input", "aria-label": "Label", title: "Label (optional): the journal's tag for the position" },
-    [["", "label"], ["directional", "directional"], ["conviction", "conviction"], ["hedge", "hedge"], ["fade", "fade"]]
+  const strat = el("select", { class: "trade-input", "aria-label": "Strategy", title: "Strategy tag (optional)" },
+    [["", "strat"], ["directional", "directional"], ["conviction", "conviction"], ["hedge", "hedge"], ["fade", "fade"]]
       .map(([value, text]) => el("option", { value, text })));
   const go = el("button", { type: "button", class: "trade-go", text: "▶", title: "Plan the entry", "aria-label": "Plan the entry" });
   const run = () => {
     const raw = asset.value.trim();
     if (!raw) { asset.focus(); return; }
     const coin = universeMap[raw.toLowerCase()] || (/^[a-z0-9]+:/i.test(raw) ? raw.toLowerCase().replace(/^([a-z0-9]+):(.*)$/, (m, d, c) => d + ":" + c.toUpperCase()) : raw.toUpperCase());
-    feedback("trade", "plan", coin, tradeSide + (label.value ? " " + label.value : ""));
-    if (window.DESK_SOURCE) runAction(tradeSide === "short" ? "Short" : "Long", tradeSide, 1, { coin, wallet: "07f2", label: label.value || undefined });
-    else if (navigator.clipboard) navigator.clipboard.writeText(`${tradeSide} ${coin}${label.value ? " as " + label.value : ""}`);
+    feedback("trade", "plan", coin, tradeSide + (strat.value ? " " + strat.value : ""));
+    if (window.DESK_SOURCE) runAction(tradeSide === "short" ? "Short" : "Long", tradeSide, 1, { coin, wallet: "07f2", label: strat.value || undefined });
+    else if (navigator.clipboard) navigator.clipboard.writeText(`${tradeSide} ${coin}${strat.value ? " as " + strat.value : ""}`);
   };
   go.addEventListener("click", run);
   asset.addEventListener("keydown", (event) => { if (event.key === "Enter") run(); });
   tradeBarNode = el("div", { class: "trade-bar", role: "group", "aria-label": "Trade" },
-    [el("div", { class: "trade-asset-wrap" }, [asset, suggestions]), ...sides, label, go, el("datalist", { id: "trade-assets" }, tradeAssets().map((n) => el("option", { value: n })))]);
+    [el("div", { class: "trade-asset-wrap" }, [asset, suggestions]), ...sides, strat, go, el("datalist", { id: "trade-assets" }, tradeAssets().map((n) => el("option", { value: n })))]);
   return tradeBarNode;
 }
 function drawModes() {
@@ -2291,11 +2291,11 @@ function decoratePublishedTraces(traces, layout) {
   copy.forEach((trace) => { if (trace.type === "scatter" && BENCHMARK_NAME.test(String(trace.name || ""))) trace.line = Object.assign({}, trace.line, { dash: "dot" }); });
   layout.showlegend = false;
   delete layout.legend;
-  layout.margin = Object.assign({}, layout.margin, { r: 150, t: 30 });
+  layout.margin = Object.assign({}, layout.margin, { r: 28, t: 30 });
   if (layout.yaxis2) layout.yaxis2 = Object.assign({}, layout.yaxis2, { showticklabels: false, title: { text: "" } });   // the daily bars: the end labels own the right edge
   const lastAt = (trace) => { for (let k = trace.y.length - 1; k >= 0; k--) if (Number.isFinite(trace.y[k])) return k; return -1; };
   layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => trace.type === "scatter" && lastAt(trace) >= 0)
-    .map(([trace, i]) => ({ x: trace.x[lastAt(trace)], y: trace.y[lastAt(trace)], xref: "x", yref: "y", showarrow: false, xanchor: "left", xshift: 6,
+    .map(([trace, i]) => ({ x: 1, y: trace.y[lastAt(trace)], xref: "paper", yref: "y", showarrow: false, xanchor: "right", xshift: -4,
       text: `${String(trace.name || "").replace(/ \(on equity\)/, "").replace(/^Same \$ in /, "")} ${readablePct(trace.y[lastAt(trace)] / 100)}`,
       font: { size: 11, color: (trace.line && trace.line.color) || colors[i % colors.length] } }));
   return copy;
@@ -2370,7 +2370,7 @@ function decoratePublishedBars(traces, layout) {
   });
   if (data.some((trace, i) => trace !== traces[i] && trace.type === "bar")) {
     layout.margin = Object.assign({}, layout.margin, horizontal
-      ? { l: Math.max(64, Number(layout.margin && layout.margin.l) || 0), r: Math.max(88, Number(layout.margin && layout.margin.r) || 0) }
+      ? { l: Math.max(56, Number(layout.margin && layout.margin.l) || 0), r: Math.max(44, Number(layout.margin && layout.margin.r) || 0) }
       : { t: Math.max(42, Number(layout.margin && layout.margin.t) || 0) });
   }
   return data;
@@ -2444,7 +2444,7 @@ function renderPublished(tiles) {
       const layout = Object.assign({}, base, Object.fromEntries(Object.entries(tile.layout || {}).filter(([key]) => !PUBLISHED_AXES.includes(key))));
       PUBLISHED_AXES.forEach((key) => { if (base[key] || (tile.layout || {})[key]) layout[key] = Object.assign({}, base[key] || {}, (tile.layout || {})[key] || {}); });
       layout.margin = Object.assign({}, layout.margin, {
-        l: Math.min(Number(layout.margin.l) || 40, 52), r: Math.min(Number(layout.margin.r) || 40, 48),
+        l: Math.min(Number(layout.margin.l) || 40, 52), r: Math.min(Number(layout.margin.r) || 32, 36),
         t: Math.min(Number(layout.margin.t) || 30, 42), b: Math.min(Number(layout.margin.b) || 32, 42),
       });
       const node = document.getElementById("pub-" + tile.key);
@@ -2453,6 +2453,7 @@ function renderPublished(tiles) {
       if (node) whenVisible(node, () => Plotly.react(node, data, layout, CONFIG).then(() => {
         markNumericNotes();
         if (isTimeSeriesChart(tile.data || [])) {
+          spreadEndLabels(node.id);
           node._returnSeries = series;
           node._orig = null;
           addPeriodChips(node);
@@ -3134,7 +3135,7 @@ function fillMenuLists() {
   const button = document.getElementById("sections-button");
   if (button) button.classList.toggle("has-suggestion", rarelyUsed().length > 0);
   lists.replaceChildren(heading("On the dashboard"), ...rows, ...(rows.length ? [] : [el("div", { class: "sections-empty", text: "No match" })]),
-    heading(`Available to add${menuQuery ? "" : ` (${addable.length})`}`), ...addable, ...(addable.length ? [] : [el("div", { class: "sections-empty", text: "Nothing more to add" })]),
+    heading(`Available to add (${addable.length})`), ...addable, ...(addable.length ? [] : [el("div", { class: "sections-empty", text: "Nothing more to add" })]),
     ...menuFooter());
 }
 async function pullTile(entry, button, anchor) {   // the section is built (the Mac for the local page, the server for the web) and published

@@ -327,13 +327,13 @@ tr.total td.key { background: rgba(59, 130, 246, 0.12); }
 .sections { position: relative; }
 .sections-button { border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .sections-button:hover, .sections-button[aria-expanded="true"] { color: var(--ink); background: var(--border); }
-.sections-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 240px; max-height: 70vh; overflow: auto;
+.sections-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 240px; max-height: min(85vh, calc(100vh - 72px)); overflow: auto; overscroll-behavior: contain;
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
 .sections-menu[hidden] { display: none; }
 .sections-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--ink-2); }
-.sections-row:hover { background: var(--border); }
-.sections-row.is-picked { color: var(--ink); background: color-mix(in srgb, var(--series-1) 18%, transparent); }
+.sections-row:hover { color: var(--ink); }
+.sections-row.is-picked { color: var(--ink); font-weight: 700; }
 .sections-row:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
 .sections-reset { margin: 6px 8px 4px; background: transparent; border: 1px solid var(--border); color: var(--ink-2); border-radius: 6px;
   padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
@@ -727,7 +727,7 @@ th { text-align: center; }
 .trade-suggestion-empty { padding: 6px 8px; color: var(--ink-2); font-size: 12px; }
 .trade-input { width: 84px; font: inherit; padding: 3px 6px; border: 1px solid var(--line, #8884); border-radius: 6px; background: transparent; color: inherit; }
 .trade-input[type="text"] { text-transform: uppercase; }
-select.trade-input { width: auto; }
+select.trade-input { width: auto; appearance: none; -webkit-appearance: none; background-image: none; padding-right: 6px; }
 .trade-side, .trade-go { font: inherit; line-height: 1; padding: 4px 7px; border: 1px solid var(--line, #8884); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; opacity: 0.55; }
 .trade-side.long[aria-pressed="true"] { color: #16a34a; border-color: #16a34a; opacity: 1; }
 .trade-side.short[aria-pressed="true"] { color: #dc2626; border-color: #dc2626; opacity: 1; }
