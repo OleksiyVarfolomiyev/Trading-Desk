@@ -445,7 +445,7 @@ html.private td.digits { cursor: pointer; }
 .sections-menu { min-width: 300px; }
 /* Symbols in highlights are buttons; an asset tile shows price, chart, your position and the actions. */
 .symbol-chip { background: transparent; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
-.symbol-chip:hover, .symbol-chip:focus-visible { color: var(--series-1) !important; text-decoration: underline; }
+.symbol-chip:hover, .symbol-chip:focus-visible { font-weight: 700; }
 .asset-plot { position: relative; }
 .asset-line { position: absolute; inset: 6px max(52px, 12%) auto 8px; z-index: 2; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); pointer-events: none; }
 .asset-line > span, .asset-line .chart-act { background-color: var(--surface); }
@@ -693,7 +693,7 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .brow:hover { background: var(--border); }
 .brow.notable { box-shadow: inset 2px 0 0 var(--warning); }
 button.bname { cursor: pointer; }
-button.bname:hover, button.bname:focus-visible { text-decoration: underline; }
+button.bname:hover, button.bname:focus-visible { font-weight: 700; }
 .bname { background: transparent; border: 0; font: inherit; font-weight: 600; text-align: left; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btrack { position: relative; height: 16px; min-width: 0; }
 .barlist.zero-centered .btrack::after { content: ""; position: absolute; z-index: 1; left: 50%; top: 1px; bottom: 1px; width: 1px; background: var(--axis); pointer-events: none; }
