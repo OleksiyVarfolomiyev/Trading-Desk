@@ -165,8 +165,8 @@ async function flushFeedback() {
 // names them for the reader and formats them: [source column, shown name, format]. ``derive`` adds computed
 // fields to a row first, ``keep`` drops rows, ``hover`` gives a row its tooltip.
 const RISK_CAP = 0.33;  // desk/risk.py MAX_TOTAL_RISK_PCT
-const ASSET_NAMES = { "crypto perp": "Crypto", "crypto spot": "Wallet tokens", "tradfi perp": "Stocks & commodities (HL)",
-  "equity": "Stocks (IB)", "stock": "Stocks (IB)", "etf": "ETFs (IB)" };
+const ASSET_NAMES = { "crypto perp": "Crypto perps", "crypto spot": "Wallet tokens", "tradfi perp": "TradFi perps",
+  equity: "Equities", stock: "Stocks", etf: "ETFs", futures: "Futures", option: "Options", fx: "FX" };
 const marketName = (symbol) => String(symbol || "").replace(/^[a-z0-9]+:/, "");  // "xyz:AMD" -> "AMD"
 // The uPnL column reads in percent of cost (the desk's default) or in dollars: the $ / % switch in the top bar (as on HL).
 let pnlUnit = "pct";
@@ -206,9 +206,11 @@ const VIEWS = {
   },
   exposure: {
     derive: (r) => {
-      const equity = isNum(r.Net) && isNum(r["Net / equity"]) && r["Net / equity"] ? r.Net / r["Net / equity"] : NaN;
-      return { "Asset class": ASSET_NAMES[r["Asset class"]] || r["Asset class"],
-        _long: equity ? r.Long / equity : NaN, _short: equity ? r.Short / equity : NaN };
+      const equity = isNum(r.Gross) && isNum(r["Gross / equity"]) && r["Gross / equity"] > 0
+        ? r.Gross / r["Gross / equity"] : NaN;
+      return { "Asset class": ASSET_NAMES[r["Asset class"]] || r["Asset class"] || "Unclassified",
+        _long: equity > 0 && isNum(r.Long) ? r.Long / equity : NaN,
+        _short: equity > 0 && isNum(r.Short) ? r.Short / equity : NaN };
     },
     columns: [["Asset class"], ["Net / equity", "Net", "slev"], ["Gross / equity", "Gross", "lev"], ["_long", "Long", "pct"],
       ["_short", "Short", "pct"]],
@@ -858,6 +860,8 @@ function renderTable(id, spec) {
         "symbol-chip table-symbol name-" + (symbolSide(market) || symbolKind(market)))]);
     }
     if (/^notes?$/i.test(column.key)) return el("td", { class: classes + withDigits + " signal-notes" }, signalMarks(value));
+    if (column.key === "Asset class") return el("td", { class: classes, text: ASSET_NAMES[text] || text || "Unclassified" });
+    if (id === "exposure" && isNum(value)) return el("td", { class: classes + withDigits, text });
     if (!format.num && KIND_WORDS.test(text)) { KIND_WORDS.lastIndex = 0; return el("td", { class: classes }, kindMarks(text)); }
     KIND_WORDS.lastIndex = 0;
     return el("td", { class: classes + withDigits, text: ZERO_TEXT.test(text) ? "" : text });
