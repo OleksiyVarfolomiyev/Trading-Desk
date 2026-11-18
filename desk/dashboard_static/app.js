@@ -362,7 +362,7 @@ function renderBarList(id, spec, plan, host) {
   const sizes = list.map((row) => Math.abs(row[plan.value])).sort((a, b) => b - a);
   const cap = sizes.length > 2 ? sizes[1] * BAR_CAP : Infinity;   // one dominant bar is drawn at most 3x the second
   const biggest = Math.min(sizes[0] || 1, cap) || 1;
-  const trackWidth = Math.max(180, (host.clientWidth || 600) - 130);
+  const trackWidth = Math.max(120, (host.clientWidth || 600) - 200);
   const mixed = plan.zeroCentered
     || (list.some((row) => row[plan.value] < 0) && list.some((row) => row[plan.value] > 0));
   const body = el("div", { class: "barlist" + (plan.zeroCentered ? " zero-centered" : "") }, list.map((row) => {
@@ -371,7 +371,7 @@ function renderBarList(id, spec, plan, host) {
     const allText = text(plan.value, value), clipped = Math.abs(value) > cap;
     const proportionalWidth = share * (mixed ? 50 : 100);
     const readableWidth = plan.zeroCentered && value !== 0
-      ? Math.min(50, (allText.length * 8 + (clipped ? 24 : 12)) / trackWidth * 100) : 0;
+      ? Math.min(50, (allText.length * 7 + (clipped ? 22 : 10)) / trackWidth * 100) : 0;
     const width = Math.max(value === 0 ? 2 : 0, proportionalWidth, readableWidth);
     const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
     const inside = el("span", { class: "bfig bfig-inside " + signClass(value),
