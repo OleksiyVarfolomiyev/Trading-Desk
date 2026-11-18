@@ -741,18 +741,13 @@ const CORRELATION_COLORS = [
   [5, 48, 97], [33, 102, 172], [67, 147, 195], [146, 197, 222], [209, 229, 240],
   [247, 247, 247], [253, 219, 199], [244, 165, 130], [214, 96, 77], [178, 24, 43], [103, 0, 31],
 ];
-function correlationStyle(value) {
+function correlationColor(value) {
   const range = CORRELATION_COLORS.length - 1;
   const stop = (Math.max(-1, Math.min(1, value)) + 1) * range / 2;
   const lower = Math.min(Math.floor(stop), range - 1);
   const rgb = CORRELATION_COLORS[lower].map((channel, i) =>
     Math.round(channel + (CORRELATION_COLORS[lower + 1][i] - channel) * (stop - lower)));
-  const [r, g, b] = rgb.map((channel) => {
-    const srgb = channel / 255;
-    return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
-  });
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return `--correlation-tint:rgb(${rgb.join(",")});--correlation-ink:${luminance > 0.179 ? "#000" : "#fff"}`;
+  return `rgb(${rgb.join(",")})`;
 }
 
 function renderTable(id, spec) {
@@ -821,7 +816,7 @@ function renderTable(id, spec) {
     th.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
     return th;
   }));
-  // Key columns (desk/emphasis.py): tinted, with the standout value of each picked by its mode.
+  // Key columns (desk/emphasis.py): mark the standout value picked by each column’s mode.
   const standout = {};
   spec.columns.forEach((column) => {
     if (!column.emphasis || column.emphasis === "none") return;
@@ -848,7 +843,7 @@ function renderTable(id, spec) {
     // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
     const withDigits = !isAssetColumn(column.key) && /\d/.test(text) ? " digits" : "";
     if (/^corr(?:elation)?\s+(?:to\s+)?btc(?:\s+30d)?$/i.test(column.key) && isNum(value)) {
-      return el("td", { class: classes + withDigits + " correlation-cell", style: correlationStyle(value), text });
+      return el("td", { class: classes + withDigits + " correlation-cell", style: `--correlation-color:${correlationColor(value)}`, text });
     }
     if (isAssetColumn(column.key) && text && !/^(?:net\/)?total$/i.test(text) && !ZERO_TEXT.test(text)) {
       const market = (row.__raw && row.__raw[column.key]) || value;
