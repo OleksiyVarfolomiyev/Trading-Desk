@@ -1888,6 +1888,9 @@ function drawModes() {
 // switch redraws the tables; mode and style are CSS for the tables, so only the Plotly charts (which read the colours and
 // font when drawn) are redrawn, and the table charts when the charts view is on.
 function redrawLook(kind) {
+  if (kind !== "view") {
+    document.querySelectorAll(".asset-chart").forEach((chart) => chart._candleSeries?.applyOptions(candleColors()));
+  }
   if (!latest || !latest.data) return;
   const data = latest.data, context = { deskValue: (data.kpis || {}).desk_value };
   if (kind === "view" || isChartView()) {
@@ -2801,6 +2804,13 @@ function assetAdvice(rows) {   // where it stands, and what is sensible
   return { line, actions, lead: share >= 0.1 ? "Winner: take part of it" : share <= -0.1 ? "Loser: decide" : "",
     target: hl && window.DESK_SOURCE ? { coin: hl.Symbol, wallet: String(hl.Account).slice(-4) } : null };
 }
+function candleColors() {
+  const up = token("--good-text"), down = token("--bad-text");
+  return {
+    upColor: withAlpha(up, 0.42), downColor: withAlpha(down, 0.42),
+    borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
+  };
+}
 async function openAsset(symbol) {
   const name = friendlyName(symbol), rows = assetRows(symbol);
   const market = String(symbol).includes(":") ? symbol : rows.find((row) => /^HL /.test(String(row.Account || "")))?.Symbol || symbol;
@@ -2925,6 +2935,7 @@ async function openAsset(symbol) {
     }
     chart._lightweightChart?.remove();
     chart._lightweightChart = null;
+    chart._candleSeries = null;
     chart.textContent = "Loading candles…";
     try {
       const end = Date.now();
@@ -2939,7 +2950,7 @@ async function openAsset(symbol) {
       }
       chart.replaceChildren();
       const entry = rows.map((row) => row["Avg price"]).find(isNum);
-      const border = token("--grid"), ink = token("--ink-2"), up = token("--good-text"), down = token("--bad-text");
+      const border = token("--grid"), ink = token("--ink-2");
       const instance = LightweightCharts.createChart(chart, {
         autoSize: true,
         layout: { background: { type: "solid", color: token("--surface") }, textColor: ink, attributionLogo: true },
@@ -2952,9 +2963,9 @@ async function openAsset(symbol) {
       });
       chart._lightweightChart = instance;
       const series = instance.addSeries(LightweightCharts.CandlestickSeries, {
-        upColor: up, downColor: down, borderUpColor: up, borderDownColor: down,
-        wickUpColor: up, wickDownColor: down, priceLineVisible: false,
+        ...candleColors(), priceLineVisible: false,
       });
+      chart._candleSeries = series;
       series.setData(candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c) }))
         .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close)));
       if (isNum(entry)) series.createPriceLine({ price: entry, color: token("--muted"), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
