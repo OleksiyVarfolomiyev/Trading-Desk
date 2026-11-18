@@ -2917,7 +2917,7 @@ function openMoreMenu(card, button) {
       const matches = [...document.querySelectorAll(".feed .card[data-published]")].filter((tile) => tile.dataset.published.startsWith(prefix));
       const selected = matches.some((tile) => !tile.classList.contains("card-off"));
       const row = el("div", { class: "sections-row" + (selected ? " is-picked" : ""), role: "checkbox", tabindex: "0",
-        "aria-checked": String(selected), text: (s ? "★ " : "") + entry.title, title: entry.description || entry.call });
+        "aria-checked": String(selected), text: (s ? "★ " : "") + entry.title });
       const toggle = () => {
         if (!matches.length) { pullTile(entry, null, cardId(card)).then(fill); return; }
         const show = !selected;
@@ -3129,7 +3129,7 @@ function fillMenuLists() {
       feedback("section", show ? "show" : "hide", entry.title);
       drawSectionsMenu();
       if (show && latest && latest.data) renderCharts(latest.data.charts);
-    }, entry.description || entry.call);
+    });
     (selected ? rows : addable).push(row);
   });
   const button = document.getElementById("sections-button");
