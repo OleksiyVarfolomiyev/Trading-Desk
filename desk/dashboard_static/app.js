@@ -1447,15 +1447,17 @@ function renderHighlights(id, rows, hover = {}) {
     const positions = symbolActions(whole);
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
     const item = el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [   // a pop-up only for the headlines around a big move
-      el("span", { class: "text" }, [
-        ...lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text)),
+      el("div", { class: "hl-text-row" }, [
+        el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),
         response?.button,
-      ]),   // the uPnL lines carry no background
+      ]),
       el("span", { class: "hl-actions" }, [
-        positions?.button,
-        act("Read: hide until it changes", "✓", markRead),
-        act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),   // stays; tells the model this area earns its place
+        act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),
         act("Not important: stop showing this", "👎", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
+        el("span", { class: "hl-primary-actions" }, [
+          act("Read: hide until it changes", "✓", markRead),
+          positions?.button,
+        ]),
       ]),
       response?.panel, positions?.panel,
     ]);
@@ -2314,7 +2316,7 @@ function adoptCard(card) {
     const more = tool("card-more", "Add a layer: more on this", "+", () => openMoreMenu(card, more));
     addResizeHandle(card);
     addColumnHandle(card);
-    card.append(el("div", { class: "card-foot" }, thumbs(cardTitle(card), "section")));   // bottom right, on hover: clear of the heading
+    card.append(el("div", { class: "card-foot" }, thumbs(cardTitle(card), "section")));   // bottom left, on hover: clear of the heading
     const tools = el("span", { class: "card-tools" }, [
       more,
       ...chartTools(),

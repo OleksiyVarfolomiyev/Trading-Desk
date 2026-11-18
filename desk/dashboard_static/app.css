@@ -373,9 +373,12 @@ html.has-full { overflow: hidden; }
 @media (hover: none) { .hl-actions { opacity: 1; } }
 .hl-act { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 7px; border-radius: 4px; }
 .hl-act:hover { color: var(--ink); background: var(--border); }
-.alert-response { margin-inline-start: 4px; }
+.hl-text-row { display: flex; align-items: baseline; gap: 4px; }
+.hl-text-row .alert-response { flex: 0 0 auto; }
+.hl-primary-actions { display: inline-flex; gap: 2px; margin-inline-start: auto; }
 .highlight-options { margin-block: 4px; }
-.highlight-option-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.highlight-option-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px; }
+.highlight-option-row > :is(b, span) { margin-inline-end: auto; }
 .highlight-options .hl-act { min-width: 24px; min-height: 24px; }
 .hl-act[aria-expanded="true"] { color: var(--series-1); }
 @media (max-width: 600px) { .highlights li { grid-template-columns: 1fr; } .hl-actions { opacity: 1; } }
@@ -454,7 +457,7 @@ html.private td.digits { cursor: pointer; }
 .card.asset-card h2 .card-name { opacity: 1; }
 .asset-body .asset-scales { opacity: 1; margin: 0 0 4px; flex-wrap: wrap; }
 .asset-change { font-weight: 600; font-variant-numeric: tabular-nums; }
-.asset-trade-actions { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.asset-trade-actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-inline-start: auto; }
 .asset-position:empty, .asset-change:empty, .asset-price:empty { display: none; }
 .asset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .asset-action { background: transparent; border: 1px solid var(--border); color: var(--ink-2); border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; text-decoration: none; }
@@ -522,6 +525,7 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 @media (hover: none) { .row-act { opacity: 1; } }
 /* An element's own scale chips, shown on its hover. */
 .scale-chips { display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s; order: 5; margin-left: auto; }
+.tile .scale-chips { order: 0; margin-inline-start: 0; }
 .tile:hover .scale-chips, .card:hover .scale-chips, .scale-chips:focus-within { opacity: 1; }
 .scale-chip { background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 11px; padding: 1px 5px; border-radius: 4px; cursor: pointer; position: relative; }
 .scale-chips.table-periods { display: flex; flex-wrap: wrap; order: 0; margin: 0 0 4px; }
@@ -622,9 +626,9 @@ th, td { padding: 1px 5px; }
 .card.drop-target { outline: none; }
 /* Thumbs: bottom right of the tile, on hover. */
 .card { position: relative; }
-.card-foot { position: absolute; right: 4px; bottom: 2px; display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s; background: var(--surface); border-radius: 6px; }
-.card:hover .card-foot, .tile:hover .card-foot { opacity: 1; }
-.tile-foot { right: 2px; bottom: 0; }
+.card-foot { position: absolute; left: 4px; bottom: 2px; display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s; background: var(--surface); border-radius: 6px; }
+.card:hover .card-foot, .tile:hover .card-foot, .card-foot:focus-within { opacity: 1; }
+.tile-foot { left: 2px; bottom: 0; }
 @media (hover: none) { .card-foot { opacity: 1; } }
 /* Nothing but separation: no heading height, no card padding beyond a hairline, tight table rows and charts. */
 .card { padding: 1px 3px !important; }
@@ -755,7 +759,7 @@ html:not([data-screen="research"]) .alert-strip { display: none; }
 
 .asset-actions .asset-action.lead, .asset-actions .asset-action { min-width: 56px; font-size: 20px; line-height: 1; padding: 8px 16px; }
 .asset-actions .asset-action.lead { color: var(--good-text); }
-.asset-links { display: flex; gap: 4px; margin-top: 4px; }
+.asset-links { display: flex; justify-content: flex-end; gap: 4px; margin-top: 4px; }
 .asset-card .chart-act { opacity: 1; min-width: 24px; text-align: center; line-height: 1.5; }
 .asset-card .chart-act.lead { color: var(--series-1); }
 
@@ -770,7 +774,7 @@ th { text-align: center; }
   .tile .tile-tools, .tile .card-foot, .tile:hover .tile-tools, .tile:hover .card-foot, .tile:focus-within .tile-tools { opacity: 0; pointer-events: none; }
 }
 
-.period-chips { position: relative; z-index: 5; display: flex; justify-content: flex-end; height: 0; margin: 0; overflow: visible; opacity: 0; transition: opacity .12s; }   /* D W M Y ALL float over the chart's corner on hover: no row of their own taking the tile's height */
+.period-chips { position: relative; z-index: 5; display: flex; justify-content: flex-start; height: 0; margin: 0; overflow: visible; opacity: 0; transition: opacity .12s; }   /* D W M Y ALL float over the chart's corner on hover: no row of their own taking the tile's height */
 .period-chips .scale-chip { transform: translateY(4px); }
 .card:hover .period-chips, .period-chips:focus-within { opacity: 1; }
 @media (hover: none) { .period-chips { opacity: 1; } }
