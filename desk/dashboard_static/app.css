@@ -439,7 +439,7 @@ html.private td.digits { cursor: pointer; }
 .sections-menu { min-width: 300px; }
 /* Symbols in highlights are buttons; an asset tile shows price, chart, your position and the actions. */
 .symbol-chip { background: transparent; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
-.symbol-chip:hover, .symbol-chip:focus-visible { color: var(--series-1); }
+.symbol-chip:hover, .symbol-chip:focus-visible { color: var(--series-1) !important; }
 .asset-line { display: flex; gap: 6px; align-items: baseline; font-size: 13px; color: var(--ink-2); margin-bottom: 4px; }
 .asset-price { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 .asset-chart { height: 150px; }

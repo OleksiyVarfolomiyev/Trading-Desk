@@ -791,7 +791,7 @@ function renderTable(id, spec) {
     const withDigits = column.key !== "Symbol" && column.key !== "Coin" && /\d/.test(text) ? " digits" : "";
     if (row.__link && (column.key === "Symbol" || column.key === "Coin") && text) {   // the symbol opens its dashboard tile; ↗ remains the external page
       const symbol = el("button", { type: "button", class: "symbol-chip table-symbol name-" + (symbolSide(text) || symbolKind(text)),
-        title: "Open " + marketName(text) + " on the dashboard", text });
+        text });
       symbol.addEventListener("click", (event) => { event.stopPropagation(); openAsset(text); });
       return el("td", { class: classes }, [symbol]);
     }
@@ -2747,6 +2747,7 @@ async function openAsset(symbol) {
     card = el("div", { class: "card asset-card", "data-asset": key }, [el("h2", { text: name }), el("div", { class: "asset-body", id: key })]);
     feed.prepend(card);
     adoptCard(card);
+    requestAnimationFrame(() => card.scrollIntoView({ behavior: "smooth", block: "center" }));
   }
   const body = card.querySelector(".asset-body");
   const rows = assetRows(symbol), advice = assetAdvice(rows);
@@ -2760,7 +2761,7 @@ async function openAsset(symbol) {
     if (oldChart && oldChart._lightweightChart) { oldChart._lightweightChart.remove(); oldChart._lightweightChart = null; }
     body.replaceChildren(
       el("div", { class: "asset-line" }, [el("span", { class: "asset-price", id: key + "-price" }), el("span", { text: advice.line })]),
-      el("div", { class: "chart asset-chart", id: key + "-chart", hidden: true }),
+      el("div", { class: "chart asset-chart", id: key + "-chart", text: "Loading candles…" }),
       advice.lead ? el("div", { class: "asset-lead", text: advice.lead }) : null,
       el("div", { class: "asset-actions" }, [
         ...advice.actions.map(([label, sentence, change, fraction], i) => {
@@ -2780,7 +2781,8 @@ async function openAsset(symbol) {
   try {
     await loadUniverse();
     const hlName = universeMap[name.toLowerCase()];
-    if (!hlName) return;
+    const chart = document.getElementById(key + "-chart");
+    if (!hlName) { if (chart) chart.textContent = "No Hyperliquid market found for this asset."; return; }
     const contexts = await tickerContexts([hlName]);
     const context = contexts[hlName];
     if (context) {
@@ -2792,9 +2794,8 @@ async function openAsset(symbol) {
     const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(Object.assign({ type: "candleSnapshot", req: { coin: hlName.split(":").pop(), interval: "1h", startTime: end - 7 * 86400000, endTime: end } }, dex ? { dex } : {})) });
     const candles = await response.json();
-    const chart = document.getElementById(key + "-chart");
-    if (!chart || !candles.length || !window.LightweightCharts) return;
-    chart.hidden = false;
+    if (!chart || !candles.length || !window.LightweightCharts) { if (chart) chart.textContent = "Candles are unavailable for this asset."; return; }
+    chart.replaceChildren();
     const entry = rows.map((row) => row["Avg price"]).find(isNum);
     const border = token("--grid"), ink = token("--ink-2"), up = token("--good-text"), down = token("--bad-text");
     const instance = LightweightCharts.createChart(chart, {
@@ -2817,7 +2818,7 @@ async function openAsset(symbol) {
     if (isNum(entry)) series.createPriceLine({ price: entry, color: token("--muted"), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
       axisLabelVisible: true, title: "Entry" });
     instance.timeScale().fitContent();
-  } catch (e) { /* no chart: the facts and actions are there */ }
+  } catch (e) { const chart = document.getElementById(key + "-chart"); if (chart) chart.textContent = "Candles could not be loaded."; }
 }
 
 
