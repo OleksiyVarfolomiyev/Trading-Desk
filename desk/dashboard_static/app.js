@@ -386,7 +386,7 @@ function renderBarList(id, spec, plan, host) {
     const clipped = Math.abs(value) > cap, width = Math.max(2, share * (mixed ? 50 : 100));
     const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
     const endStyle = mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)`;
-    const figures = (plan.text ? [[plan.text, extra]] : plan.zeroCentered ? [[plan.value, value]] : [])
+    const figures = (plan.text ? [[plan.text, extra]] : (plan.zeroCentered || id === "pub-desk_crypto-picks-vs-btc") ? [[plan.value, value]] : [])
       .filter(([, number]) => number !== null && number !== undefined && number !== "");
     const end = figures.length ? el("span", { class: "bfig", style: endStyle }, [
       ...(clipped ? [el("span", { class: signClass(value), text: "» " })] : []),
