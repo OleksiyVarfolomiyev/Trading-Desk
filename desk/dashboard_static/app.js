@@ -671,6 +671,35 @@ function candidateRowButtons(id, row) {   // the same answers as a list row's bu
 }
 const filterState = {};   // table id -> text: only rows that contain it are shown
 const lastSpecs = {};     // table id -> the last spec drawn, so a filter redraws without new data
+function signalMarks(value) {
+  const signals = [
+    [/kelly long/i, "K", "--series-5", "Kelly model leans long"],
+    [/low correlation/i, "ρ", "--series-1", "Low correlation with BTC"],
+    [/crowded long/i, "L", "--warning", "Crowded longs: longs are paying funding"],
+    [/crowded short/i, "S", "--warning", "Crowded shorts: shorts are paying funding"],
+    [/crowded/i, "F", "--warning", "Crowded funding"],
+    [/breakout risk/i, "⚡", "--kind-crypto", "Breakout risk: price is near a 60-day range edge"],
+    [/large size/i, "↗", "--bad-text", "Large size: trades of this size lost money in desk history"],
+    [/weak side/i, "↓", "--bad-text", "Weak side in desk trade history"],
+    [/weak market/i, "!", "--bad-text", "Weak historical result for this market"],
+    [/(stress|refused|cut to)/i, "!", "--bad-text", "Stress scenario warning"],
+  ];
+  const notes = String(value || "").split(/;\s*/).filter(Boolean);
+  const marks = [], used = new Set();
+  notes.forEach((note) => {
+    const signal = signals.find(([pattern]) => pattern.test(note));
+    if (signal) {
+      const key = signal[1] + signal[3];
+      if (used.has(key)) return;
+      used.add(key);
+      marks.push(el("span", { class: "signal-mark", style: `color:var(${signal[2]})`, title: signal[3], "aria-label": signal[3], tabindex: "0", text: signal[1] }));
+    } else {
+      marks.push(el("span", { class: "signal-mark signal-other", title: note, "aria-label": note, tabindex: "0", text: "•" }));
+    }
+  });
+  return marks;
+}
+
 function renderTable(id, spec) {
   const original = spec;
   lastSpecs[id] = spec;
@@ -764,6 +793,7 @@ function renderTable(id, spec) {
       const link = el("a", { class: "symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", text });
       return el("td", { class: classes }, [link]);
     }
+    if (/^notes?$/i.test(column.key)) return el("td", { class: classes + withDigits + " signal-notes" }, signalMarks(value));
     if (!format.num && KIND_WORDS.test(text)) { KIND_WORDS.lastIndex = 0; return el("td", { class: classes }, kindMarks(text)); }
     KIND_WORDS.lastIndex = 0;
     return el("td", { class: classes + withDigits, text: ZERO_TEXT.test(text) ? "" : text });
