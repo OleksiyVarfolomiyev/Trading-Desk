@@ -3149,6 +3149,7 @@ async function refreshTicker() {
     const asset = known ? known : name.includes(":") ? name.replace(/^([A-Za-z0-9]+):(.*)$/, (m, dex, coin) => dex.toLowerCase() + ":" + coin.toUpperCase()) : name.toUpperCase();
     if (!s.assets.includes(asset)) s.assets.push(asset);
     addBox.firstChild.value = "";
+    addBox.firstChild.blur();   // an empty focused field blocks refreshTicker from redrawing the newly added chip
     saveTicker(s); feedback("look", "price strip add", asset); refreshTicker();
   };
   addBox.firstChild.addEventListener("keydown", (event) => { if (event.key === "Enter") addAsset(); });
