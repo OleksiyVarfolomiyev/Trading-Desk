@@ -757,7 +757,7 @@ function renderTable(id, spec) {
   if (spec.rows.length > 1 && !align) {
     spec = Object.assign({}, spec, { columns: spec.columns.filter((column, i) => {
       const format = FORMATS[column.fmt] || FORMATS.text;
-      if (i === 0) return true;
+      if (i === 0 || /^leg$/i.test(column.key)) return true;
       if (format.num) {  // a number column empty or zero in every row says nothing: left out
         return spec.rows.some((row) => isNum(row[column.key]) && !ZERO_TEXT.test(format.text(row[column.key])));
       }
@@ -822,8 +822,10 @@ function renderTable(id, spec) {
       : format.side ? (value === "LONG" ? "pos" : value === "SHORT" ? "neg" : "")
       : format.tone && isNum(value) && value > 0 ? format.tone : "";
     const key = column.emphasis ? (index !== undefined && standout[column.key] === index ? "key key-top" : "key") : "";
-    const classes = [format.num ? "num" : "", tone, key].filter(Boolean).join(" ");
     const text = format.text(value);
+    const leg = /^leg$/i.test(column.key) ? text.trim().toLowerCase() : "";
+    const legColor = /^(long|short|net)$/.test(leg) ? "name-" + leg : "";
+    const classes = [format.num ? "num" : "", tone, key, legColor].filter(Boolean).join(" ");
     // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
     const withDigits = !isAssetColumn(column.key) && /\d/.test(text) ? " digits" : "";
     if (isAssetColumn(column.key) && text && !/^(?:net\/)?total$/i.test(text) && !ZERO_TEXT.test(text)) {
