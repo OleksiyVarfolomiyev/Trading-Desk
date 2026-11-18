@@ -11,16 +11,16 @@
   --axis: #c3c2b7;
   --border: rgba(11, 11, 11, 0.10);
   --good-text: #006300;
-  --bad-text: #d03b3b;
+  --bad-text: #b92314;
   --good: #0ca30c;
   --warning: #fab219;
-  --critical: #d03b3b;
+  --critical: var(--bad-text);
   --wash-warning: rgba(250, 178, 25, 0.12);
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-4: #eda100;
-  --series-5: #e87ba4;
+  --series-5: #7138c7;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -34,15 +34,15 @@
     --axis: #383835;
     --border: rgba(255, 255, 255, 0.10);
     --good-text: #0ca30c;
-    --bad-text: #e66767;
+    --bad-text: #ff4d32;
     --good: #0ca30c;
-    --critical: #d03b3b;
+    --critical: var(--bad-text);
     --wash-warning: rgba(250, 178, 25, 0.14);
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
-    --series-5: #d55181;
+    --series-5: #9860e8;
   }
 }
 :root[data-theme="dark"] {
@@ -56,15 +56,15 @@
   --axis: #383835;
   --border: rgba(255, 255, 255, 0.10);
   --good-text: #0ca30c;
-  --bad-text: #e66767;
+  --bad-text: #ff4d32;
   --good: #0ca30c;
-  --critical: #d03b3b;
+  --critical: var(--bad-text);
   --wash-warning: rgba(250, 178, 25, 0.14);
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #c98500;
-  --series-5: #d55181;
+  --series-5: #9860e8;
 }
 
 /* Hyperliquid look: deep teal-black page, mint accent, mint-green gains and rose losses. Open the dashboard with

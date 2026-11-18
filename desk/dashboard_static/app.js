@@ -1568,7 +1568,7 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 // style: Indie (the desk's own), HL (Hyperliquid), Apple or monochrome. Every style has a light and a dark version. The choices are
 // remembered in the browser; the page's head script sets them before first paint (and reads ?mode= ?style= ?view=).
 const VIEW_CHOICES = [["tables", "Numbers (tables)", "table"], ["charts", "Charts", "chart"]];
-const STYLE_CHOICES = [["indie", "Indie", "#898781"], ["hl", "HL", "#50d2c1"], ["apple", "Apple", "#0a84ff"], ["mono", "Monochrome", "#666666"]];
+const STYLE_CHOICES = [["indie", "Indie", "#d95926"], ["hl", "HL", "#50d2c1"], ["apple", "Apple", "#0a84ff"], ["mono", "Monochrome", "linear-gradient(90deg, #d9d9d9 50%, #555 50%)"]];
 function lookTheme(mode, style) {   // the CSS theme for a style and mode
   return style === "indie" ? mode : style === "hl" ? (mode === "dark" ? "hl" : "hl-light")
     : style === "mono" ? "mono-" + mode : "apple-" + mode;
