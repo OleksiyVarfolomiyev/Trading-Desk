@@ -362,24 +362,33 @@ function renderBarList(id, spec, plan, host) {
   const sizes = list.map((row) => Math.abs(row[plan.value])).sort((a, b) => b - a);
   const cap = sizes.length > 2 ? sizes[1] * BAR_CAP : Infinity;   // one dominant bar is drawn at most 3x the second
   const biggest = Math.min(sizes[0] || 1, cap) || 1;
-  const trackWidth = Math.max(120, (host.clientWidth || 600) - 200);
+  const labelCounts = new Map();
+  list.forEach((row) => { const label = String(row[plan.label] ?? ""); labelCounts.set(label, (labelCounts.get(label) || 0) + 1); });
+  const labelSeen = new Map();
+  const windowName = { D: "24h", W: "7D", M: "30D", Q: "90D", Y: "1Y" };
+  const rowLabel = (row) => {
+    const label = String(row[plan.label] ?? "");
+    if (labelCounts.get(label) <= 1) return label;
+    let suffix = row.Window ? ` · ${windowName[row.Window] || row.Window}` : row.Account ? ` (${row.Account})` : "";
+    if (!suffix) { const seen = (labelSeen.get(label) || 1) + 1; labelSeen.set(label, seen); suffix = ` #${seen}`; }
+    return label + suffix;
+  };
   const mixed = plan.zeroCentered
     || (list.some((row) => row[plan.value] < 0) && list.some((row) => row[plan.value] > 0));
-  const body = el("div", { class: "barlist" + (plan.zeroCentered ? " zero-centered" : "") }, list.map((row) => {
+  const body = el("div", { class: "barlist" + (plan.zeroCentered ? " zero-centered" : "") + (id.startsWith("pub-") ? " wide-labels" : "") }, list.map((row) => {
     const value = row[plan.value], share = Math.min(Math.abs(value), cap) / biggest, kind = kindClass(id, row);
-    const label = String(row[plan.label] ?? ""), extra = plan.text ? row[plan.text] : null;
-    const allText = text(plan.value, value), clipped = Math.abs(value) > cap;
-    const proportionalWidth = share * (mixed ? 50 : 100);
-    const readableWidth = plan.zeroCentered && value !== 0
-      ? Math.min(50, (allText.length * 7 + (clipped ? 22 : 10)) / trackWidth * 100) : 0;
-    const width = Math.max(value === 0 ? 2 : 0, proportionalWidth, readableWidth);
+    const label = rowLabel(row), extra = plan.text ? row[plan.text] : null;
+    const clipped = Math.abs(value) > cap, width = Math.max(2, share * (mixed ? 50 : 100));
     const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
-    const inside = el("span", { class: "bfig bfig-inside " + signClass(value),
-      style: (mixed ? (value < 0 ? "right:calc(50% + 4px);text-align:right" : "left:calc(50% + 4px)") : "left:4px") + ";color:#fff" },
-      `${clipped ? "» " : ""}${allText}`);
     const endStyle = mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)`;
-    const end = plan.text && isNum(extra) ? el("span", { class: "bfig", style: endStyle }, [
-      el("span", { class: signClass(extra), text: text(plan.text, extra) }),
+    const figures = (plan.text ? [[plan.text, extra]] : plan.zeroCentered ? [[plan.value, value]] : [])
+      .filter(([, number]) => number !== null && number !== undefined && number !== "");
+    const end = figures.length ? el("span", { class: "bfig", style: endStyle }, [
+      ...(clipped ? [el("span", { class: signClass(value), text: "» " })] : []),
+      ...figures.flatMap(([key, number], index) => [
+        ...(index ? [el("span", { text: " · " })] : []),
+        el("span", { class: isNum(number) ? signClass(number) : "", text: text(key, number) }),
+      ]),
     ]) : null;
     const heldSide = (row.__raw && isNum(row.__raw.Value)) ? (row.__raw.Value < 0 ? "short" : "long") : null;   // colour by side, so no long or short word
     const name = el("button", { type: "button", class: "bname name-" + (heldSide || kind), text: friendlyName(label) });
@@ -417,7 +426,7 @@ function renderBarList(id, spec, plan, host) {
     }
     if (row.__link) acts.append(el("a", { class: "row-act symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", title: "Open its page", text: "↗" }));
     const line = el("div", { class: "brow" + (notable && !plan.zeroCentered ? " notable" : ""),
-      title: plan.zeroCentered ? "" : notable || row.__hover || "" }, [name, el("span", { class: "btrack" }, [fill, inside, end]), acts]);
+      title: plan.zeroCentered ? "" : notable || row.__hover || "" }, [name, el("span", { class: "btrack" }, [fill, end]), acts]);
     gestures(line, id in CANDIDATE_TABLES ? {
       dislike: () => { const s = candidateState(); s.refused[row.Coin] = Date.now(); saveCandidates(s); feedback("candidate", "refuse", row.Coin, id); if (lastSpecs[id]) renderTable(id, lastSpecs[id]); },
       like: () => { const s = candidateState(); if (!s.starred.includes(row.Coin)) s.starred.push(row.Coin); saveCandidates(s); feedback("candidate", "bookmark", row.Coin, id); if (lastSpecs[id]) renderTable(id, lastSpecs[id]); },
