@@ -1341,7 +1341,8 @@ function renderCharts(charts) {
   const twr = (charts.twr || []).map((s, i) => colorHover({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
     line: Object.assign({ shape: "linear" }, lineFor(s, i)),
-    hovertemplate: "%{fullData.name}: %{y:.1f}%<extra></extra>",
+    customdata: s.y.map((v) => readablePct(v / 100)),
+    hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>",
   }));
   // % since the start; the desk line ends at the "TW return" tile.
   const shortName = (name) => (/^(total|desk)/i.test(name) ? "desk" : String(name));
@@ -1572,7 +1573,7 @@ function drawIntraday(node, days) {
   if (sp) lines.push(["S&P500", sp, { width: 1.4, dash: "dot", color: colorFor("S&P500") }]);
   if (!lines.length) return false;
   const traces = lines.map(([name, line, style]) => colorHover({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
-    hovertemplate: "%{fullData.name}: %{y:.2f}%<extra></extra>" }));
+    customdata: line.y.map((v) => readablePct(v / 100)), hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>" }));
   const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ xref: "paper", x: 1, y: line.y[line.y.length - 1], xanchor: "right", xshift: -4,
     showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color } })), xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null }),
     yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }) });
@@ -2363,7 +2364,7 @@ function decoratePublishedBars(traces, layout) {
     const label = (value) => {
       if (!isNum(value)) return "";
       if (format.includes("%")) return readablePct(value);
-      if (axis.ticksuffix === "%") return number(value) + "%";
+      if (axis.ticksuffix === "%") return readablePct(value / 100);
       if (format.includes("$") || axis.tickprefix === "$") return usd(value);
       return (axis.tickprefix || "") + number(value) + (axis.ticksuffix || "");
     };
@@ -2373,7 +2374,8 @@ function decoratePublishedBars(traces, layout) {
       return prior && !prior.includes(numberLabel) ? `${prior} · ${numberLabel}` : numberLabel;
     });
     const colors = values.map((value) => !isNum(value) || value === 0 ? token("--ink-2") : value > 0 ? good : bad);
-    return Object.assign(trace, { [key]: values, text, textposition: "outside", cliponaxis: false,
+    return Object.assign(trace, { [key]: values, text, customdata: values.map(label),
+      hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>", textposition: "outside", cliponaxis: false,
       outsidetextfont: LABEL_FONT(12, colors) });
   });
   if (data.some((trace, i) => trace !== traces[i] && trace.type === "bar")) {
