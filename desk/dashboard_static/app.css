@@ -455,7 +455,9 @@ html.private td.digits { cursor: pointer; }
 .asset-price { font-weight: 600; color: var(--good-text); font-variant-numeric: tabular-nums; }
 .chart.asset-chart { height: 220px; }
 .card.asset-card h2 .card-name { opacity: 1; }
-.asset-body .asset-scales { opacity: 1; margin: 0 0 4px; flex-wrap: wrap; }
+.asset-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 4px; margin-bottom: 4px; }
+.asset-body .asset-scales { opacity: 1; margin: 0; flex-wrap: wrap; order: 0; }
+.asset-control { margin-inline-start: auto; flex: 0 0 auto; }
 .asset-change { font-weight: 600; font-variant-numeric: tabular-nums; }
 .asset-trade-actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-inline-start: auto; }
 .asset-position:empty, .asset-change:empty, .asset-price:empty { display: none; }

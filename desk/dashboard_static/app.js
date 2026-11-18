@@ -3051,31 +3051,73 @@ function candlePriceFormat(candles) {
   precision = Math.min(precision, 12);
   return { type: "price", precision, minMove: 10 ** -precision };
 }
-async function openAsset(symbol) {
+let assetCardCount = 0;
+async function openAsset(symbol, targetCard = null) {
   const name = friendlyName(symbol), rows = assetRows(symbol);
   const market = String(symbol).includes(":") ? symbol : rows.find((row) => /^HL /.test(String(row.Account || "")))?.Symbol || symbol;
-  const key = "asset-" + String(market).toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  const key = String(market).toUpperCase();
   feedback("asset", "open", name);
-  let feed = document.getElementById("feed");
-  if (!feed) { renderPublished([]); feed = document.getElementById("feed"); }
-  if (!feed) return;
-  feed.hidden = false;
-  const existing = document.getElementById(key)?.closest(".asset-card");
-  if (existing) {
-    existing.classList.remove("card-off", "card-min");
-    existing.refreshPosition();
-    existing.scrollIntoView({ behavior: "smooth", block: "center" });
-    return;
+  let card = targetCard;
+  if (card?.dataset.asset === key) return;
+  if (!card) {
+    let feed = document.getElementById("feed");
+    if (!feed) { renderPublished([]); feed = document.getElementById("feed"); }
+    if (!feed) return;
+    feed.hidden = false;
+    const existing = Object.values(CARDS).find((candidate) => candidate.isConnected && candidate.dataset.asset === key);
+    if (existing) {
+      existing.classList.remove("card-off", "card-min");
+      existing.refreshPosition();
+      existing.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    const baseId = "asset-" + key.replace(/[^A-Z0-9]/g, "_");
+    let id = baseId;
+    while (document.getElementById(id)) id = baseId + "-" + ++assetCardCount;
+    card = el("div", { class: "card asset-card", "data-asset": key }, [
+      el("h2", { text: name }), el("div", { class: "asset-body", id }),
+    ]);
+    feed.prepend(card);
+    adoptCard(card);
+    requestAnimationFrame(() => card.scrollIntoView({ behavior: "smooth", block: "center" }));
+  } else {
+    card.disposeAssetChart?.();
+    card.dataset.asset = key;
+    card.querySelector(".card-name").textContent = name;
   }
-  const body = el("div", { class: "asset-body", id: key });
-  const card = el("div", { class: "card asset-card", "data-asset": key }, [el("h2", { text: name }), body]);
-  feed.prepend(card);
-  adoptCard(card);
-  requestAnimationFrame(() => card.scrollIntoView({ behavior: "smooth", block: "center" }));
+  const body = card.querySelector(".asset-body");
   const external = rows.some((row) => /^IB/.test(String(row.Account || ""))) ? stockLink(name) : hlLink(market);
   const chart = el("div", { class: "chart asset-chart", text: "Loading candles…" });
   const price = el("span", { class: "asset-price" });
   const scales = el("div", { class: "scale-chips asset-scales", role: "group", "aria-label": "Candle interval" });
+  const picker = assetPicker("Asset to chart", (selection) => {
+    picker.wrap.hidden = true;
+    changeAsset.setAttribute("aria-expanded", "false");
+    openAsset(selection, card);
+    card.querySelector(".asset-switch")?.focus();
+  }, true);
+  picker.asset.placeholder = name;
+  picker.wrap.hidden = true;
+  const changeAsset = el("button", { type: "button", class: "row-act chart-act asset-switch", text: "⇄", title: "Change chart asset",
+    "aria-label": `Change chart asset (currently ${name})`, "aria-expanded": "false" });
+  const togglePicker = (open) => {
+    picker.wrap.hidden = !open;
+    changeAsset.setAttribute("aria-expanded", String(open));
+    if (open) picker.asset.focus();
+    else changeAsset.focus();
+  };
+  changeAsset.addEventListener("click", () => togglePicker(picker.wrap.hidden));
+  const assetControl = el("div", { class: "trade-bar asset-control" }, [picker.wrap, changeAsset]);
+  assetControl.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !picker.wrap.hidden) { event.stopPropagation(); togglePicker(false); }
+  });
+  let request;
+  card.disposeAssetChart = () => {
+    request?.abort();
+    chart._lightweightChart?.remove();
+    chart._lightweightChart = null;
+    chart._candleSeries = null;
+  };
   const copy = (sentence, button) => {
     const label = button.textContent;
     button.disabled = true;
@@ -3135,7 +3177,7 @@ async function openAsset(symbol) {
   const strip = el("button", { type: "button", class: "row-act chart-act", title: "Add to price strip", "aria-label": `Add ${name} to price strip`, text: "+" });
   strip.addEventListener("click", () => { const s = tickerState(); if (!s.assets.includes(name)) s.assets.push(name); s.on = true; saveTicker(s); refreshTicker(); drawModes(); strip.textContent = "✓"; });
   body.replaceChildren(
-    scales,
+    el("div", { class: "asset-toolbar" }, [scales, assetControl]),
     el("div", { class: "asset-plot" }, [
       chart,
       el("div", { class: "asset-line" }, [price, move, position, tradeActions]),
@@ -3146,6 +3188,7 @@ async function openAsset(symbol) {
       strip,
     ]));
   await loadUniverse();
+  if (!body.contains(chart)) return;
   hlName = String(market).includes(":") ? market : universeMap[String(market).toLowerCase()];
   if (!hlName) {
     chart.textContent = "No Hyperliquid market found for this asset.";
@@ -3163,8 +3206,8 @@ async function openAsset(symbol) {
     }
   });
 
-  let request;
   async function loadCandles(interval, minutes) {
+    card.assetInterval = interval;
     request?.abort();
     const controller = new AbortController();
     request = controller;
@@ -3225,7 +3268,8 @@ async function openAsset(symbol) {
     chip.addEventListener("click", () => loadCandles(interval, minutes));
     scales.append(chip);
   }
-  return loadCandles("1h", 60);
+  const interval = CANDLE_INTERVALS.find(([label]) => label === card.assetInterval) || ["1h", 60];
+  return loadCandles(...interval);
 }
 
 
