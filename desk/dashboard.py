@@ -71,22 +71,24 @@ def _stress_profile(overview) -> dict:
 
 def intraday_series(desk) -> dict:
     """Hourly points for the return chart's D and W: the HL wallets' PnL and value (``desk``, [t ms, pnl, value]) and BTC and the
-    S&P 500 perp's hourly closes ([t ms, close]); the page rebases each to its window. Empty where HL does not answer."""
+    S&P 500 perp's hourly closes ([t ms, close]); the page rebases each to its window. Matched desk observations
+    use snapshots at or before the hour, with all configured wallets present within 65 minutes."""
     import time as _time
 
     import pandas as _pd
 
-    out = {"desk": [], "accounts": [], "BTC": [], "S&P500": []}
+    out = {"desk": [], "matched_desk": [], "accounts": [], "BTC": [], "S&P500": []}
     try:
         from desk.accounts import accounts_for
 
-        named = [(a.name, desk.histories[a.name].copy()) for a in accounts_for("hl", desk.accounts) if a.name in desk.histories]
+        wallets = accounts_for("hl", desk.accounts)
+        named = [(a.name, desk.histories[a.name].copy()) for a in wallets if a.name in desk.histories]
         histories = [frame for _, frame in named]
         cutoff = _pd.Timestamp.now(tz="UTC") - _pd.Timedelta(days=8)
         frames = []
         for history in histories:
             frame = history[history["ts"] >= cutoff].copy()
-            frame["hour"] = frame["ts"].dt.floor("h")
+            frame["hour"] = _pd.to_datetime(frame["ts"], utc=True).dt.floor("h")
             frames.append(frame.groupby("hour")[["pnl", "accountValue"]].last())
         if frames and all(len(f) for f in frames):
             grid = sorted(set().union(*[set(f.index) for f in frames]))
@@ -98,6 +100,20 @@ def intraday_series(desk) -> dict:
                 [int(stamp.timestamp() * 1000), float(row[(k, "accountValue")])]
                 for stamp, row in combined.iterrows() if _pd.notna(row[(k, "accountValue")])
             ]} for k, (name, _) in enumerate(named)]
+        if histories and len(histories) == len(wallets) and all(len(frame) for frame in frames):
+            hours = _pd.date_range(end=_pd.Timestamp.now(tz="UTC").floor("h"), periods=169, freq="h")
+            aligned = []
+            for history in histories:
+                recent = history.loc[history["ts"] >= cutoff, ["ts", "pnl", "accountValue"]].copy()
+                recent["ts"] = _pd.to_datetime(recent["ts"], utc=True)
+                recent = recent.drop_duplicates("ts", keep="last").set_index("ts").sort_index()
+                aligned.append(recent.reindex(hours, method="ffill", tolerance=_pd.Timedelta(minutes=65)))
+            joined = _pd.concat(aligned, axis=1, keys=range(len(aligned))).dropna()
+            out["matched_desk"] = [
+                [int(stamp.timestamp() * 1000), float(row.xs("pnl", level=1).sum()),
+                 float(row.xs("accountValue", level=1).sum())]
+                for stamp, row in joined.iterrows()
+            ]
     except Exception:
         pass
     try:
@@ -200,6 +216,7 @@ def book_lines(start) -> list[dict]:
             continue
         base = 1 + points[0][1]
         lines.append({"name": name, "x": [day for day, _ in points],
+                      "levels": [1 + value for _, value in points],
                       "y": [round(100 * ((1 + value) / base - 1), 2) for _, value in points]})
     return lines
 
@@ -634,7 +651,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
             prices = desk.benchmarks[name].dropna()
             prices = prices[prices.index >= index.index[0]]
             if len(prices):
-                twr.append({"name": name, "x": [ts.strftime("%Y-%m-%d") for ts in prices.index],
+                twr.append({"name": name, "x": [ts.strftime("%Y-%m-%d") for ts in prices.index], "levels": prices.tolist(),
                             "y": (100 * (prices / prices.iloc[0] - 1)).round(2).tolist()})
 
     twr += book_lines(index.index[0])

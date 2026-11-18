@@ -57,6 +57,7 @@ function compactUsd(value) {
 const FORMATS = {
   usd: { text: usd, num: true },
   susd: { text: signedUsd, num: true, signed: true },
+  wholeusd: { text: (value) => isNum(value) ? wholeUsd(value) : "", num: true },
   // Coloured by sign without a "+" prefix (holdings, values).
   vusd: { text: usd, num: true, signed: true },
   vpct: { text: (v) => pct(v, 1), num: true, signed: true },
@@ -747,16 +748,16 @@ function renderTable(id, spec) {
   // An empty table has nothing to act on: its card is hidden until it has rows.
   const card = host.closest(".card");
   const numbers = spec && spec.columns ? spec.columns.filter((c) => (FORMATS[c.fmt] || FORMATS.text).num) : [];
-  const allZero = numbers.length && (spec.rows || []).every((row) => numbers.every((c) => !isNum(row[c.key]) || Math.abs(row[c.key]) < 1e-9));
+  const allZero = !spec?.keepColumns && numbers.length && (spec.rows || []).every((row) => numbers.every((c) => !isNum(row[c.key]) || Math.abs(row[c.key]) < 1e-9));
   const empty = !spec || !spec.columns || !spec.columns.length || !(spec.rows || []).length || allZero;
   if (card) card.hidden = empty;
   if (empty) return;
   if (id.startsWith("pub-")) spec = tableWindow(id, host, spec);
-  if ((isChartView() || id === "strategies") && renderTableChart(id, spec)) return;   // the performance tile is always the stacked bars   // ?view=charts: the table drawn as a chart
+  if (!spec.tableOnly && (isChartView() || id === "strategies") && renderTableChart(id, spec)) return;   // the performance tile is always the stacked bars   // ?view=charts: the table drawn as a chart
   // A text column with the same value in every row is said once, above the table; an empty one is left out.
   const shared = [];
   const align = (VIEWS[id] || {}).align;
-  if (spec.rows.length > 1 && !align) {
+  if (spec.rows.length > 1 && !align && !spec.keepColumns) {
     spec = Object.assign({}, spec, { columns: spec.columns.filter((column, i) => {
       const format = FORMATS[column.fmt] || FORMATS.text;
       if (i === 0 || /^leg$/i.test(column.key)) return true;
@@ -864,7 +865,7 @@ function renderTable(id, spec) {
     if (id === "exposure" && isNum(value)) return el("td", { class: classes + withDigits, text });
     if (!format.num && KIND_WORDS.test(text)) { KIND_WORDS.lastIndex = 0; return el("td", { class: classes }, kindMarks(text)); }
     KIND_WORDS.lastIndex = 0;
-    return el("td", { class: classes + withDigits, text: ZERO_TEXT.test(text) ? "" : text });
+    return el("td", { class: classes + withDigits, text: spec.keepColumns ? text || "—" : ZERO_TEXT.test(text) ? "" : text });
   };
   const body = el("tbody", {}, rows.map((row, index) => el("tr", row.__hover ? { title: row.__hover } : {},
     spec.columns.map((column) => cell(row, column, index)).concat(id in CANDIDATE_TABLES && row.Coin ? [candidateActions(id, row)] : []))));
@@ -878,6 +879,7 @@ function renderTable(id, spec) {
     parts.unshift(el("colgroup", {}, spec.columns.map((column) => el("col", { style: `width:${align[column.key] || 10}%` }))));
   }
   host.append(el("table", align ? { class: "aligned" } : {}, parts));
+  if (spec.note) host.append(el("p", { class: "table-note", text: spec.note }));
 }
 
 // ---------------------------------------------------------------- tiles
@@ -1666,6 +1668,146 @@ function balanceColumns() {
   (right.offsetHeight < left.offsetHeight ? right : left).appendChild(piece);
 }
 
+const BENCHMARK_HOUR = 3600000;
+const BENCHMARK_DAY = 24 * BENCHMARK_HOUR;
+const BENCHMARK_WINDOWS = {
+  "benchmark-intraday": { periods: [["D", 1], ["W", 7]], initial: "W" },
+  "benchmark-history": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
+};
+
+function benchmarkCounts(pairs) {
+  const tolerance = 1e-8;
+  const beat = pairs.filter(([actual, index]) => actual - index > tolerance).length;
+  const lag = pairs.filter(([actual, index]) => index - actual > tolerance).length;
+  return { n: pairs.length, beat, lag, tie: pairs.length - beat - lag,
+    positive: pairs.filter(([actual]) => actual > tolerance).length };
+}
+
+function intradayBenchmarkTable(data, days, now) {
+  const end = Math.floor(now / BENCHMARK_HOUR) * BENCHMARK_HOUR;
+  const btc = new Map((data.BTC || []).map(([time, close]) => [time + BENCHMARK_HOUR, close]));
+  const sp = new Map((data["S&P500"] || []).map(([time, close]) => [time + BENCHMARK_HOUR, close]));
+  const desk = new Map((data.matched_desk || []).map(([time, pnl, value]) => [time, { pnl, value }]));
+  const collect = (hours) => {
+    const width = hours * BENCHMARK_HOUR;
+    const samples = [];
+    let next = end - days * BENCHMARK_DAY + width;
+    while (next <= end) {
+      const t = next, prior = t - width;
+      next += BENCHMARK_HOUR;
+      const start = desk.get(prior), finish = desk.get(t);
+      if (!(start?.value > 0) || !isNum(start.pnl) || !isNum(finish?.pnl)) continue;
+      const btcStart = btc.get(prior), btcEnd = btc.get(t), spStart = sp.get(prior), spEnd = sp.get(t);
+      if (![btcStart, btcEnd, spStart, spEnd].every((price) => isNum(price) && price > 0)) continue;
+      samples.push({ actual: (finish.pnl - start.pnl) / start.value, btc: btcEnd / btcStart - 1, stocks: spEnd / spStart - 1 });
+      next = t + width;
+    }
+    return samples;
+  };
+  let hours = 1, samples = collect(hours);
+  // When the wallet history has gaps, use a longer common interval with observed endpoints.
+  for (const width of [2, 4]) {
+    if (samples.length) break;
+    hours = width;
+    samples = collect(hours);
+  }
+  const count = hours === 1 || !samples.length ? "Hours" : `${hours}h periods`;
+  const conditions = [
+    ["All conditions", samples],
+    ["Both down", samples.filter(({ btc, stocks }) => btc < 0 && stocks < 0)],
+    ["Both up", samples.filter(({ btc, stocks }) => btc > 0 && stocks > 0)],
+  ];
+  return {
+    columns: [{ key: "Market", fmt: "text" }, { key: count, fmt: "int" }, { key: "Beat", fmt: "pct" },
+      { key: "Lagged", fmt: "pct" }, { key: "Made money", fmt: "pct" }],
+    rows: conditions.map(([label, list]) => {
+      const { n, beat, lag, tie, positive } = benchmarkCounts(list.map(({ actual, btc, stocks }) => [actual, (btc + stocks) / 2]));
+      return { Market: label, [count]: n, Beat: n ? beat / n : null, Lagged: n ? lag / n : null,
+        "Made money": n ? positive / n : null, __hover: n ? `${beat} beat · ${lag} lagged · ${tie} tied` : "No matched intervals in this window" };
+    }),
+    note: samples.length ? "HL wallets vs. 50/50 BTC and S&P 500 perp · Matched observations only"
+      : "No matched wallet and benchmark observations in this window",
+  };
+}
+
+function benchmarkLevels(lines, name, today) {
+  const line = lines.find((series) => String(series.name).toLowerCase() === name);
+  return new Map((line?.x || []).flatMap((day, i) => {
+    const time = Date.parse(day), level = line.levels?.[i];
+    return time < today && isNum(level) && level > 0 ? [[time, level]] : [];
+  }));
+}
+
+function historicalBenchmarkTable(lines, days, now) {
+  const today = Math.floor(now / BENCHMARK_DAY) * BENCHMARK_DAY;
+  const specs = [["Crypto", "crypto", "BTC", "btc"], ["Stocks", "stocks", "SPY", "spy"]];
+  const percent = (value, count) => count ? value / count : null;
+  return {
+    columns: [{ key: "Book", fmt: "text" }, { key: "Beat", fmt: "pct" }, { key: "Lagged", fmt: "pct" },
+      { key: "Beat on down days", fmt: "pct" }, { key: "$10k book", fmt: "wholeusd" }, { key: "$10k index", fmt: "wholeusd" }],
+    rows: specs.map(([bookName, bookKey, benchmarkName, benchmarkKey]) => {
+      const book = benchmarkLevels(lines, bookKey, today);
+      const bench = benchmarkLevels(lines, benchmarkKey, today);
+      const dates = [...bench.keys()].sort((a, b) => a - b);
+      const oldest = days === null ? -Infinity : today - days * BENCHMARK_DAY;
+      const pairs = [];
+      let start, end;
+      for (let i = 1; i < dates.length; i++) {
+        const from = dates[i - 1], to = dates[i];
+        if (to < oldest || !book.has(from) || !book.has(to)) continue;
+        if (benchmarkKey === "btc" && to - from !== BENCHMARK_DAY) continue;
+        if (start === undefined) start = from;
+        end = to;
+        pairs.push([book.get(to) / book.get(from) - 1, bench.get(to) / bench.get(from) - 1]);
+      }
+      const { n, beat, lag, tie } = benchmarkCounts(pairs);
+      const down = benchmarkCounts(pairs.filter(([, index]) => index < 0));
+      const date = (stamp) => new Date(stamp).toISOString().slice(0, 10);
+      return { Book: `${bookName} vs ${benchmarkName}`, Beat: percent(beat, n), Lagged: percent(lag, n),
+        "Beat on down days": percent(down.beat, down.n),
+        "$10k book": n ? 10000 * book.get(end) / book.get(start) : null,
+        "$10k index": n ? 10000 * bench.get(end) / bench.get(start) : null,
+        __hover: n ? `${beat}/${n} beat · ${tie} tied · ${down.beat}/${down.n} on down days · ${date(start)} to ${date(end)}`
+          : "No matched book and benchmark closes in this window" };
+    }),
+    note: "Matched closes for win rates · $10k held across each row’s paired dates",
+  };
+}
+
+function renderBenchmarkTables(doc) {
+  const now = new Date(doc.server_time || Date.now()).getTime();
+  for (const [id, { periods, initial }] of Object.entries(BENCHMARK_WINDOWS)) {
+    const host = document.getElementById("t-" + id);
+    if (!host) continue;
+    const selected = periods.find(([label]) => label === scaleChoices[id]) || periods.find(([label]) => label === initial);
+    let toolbar = host.previousElementSibling;
+    if (!toolbar?.classList.contains("table-periods")) {
+      toolbar = el("div", { class: "scale-chips table-periods", role: "group", "aria-label": "Table period" });
+      for (const [label, days] of periods) {
+        const button = el("button", { type: "button", class: "scale-chip", "data-window": label, text: label,
+          title: days ? (days === 1 ? "Last 24 hours" : `Last ${days} days`) : "All available history" });
+        button.addEventListener("click", () => {
+          scaleChoices[id] = label;
+          saveScaleChoices();
+          feedback("table", "period", id, label);
+          if (latest?.data) renderBenchmarkTables(latest);
+        });
+        toolbar.append(button);
+      }
+      host.before(toolbar);
+    }
+    for (const button of toolbar.children) {
+      const active = selected[0] === button.dataset.window;
+      button.classList.toggle("on", active);
+      button.setAttribute("aria-pressed", String(active));
+    }
+    const table = id === "benchmark-intraday"
+      ? intradayBenchmarkTable(doc.data.intraday || {}, selected[1], now)
+      : historicalBenchmarkTable(doc.data.charts?.twr || [], selected[1], now);
+    renderTable(id, { ...table, keepColumns: true, tableOnly: true });
+  }
+}
+
 function render(doc) {
   const now = new Date(doc.server_time || Date.now());
   renderBanners(doc, now);
@@ -1683,6 +1825,7 @@ function render(doc) {
   redrawHighlights();
   const context = { deskValue: (data.kpis || {}).desk_value };
   for (const id of TABLES) renderTable(id, applyView(id, withWallets(id, data.tables || {}), context));
+  renderBenchmarkTables(doc);
   balanceColumns();
   renderCharts(data.charts);
   renderPublished(data.tiles || []);
@@ -4034,8 +4177,8 @@ document.addEventListener("click", (event) => {
 // value and return charts and the analytics pulled from the notebooks). The dots sit at the bottom; the choice is remembered.
 const SCREENS = ["now", "research"];
 // Research keeps the research items in: the candidates (short and market-making), the strategy result, the long charts, and whatever is pulled from the notebooks.
-const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "hl-desk-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr"],
-  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr"] };
+const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "hl-desk-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr", "t-benchmark-intraday"],
+  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr", "t-benchmark-history"] };
 function screensFor(card) {
   const id = cardId(card);
   if (card.dataset.published) return "research";

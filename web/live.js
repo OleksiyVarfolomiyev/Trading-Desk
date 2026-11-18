@@ -947,7 +947,8 @@
     const rebased = (name, rows) => {  // rows: [{t, c}] daily closes
       const inRange = rows.filter((row) => row.t >= Math.floor(chartStart / DAY_MS) * DAY_MS && row.c > 0);
       if (!inRange.length) return null;
-      return { name, x: inRange.map((row) => dayKey(row.t)), y: inRange.map((row) => Math.round(1e4 * (row.c / inRange[0].c - 1)) / 1e2) };
+      return { name, x: inRange.map((row) => dayKey(row.t)), levels: inRange.map((row) => row.c),
+        y: inRange.map((row) => Math.round(1e4 * (row.c / inRange[0].c - 1)) / 1e2) };
     };
     // SPY's daily closes come from Yahoo Finance through the relay (a browser cannot call Yahoo), so
     // the line covers the whole chart; HL's S&P 500 perp, which starts at its listing, is the fallback.
@@ -961,7 +962,8 @@
       const kept = points.filter(([day, value]) => value !== null && day >= startDay);
       if (kept.length < 2) return;
       const base = 1 + kept[0][1];
-      twr.push({ name, x: kept.map(([day]) => day), y: kept.map(([, value]) => Math.round(10000 * ((1 + value) / base - 1)) / 100) });
+      twr.push({ name, x: kept.map(([day]) => day), levels: kept.map(([, value]) => 1 + value),
+        y: kept.map(([, value]) => Math.round(10000 * ((1 + value) / base - 1)) / 100) });
     });
 
     // -- the chart's day and week at hourly resolution: the HL wallets' PnL (net of deposits) over their value at the start, and
@@ -984,7 +986,17 @@
         const point = at(history, t);
         return point ? [t, point.value] : null;
       }).filter(Boolean) }));
-      return { desk, accounts, BTC: await hours(BTC), "S&P500": await hours(SP500) };
+      const matched_desk = [];
+      if (histories.length === CFG.wallets.length && histories.length) {
+        const close = Math.floor(end / HOUR_MS) * HOUR_MS;
+        for (let t = close - 168 * HOUR_MS; t <= close; t += HOUR_MS) {
+          const parts = histories.map((h) => at(h, t));
+          if (parts.every((p) => p && t - p.t <= 65 * 60000 && fin(p.pnl) && fin(p.value))) {
+            matched_desk.push([t, sum(parts.map((p) => p.pnl)), sum(parts.map((p) => p.value))]);
+          }
+        }
+      }
+      return { desk, matched_desk, accounts, BTC: await hours(BTC), "S&P500": await hours(SP500) };
     })();
 
     // -- highlights (desk/overview.py and desk_accounts.py rules)
