@@ -48,14 +48,16 @@
 <script defer src="https://unpkg.com/lightweight-charts@5.3.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
-<header class="topbar">
-  <div class="title">
-    <h1>Trading desk</h1>
-    <div id="banners"></div>
-  </div>
-  <div class="modes" id="modes" role="group" aria-label="Look"></div>
-  <div class="accounts-status" id="accounts-status" aria-label="Account connections"></div>
-</header>
+<div class="desk-header">
+  <header class="topbar">
+    <div class="title">
+      <h1>Trading desk</h1>
+      <div id="banners"></div>
+    </div>
+    <div class="modes" id="modes" role="group" aria-label="Look"></div>
+    <div class="accounts-status" id="accounts-status" aria-label="Account connections"></div>
+  </header>
+</div>
 
 <main id="main">
   <div id="loading" class="loading">

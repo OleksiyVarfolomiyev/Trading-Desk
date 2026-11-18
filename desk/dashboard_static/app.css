@@ -145,8 +145,8 @@ body {
   font: 14px/1.45 var(--font);
 }
 
+.desk-header { position: sticky; top: 0; z-index: 10; }
 .topbar {
-  position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   padding: 12px 12px;
   background: var(--surface);
