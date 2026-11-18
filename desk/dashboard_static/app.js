@@ -1325,17 +1325,21 @@ function colorHover(trace) {
     font: Object.assign({}, trace.hoverlabel && trace.hoverlabel.font, { color, weight: 600 }) });
   return trace;
 }
+function endLabelBox() {
+  const surface = token("--surface");
+  return { bgcolor: surface, bordercolor: surface, borderpad: 2, opacity: 1 };
+}
 
 function endLabels(series, format) {
   return series.filter((s) => s.y.length).map((s) => ({
     xref: "paper", x: 1, y: s.y[s.y.length - 1], xanchor: "right", xshift: -4, showarrow: false,
-    text: format(s.y[s.y.length - 1]), font: { color: token("--ink-2"), size: 11 },
+    text: format(s.y[s.y.length - 1]), font: { color: token("--ink-2"), size: 11 }, ...endLabelBox(),
   }));
 }
 
 // End labels closer than a line apart (a stacked total over its top layer, two lines ending near each other) are
 // pushed apart vertically, in rendered pixels, keeping their order; each stays as close to its line as it can.
-const END_LABEL_GAP_PX = 14;
+const END_LABEL_GAP_PX = 18;
 function spreadEndLabels(id) {
   const gd = document.getElementById(id);
   const axis = gd && gd._fullLayout && gd._fullLayout.yaxis;
@@ -1395,7 +1399,7 @@ function renderCharts(charts) {
     const own = trace.y[trace.y.length - 1];
     const y = trace.stackgroup ? (stackTop += own) : own;
     return { xref: "paper", x: 1, y, xanchor: "right", xshift: -4, showarrow: false, text: money(own),
-             font: { color: trace.line.color, size: 11 } };
+             font: { color: trace.line.color, size: 11 }, ...endLabelBox() };
   });
   valueLayout.annotations = (valueLayout.annotations || []).concat(valueEnds);
   valueLayout.margin = Object.assign({}, valueLayout.margin, { r: 32 });
@@ -1648,7 +1652,7 @@ function drawIntraday(node, days) {
   const traces = lines.map(([name, line, style]) => colorHover({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
     customdata: line.y.map((v) => readablePct(v / 100)), hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>" }));
   const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ xref: "paper", x: 1, y: line.y[line.y.length - 1], xanchor: "right", xshift: -4,
-    showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color } })), xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null }),
+    showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color }, ...endLabelBox() })), xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null }),
     yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }) });
   node._orig = null;
   node._intraday = true;
@@ -1675,7 +1679,7 @@ function drawIntradayValue(node, days) {
   traces.forEach((trace) => {
     const own = trace.y[trace.y.length - 1]; stack += own;
     annotations.push({ xref: "paper", x: 1, y: stack, xanchor: "right", xshift: -4, showarrow: false, text: usd(own),
-      font: { color: trace.line.color, size: 11 } });
+      font: { color: trace.line.color, size: 11 }, ...endLabelBox() });
   });
   const layout = Object.assign({}, node.layout, { annotations,
     xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null, rangebreaks: [] }),
@@ -2379,7 +2383,7 @@ function decoratePublishedTraces(traces, layout) {
   layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => trace.type === "scatter" && lastAt(trace) >= 0)
     .map(([trace, i]) => ({ x: 1, y: trace.y[lastAt(trace)], xref: "paper", yref: "y", showarrow: false, xanchor: "right", xshift: -4,
       text: `${String(trace.name || "").replace(/ \(on equity\)/, "").replace(/^Same \$ in /, "")} ${readablePct(trace.y[lastAt(trace)] / 100)}`,
-      font: { size: 11, color: (trace.line && trace.line.color) || colors[i % colors.length] } }));
+      font: { size: 11, color: (trace.line && trace.line.color) || colors[i % colors.length] }, ...endLabelBox() }));
   return copy;
 }
 // D/W/M/ALL controls sit with the chart title; return series rebase, other time charts zoom to the selected window.
@@ -2750,6 +2754,8 @@ async function openAsset(symbol) {
     if (navigator.clipboard) navigator.clipboard.writeText(sentence).then(done, done); else done();
   };
   function drawAsset() {
+    const oldChart = document.getElementById(key + "-chart");
+    if (oldChart && oldChart._lightweightChart) { oldChart._lightweightChart.remove(); oldChart._lightweightChart = null; }
     body.replaceChildren(
       el("div", { class: "asset-line" }, [el("span", { class: "asset-price", id: key + "-price" }), el("span", { text: advice.line })]),
       el("div", { class: "chart asset-chart", id: key + "-chart", hidden: true }),
@@ -2768,7 +2774,7 @@ async function openAsset(symbol) {
     body.querySelector(".asset-actions").append(strip);
   }
   drawAsset();
-  // HL markets: live price and 7 days of hourly closes, with the entry price marked.
+  // HL markets: live price and 7 days of hourly candles, with the entry price marked.
   try {
     await loadUniverse();
     const hlName = universeMap[name.toLowerCase()];
@@ -2785,14 +2791,30 @@ async function openAsset(symbol) {
       body: JSON.stringify(Object.assign({ type: "candleSnapshot", req: { coin: hlName.split(":").pop(), interval: "1h", startTime: end - 7 * 86400000, endTime: end } }, dex ? { dex } : {})) });
     const candles = await response.json();
     const chart = document.getElementById(key + "-chart");
-    if (!chart || !candles.length || typeof Plotly === "undefined") return;
+    if (!chart || !candles.length || !window.LightweightCharts) return;
     chart.hidden = false;
     const entry = rows.map((row) => row["Avg price"]).find(isNum);
-    const layout = baseLayout({ hovermode: "x unified", margin: { l: 48, r: 12, t: 6, b: 28 }, showlegend: false });
-    layout.shapes = entry ? [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: entry, y1: entry, line: { color: token("--muted"), dash: "dot", width: 1 } }] : [];
-    layout.xaxis = Object.assign({}, layout.xaxis, { showspikes: false });
-    Plotly.newPlot(chart, [colorHover({ type: "scatter", mode: "lines", x: candles.map((c) => new Date(c.t)), y: candles.map((c) => Number(c.c)),
-      line: { color: token("--series-1"), width: 1.6 }, hovertemplate: "%{y}<extra></extra>" })], layout, CONFIG);
+    const border = token("--grid"), ink = token("--ink-2"), up = token("--good-text"), down = token("--bad-text");
+    const instance = LightweightCharts.createChart(chart, {
+      autoSize: true,
+      layout: { background: { type: "solid", color: token("--surface") }, textColor: ink, attributionLogo: true },
+      grid: { vertLines: { color: border }, horzLines: { color: border } },
+      rightPriceScale: { borderColor: border, scaleMargins: { top: 0.12, bottom: 0.12 } },
+      timeScale: { borderColor: border, timeVisible: true, secondsVisible: false, rightOffset: 2 },
+      crosshair: { vertLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") },
+        horzLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") } },
+      handleScroll: true, handleScale: true,
+    });
+    chart._lightweightChart = instance;
+    const series = instance.addSeries(LightweightCharts.CandlestickSeries, {
+      upColor: up, downColor: down, borderUpColor: up, borderDownColor: down,
+      wickUpColor: up, wickDownColor: down, priceLineVisible: false,
+    });
+    series.setData(candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c) }))
+      .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close)));
+    if (isNum(entry)) series.createPriceLine({ price: entry, color: token("--muted"), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
+      axisLabelVisible: true, title: "Entry" });
+    instance.timeScale().fitContent();
   } catch (e) { /* no chart: the facts and actions are there */ }
 }
 
