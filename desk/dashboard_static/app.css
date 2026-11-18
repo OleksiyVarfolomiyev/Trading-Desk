@@ -502,6 +502,7 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 /* Highlights: one card, no title; attention first, then what stands out (a green edge marks those). */
 .highlights-card .highlights { margin: 0; }
 .highlights-card .highlights.well:not(:empty) { margin-top: 2px; }
+.highlights-card h2 .card-name { opacity: 1; }
 .highlights.well li .area { color: var(--good-text); }
 /* Card names on hover only; the heading keeps its height small. */
 .card h2 { min-height: 18px; margin-bottom: 2px; }

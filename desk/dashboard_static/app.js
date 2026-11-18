@@ -1155,10 +1155,38 @@ async function loadHighlightState() {
 function redrawHighlights() {
   if (!latest || !latest.data) return;
   const hl = latest.data.highlights || {}, hover = hl.hover || {};
-  renderHighlights("hl-well", hl.well, hover);
-  renderHighlights("hl-attention", hl.attention, hover);
+  for (const kind of ["crypto", "stocks"]) {
+    renderHighlights(`hl-${kind}-well`, highlightsForKind(hl.well, kind), hover);
+    renderHighlights(`hl-${kind}-attention`, highlightsForKind(hl.attention, kind), hover);
+  }
   renderAlertStrip(hl.attention, hover);
   if (typeof drawSectionsMenu === "function") drawSectionsMenu();
+}
+function highlightsForKind(rows, kind) {
+  const tables = (latest && latest.data && latest.data.tables) || {};
+  const symbols = (ids) => new Set(ids.flatMap((id) => ((tables[id] || {}).rows || []).flatMap((row) => {
+    const value = String(row.Symbol || row.Coin || "").toUpperCase();
+    return value ? [value, value.split(":").pop()] : [];
+  }));
+  const cryptoSymbols = symbols(["positions", "movers", "wallets"]), stockSymbols = symbols(["positions_stocks", "movers_stocks"]);
+  const escaped = (symbol) => symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const contains = (text, set) => [...set].some((symbol) => symbol && new RegExp(`(^|[^A-Z0-9])${escaped(symbol)}($|[^A-Z0-9])`, "i").test(text));
+  return (rows || []).flatMap(([area, source]) => {
+    const text = String(source), tagged = [...text.matchAll(/\b(crypto|stocks(?:\s+and\s+tradfi)?|tradfi)\b\s*:?/gi)];
+    const hasCrypto = /\bcrypto\b|\bBTC\b|\bETH\b/i.test(text) || contains(text, cryptoSymbols);
+    const hasStocks = /\bstocks?\b|\btradfi\b|\bSPY\b|\bS&P\s*500\b|\bQQQ\b/i.test(text) || contains(text, stockSymbols);
+    if (hasCrypto && hasStocks && tagged.some((match) => /^crypto$/i.test(match[1])) && tagged.some((match) => /^(stocks?|tradfi)/i.test(match[1]))) {
+      const prefix = text.slice(0, tagged[0].index).trim();
+      const pieces = tagged.map((match, i) => ({
+        kind: /^crypto$/i.test(match[1]) ? "crypto" : "stocks",
+        text: text.slice(match.index, i + 1 < tagged.length ? tagged[i + 1].index : text.length).trim(),
+      })).filter((piece) => piece.kind === kind);
+      return pieces.map((piece) => [area, [prefix, piece.text].filter(Boolean).join(" ")]);
+    }
+    if (hasCrypto && !hasStocks) return kind === "crypto" ? [[area, text]] : [];
+    if (hasStocks && !hasCrypto) return kind === "stocks" ? [[area, text]] : [];
+    return [[area, text]];  // desk-wide signals belong in both tiles
+  });
 }
 const VENUES = /\b(xyz|flx|vntl|hyna|km|abcd|cash|para|mkts|io):/gi;
 const cleanLine = (text) => String(text).replace(VENUES, "").replace(/\bSP500\b/g, "S&P500")   // the venue is the desk's business
@@ -1213,9 +1241,11 @@ function renderHighlights(id, rows, hover = {}) {
   const folded = answered.filter(([area, text]) => quiet.has(area) && severity(area, text) !== "critical");
   const shown = open ? answered : answered.filter((row) => !folded.includes(row));
   if (!shown.length && !folded.length) {   // one card holds both lists: say it once, on the first list, when both are empty
-    const other = document.getElementById(id === "hl-attention" ? "hl-well" : "hl-attention");
-    const otherRows = (latest && latest.data && latest.data.highlights && latest.data.highlights[id === "hl-attention" ? "well" : "attention"]) || [];
-    host.replaceChildren(...(id === "hl-attention" && !otherRows.length ? [el("li", {}, el("span", { class: "empty", text: "Nothing to report" }))] : []));
+    const match = id.match(/^hl-(crypto|stocks)-(attention|well)$/);
+    const otherRows = match && latest && latest.data && latest.data.highlights
+      ? highlightsForKind(latest.data.highlights[match[2] === "attention" ? "well" : "attention"], match[1]) : [];
+    host.replaceChildren(...(match && match[2] === "attention" && !otherRows.length
+      ? [el("li", {}, el("span", { class: "empty", text: "Nothing to report" }))] : []));
     return;
   }
   const rank = { critical: 0, watch: 1, "": 2 };
@@ -1226,7 +1256,7 @@ function renderHighlights(id, rows, hover = {}) {
   const foot = folded.length ? [el("li", {}, [el("button", { type: "button", class: "quiet-toggle", title: "Areas you have dismissed several times: " + [...new Set(folded.map((r) => r[0]))].join(", "),
     text: open ? "hide quiet" : `${folded.length} quiet`, onclick: null })])] : [];
   if (foot.length) foot[0].firstChild.addEventListener("click", () => { host.dataset.showQuiet = open ? "0" : "1"; redrawHighlights(); });
-  numberContext = { positive: id === "hl-well" };
+  numberContext = { positive: id.endsWith("-well") };
   host.replaceChildren(...ordered.map(([area, text, level, whole]) => {
     const act = (label, symbol, change) => {
       const button = el("button", { type: "button", class: "hl-act", title: label, "aria-label": `${label}: ${area}`, text: symbol });
@@ -1442,10 +1472,7 @@ function render(doc) {
   if (lastRendered === doc.status.last_ok) return;   // same data: keep tables, sort and hover as they are
   lastRendered = doc.status.last_ok;
   renderTiles(data.kpis || {}, data.theses);
-  const hover = (data.highlights && data.highlights.hover) || {};  // headlines around a big move, per alert title
-  renderHighlights("hl-well", data.highlights && data.highlights.well, hover);
-  renderHighlights("hl-attention", data.highlights && data.highlights.attention, hover);
-  renderAlertStrip(data.highlights && data.highlights.attention, hover);
+  redrawHighlights();
   const context = { deskValue: (data.kpis || {}).desk_value };
   for (const id of TABLES) renderTable(id, applyView(id, withWallets(id, data.tables || {}), context));
   balanceColumns();
@@ -1835,7 +1862,7 @@ function saveLayout(state) {
 const cardId = (card) => { const inner = card.querySelector("[id]"); return inner ? inner.id : ""; };
 const cardTitle = (card) => {   // the heading without its icon, grip and buttons (the untitled highlights card is "Highlights")
   const h = card.querySelector("h2");
-  if (!h) return card.querySelector("#hl-attention") ? "Highlights" : "";
+  if (!h) return "";
   const copy = h.cloneNode(true);
   copy.querySelectorAll(".card-grip, .card-tools, .icon").forEach((node) => node.remove());
   return copy.textContent.trim();
@@ -3516,7 +3543,7 @@ document.addEventListener("click", (event) => {
 // value and return charts and the analytics pulled from the notebooks). The dots sit at the bottom; the choice is remembered.
 const SCREENS = ["now", "research"];
 // Research keeps the research items in: the candidates (short and market-making), the strategy result, the long charts, and whatever is pulled from the notebooks.
-const SCREEN_OF = { now: ["hl-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr"],   // what is happening; the candidates and the strategy result are research
+const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr"],
   research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr"] };
 function screensFor(card) {
   const id = cardId(card);
