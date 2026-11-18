@@ -789,7 +789,7 @@ function renderTable(id, spec) {
     const text = format.text(value);
     // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
     const withDigits = column.key !== "Symbol" && column.key !== "Coin" && /\d/.test(text) ? " digits" : "";
-    if (row.__link && (column.key === "Symbol" || column.key === "Coin") && text) {   // the symbol opens its dashboard tile; ↗ remains the external page
+    if ((column.key === "Symbol" || column.key === "Coin") && text && !/^total$/i.test(text)) {   // every asset symbol opens its dashboard tile; ↗ remains the external page
       const symbol = el("button", { type: "button", class: "symbol-chip table-symbol name-" + (symbolSide(text) || symbolKind(text)),
         text });
       symbol.addEventListener("click", (event) => { event.stopPropagation(); openAsset(text); });
@@ -3581,7 +3581,7 @@ const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "hl-desk
 function screensFor(card) {
   const id = cardId(card);
   if (card.dataset.published) return "research";
-  if (card.dataset.asset) return "now";
+  if (card.dataset.asset) return "now research";   // an asset opened from either screen must be visible on that screen
   const on = SCREENS.filter((name) => SCREEN_OF[name].includes(id));
   return on.length ? on.join(" ") : "now research";   // a tile that belongs to no screen shows on both
 }
