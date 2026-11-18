@@ -480,10 +480,10 @@ function renderTableChart(id, spec, override) {
       traces = kept.map(([row, i]) => ({ type: "bar", orientation: "h", name: names[i], y: series, showlegend: false,
         x: series.map((key) => (isNum(row[key]) ? row[key] * axis.mult : null)),
         marker: { color: /crypto/i.test(String(row.Book || row.Account)) ? token("--kind-crypto") : token("--kind-stocks") },
-        text: series.map((key) => text(key, row[key])), textposition: "auto", insidetextanchor: "end", cliponaxis: false, insidetextfont: { size: 12, color: "#ffffff" },
+        text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false,
         outsidetextfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
         hoverinfo: "skip" }));   // the value is on the bar
-      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis) };
+      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis), margin: { l: 8, r: 88, t: 2, b: 6 } };
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
     } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
