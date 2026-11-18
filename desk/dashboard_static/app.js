@@ -1453,7 +1453,7 @@ function autoScale() {
   const days = latest && latest.data && latest.data.horizon_days;
   return !isNum(days) ? "1D" : days < 2 ? "1D" : days < 10 ? "1W" : days < 60 ? "1M" : "All";
 }
-function currentScale(element = "tile") { const choice = scaleChoices[element] || "auto"; return choice === "auto" ? autoScale() : choice; }
+function currentScale(element = "tile") { const choice = scaleChoices[element] || "auto"; return choice === "auto" ? (element === "tile" ? "1D" : autoScale()) : choice; }
 function setScale(element, scale) {
   scaleChoices[element] = (scaleChoices[element] || "auto") === scale ? "auto" : scale;
   try { localStorage.setItem("desk-scales", JSON.stringify(scaleChoices)); } catch (e) {}
