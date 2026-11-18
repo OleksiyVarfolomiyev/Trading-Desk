@@ -365,9 +365,14 @@ function renderBarList(id, spec, plan, host) {
   const labelCounts = new Map();
   list.forEach((row) => { const label = String(row[plan.label] ?? ""); labelCounts.set(label, (labelCounts.get(label) || 0) + 1); });
   const labelSeen = new Map();
-  const windowName = { D: "24h", W: "7D", M: "30D", Q: "90D", Y: "1Y" };
+  const windowName = { "1D": "24h", D: "24h", "7D": "7D", W: "7D", "30D": "30D", M: "30D", "90D": "90D", Q: "90D", "1Y": "1Y", "365D": "1Y", Y: "1Y" };
   const rowLabel = (row) => {
     const label = String(row[plan.label] ?? "");
+    // This published dashboard tile compares the same book leg over several windows.
+    // Include the window on every bar so its category axis identifies each result.
+    if (id === "pub-desk_crypto-picks-vs-btc" && row.Window) {
+      return `${label} · ${windowName[row.Window] || row.Window}`;
+    }
     if (labelCounts.get(label) <= 1) return label;
     let suffix = row.Window ? ` · ${windowName[row.Window] || row.Window}` : row.Account ? ` (${row.Account})` : "";
     if (!suffix) { const seen = (labelSeen.get(label) || 1) + 1; labelSeen.set(label, seen); suffix = ` #${seen}`; }
