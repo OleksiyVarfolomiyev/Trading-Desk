@@ -478,13 +478,13 @@ function renderTableChart(id, spec, override) {
     if (plan.by === "window") {   // one group per window, one bar per book (crypto, stocks) inside it, in the book's colour
       const book = (row) => String(row.Book || row.Account || row[plan.label] || (row.__raw || {}).Account || "");
       const kept = rows.map((row, i) => [row, i]).filter(([row]) => /^(crypto|stocks)$/i.test(book(row)));
-      traces = kept.map(([row, i]) => ({ type: "bar", orientation: "h", name: names[i], y: series, showlegend: false,
+      traces = kept.map(([row, i]) => ({ type: "bar", orientation: "h", name: names[i], y: series, base: 0, showlegend: false,
         x: series.map((key) => (isNum(row[key]) ? row[key] * axis.mult : null)),
         marker: { color: /crypto/i.test(book(row)) ? token("--kind-crypto") : token("--kind-stocks") },
         text: series.map((key) => text(key, row[key])), textposition: "outside", cliponaxis: false,
         outsidetextfont: LABEL_FONT(12, series.map((key) => (row[key] < 0 ? bad : good))),
         hoverinfo: "skip" }));   // the value is on the bar
-      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true }, axis), margin: { l: 8, r: 88, t: 2, b: 6 } };
+      layout = { barmode: "group", xaxis: Object.assign({ zeroline: true, autorange: true, rangemode: "tozero" }, axis), margin: { l: 8, r: 88, t: 2, b: 6 } };
       height = Math.max(220, series.length * (rows.length * 16 + 18) + 80);
     } else traces = series.map((key, i) => ({ type: "bar", orientation: "h", name: key, y: names,
       x: rows.map((row) => (isNum(row[key]) ? row[key] * axis.mult : null)), marker: { color: colors[i % colors.length] },
