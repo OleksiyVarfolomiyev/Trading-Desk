@@ -2912,9 +2912,24 @@ function openMoreMenu(card, button) {
     const rows = catalog.filter((entry) => !q || (entry.title + " " + entry.keywords).toLowerCase().includes(q))
       .map((entry) => ({ entry, s: score(entry) })).sort((a, b) => b.s - a.s);
     list.replaceChildren(...rows.map(({ entry, s }) => {
-      const add = el("button", { type: "button", class: "sections-add", text: "+" });
-      add.addEventListener("click", () => pullTile(entry, add, cardId(card)));
-      return el("div", { class: "sections-row" }, [el("span", { text: (s ? "★ " : "") + entry.title }), add]);
+      const prefix = entry.id.replace(":", "-");
+      const matches = [...document.querySelectorAll(".feed .card[data-published]")].filter((tile) => tile.dataset.published.startsWith(prefix));
+      const selected = matches.some((tile) => !tile.classList.contains("card-off"));
+      const row = el("div", { class: "sections-row" + (selected ? " is-picked" : ""), role: "checkbox", tabindex: "0",
+        "aria-checked": String(selected), text: (s ? "★ " : "") + entry.title, title: entry.description || entry.call });
+      const toggle = () => {
+        if (!matches.length) { pullTile(entry, null, cardId(card)).then(fill); return; }
+        const show = !selected;
+        matches.forEach((tile) => tile.classList.toggle("card-off", !show));
+        const state = layoutState(); state.hidden = [...document.querySelectorAll("#content .card-off")].map(cardId); saveLayout(state);
+        document.querySelectorAll(".feed").forEach((feed) => { feed.hidden = !feed.querySelector(".card:not(.card-off)"); });
+        feedback("section", show ? "show" : "hide", entry.title);
+        if (show) matches.forEach((tile) => tile.querySelectorAll(".js-plotly-plot").forEach((plot) => { try { Plotly.Plots.resize(plot); } catch (e) {} }));
+        fill();
+      };
+      row.addEventListener("click", toggle);
+      row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
+      return row;
     }));
   };
   field.addEventListener("input", fill);
@@ -3137,7 +3152,7 @@ async function pullTile(entry, button, anchor) {   // the section is built (the 
     for (let tries = 0; tries < 90; tries++) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       const now = await status();
-      if (now.startsWith("done")) { if (button) button.textContent = "✓"; lastRendered = null; load(); return; }
+      if (now.startsWith("done")) { if (button) button.textContent = "✓"; lastRendered = null; await load(); return; }
       if (now.startsWith("failed") || now.startsWith("nothing")) { if (button) { button.textContent = "!"; button.title = now; button.disabled = false; } return; }
     }
   } catch (e) { if (button) { button.textContent = "!"; button.disabled = false; } }
