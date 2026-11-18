@@ -1167,7 +1167,7 @@ function highlightsForKind(rows, kind) {
   const symbols = (ids) => new Set(ids.flatMap((id) => ((tables[id] || {}).rows || []).flatMap((row) => {
     const value = String(row.Symbol || row.Coin || "").toUpperCase();
     return value ? [value, value.split(":").pop()] : [];
-  }));
+  })));
   const cryptoSymbols = symbols(["positions", "movers", "wallets"]), stockSymbols = symbols(["positions_stocks", "movers_stocks"]);
   const escaped = (symbol) => symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const contains = (text, set) => [...set].some((symbol) => symbol && new RegExp(`(^|[^A-Z0-9])${escaped(symbol)}($|[^A-Z0-9])`, "i").test(text));
