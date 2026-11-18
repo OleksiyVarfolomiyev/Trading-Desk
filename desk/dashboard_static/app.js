@@ -1782,8 +1782,8 @@ function historicalBenchmarkTable(lines, comparison, days, now) {
   const desk = returns(comparison.desk_series);
   const books = comparison.class_series || {};
   const specs = [
-    ["Crypto", returns(books.crypto), "BTC", "btc"], ["Desk", desk, "BTC", "btc"],
-    ["Stocks", returns(books.stocks), "SPY", "spy"], ["Desk", desk, "SPY", "spy"],
+    ["crypto", returns(books.crypto), "BTC", "btc"], ["Desk", desk, "BTC", "btc"],
+    ["stocks", returns(books.stocks), "SPY", "spy"], ["Desk", desk, "SPY", "spy"],
   ];
   const percent = (value, count) => count ? value / count : null;
   return {
