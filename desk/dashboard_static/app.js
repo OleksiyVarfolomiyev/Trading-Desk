@@ -612,6 +612,9 @@ function renderTableChart(id, spec, override) {
     const shorts = traces.some((trace) => trace.type === "bar" && (trace.x || []).some((value) => value < 0));
     base.margin = Object.assign({}, base.margin, { l: shorts ? 150 : 12 });
     delete base.insideLabels;
+  } else if (plan.kind === "bookstack") {   // the book colours distinguish the two rows
+    base.yaxis.showticklabels = false;
+    base.margin = Object.assign({}, base.margin, { l: 12 });
   }
   whenVisible(host, () => Plotly.newPlot(node, traces, base, CONFIG).then(markNumericNotes));
   return true;
