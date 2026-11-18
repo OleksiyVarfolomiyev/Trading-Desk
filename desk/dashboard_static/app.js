@@ -868,6 +868,12 @@ function renderTable(id, spec) {
     if (/^notes?$/i.test(column.key)) return el("td", { class: classes + withDigits + " signal-notes" }, signalMarks(value));
     if (column.key === "Asset class") return el("td", { class: classes, text: ASSET_NAMES[text] || text || "Unclassified" });
     if (id === "exposure" && isNum(value)) return el("td", { class: classes + withDigits, text });
+    if (column.key === "Comparison") {
+      const benchmark = text.match(/^(.*?)(BTC|SPY)$/);
+      return el("td", { class: classes }, benchmark
+        ? [benchmark[1], el("span", { class: "benchmark-" + benchmark[2].toLowerCase(), text: benchmark[2] })]
+        : [text]);
+    }
     if (!format.num && KIND_WORDS.test(text)) { KIND_WORDS.lastIndex = 0; return el("td", { class: classes }, kindMarks(text)); }
     KIND_WORDS.lastIndex = 0;
     return el("td", { class: classes + withDigits, title: row.__cellTitles?.[column.key],

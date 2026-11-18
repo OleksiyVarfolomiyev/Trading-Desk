@@ -741,6 +741,8 @@ td.name-net { color: var(--series-1); }
 .weight-track { display: block; height: 6px; border-radius: 3px; background: var(--grid); margin-block: 3px; }
 .weight-fill { display: block; height: 100%; border-radius: inherit; }
 .weight-fill:not(.kind-bg-crypto):not(.kind-bg-stocks) { background: var(--series-1); }
+.benchmark-btc { color: var(--kind-crypto); }
+.benchmark-spy { color: var(--good-text); }
 td.correlation-cell { white-space: nowrap; }
 td.correlation-cell::before {
   --correlation-mid: color-mix(in oklab, var(--series-1) 70%, var(--surface));
