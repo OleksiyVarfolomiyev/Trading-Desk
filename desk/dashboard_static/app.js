@@ -1175,8 +1175,8 @@ function renderAccountStatus(rows, now) {
 
 // How loud a highlight is (desk/notebook_highlights.py ``severity``): "critical" rows call for action now and sit
 // first in a red band; "watch" rows get an amber marker.
-const CRITICAL_TITLES = /cut gross|margin guard|not reporting|over cap|liquidat|^major hack$|^squeeze/i;
-const WATCH_TITLES = /^alt rally$|^stock dip$|near cap|^hack$|^burn approaching$|^burn$|^unlock$/i;
+const CRITICAL_TITLES = /cut gross|margin guard|margin reserve breached|not reporting|over cap|liquidat|^major hack$|^squeeze|^stress:.*\(block\)$|^data flow down$|^unreadable accounts$/i;
+const WATCH_TITLES = /^alt rally$|^stock dip$|^equity sell[- ]off$|^stress:.*\(warn\)$|^available margin low$|near cap|^hack$|^burn approaching$|^burn$|^unlock$/i;
 function severity(title, text) {
   if (CRITICAL_TITLES.test(title) || (/^regime$/i.test(title) && /\bhigh\b/.test(text))) return "critical";
   if (WATCH_TITLES.test(title) || /^regime$/i.test(title)) return "watch";
@@ -1309,6 +1309,93 @@ function renderAlertStrip(rows, hover = {}) {
   renderHighlights("hl-alert", (rows || []).filter(([area, text]) => severity(area, text) !== ""), hover);
   host.hidden = !host.children.length;
 }
+function alertResponseButton(area, text, monitor) {
+  const equitySelloff = /equity sell[- ]off|stock (?:sell[- ]off|dip)/i.test(`${area} ${text}`);
+  const accountAlert = /margin|not reporting|liquidat|data flow down|unreadable accounts/i.test(area);
+  const button = el("button", { type: "button", class: "hl-act alert-response", text: "▶",
+    title: "Response options", "aria-label": `Response options for ${area}` });
+  button.addEventListener("click", () => {
+    const title = equitySelloff ? "Equity sell-off" : area;
+    const { overlay, box } = actionDialog(title);
+    const option = (label, action) => {
+      const choice = el("button", { type: "button", class: "asset-action", text: label });
+      choice.addEventListener("click", () => {
+        feedback("highlight", "response", area, label);
+        overlay.remove();
+        action();
+      });
+      return choice;
+    };
+    const review = (id) => {
+      const card = document.getElementById(id)?.closest(".card");
+      if (!card || card.hidden) {
+        if (id !== "t-exposure") review("t-exposure");
+        else notify([], "Exposure data is unavailable");
+        return;
+      }
+      setScreen("now");
+      if (card.classList.contains("card-off")) setHidden(id, false);
+      if (card.classList.contains("card-min")) setMinimized(id, false);
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+    box.replaceChildren(el("h3", { text: title }), el("div", { class: "asset-actions" }, [
+      ...(equitySelloff ? [
+        option("Review stock exposure", () => review("t-positions_stocks")),
+        option("Review long trims", reviewStockTrims),
+      ] : [
+        option(accountAlert ? "Review accounts" : "Review exposure", () => review(accountAlert ? "t-accounts" : "t-exposure")),
+        ...(accountAlert ? [option("Refresh data", refreshAlertData)] : []),
+      ]),
+      option("Monitor for changes", monitor),
+    ]), closeButton(overlay));
+    box.querySelector("button")?.focus();
+  });
+  return button;
+}
+
+function reviewStockTrims() {
+  const title = "Trim stock and TradFi longs by one third";
+  const { overlay, box } = actionDialog(title);
+  const rows = (latest?.data?.tables?.positions_stocks?.rows || [])
+    .filter((row) => row.Symbol && isNum(row.Value) && row.Value > 0)
+    .sort((a, b) => b.Value - a.Value);
+  const options = rows.map((row) => {
+    const hl = /^HL /.test(String(row.Account || ""));
+    const name = marketName(row.Symbol);
+    const sentence = `trim the ${row.Symbol} long in ${row.Account} by a third`;
+    const plan = window.DESK_SOURCE && hl;
+    const trim = el("button", { type: "button", class: "asset-action", text: "⅓",
+      title: plan ? "Plan trim" : "Copy trim", "aria-label": `${plan ? "Plan" : "Copy"} trim for ${name} in ${row.Account}` });
+    trim.addEventListener("click", () => {
+      if (plan) {
+        overlay.remove();
+        runAction("Trim ⅓", "reduce", 1 / 3, { coin: row.Symbol, wallet: String(row.Account).slice(-4) });
+      } else {
+        copyOrder(trim, sentence);
+      }
+    });
+    return el("div", { class: "alert-position" }, [
+      el("span", { text: `${name} · ${row.Account}` }), trim,
+    ]);
+  });
+  box.replaceChildren(el("h3", { text: title }),
+    ...(options.length ? options : [el("p", { class: "muted", text: "No stock or TradFi longs to trim." })]),
+    closeButton(overlay));
+  box.querySelector("button")?.focus();
+}
+
+async function refreshAlertData() {
+  if (!window.DESK_SOURCE) {
+    try {
+      const response = await fetch("/api/refresh", { method: "POST" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      notify([String(error)], "Could not request refresh");
+    }
+  }
+  await load();
+}
+
 function renderHighlights(id, rows, hover = {}) {
   const host = document.getElementById(id);
   const state = highlightState();
@@ -1342,12 +1429,20 @@ function renderHighlights(id, rows, hover = {}) {
       button.addEventListener("click", () => { const s = highlightState(); change(s); saveHighlightState(s); redrawHighlights(); });
       return button;
     };
+    const markRead = (s) => {
+      s.read[area + "|" + whole] = { at: Date.now(), shape: lineShape(whole), nums: lineNumbers(whole) };
+      feedback("highlight", "read", area, text);
+    };
+    const monitor = () => { const s = highlightState(); markRead(s); saveHighlightState(s); redrawHighlights(); };
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
     const item = el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [   // a pop-up only for the headlines around a big move
-      el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),   // the uPnL lines carry no background
+      el("span", { class: "text" }, [
+        ...lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text)),
+        level ? alertResponseButton(area, text, monitor) : null,
+      ]),   // the uPnL lines carry no background
       el("span", { class: "hl-actions" }, [
         ...symbolActions(whole),   // act on the symbols it names: run it (plan, then confirm) or copy the order
-        act("Read: hide until it changes", "✓", (s) => { s.read[area + "|" + whole] = { at: Date.now(), shape: lineShape(whole), nums: lineNumbers(whole) }; feedback("highlight", "read", area, text); }),
+        act("Read: hide until it changes", "✓", markRead),
         act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),   // stays; tells the model this area earns its place
         act("Not important: stop showing this", "👎", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
       ]),
@@ -1510,6 +1605,12 @@ function renderCharts(charts) {
 }
 
 // ---------------------------------------------------------------- page
+function retryDataButton() {
+  const button = el("button", { type: "button", class: "asset-action", text: "Retry refresh" });
+  button.addEventListener("click", refreshAlertData);
+  return button;
+}
+
 function renderBanners(doc, now) {
   const host = document.getElementById("banners");
   const banners = [];
@@ -1521,11 +1622,13 @@ function renderBanners(doc, now) {
       el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }),
       el("div", {}, [el("strong", { text: `Last refresh failed (${clock(status.last_attempt)}). ` }),
         el("span", { text: `${status.error}. ` + (status.last_ok ? `Showing data from ${ago(status.last_ok, now)}.` : "") })]),
+      retryDataButton(),
     ]));
   } else if (status.last_ok && (now - new Date(status.last_ok)) / 1000 > 3 * (status.interval_s || 60) + 120) {
     banners.push(el("div", { class: "banner warning", role: "alert" }, [
       el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }),
       el("div", { text: `Data is ${ago(status.last_ok, now)}; the refresh may be stuck.` }),
+      retryDataButton(),
     ]));
   }
   host.replaceChildren(...banners);
@@ -1589,7 +1692,7 @@ async function load() {
     const message = window.DESK_SOURCE ? `Could not read the desk data (${error.message || error}).`
       : "Dashboard server not reachable (is python -m desk.dashboard running?)";
     document.getElementById("banners").replaceChildren(el("div", { class: "banner warning", role: "alert" }, [
-      el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }), el("div", { text: message })]));
+      el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }), el("div", { text: message }), retryDataButton()]));
   }
 }
 

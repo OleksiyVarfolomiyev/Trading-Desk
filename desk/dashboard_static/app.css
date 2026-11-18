@@ -373,6 +373,8 @@ html.has-full { overflow: hidden; }
 @media (hover: none) { .hl-actions { opacity: 1; } }
 .hl-act { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 7px; border-radius: 4px; }
 .hl-act:hover { color: var(--ink); background: var(--border); }
+.alert-response { margin-inline-start: 4px; }
+.alert-position { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-block: 4px; }
 @media (max-width: 600px) { .highlights li { grid-template-columns: 1fr; } .hl-actions { opacity: 1; } }
 /* Privacy: numbers blurred until a number (or the eye) is clicked again. */
 .privacy-eye { background: transparent; border: 0; color: var(--muted); cursor: pointer; border-radius: 6px; }
