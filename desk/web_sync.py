@@ -185,19 +185,23 @@ BOOKS_FILE = REPO / "data" / "books_performance.json"
 BOOKS_EVERY_SECONDS = 3600
 
 
-def trade_stats() -> dict | None:
+def _book_fills() -> dict:
+    from desk.accounts import hl_wallets
+    from desk.hl.account_analytics import fetch_user_fills
+
+    return {wallet: fetch_user_fills(wallet) for wallet in dict.fromkeys(hl_wallets())}
+
+
+def trade_stats(fills_by_wallet: dict | None = None) -> dict | None:
     """The key numbers of the HL fills (the realized PnL statistics of hl_accounts.ipynb, perps, every wallet): hit rate,
     average win and loss as a share of notional, expected value per close as a share of the closes' notional, and
     liquidations. None when the fills cannot be read."""
     try:
-        from desk.accounts import hl_wallets
-        from desk.hl.account_analytics import (
-            fetch_user_fills, liquidation_stats, normalize_fills, realized_pnl_stats, split_realized_fills,
-        )
+        from desk.hl.account_analytics import liquidation_stats, normalize_fills, realized_pnl_stats, split_realized_fills
 
         fills = []
-        for wallet in dict.fromkeys(hl_wallets()):
-            frame = normalize_fills(fetch_user_fills(wallet), wallet)
+        for wallet, raw in (_book_fills() if fills_by_wallet is None else fills_by_wallet).items():
+            frame = normalize_fills(raw, wallet)
             if not frame.empty:
                 fills.append(frame.assign(wallet=short_id(wallet)))
         if not fills:
@@ -224,7 +228,7 @@ def books_payload() -> dict:
     dashboards' performance table: the books, not the accounts."""
     from desk.books import Book, chart_returns, decision_attribution, invested_class_returns
 
-    rows, series, attribution, class_series = [], {}, {}, {}
+    rows, series, attribution, class_series, equity = [], {}, {}, {}, {}
     for kind, options in (("Crypto", {}), ("Stocks", {"since": "2025-01-13"})):
         book = Book(kind, **options).fetch_data()
         table = book.performance().set_index("Window")
@@ -234,12 +238,22 @@ def books_payload() -> dict:
         returns = chart_returns(book).dropna()
         growth = (1 + returns).cumprod()
         attribution[kind.lower()] = decision_attribution(book, returns)
+        equity[kind.lower()] = book.equity.shift(1)
         series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(round(float(value) - 1, 5))] for day, value in growth.items()]
         invested = (1 + invested_class_returns(book)).clip(lower=0).cumprod()
         class_series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(float(value))]
                                       for day, value in invested.items()]
+    fills = {}
+    replay = {}
+    try:
+        from desk.risk_replay import stop_replay
+
+        fills = _book_fills()
+        replay = stop_replay(fills, equity, attribution)
+    except Exception as error:
+        print(f"Risk replay unavailable ({type(error).__name__}).", file=sys.stderr)
     return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series,
-            "class_series": class_series, "attribution": attribution, "stats": trade_stats()}
+            "class_series": class_series, "attribution": attribution, "risk_replay": replay, "stats": trade_stats(fills)}
 
 
 def push_books(force: bool = False) -> dict | None:

@@ -207,7 +207,7 @@ def book_comparison_now() -> dict:
 
     try:
         payload = _json.loads(BOOKS_FILE.read_text())
-        return {key: payload.get(key, {}) for key in ("attribution", "class_series")}
+        return {key: payload.get(key, {}) for key in ("attribution", "class_series", "risk_replay")}
     except (OSError, ValueError):
         return {}
 

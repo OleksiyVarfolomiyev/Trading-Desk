@@ -870,14 +870,15 @@ function renderTable(id, spec) {
     if (id === "exposure" && isNum(value)) return el("td", { class: classes + withDigits, text });
     if (!format.num && KIND_WORDS.test(text)) { KIND_WORDS.lastIndex = 0; return el("td", { class: classes }, kindMarks(text)); }
     KIND_WORDS.lastIndex = 0;
-    return el("td", { class: classes + withDigits, text: spec.keepColumns ? text || "—" : ZERO_TEXT.test(text) ? "" : text });
+    return el("td", { class: classes + withDigits, title: row.__cellTitles?.[column.key],
+      text: spec.keepColumns ? text || "—" : ZERO_TEXT.test(text) ? "" : text });
   };
   const body = el("tbody", {}, rows.map((row, index) => el("tr", row.__hover ? { title: row.__hover } : {},
     spec.columns.map((column) => cell(row, column, index)).concat(id in CANDIDATE_TABLES && row.Coin ? [candidateActions(id, row)] : []))));
   if (id in CANDIDATE_TABLES) head.append(el("th", { class: "row-actions" }));
   const parts = [el("thead", {}, head), body];
   if (spec.total && spec.rows.length > 1) {  // the total of a single row only repeats it
-    parts.push(el("tfoot", {}, el("tr", { class: "total" }, spec.columns.map((column) => cell(spec.total, column)))));
+    parts.push(el("tfoot", {}, el("tr", { class: "total", title: spec.total.__hover }, spec.columns.map((column) => cell(spec.total, column)))));
   }
   if (shared.length) host.append(el("p", { class: "table-note", text: shared.join(" · ") }));
   if (align) {  // fixed widths shared with the tables it is aligned with
@@ -1793,7 +1794,17 @@ function historicalBenchmarkTable(lines, comparison, days, now) {
 }
 
 function benchmarkAttributionTable(data, period) {
-  const crypto = data.crypto?.[period], stocks = data.stocks?.[period];
+  const crypto = data.attribution?.crypto?.[period], stocks = data.attribution?.stocks?.[period];
+  const cryptoReplay = data.risk_replay?.crypto?.[period], stocksReplay = data.risk_replay?.stocks?.[period];
+  const replayMethod = "Verified Hyperliquid protective stops vs holding the same quantity for 24 hours, marked at the next hourly close. Price effect scaled to prior trading equity. Trims, IB stops, fees and funding are outside this replay. The estimate is separate from excess return.";
+  const replayTooltip = (replay) => {
+    if (!replay) return replayMethod + " Replay data unavailable.";
+    const counts = replay.covered
+      ? `${wholeUsd(replay.effect)} gross price effect · ${replay.helped} helped · ${replay.hurt} hurt · ${replay.covered}/${replay.identified} matched stop orders.`
+      : "No eligible stop orders with a matched close in this period.";
+    const coverage = replay.coverage_start ? ` Common order-history coverage starts ${replay.coverage_start}.` : "";
+    return `${counts} Order history for ${replay.wallets_read}/${replay.wallets} wallets.${coverage} ${replayMethod}`;
+  };
   const definitions = [
     ["Picks", "Equal-size holdings within each side versus the same signed exposure in the benchmark"],
     ["Sizing", "Actual position weights versus equal sizing within each side"],
@@ -1801,15 +1812,18 @@ function benchmarkAttributionTable(data, period) {
     ["Market exposure", "Average net exposure versus a fully invested benchmark"],
     ["Fees & funding", "Recorded fees and funding"],
     ["Unattributed", "PnL that could not be linked to the position marks, including unallocated IB results"],
-    ["Risk management", "Requires a replay of the same trades without stops, trims and other risk controls"],
   ];
   return {
     columns: [{ key: "Factor", fmt: "text" }, { key: "Crypto vs BTC", fmt: "spp" }, { key: "Stocks vs SPY", fmt: "spp" }],
-    rows: definitions.map(([label, description]) => ({ Factor: label, "Crypto vs BTC": crypto?.parts?.[label],
-      "Stocks vs SPY": stocks?.parts?.[label], __hover: description })),
-    total: { Factor: "Excess return", "Crypto vs BTC": crypto?.excess, "Stocks vs SPY": stocks?.excess },
-    note: crypto || stocks ? "Percentage points on desk trading equity · Risk management requires a separate replay"
-      : "Attribution data is unavailable for this period",
+    rows: [
+      ...definitions.map(([label, description]) => ({ Factor: label, "Crypto vs BTC": crypto?.parts?.[label],
+        "Stocks vs SPY": stocks?.parts?.[label], __hover: description })),
+      { Factor: "RM replay", "Crypto vs BTC": cryptoReplay?.share, "Stocks vs SPY": stocksReplay?.share,
+        __hover: replayMethod, __cellTitles: { "Crypto vs BTC": replayTooltip(cryptoReplay), "Stocks vs SPY": replayTooltip(stocksReplay) } },
+    ],
+    total: { Factor: "Excess return", "Crypto vs BTC": crypto?.excess, "Stocks vs SPY": stocks?.excess,
+      __hover: "Compounded difference versus the index in percentage points on desk trading equity. Excludes the RM replay." },
+    note: crypto || stocks ? "" : "Attribution data is unavailable for this period",
   };
 }
 
@@ -1844,7 +1858,7 @@ function renderBenchmarkTables(doc) {
       ? intradayBenchmarkTable(doc.data.intraday || {}, selected[1], now)
       : id === "benchmark-history"
         ? historicalBenchmarkTable(doc.data.charts?.twr || [], doc.data.book_comparison || {}, selected[1], now)
-        : benchmarkAttributionTable(doc.data.book_comparison?.attribution || {}, selected[0]);
+        : benchmarkAttributionTable(doc.data.book_comparison || {}, selected[0]);
     renderTable(id, { ...table, keepColumns: true, tableOnly: true });
   }
 }
