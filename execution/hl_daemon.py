@@ -3569,8 +3569,8 @@ class Daemon:
             exchange = self.exchanges[wallet]
             if kind == "signals":
                 active, failures = ht.execute_plans(exchange, wallet, plans, markets, urgent=urgent,
-                                                    slippage=slippage, batched_exits=True, fast=fast)
-                print(f"Orders sent and protected {time.time() - confirmed:.2f}s after confirmation.")
+                                                    slippage=slippage, fast=fast)
+                print(f"Entry orders processed {time.time() - confirmed:.2f}s after confirmation.")
                 for trade in active:
                     if self.paper:
                         print(f"[paper] {trade.plan.coin}: a guard would start here.")
@@ -3600,13 +3600,18 @@ class Daemon:
         if not keys or self.paper:
             return
         held_targets = {}
+        modeled_stops = {}
         for key in keys:
             with self.guards.lock:
                 old = self.guards.entries.pop(key, None)
-            if old is not None and old.trade.hidden_target:
-                held_targets[key[1]] = old.trade.hidden_target
+            if old is not None:
+                modeled_stops[key[1]] = old.trade.plan.stop_price
+                if old.trade.hidden_target:
+                    held_targets[key[1]] = old.trade.hidden_target
         markets = self.state.markets()
-        rebuilt = ht.plan_guard_reattachment(wallet, self.state.dexes, markets, {key[1].upper() for key in keys})
+        rebuilt = ht.plan_guard_reattachment(
+            wallet, self.state.dexes, markets, {key[1].upper() for key in keys}, modeled_stops=modeled_stops,
+        )
         for item in rebuilt:
             if item.trade is not None:
                 if not item.trade.target_oid and item.coin in held_targets:  # no take-profit on the book: keep the one in memory

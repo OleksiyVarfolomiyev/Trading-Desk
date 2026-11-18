@@ -2,9 +2,8 @@
 
 Signals use a ``symbol,side`` CSV with optional ``sec_type,exchange,currency,expiry``
 columns (defaults: STK on SMART in USD; futures need an exchange and use the front month
-when no expiry is given). Each entry is a marketable limit order bracketed by a GTC
-stop-loss and take-profit (one cancels the other), all held by IB, so no local process has
-to keep running. New risk is sized against desk equity (IB plus every other account in
+when no expiry is given). Each entry is a marketable limit order with a GTC take-profit
+held by IB. New risk is sized against desk equity (IB plus every other account in
 accounts.json) and capped by desk-wide open risk, like the HL executor.
 
 TWS must be logged in with the API enabled and "Read-Only API" off for live orders.
@@ -77,7 +76,7 @@ YAHOO_MAX_AGE_SECONDS = 600  # a regular-session last trade older than this is n
 # With only a last price (no bid/ask), the entry limit sits this far through it, still capped by
 # MAX_ENTRY_SLIPPAGE_PCT: a marketable limit that fills at the best offer, never beyond the cap.
 EXTERNAL_QUOTE_CROSS_PCT = 0.003
-# Bracket each entry with a GTC stop and take-profit; --no-exits sends the entry alone.
+# Attach a GTC take-profit to each entry; --no-exits sends the entry alone.
 attach_exits = True
 # Aggregate cap for this run; --max-risk-pct overrides it.
 max_total_risk_pct = desk_risk.MAX_TOTAL_RISK_PCT
@@ -611,6 +610,7 @@ def print_plans(plans: list[IBPlan], summary: dict) -> None:
     print(f"Aggregate risk cap: ${summary['risk_cap']:,.2f} ({max_total_risk_pct * 100:g}% of desk equity)")
     print(f"Per-position risk budget: ${summary['budget']:,.2f} (5% of the 80% usable-equity amount)")
     print(f"IB margin room above its {RESERVE_PCT:.0%} reserve: ${summary['margin_room']:,.2f}")
+    print("Stop levels are used for sizing and preflight only.")
     if not attach_exits:
         print("--no-exits: entries only. No stop or take-profit will be placed; stop and target below are "
               "the risk model's levels, not orders.")
@@ -709,22 +709,18 @@ def submit_bracket(ib, plan: IBPlan, account: str) -> str:
     if not attach_exits:
         return submit_entry_only(ib, plan, action, limit, account)
     exit_action = "SELL" if direction > 0 else "BUY"
-    # Entry (DAY) bracketed by a GTC target and stop that cancel each other, all able to work
-    # in extended sessions. Only the last child transmits, so IB activates the three together.
+    # The attached GTC target transmits the DAY entry and activates after it fills.
     parent = LimitOrder(action, plan.quantity, limit, orderId=ib.client.getReqId(), transmit=False,
                         tif="DAY", outsideRth=extended_hours, account=account)
     take_profit = exit_target_order(exit_action, plan.quantity, plan.target_price, account)
-    stop_loss = exit_stop_order(exit_action, plan.quantity, plan.stop_price, plan.atr, plan.tick, account)
-    return _send_bracket(ib, plan, parent, take_profit, stop_loss)
+    return _send_entry_with_target(ib, plan, parent, take_profit)
 
 
-def _send_bracket(ib, plan: IBPlan, parent, take_profit, stop_loss) -> str:
-    """Transmit an entry with its target and stop, wait for the entry, and tidy partial fills."""
-    for child in (take_profit, stop_loss):
-        child.orderId, child.parentId, child.transmit = ib.client.getReqId(), parent.orderId, False
-    stop_loss.transmit = True
-    trades = [ib.placeOrder(plan.contract, order) for order in (parent, take_profit, stop_loss)]
-    parent, take_profit, stop_loss = trades
+def _send_entry_with_target(ib, plan: IBPlan, parent, take_profit) -> str:
+    """Transmit an entry with its take-profit and tidy partial fills."""
+    take_profit.orderId, take_profit.parentId, take_profit.transmit = ib.client.getReqId(), parent.orderId, True
+    parent = ib.placeOrder(plan.contract, parent)
+    take_profit = ib.placeOrder(plan.contract, take_profit)
     _wait_for_parent(ib, parent, ENTRY_TIMEOUT_SECONDS)
     filled = parent.orderStatus.filled
     if not parent.isDone():
@@ -733,18 +729,15 @@ def _send_bracket(ib, plan: IBPlan, parent, take_profit, stop_loss) -> str:
         filled = parent.orderStatus.filled
     if filled <= 0:
         reasons = "; ".join(entry.message for entry in parent.log if entry.message)
-        for child in (take_profit, stop_loss):
-            if not child.isDone():
-                ib.cancelOrder(child.order)
+        if not take_profit.isDone():
+            ib.cancelOrder(take_profit.order)
         return f"{plan.symbol}: entry not filled ({parent.orderStatus.status}){': ' + reasons if reasons else ''}."
     if filled < plan.quantity:
-        for child in (take_profit, stop_loss):
-            child.order.totalQuantity = filled
-            ib.placeOrder(plan.contract, child.order)
+        take_profit.order.totalQuantity = filled
+        ib.placeOrder(plan.contract, take_profit.order)
         ib.sleep(1)
     price = parent.orderStatus.avgFillPrice
-    return (f"{plan.symbol}: filled {filled:g} at {price:,.6g}; GTC stop {plan.stop_price:,.6g} and "
-            f"take-profit {plan.target_price:,.6g} are held by IB as one-cancels-other.")
+    return f"{plan.symbol}: filled {filled:g} at {price:,.6g}; IB take-profit {plan.target_price:,.6g}."
 
 
 def submit_at_limit(ib, plan: IBPlan, account: str) -> str:
@@ -771,8 +764,7 @@ def submit_at_limit(ib, plan: IBPlan, account: str) -> str:
     parent = LimitOrder(action, plan.quantity, plan.entry_limit, orderId=ib.client.getReqId(), transmit=False,
                         tif="DAY", outsideRth=extended_hours, account=account)
     take_profit = exit_target_order(exit_action, plan.quantity, plan.target_price, account)
-    stop_loss = exit_stop_order(exit_action, plan.quantity, plan.stop_price, plan.atr, plan.tick, account)
-    return _send_bracket(ib, plan, parent, take_profit, stop_loss)
+    return _send_entry_with_target(ib, plan, parent, take_profit)
 
 
 def submit_entry_only(ib, plan: IBPlan, action: str, limit: float, account: str) -> str:

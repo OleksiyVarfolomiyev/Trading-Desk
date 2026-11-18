@@ -1232,7 +1232,7 @@ class TradeAnalyticsTests(unittest.TestCase):
         with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
                 patch.object(hl_trade, "_set_leverage"), \
                 patch.object(hl_trade, "_place_entry", return_value=(plan.quantity, 100.0)), \
-                patch.object(hl_trade, "_place_exit_orders") as exits:
+                patch.object(hl_trade, "_place_entry_target") as exits:
             active, failures = hl_trade.execute_plans(MagicMock(), "0xabc", [plan], {"BTC": market})
         exits.assert_not_called()
         self.assertEqual((active, failures), ([], []))
@@ -1240,10 +1240,11 @@ class TradeAnalyticsTests(unittest.TestCase):
         with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
                 patch.object(hl_trade, "_set_leverage"), \
                 patch.object(hl_trade, "_place_entry", return_value=(plan.quantity, 100.0)), \
-                patch.object(hl_trade, "_place_exit_orders", return_value=(1, 2)) as exits:
+                patch.object(hl_trade, "_place_entry_target", return_value=2) as exits:
             active, _ = hl_trade.execute_plans(MagicMock(), "0xabc", [normal], {"BTC": market})
         exits.assert_called_once()
         self.assertEqual(len(active), 1)
+        self.assertEqual((active[0].stop_oid, active[0].target_oid), (0, 2))
 
     @patch.dict("desk.stress.SCENARIOS", {"alt rally": {"alt": 0.25, "major": 0.10}})
     def test_plan_trades_cuts_an_entry_that_would_push_a_stress_scenario_past_the_limit(self):

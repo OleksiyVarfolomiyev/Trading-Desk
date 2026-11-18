@@ -334,8 +334,7 @@ class DaemonTradeTests(unittest.TestCase):
         self.daemon.state.other = (risk.DeskBook(), time.time())
         self.exchange = MagicMock()
         self.exchange.update_leverage.return_value = {"status": "ok"}
-        self.exchange.order.return_value = filled(30, 7.98)
-        self.exchange.bulk_orders.return_value = statuses({"resting": {"oid": 2}}, {"resting": {"oid": 3}})
+        self.exchange.order.side_effect = [filled(30, 7.98), statuses({"resting": {"oid": 3}})]
         self.daemon.exchanges[WALLET] = self.exchange
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -376,18 +375,19 @@ class DaemonTradeTests(unittest.TestCase):
         self.exchange.order.assert_not_called()
         self.assertIn("Confirmation did not match", self.output.getvalue())
 
-    def test_an_urgent_entry_crosses_once_then_sends_stop_and_target_together_and_starts_a_guard(self):
+    def test_an_urgent_entry_places_only_a_take_profit_and_starts_a_guard(self):
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
         self.assertEqual(self.daemon.trade(self.request(live=True), session), 0)
-        (coin, is_buy, size, limit, order_type), kwargs = self.exchange.order.call_args
+        entry, target = self.exchange.order.call_args_list
+        (coin, is_buy, size, limit, order_type), kwargs = entry
         self.assertEqual((coin, is_buy, order_type, kwargs), ("AVAX", False, {"limit": {"tif": "Ioc"}},
                                                               {"reduce_only": False}))
-        self.assertAlmostEqual(limit, 7.96)  # the $8.00 mid less 0.5%
-        [requests_sent], _ = self.exchange.bulk_orders.call_args
-        self.assertEqual([("trigger" in item["order_type"], item["reduce_only"], item["sz"]) for item in requests_sent],
-                         [(True, True, 30.0), (False, True, 30.0)])
-        self.assertIn((WALLET, "AVAX"), self.daemon.guards.entries)
-        self.assertEqual(self.daemon.guards.entries[(WALLET, "AVAX")].trade.entry_price, 7.98)
+        self.assertAlmostEqual(limit, 7.96)
+        self.assertEqual(target.args[:3], ("AVAX", True, 30.0))
+        self.assertEqual(target.args[4], {"limit": {"tif": "Alo"}})
+        self.assertEqual(target.kwargs, {"reduce_only": True})
+        trade = self.daemon.guards.entries[(WALLET, "AVAX")].trade
+        self.assertEqual((trade.entry_price, trade.stop_oid, trade.target_oid), (7.98, 0, 3))
 
     def test_the_kill_switch_blocks_live_orders(self):
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
@@ -402,7 +402,7 @@ class DaemonTradeTests(unittest.TestCase):
             self.daemon.trade(self.request(live=True), FakeSession("LIVE TRADING", "SUBMIT ORDERS"))
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
         self.assertEqual(self.daemon.trade(self.request(live=True, ignore_unreachable=True), session), 0)
-        self.exchange.order.assert_called_once()
+        self.assertEqual(self.exchange.order.call_count, 2)
 
     def test_a_one_off_risk_cap_is_restored_afterwards(self):
         cap = ht.MAX_TOTAL_RISK_PCT
@@ -501,25 +501,19 @@ class ExecutorFastPathTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "shows no fill"):
             ht._place_taker_entry(exchange, WALLET, self.plan, self.market, reference=8.0, baseline=0.0)
 
-    def test_batched_exits_send_stop_and_target_in_one_request(self):
+    def test_entry_target_is_post_only_and_reduce_only(self):
         exchange = MagicMock()
-        exchange.bulk_orders.return_value = statuses({"resting": {"oid": 2}}, {"resting": {"oid": 3}})
-        self.assertEqual(ht._place_exit_orders(exchange, self.plan, 30, 8.0, 2, batched=True), (2, 3))
-        exchange.order.assert_not_called()
-
-    def test_a_stop_that_cannot_rest_cancels_the_lone_target(self):
-        exchange = MagicMock()
-        exchange.bulk_orders.return_value = statuses({"error": "bad trigger"}, {"resting": {"oid": 3}})
-        with self.assertRaisesRegex(RuntimeError, "stop-market"):
-            ht._place_exit_orders(exchange, self.plan, 30, 8.0, 2, batched=True)
-        exchange.cancel.assert_called_once_with("AVAX", 3)
+        exchange.order.return_value = statuses({"resting": {"oid": 3}})
+        self.assertEqual(ht._place_entry_target(exchange, self.plan, 30, 8.0, 2), 3)
+        self.assertEqual(exchange.order.call_args.args[4], {"limit": {"tif": "Alo"}})
+        self.assertTrue(exchange.order.call_args.kwargs["reduce_only"])
+        exchange.order.assert_called_once()
 
     def test_a_target_that_would_cross_is_placed_again_outside_the_spread(self):
         exchange = MagicMock()
-        exchange.bulk_orders.return_value = statuses({"resting": {"oid": 2}}, {"error": "Post only would match"})
-        exchange.order.return_value = statuses({"resting": {"oid": 4}})
+        exchange.order.side_effect = [statuses({"error": "Post only would match"}), statuses({"resting": {"oid": 4}})]
         with patch.object(ht, "post_only_price", return_value=7.5):
-            self.assertEqual(ht._place_exit_orders(exchange, self.plan, 30, 8.0, 2, batched=True), (2, 4))
+            self.assertEqual(ht._place_entry_target(exchange, self.plan, 30, 8.0, 2), 4)
 
     def test_a_fast_chase_reprices_every_two_seconds(self):
         exchange = MagicMock()

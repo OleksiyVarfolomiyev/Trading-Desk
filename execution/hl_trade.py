@@ -621,13 +621,13 @@ def _matching_protection_orders(
             trigger_price = float(order.get("triggerPx") or 0)
         except (TypeError, ValueError):
             trigger_price = 0.0
+        if "take profit" in order_type and _is_reduce_only(order):
+            targets.append(order)
+            continue
         if "stop" in order_type or trigger_price > 0:
             stops.append(order)
             continue
         if not _is_reduce_only(order):
-            continue
-        if "take profit" in order_type:
-            targets.append(order)
             continue
         if "limit" not in order_type and order.get("limitPx") is None:
             continue
@@ -1837,102 +1837,21 @@ def _resend_passive_target(
     return oid
 
 
-def _place_exit_orders(
-    exchange: Any,
-    plan: PlannedTrade,
-    quantity: float,
-    entry_price: float,
-    size_decimals: int,
-    batched: bool = False,
-) -> tuple[int, int]:
-    """Submit reduce-only stop-market and post-only take-profit orders for a filled entry.
-
-    ``batched`` sends both in one request (one round trip instead of two). The stop must rest;
-    a take-profit that cannot rest is re-placed just outside the spread, or left out.
-    """
+def _place_entry_target(exchange: Any, plan: PlannedTrade, quantity: float, entry_price: float,
+                        size_decimals: int) -> int:
+    """Place a post-only take-profit, retrying outside the spread if it would cross."""
     direction = side_to_direction(plan.side)
-    stop_distance = plan.price_stop_distance or plan.stop_distance
-    stop_price = _round_price(entry_price - direction * stop_distance, size_decimals)
-    target_price = _round_price(
-        entry_price + direction * stop_distance * REWARD_RISK_RATIO,
-        size_decimals,
-    )
-    close_is_buy = direction < 0
-    stop_type = {"trigger": {"triggerPx": stop_price, "isMarket": True, "tpsl": "sl"}}
-    if batched:
-        statuses = _status_rows(exchange.bulk_orders([
-            {"coin": plan.coin, "is_buy": close_is_buy, "sz": quantity, "limit_px": stop_price,
-             "order_type": stop_type, "reduce_only": True},
-            {"coin": plan.coin, "is_buy": close_is_buy, "sz": quantity, "limit_px": target_price,
-             "order_type": {"limit": {"tif": "Alo"}}, "reduce_only": True},
-        ]))
-        stop_status, target_status = statuses[0], (statuses[1] if len(statuses) > 1 else {})
-        stop_oid = _oid_from_status(stop_status)
-        target_oid = _oid_from_status(target_status) if "filled" not in target_status else None
-        if stop_oid is None or "filled" in stop_status:
-            if target_oid is not None:
-                try:  # a lone take-profit is no protection; the caller closes the fill
-                    exchange.cancel(plan.coin, target_oid)
-                except Exception as exc:
-                    print(f"{plan.coin}: could not cancel take-profit {target_oid} ({exc}).")
-            raise RuntimeError(f"Could not confirm the reduce-only stop-market order for {plan.coin}: {stop_status!r}")
-        if target_oid is None:
-            target_oid = _resend_passive_target(exchange, plan, quantity, target_price, size_decimals)
-        return stop_oid, target_oid
-    stop_response = exchange.order(
-        plan.coin,
-        close_is_buy,
-        quantity,
-        stop_price,
-        stop_type,
-        reduce_only=True,
-    )
-    stop_status = _status_rows(stop_response)[0]
-    stop_oid = _oid_from_status(stop_status)
-    if stop_oid is None:
-        raise RuntimeError(f"Could not confirm the reduce-only stop-market order for {plan.coin}: {stop_status!r}")
-    target_response = exchange.order(
-        plan.coin,
-        close_is_buy,
-        quantity,
-        target_price,
-        {"limit": {"tif": "Alo"}},
-        reduce_only=True,
-    )
+    distance = plan.price_stop_distance or plan.stop_distance
+    target = _round_price(entry_price + direction * distance * REWARD_RISK_RATIO, size_decimals)
     try:
-        target_status = _status_rows(target_response)[0]
-    except ValueError:
+        return _submit_protection_order(exchange, plan.coin, plan.side, quantity, target, "target")
+    except RuntimeError as exc:
+        if "post only" not in str(exc).lower():
+            raise
         exit_side = "SHORT" if direction > 0 else "LONG"
         passive_price = post_only_price(plan.coin, plan.dex, exit_side, size_decimals)
-        target_price = (
-            max(target_price, passive_price)
-            if direction > 0
-            else min(target_price, passive_price)
-        )
-        target_response = exchange.order(
-            plan.coin,
-            close_is_buy,
-            quantity,
-            target_price,
-            {"limit": {"tif": "Alo"}},
-            reduce_only=True,
-        )
-        try:
-            target_status = _status_rows(target_response)[0]
-        except ValueError:
-            print(
-                f"{plan.coin}: take-profit ALO was rejected after passive repricing; "
-                "the reduce-only stop remains active."
-            )
-            return stop_oid, 0
-    target_oid = _oid_from_status(target_status)
-    if target_oid is None:
-        print(
-            f"{plan.coin}: take-profit order has no confirmed resting ID; "
-            "the reduce-only stop remains active."
-        )
-        return stop_oid, 0
-    return stop_oid, target_oid
+        target = max(target, passive_price) if direction > 0 else min(target, passive_price)
+        return _submit_protection_order(exchange, plan.coin, plan.side, quantity, target, "target")
 
 
 def _cancel_if_open(exchange: Any, coin: str, wallet: str, oid: int) -> None:
@@ -1955,7 +1874,7 @@ def _current_position_quantity(wallet: str, dex: str, coin: str) -> float:
 def _check_trade(exchange: Any, wallet: str, trade: ActiveTrade, maker_rate: float, taker_rate: float) -> str:
     """Run one guard check for a trade; return a message once the guard is done with it."""
     plan = trade.plan
-    stop_status = _order_status(wallet, trade.stop_oid).get("order", {})
+    stop_status = _order_status(wallet, trade.stop_oid).get("order", {}) if trade.stop_oid else {}
     target_status = (
         _order_status(wallet, trade.target_oid).get("order", {})
         if trade.target_oid
@@ -1972,7 +1891,8 @@ def _check_trade(exchange: Any, wallet: str, trade: ActiveTrade, maker_rate: flo
     current_quantity = _current_position_quantity(wallet, plan.dex, plan.coin)
     tranche_quantity = side_to_direction(plan.side) * (current_quantity - trade.baseline_quantity)
     if tranche_quantity <= max(1e-8, trade.quantity * 0.01):
-        _cancel_if_open(exchange, plan.coin, wallet, trade.stop_oid)
+        if trade.stop_oid:
+            _cancel_if_open(exchange, plan.coin, wallet, trade.stop_oid)
         if trade.target_oid:
             _cancel_if_open(exchange, plan.coin, wallet, trade.target_oid)
         if trade.exiting:
@@ -2194,7 +2114,7 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
             f"{plan.coin} {plan.side}: quantity={plan.quantity:g}, reference=${plan.entry_reference:,.6g}, "
             + (f"notional=${plan.quantity * plan.entry_reference:,.2f}, CONVICTION: no stop or take-profit "
                f"(risk counted at a {STOP_ATR_MULTIPLE:g} x ATR move, ${plan.stop_price:,.6g}), "
-               if plan.conviction else f"stop=${plan.stop_price:,.6g}, target=${plan.target_price:,.6g}, ")
+               if plan.conviction else f"sizing level=${plan.stop_price:,.6g}, target=${plan.target_price:,.6g}, ")
             + f"risk=${plan.risk_budget:,.2f}, funding reserve/unit=${plan.funding_reserve_per_unit:,.6g}, "
             f"estimated entry+stop fees=${plan.quantity * plan.entry_reference * (plan.maker_fee_rate + plan.taker_fee_rate):,.2f}, "
             f"expected 5d PnL=${plan.expected_pnl.net_pnl:,.2f} "
@@ -2428,7 +2348,7 @@ def print_reconcile_plans(plans: list[ReconcilePlan]) -> None:
         print(
             f"{request.coin} {plan.side} [{request.action}]: "
             f"current={plan.current_quantity:g}, target={plan.target_quantity:g}, "
-            f"{quantity_change}; SL=${plan.stop_price:,.6g}, TP=${plan.target_price:,.6g}"
+            f"{quantity_change}; sizing level=${plan.stop_price:,.6g}, TP=${plan.target_price:,.6g}"
             + (f" — BLOCKED: {plan.block_reason}" if plan.block_reason else "")
         )
         print(
@@ -2448,7 +2368,7 @@ def print_reconcile_plans(plans: list[ReconcilePlan]) -> None:
                 )
     if any(not plan.block_reason and plan.quantity_delta != 0 for plan in plans):
         print(
-            "Warning: after a size change the executor cancels and recreates reduce-only SL/TP orders; "
+            "Warning: after a size change the executor cancels existing exits and recreates take-profit orders; "
             "the exchange does not provide an atomic resize, so a brief unprotected interval is possible."
         )
 
@@ -2822,29 +2742,8 @@ def run_position_reconciliation(
             )
             candles = fetch_daily_candles(coin.split(":")[-1], dex)
             protection = plan_position_protection(position, open_orders, candles)
-            if plan.action.stop == "none":  # squeeze-sized: no stop; the take-profit still takes the reversal
-                print(f"{coin}: no stop (squeeze-sized: notional within the per-trade risk budget).")
-                if protection.target_block_reason:
-                    raise RuntimeError(protection.target_block_reason)
-                if protection.target_quantity_to_add > 0:
-                    target_oid = _submit_protection_order(exchange, coin, protection.side, protection.target_quantity_to_add,
-                                                          protection.target_price, "target")
-                    print(f"{coin}: reduce-only take-profit active at ${protection.target_price:,.6g} (order {target_oid}).")
-                continue
-            if protection.stop_block_reason or protection.target_block_reason:
-                raise RuntimeError(
-                    protection.stop_block_reason or protection.target_block_reason
-                )
-            if protection.stop_quantity_to_add > 0:
-                stop_oid = _submit_protection_order(
-                    exchange,
-                    coin,
-                    protection.side,
-                    protection.stop_quantity_to_add,
-                    protection.stop_price,
-                    "stop",
-                )
-                print(f"{coin}: reduce-only stop active at ${protection.stop_price:,.6g} (order {stop_oid}).")
+            if protection.target_block_reason:
+                raise RuntimeError(protection.target_block_reason)
             if protection.target_quantity_to_add > 0:
                 target_oid = _submit_protection_order(
                     exchange,
@@ -2899,13 +2798,14 @@ def plan_guard_reattachment(
     dexes: list[str],
     markets: dict[str, Market],
     coins: set[str] | None = None,
+    modeled_stops: dict[str, float] | None = None,
 ) -> list[GuardReattachment]:
     """Rebuild net-loss guards for open positions from their live stop and target orders.
 
     Each guard watches the whole position. Its loss budget mirrors a fresh entry's:
     the distance from entry to the nearest stop, twice the current adverse funding
     reserve, and entry and exit fees. Funding since the position opened counts as
-    already realized. Positions without a stop get no guard.
+    already realized. Existing guards can supply their modeled stop after a resize.
     """
     snapshot = collect_snapshot([wallet], dexes, markets)
     open_orders = fetch_open_orders(wallet, dexes)
@@ -2929,7 +2829,7 @@ def plan_guard_reattachment(
         nearest = lambda orders: min(orders, key=lambda order: abs(_order_price(order) - position.mark_price))
         stop = nearest(stops) if stops else None
         target = nearest(targets) if targets else None
-        stop_price = _order_price(stop) if stop else float("nan")
+        stop_price = _order_price(stop) if stop else (modeled_stops or {}).get(position.coin, float("nan"))
         target_price = _order_price(target) if target else float("nan")
         prior_funding = funding_since_open.get(position.coin, 0.0)
         base = dict(
@@ -2940,7 +2840,7 @@ def plan_guard_reattachment(
             direction * quantity * (position.mark_price - position.entry_price) + prior_funding
             - position.mark_price * quantity * taker - position.entry_price * quantity * maker
         )
-        if stop is None:
+        if not math.isfinite(stop_price):
             plans.append(GuardReattachment(trade=None, risk_budget=float("nan"), net_pnl=net_pnl,
                 note="no stop order; add one with --protect-open first", **base))
             continue
@@ -2976,7 +2876,7 @@ def plan_guard_reattachment(
         )
         trade = ActiveTrade(
             plan=plan, quantity=quantity, entry_price=position.entry_price, baseline_quantity=0.0,
-            stop_oid=int(stop["oid"]), target_oid=int(target["oid"]) if target else 0,
+            stop_oid=int(stop["oid"]) if stop else 0, target_oid=int(target["oid"]) if target else 0,
             started_at=started_at, prior_funding_pnl=prior_funding,
         )
         plans.append(GuardReattachment(trade=trade, risk_budget=risk_budget, net_pnl=net_pnl,
@@ -3032,7 +2932,6 @@ def execute_plans(
     markets: dict[str, Market],
     urgent: bool = False,
     slippage: float = URGENT_SLIPPAGE,
-    batched_exits: bool = False,
     fast: bool = False,
 ) -> tuple[list[ActiveTrade], list[str]]:
     """Enter each planned trade and place its exits; return the trades to guard and any failures.
@@ -3072,22 +2971,11 @@ def execute_plans(
                 print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; conviction trade, "
                       "so no stop, take-profit or loss guard (the daemon's margin guard still watches the account).")
                 continue
+            target_oid = 0
             try:
-                stop_oid, target_oid = _place_exit_orders(
-                    exchange,
-                    plan,
-                    quantity,
-                    entry_price,
-                    market.size_decimals,
-                    batched=batched_exits,
-                )
+                target_oid = _place_entry_target(exchange, plan, quantity, entry_price, market.size_decimals)
             except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as exc:
-                exchange.market_close(plan.coin, quantity)
-                failures.append(
-                    f"{plan.coin}: exit protection failed; attempted a reduce-only market close "
-                    f"for the new fill ({type(exc).__name__}: {exc})"
-                )
-                continue
+                failures.append(f"{plan.coin}: entry filled but take-profit placement failed ({exc})")
         except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as exc:
             failures.append(f"{plan.coin}: {type(exc).__name__}: {exc}")
             print(f"Skipping {plan.coin} after a live preflight/order error: {exc}")
@@ -3098,14 +2986,14 @@ def execute_plans(
                 quantity=quantity,
                 entry_price=entry_price,
                 baseline_quantity=baseline_quantity,
-                stop_oid=stop_oid,
+                stop_oid=0,
                 target_oid=target_oid,
                 started_at=pd.Timestamp.now(tz="UTC"),
             )
         )
         print(
             f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; "
-            f"reduce-only stop-market is active."
+            f"funding-adjusted loss guard configured."
         )
         if target_oid:
             print(f"{plan.coin}: reduce-only post-only take-profit is active.")
@@ -3125,7 +3013,7 @@ def run_live(
     """Execute planned entries, place protective exits, and monitor resulting trades."""
     exchange = build_exchange(wallet, private_key, trade_dexes(plans))
     active, failures = execute_plans(exchange, wallet, plans, markets, urgent=urgent, slippage=slippage,
-                                     batched_exits=True, fast=fast)
+                                     fast=fast)
     if active:
         print("Monitoring funding-adjusted net PnL. Keep this process running for the guard to remain active.")
         _watch_trades(exchange, wallet, active, plans[0].maker_fee_rate, plans[0].taker_fee_rate)

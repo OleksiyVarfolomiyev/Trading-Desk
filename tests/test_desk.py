@@ -268,7 +268,7 @@ class BracketSubmissionTests(unittest.TestCase):
     def live_quote(self, live=True):
         return ib_venue.Quote(bid=99.99, ask=100.01, last=100.0, close=99.0, live=live)
 
-    def test_full_fill_leaves_gtc_stop_and_target(self):
+    def test_full_fill_leaves_only_gtc_target(self):
         ib = FakeIB()
         original = ib.placeOrder
 
@@ -283,21 +283,20 @@ class BracketSubmissionTests(unittest.TestCase):
         with patch.object(ib_venue, "quote", return_value=self.live_quote()):
             message = ib_trade.submit_bracket(ib, self.plan(), "U1")
         self.assertIn("filled 10", message)
-        self.assertEqual([entry[4] for entry in ib.placed], ["DAY", "GTC", "GTC"])
+        self.assertEqual([entry[4] for entry in ib.placed], ["DAY", "GTC"])
         self.assertEqual(ib.placed[0][3], 100.03)
-        # Entry, target and a stop-limit stop, all able to work in extended hours.
-        self.assertEqual([entry[0] for entry in ib.placed], ["LMT", "LMT", "STP LMT"])
+        # Both the entry and the target work in extended hours.
+        self.assertEqual([entry[0] for entry in ib.placed], ["LMT", "LMT"])
         self.assertTrue(all(entry[5] for entry in ib.placed))
-        self.assertEqual(ib.placed[2][3], 97.5)
         self.assertEqual(ib.cancelled, [])
 
-    def test_rth_only_keeps_plain_stops_in_regular_hours(self):
+    def test_rth_only_keeps_entry_and_target_in_regular_hours(self):
         ib = FakeIB()
         with patch.object(ib_venue, "quote", return_value=self.live_quote()), \
                 patch.object(ib_trade, "extended_hours", False), patch.object(ib_trade, "ENTRY_TIMEOUT_SECONDS", 0):
             ib_trade.submit_bracket(ib, self.plan(), "U1")
-        self.assertEqual([entry[0] for entry in ib.placed[:3]], ["LMT", "LMT", "STP"])
-        self.assertFalse(any(entry[5] for entry in ib.placed[:3]))
+        self.assertEqual([entry[0] for entry in ib.placed], ["LMT", "LMT"])
+        self.assertFalse(any(entry[5] for entry in ib.placed))
 
     def test_partial_fill_cancels_rest_and_resizes_exits(self):
         ib = FakeIB()
@@ -314,7 +313,7 @@ class BracketSubmissionTests(unittest.TestCase):
             message = ib_trade.submit_bracket(ib, self.plan(), "U1")
         self.assertIn("filled 4", message)
         self.assertEqual(len(ib.cancelled), 1)
-        self.assertEqual([entry[2] for entry in ib.placed[3:]], [4.0, 4.0])
+        self.assertEqual([entry[2] for entry in ib.placed[2:]], [4.0])
 
     def test_no_live_quote_or_price_through_stop_sends_nothing(self):
         ib = FakeIB()
