@@ -387,7 +387,11 @@ function renderBarList(id, spec, plan, host) {
       ...(clipped ? [el("span", { class: signClass(value), text: "» " })] : []),
       ...figures.flatMap(([key, number], index) => [
         ...(index ? [el("span", { text: " · " })] : []),
-        el("span", { class: isNum(number) ? signClass(number) : "", text: text(key, number) }),
+        el("span", {
+          class: isNum(number) ? signClass(number) : "",
+          style: isNum(number) && number !== 0 ? `color:var(${number > 0 ? "--good-text" : "--bad-text"})` : "",
+          text: text(key, number),
+        }),
       ]),
     ]) : null;
     const heldSide = (row.__raw && isNum(row.__raw.Value)) ? (row.__raw.Value < 0 ? "short" : "long") : null;   // colour by side, so no long or short word
