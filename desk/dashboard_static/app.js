@@ -801,11 +801,22 @@ function renderTable(id, spec) {
       return state.dir * String(x).localeCompare(String(y));
     });
   }
+  const weightColumn = spec.columns.find((column) => /^weight$/i.test(column.key));
+  const positionTable = id === "positions" || id === "positions_stocks";
+  const tables = latest?.data?.tables;
+  const weightRows = positionTable
+    ? [...spec.rows, ...(tables?.positions?.rows || []), ...(tables?.positions_stocks?.rows || [])]
+    : spec.rows;
+  const maxWeight = weightColumn ? weightRows.reduce((max, row) => {
+    const weight = row[weightColumn.key];
+    return isNum(weight) ? Math.max(max, Math.abs(weight)) : max;
+  }, 0) : 0;
   const head = el("tr", {}, spec.columns.map((column) => {
     const format = FORMATS[column.fmt] || FORMATS.text;
     const sorted = state && state.key === column.key ? (state.dir > 0 ? "ascending" : "descending") : "none";
     const th = el("th", { class: [format.num ? "num" : "", column.emphasis ? "key" : ""].filter(Boolean).join(" "),
-      "aria-sort": sorted, tabindex: "0", title: "Click to sort", text: column.key });
+      "aria-sort": sorted, tabindex: "0",
+      title: column === weightColumn ? "Full bar = largest weight. Click to sort." : "Click to sort", text: column.key });
     const toggle = () => {
       const current = sortState[id];
       const dir = current && current.key === column.key ? -current.dir : (format.num ? -1 : 1);
@@ -842,6 +853,15 @@ function renderTable(id, spec) {
     const classes = [format.num ? "num" : "", tone, key, legColor].filter(Boolean).join(" ");
     // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
     const withDigits = !isAssetColumn(column.key) && /\d/.test(text) ? " digits" : "";
+    if (column === weightColumn && isNum(value) && index !== undefined) {
+      const share = maxWeight > 0 ? 100 * Math.abs(value) / maxWeight : 0;
+      const kind = positionTable ? " kind-bg-" + kindClass(id, row) : "";
+      return el("td", { class: classes + " weight-cell", title: text }, [
+        el("span", { class: "weight-track", role: "img", "aria-label": `Weight ${text}` }, [
+          el("span", { class: "weight-fill" + kind, style: `width:${share}%` }),
+        ]),
+      ]);
+    }
     if (/^corr(?:elation)?\s+(?:to\s+)?btc(?:\s+30d)?$/i.test(column.key) && isNum(value)) {
       return el("td", { class: classes + withDigits + " correlation-cell", style: `--correlation-color:${correlationColor(value)}`, text });
     }

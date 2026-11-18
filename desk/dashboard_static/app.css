@@ -727,6 +727,9 @@ html[data-screen="research"] #columns > .col { min-width: 520px; }
 .name-long { color: var(--good-text) !important; }
 .name-short { color: var(--bad-text) !important; }
 td.name-net { color: var(--series-1); }
+.weight-track { display: block; height: 6px; border-radius: 3px; background: var(--grid); margin-block: 3px; }
+.weight-fill { display: block; height: 100%; border-radius: inherit; }
+.weight-fill:not(.kind-bg-crypto):not(.kind-bg-stocks) { background: var(--series-1); }
 td.correlation-cell { white-space: nowrap; }
 td.correlation-cell::before {
   content: ""; display: inline-block; width: 7px; height: 7px; margin-inline-end: 5px;
