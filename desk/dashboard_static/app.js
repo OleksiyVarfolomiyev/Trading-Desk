@@ -932,6 +932,7 @@ function renderTiles(k, theses = []) {
 const STRESS_WARN = 0.25, STRESS_BLOCK = 0.35;   // desk/stress.py: a scenario loss past 25% warns, past 35% blocks added entries
 const EXTRA_TILES = ["Return 30D", "MW return", "TW return", "Positions"];
 const EXTRA_TILES_2 = ["Net exposure", "Margin left", "Risk used", "Hit rate", "Avg W/L", "EV/close", "Liquidations"];   // off until added
+let tileAddMenuOpen = false, tileAddMenuAway = null;
 function arrangeTiles(host, tiles) {
   let state = layoutState();
   if (!state.tileExtras) {   // the extra key numbers start hidden, once per browser
@@ -1009,24 +1010,48 @@ function arrangeTiles(host, tiles) {
       feedback("tile", "move", from, "before " + label);
     });
   });
-  // "+" at the row's end: the hidden key numbers, one click to bring one back
-  const hiddenTiles = tiles.filter((tile) => hidden.has(tile.dataset.label));
+  // The add menu lists available key numbers; highlighted items are currently shown and toggle off when clicked.
+  const menu = () => el("div", { class: "more-menu tile-menu" }, tiles.filter(says).map((tile) => {
+    const label = tile.dataset.label, selected = !hidden.has(label);
+    const row = el("div", { class: "sections-row tile-pick" + (selected ? " is-picked" : ""), role: "checkbox", tabindex: "0",
+      "aria-checked": String(selected) }, [el("b", { text: tile.querySelector(".value").textContent }),
+      el("span", { text: tile.querySelector(".label").textContent || label })]);
+    const toggle = (event) => {
+      event.stopPropagation();
+      remember((s) => { s.tileHidden = (s.tileHidden || []).filter((name) => name !== label).concat(selected ? [label] : []); });
+      feedback("tile", selected ? "hide" : "add", label);
+      if (latest && latest.data) { renderTiles(latest.data.kpis || {}, latest.data.theses); drawSectionsMenu(); }
+    };
+    row.addEventListener("click", toggle);
+    row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(event); } });
+    return row;
+  }));
   const plus = el("button", { type: "button", class: "tile-add", "aria-label": "Add a key number", text: "+" });
   plus.addEventListener("click", (event) => {
     event.stopPropagation();
-    document.querySelectorAll(".more-menu").forEach((node) => node.remove());
-    const menu = el("div", { class: "more-menu tile-menu" }, hiddenTiles.length ? hiddenTiles.map((tile) => {
-      const label = tile.dataset.label;
-      const row = el("button", { type: "button", class: "sections-row tile-pick" }, [el("b", { text: tile.querySelector(".value").textContent }),
-        el("span", { text: tile.querySelector(".label").textContent || label })]);
-      row.addEventListener("click", () => { remember((s) => { s.tileHidden = (s.tileHidden || []).filter((x) => x !== label); }); feedback("tile", "add", label);
-        if (latest && latest.data) renderTiles(latest.data.kpis || {}, latest.data.theses); });
-      return row;
-    }) : [el("div", { class: "sections-empty", text: "All shown" })]);
-    plus.after(menu);
-    setTimeout(() => document.addEventListener("click", function away(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", away); } }), 0);
+    tileAddMenuOpen = !tileAddMenuOpen;
+    const wrap = plus.closest(".tile-add-wrap");
+    if (tileAddMenuOpen) {
+      document.querySelectorAll(".more-menu").forEach((node) => node.remove());
+      plus.after(menu());
+      if (!tileAddMenuAway) {
+        tileAddMenuAway = (e) => {
+          if (!e.target.closest(".tile-add-wrap")) {
+            tileAddMenuOpen = false;
+            document.querySelectorAll(".tile-menu").forEach((node) => node.remove());
+            document.removeEventListener("click", tileAddMenuAway); tileAddMenuAway = null;
+          }
+        };
+        setTimeout(() => document.addEventListener("click", tileAddMenuAway), 0);
+      }
+    } else {
+      wrap.querySelectorAll(".tile-menu").forEach((node) => node.remove());
+      if (tileAddMenuAway) { document.removeEventListener("click", tileAddMenuAway); tileAddMenuAway = null; }
+    }
   });
-  host.replaceChildren(...shown, el("div", { class: "tile-add-wrap" }, [plus]));
+  const addWrap = el("div", { class: "tile-add-wrap" }, [plus]);
+  if (tileAddMenuOpen) addWrap.append(menu());
+  host.replaceChildren(...shown, addWrap);
 }
 
 function renderAccountStatus(rows, now) {
@@ -1467,7 +1492,7 @@ function setScale(element, scale) {
 }
 function scaleChips(element) {   // the element's own scale buttons, shown on its hover
   const active = currentScale(element), auto = (scaleChoices[element] || "auto") === "auto";
-  return el("span", { class: "scale-chips" }, SCALES.filter(([name]) => name !== active).map(([name]) => {   // the current one is already shown
+  return el("span", { class: "scale-chips" }, SCALES.map(([name]) => {
     const chip = el("button", { type: "button", class: "scale-chip" + (name === active ? " on" : "") + (auto && name === active ? " auto" : ""), text: { "1D": "D", "1W": "W", "1M": "M" }[name] || name });
     chip.addEventListener("click", (event) => { event.stopPropagation(); setScale(element, name); });
     return chip;
@@ -1637,7 +1662,7 @@ function tradeBar() {
     Object.keys(universeMap).filter((name) => name === friendlyName(universeMap[name]).toLowerCase())
       .forEach((name) => assets.set(name, universeMap[name]));
     const names = [...assets.keys()]
-      .filter((name) => !query || name.startsWith(query) || name.includes(query)).sort().slice(0, 12);
+      .filter((name) => !query || name.startsWith(query) || name.includes(query)).sort();
     suggestions.replaceChildren(...(names.length ? names.map((name) => {
       const market = assets.get(name);
       const button = el("button", { type: "button", role: "option", text: friendlyName(market) });
@@ -1966,9 +1991,14 @@ function adoptCard(card) {
       if (!card.querySelector(".chart")) return [];
       if (card.querySelector("#chart-twr")) {   // the return chart is actionable: more or less of each asset class
         const kindTool = (kind, change, symbol, label) => { const b = tool("card-kind kind-btn-" + kind, label, symbol, () => runClassAction(kind, change, 1 / 3)); return b; };
+        const pan = tool("card-pan", "Pan (drag moves) / zoom (drag selects)", "✥", () => {
+          const panning = !pan.classList.contains("on");
+          pan.classList.toggle("on", panning);
+          charts().forEach((node) => Plotly.relayout(node, { dragmode: panning ? "pan" : "zoom" }));
+        });
         return [kindTool("crypto", "reduce", "▾", "Reduce crypto by a third"), kindTool("crypto", "add", "▴", "Add to crypto by a third"),
           kindTool("stocks", "reduce", "▾", "Reduce stocks by a third"), kindTool("stocks", "add", "▴", "Add to stocks by a third"),
-          ...(() => { const r = tool("card-reset", "Reset view", "⟲", () => charts().forEach((node) => Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }))); return [r]; })()];
+          tool("card-reset", "Reset view", "⟲", () => charts().forEach((node) => Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }))), pan];
       }
       const reset = tool("card-reset", "Reset view", "⟲", () => charts().forEach((node) =>
         Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true })));
@@ -2223,6 +2253,15 @@ const BENCHMARK_NAME = /^(BTC|ETH|SPY|S&P|SP500|QQQ|Same \$ in)/i;
 function isReturnSeries(traces) {
   return traces.some((t) => t.type === "scatter" && Array.isArray(t.x) && t.x.length > 10 && /^\d{4}-\d{2}-\d{2}/.test(String(t.x[0])));
 }
+function isTimeSeriesChart(traces) {
+  return traces.some((trace) => {
+    const xs = decodeNumbers(trace.x || []);
+    if (xs.length < 3) return false;
+    const dates = xs.filter((x) => typeof x === "string" && /^\d{4}-\d{2}-\d{2}/.test(x)
+      || typeof x === "number" && x > 1e9 && x < 1e14);
+    return dates.length >= Math.min(3, Math.ceil(xs.length * 0.7));
+  });
+}
 function decoratePublishedTraces(traces, layout) {
   const colors = [1, 2, 3, 4, 5].map((i) => token("--series-" + i));
   let copy = traces.map((trace) => Object.assign({}, trace, { x: decodeNumbers(trace.x), y: decodeNumbers(trace.y) }));
@@ -2261,21 +2300,44 @@ function decoratePublishedTraces(traces, layout) {
       font: { size: 11, color: (trace.line && trace.line.color) || colors[i % colors.length] } }));
   return copy;
 }
-// D W M Y ALL over a published return chart: each curve rebased to the window's start, the x range cut to it.
+// D/W/M/ALL controls sit with the chart title; return series rebase, other time charts zoom to the selected window.
 function addPeriodChips(node) {
-  if (node._chips) return;
-  const periods = [["D", 1], ["W", 7], ["M", 30], ["Y", 365], ["ALL", 0]];
-  const row = el("div", { class: "scale-chips period-chips" }, periods.map(([label, days]) => {
-    const button = el("button", { type: "button", class: "scale-chip" + (!days ? " on" : ""), text: label });
+  const periods = [["D", 1], ["W", 7], ["M", 30], ["ALL", 0]];
+  const key = "published:" + node.id;
+  const current = () => {
+    try { return JSON.parse(localStorage.getItem("desk-published-periods") || "{}")[key] || "ALL"; } catch (e) { return "ALL"; }
+  };
+  const row = node._chips || el("span", { class: "scale-chips published-period-chips" });
+  row.replaceChildren(...periods.map(([label, days]) => {
+    const button = el("button", { type: "button", class: "scale-chip" + (current() === label ? " on" : ""), text: label });
     button.addEventListener("click", () => {
+      const choices = (() => { try { return JSON.parse(localStorage.getItem("desk-published-periods") || "{}"); } catch (e) { return {}; } })();
+      choices[key] = label;
+      try { localStorage.setItem("desk-published-periods", JSON.stringify(choices)); } catch (e) {}
       row.querySelectorAll(".scale-chip").forEach((b) => b.classList.toggle("on", b === button));
       feedback("chart", "period", node.id, label);
-      rebasePublished(node, days);
+      if (node._returnSeries) rebasePublished(node, days); else zoomPublished(node, days);
     });
     return button;
   }));
   node._chips = row;
-  node.before(row);
+  const title = node.closest(".card") && node.closest(".card").querySelector("h2");
+  if (title && row.parentElement !== title) {
+    const tools = title.querySelector(".card-tools");
+    if (tools) title.insertBefore(row, tools); else title.append(row);
+  }
+}
+function zoomPublished(node, days) {
+  const xs = node.data.flatMap((trace) => Array.from(trace.x || []));
+  const time = (x) => typeof x === "number" ? (x < 1e11 ? x * 1000 : x) : Date.parse(x);
+  const last = Math.max(...xs.map(time).filter(Number.isFinite));
+  if (!Number.isFinite(last)) return;
+  const update = { "yaxis.autorange": true };
+  Object.keys(node.layout || {}).filter((name) => /^xaxis\d*$/.test(name)).forEach((axis) => {
+    update[axis + ".autorange"] = !days;
+    update[axis + ".range"] = days ? [new Date(last - days * 86400000).toISOString(), new Date(last).toISOString()] : null;
+  });
+  Plotly.relayout(node, update);
 }
 
 function decoratePublishedBars(traces, layout) {
@@ -2381,12 +2443,24 @@ function renderPublished(tiles) {
       const base = baseLayout({ hovermode: "closest", margin: { l: 56, r: 24, t: 30, b: 40 }, colorway: [1, 2, 3, 4, 5].map((i) => token("--series-" + i)) });
       const layout = Object.assign({}, base, Object.fromEntries(Object.entries(tile.layout || {}).filter(([key]) => !PUBLISHED_AXES.includes(key))));
       PUBLISHED_AXES.forEach((key) => { if (base[key] || (tile.layout || {})[key]) layout[key] = Object.assign({}, base[key] || {}, (tile.layout || {})[key] || {}); });
+      layout.margin = Object.assign({}, layout.margin, {
+        l: Math.min(Number(layout.margin.l) || 40, 52), r: Math.min(Number(layout.margin.r) || 40, 48),
+        t: Math.min(Number(layout.margin.t) || 30, 42), b: Math.min(Number(layout.margin.b) || 32, 42),
+      });
       const node = document.getElementById("pub-" + tile.key);
       const series = isReturnSeries(tile.data || []);
       const data = series ? decoratePublishedTraces(tile.data || [], layout) : decoratePublishedBars(tile.data || [], layout);
       if (node) whenVisible(node, () => Plotly.react(node, data, layout, CONFIG).then(() => {
         markNumericNotes();
-        if (series) { node._orig = null; addPeriodChips(node); }
+        if (isTimeSeriesChart(tile.data || [])) {
+          node._returnSeries = series;
+          node._orig = null;
+          addPeriodChips(node);
+          let period = "ALL";
+          try { period = JSON.parse(localStorage.getItem("desk-published-periods") || "{}")["published:" + node.id] || "ALL"; } catch (e) {}
+          const days = ({ D: 1, W: 7, M: 30, ALL: 0 })[period] ?? 0;
+          if (days) { if (series) rebasePublished(node, days); else zoomPublished(node, days); }
+        }
       }));
     } else if (tile.kind === "table") {
       renderTable("pub-" + tile.key, publishedTable(tile));

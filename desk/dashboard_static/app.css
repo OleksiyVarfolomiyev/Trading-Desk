@@ -359,7 +359,7 @@ html.has-full { overflow: hidden; }
 html.private .tile .value, html.private .tile .sub, html.private .tile .line, html.private td.num,
 html.private .highlights .text, html.private .table-note,
 html.private .js-plotly-plot .textpoint, html.private .js-plotly-plot .xtick text, html.private .js-plotly-plot .ytick text,
-html.private .js-plotly-plot .numeric-note { filter: blur(7px); user-select: none; }
+html.private .js-plotly-plot .numeric-note, html.private .bfig { filter: blur(7px); user-select: none; }
 .unit-button { padding: 4px 11px; font-weight: 600; }
 .symbol-link { color: inherit; text-decoration: none; }
 .symbol-link:hover, .symbol-link:focus-visible { color: var(--series-1); }
@@ -514,6 +514,7 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 .tiles:hover .tile-add, .tile-add:focus-visible { opacity: 1; }
 .tile-menu { top: 110%; left: 0; right: auto; }
 .tile-pick { width: 100%; background: transparent; border: 0; color: var(--ink-2); font: inherit; text-align: left; gap: 8px; justify-content: flex-start !important; }
+.tile-pick:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
 .tile-pick b { color: var(--ink); }
 @media (hover: none) { .tile-add { opacity: 1; } }
 /* Card names centred; the tools sit at the right edge and the scale chips at the left, out of the name's way. */
