@@ -1742,7 +1742,7 @@ function icon(kind) {   // 16px line icons, drawn in the button's text colour
   svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("aria-hidden", "true");
   const paths = {
     table: ["M2 3.5h12v9H2z", "M2 7h12", "M2 10h12", "M6.5 3.5v9"],
-    chart: ["M3 13V8", "M7 13V4", "M11 13V9", "M14 13V6.5", "M2 13.5h13"],
+    chart: ["M2 12.5l4.2-5 2.5 2L14 3.2", "M10.8 3.2H14v3.2"],
     sun: ["M8 5.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z", "M8 1.5v1.6", "M8 12.9v1.6", "M1.5 8h1.6", "M12.9 8h1.6",
       "M3.4 3.4l1.1 1.1", "M11.5 11.5l1.1 1.1", "M3.4 12.6l1.1-1.1", "M11.5 4.5l1.1-1.1"],
     moon: ["M13 9.6A5.5 5.5 0 0 1 6.4 3a5.5 5.5 0 1 0 6.6 6.6z"],
