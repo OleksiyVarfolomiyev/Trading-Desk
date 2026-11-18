@@ -789,9 +789,11 @@ function renderTable(id, spec) {
     const text = format.text(value);
     // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
     const withDigits = column.key !== "Symbol" && column.key !== "Coin" && /\d/.test(text) ? " digits" : "";
-    if (row.__link && (column.key === "Symbol" || column.key === "Coin") && text) {   // the symbol opens its page
-      const link = el("a", { class: "symbol-link", href: row.__link, target: "_blank", rel: "noopener noreferrer", text });
-      return el("td", { class: classes }, [link]);
+    if (row.__link && (column.key === "Symbol" || column.key === "Coin") && text) {   // the symbol opens its dashboard tile; ↗ remains the external page
+      const symbol = el("button", { type: "button", class: "symbol-chip table-symbol name-" + (symbolSide(text) || symbolKind(text)),
+        title: "Open " + marketName(text) + " on the dashboard", text });
+      symbol.addEventListener("click", (event) => { event.stopPropagation(); openAsset(text); });
+      return el("td", { class: classes }, [symbol]);
     }
     if (/^notes?$/i.test(column.key)) return el("td", { class: classes + withDigits + " signal-notes" }, signalMarks(value));
     if (!format.num && KIND_WORDS.test(text)) { KIND_WORDS.lastIndex = 0; return el("td", { class: classes }, kindMarks(text)); }
