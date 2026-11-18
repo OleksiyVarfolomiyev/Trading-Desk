@@ -2972,6 +2972,19 @@ function candleColors() {
     borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
   };
 }
+function candlePriceFormat(candles) {
+  const last = candles.at(-1)?.close;
+  let precision = last > 0 && last < 1 ? 4 : 2;
+  for (const candle of candles) {
+    for (const value of [candle.open, candle.high, candle.low, candle.close]) {
+      const [mantissa, exponent = "0"] = value.toString().split("e");
+      const decimals = mantissa.split(".")[1]?.length || 0;
+      precision = Math.max(precision, decimals - Number(exponent));
+    }
+  }
+  precision = Math.min(precision, 12);
+  return { type: "price", precision, minMove: 10 ** -precision };
+}
 async function openAsset(symbol) {
   const name = friendlyName(symbol), rows = assetRows(symbol);
   const market = String(symbol).includes(":") ? symbol : rows.find((row) => /^HL /.test(String(row.Account || "")))?.Symbol || symbol;
@@ -3109,6 +3122,12 @@ async function openAsset(symbol) {
         chart.textContent = "Candles are unavailable for this asset.";
         return;
       }
+      const data = candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c) }))
+        .filter((c) => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite));
+      if (!data.length) {
+        chart.textContent = "Candles are unavailable for this asset.";
+        return;
+      }
       chart.replaceChildren();
       const entry = rows.map((row) => row["Avg price"]).find(isNum);
       const border = token("--grid"), ink = token("--ink-2");
@@ -3117,18 +3136,17 @@ async function openAsset(symbol) {
         layout: { background: { type: "solid", color: token("--surface") }, textColor: ink, attributionLogo: true },
         grid: { vertLines: { color: border }, horzLines: { color: border } },
         rightPriceScale: { borderColor: border, scaleMargins: { top: 0.35, bottom: 0.12 } },
-        timeScale: { borderColor: border, timeVisible: minutes < 1440, secondsVisible: false, rightOffset: 2 },
+        timeScale: { borderColor: border, timeVisible: minutes < 1440, secondsVisible: false, rightOffset: 2, allowBoldLabels: false },
         crosshair: { vertLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") },
           horzLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") } },
         handleScroll: true, handleScale: true,
       });
       chart._lightweightChart = instance;
       const series = instance.addSeries(LightweightCharts.CandlestickSeries, {
-        ...candleColors(), priceLineVisible: false,
+        ...candleColors(), priceLineVisible: false, priceFormat: candlePriceFormat(data),
       });
       chart._candleSeries = series;
-      series.setData(candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c) }))
-        .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close)));
+      series.setData(data);
       if (isNum(entry)) series.createPriceLine({ price: entry, color: token("--muted"), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
         axisLabelVisible: true, title: "Entry" });
       instance.timeScale().fitContent();
