@@ -49,6 +49,9 @@ MIN_INTERVAL_SECONDS = 30
 HISTORY_EVERY_SECONDS = 3600
 IB_RECORD_EVERY_SECONDS = 1800
 MOVERS = 5
+# The completed rebalance left only these fractional IB remnants; omit them from open positions.
+# A changed quantity (for example, after the next target buy) is shown normally.
+REBALANCE_FLAT_RESIDUALS = {"META": 0.75, "GOOGL": 0.25}
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -435,6 +438,12 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     net = sum(snapshot.net_usd for snapshot in trading)
     unrealized = sum(snapshot.unrealized_usd for snapshot in trading)
     positions = overview.positions_frame(trading_only=True)  # wallet tokens have their own table
+    if len(positions):
+        residual = positions.apply(lambda row: row.get("Venue") == "ib"
+                                   and row.get("Symbol") in REBALANCE_FLAT_RESIDUALS
+                                   and math.isclose(abs(float(row.get("Quantity", 0))),
+                                                    REBALANCE_FLAT_RESIDUALS[row["Symbol"]], abs_tol=1e-8), axis=1)
+        positions = positions[~residual].copy()
     # The tiles show the whole desk, wallets included (the performance table's bold last row); the
     # money-weighted PnL stays HL + IB, since the wallets have no deposit record.
     headline = desk.headline_index()

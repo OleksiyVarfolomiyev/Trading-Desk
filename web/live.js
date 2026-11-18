@@ -445,7 +445,11 @@
 
   function ibAccount(data) {
     const label = data.label, a = data.account || {};
-    const positions = (data.positions || []).map((p) => ({
+    const rebalanceResiduals = { META: 0.75, GOOGL: 0.25 };
+    const positions = (data.positions || []).filter((p) => {
+      const residual = rebalanceResiduals[String(p.symbol || "").toUpperCase()];
+      return residual === undefined || Math.abs(Math.abs(num(p.quantity)) - residual) > 1e-8;
+    }).map((p) => ({
       venue: "ib", account: label, symbol: p.symbol, coin: null, asset_class: p.asset_class,
       quantity: num(p.quantity), avg_price: num(p.avg_price), mark_price: num(p.mark_price),
       multiplier: num(p.multiplier) || 1, unrealized: num(p.unrealized), change24h: num(p.change24h),
