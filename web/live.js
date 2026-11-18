@@ -1269,7 +1269,8 @@
       tables,
       catalog: catalogEntries,
       intraday,
-      book_comparison: { attribution: bookPerf?.attribution || {}, class_series: bookPerf?.class_series || {} },
+      book_comparison: { attribution: bookPerf?.attribution || {}, class_series: bookPerf?.class_series || {},
+        desk_series: [...dailyLast(index, "v")] },
       moves: (() => {   // each held position's price move over 7 and 30 days (the uPnL tile's periods)
         const out = {}, now = Date.now();
         const at = (rows, days) => { let c = null; rows.forEach((r) => { if (r.t <= now - days * DAY_MS) c = r.c; }); return c; };

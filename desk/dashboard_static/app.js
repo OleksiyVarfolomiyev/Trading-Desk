@@ -1744,16 +1744,17 @@ function benchmarkLevels(lines, name, today) {
   }));
 }
 
-function historicalBenchmarkTable(lines, classSeries, days, now) {
+function historicalBenchmarkTable(lines, comparison, days, now) {
   const today = Math.floor(now / BENCHMARK_DAY) * BENCHMARK_DAY;
-  const desk = benchmarkLevels(lines, String(lines[0]?.name || "").toLowerCase(), today);
-  const assetClass = (key) => new Map((classSeries[key] || []).flatMap(([day, level]) => {
+  const returns = (points) => new Map((points || []).flatMap(([day, level]) => {
     const time = Date.parse(day);
     return time < today && isNum(level) && level >= 0 ? [[time, level]] : [];
   }));
+  const desk = returns(comparison.desk_series);
+  const books = comparison.class_series || {};
   const specs = [
-    ["Whole desk", desk, "BTC", "btc"], ["Whole desk", desk, "SPY", "spy"],
-    ["Crypto book", assetClass("crypto"), "BTC", "btc"], ["Stocks book", assetClass("stocks"), "SPY", "spy"],
+    ["Crypto book", returns(books.crypto), "BTC", "btc"], ["Both books", desk, "BTC", "btc"],
+    ["Stocks book", returns(books.stocks), "SPY", "spy"], ["Both books", desk, "SPY", "spy"],
   ];
   const percent = (value, count) => count ? value / count : null;
   return {
@@ -1787,7 +1788,7 @@ function historicalBenchmarkTable(lines, classSeries, days, now) {
         __hover: n ? `${beat}/${n} beat · ${tie} tied · ${down.beat}/${down.n} on down days · ${date(start)} to ${date(end)}`
           : "No matched book and benchmark closes in this window" };
     }),
-    note: "Whole desk uses time-weighted returns. Books use PnL per dollar of prior gross exposure, excluding days below 1% of trading equity.",
+    note: "Combined rows use the trading desk’s time-weighted return. Single books use prior gross exposure, excluding days below 1% of trading equity.",
   };
 }
 
@@ -1842,7 +1843,7 @@ function renderBenchmarkTables(doc) {
     const table = id === "benchmark-intraday"
       ? intradayBenchmarkTable(doc.data.intraday || {}, selected[1], now)
       : id === "benchmark-history"
-        ? historicalBenchmarkTable(doc.data.charts?.twr || [], doc.data.book_comparison?.class_series || {}, selected[1], now)
+        ? historicalBenchmarkTable(doc.data.charts?.twr || [], doc.data.book_comparison || {}, selected[1], now)
         : benchmarkAttributionTable(doc.data.book_comparison?.attribution || {}, selected[0]);
     renderTable(id, { ...table, keepColumns: true, tableOnly: true });
   }

@@ -675,11 +675,15 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     notes = list(desk.notes)
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     books_by_kind(tables)
+    book_comparison = book_comparison_now()
+    book_comparison["desk_series"] = [
+        [stamp.strftime("%Y-%m-%d"), float(level)] for stamp, level in _daily(desk.index).items()
+    ]
     return {
         "kpis": kpis,
         "horizon_days": research.get("horizon_days") if isinstance(research, dict) else None,
         "theses": (research.get("theses") if isinstance(research, dict) else None) or [],   # the thesis clock   # the open trades' median age
-        "book_comparison": book_comparison_now(),
+        "book_comparison": book_comparison,
         "intraday": intraday_series(desk),   # the day and week at hourly resolution (the return chart's D and W)
         "moves": position_moves(overview),   # the held positions' price moves over 7 and 30 days
         "usage_model": usage_model_now(),   # what the reader has said is noise (desk/usage_model.py)
