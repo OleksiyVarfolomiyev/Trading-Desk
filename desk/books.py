@@ -614,9 +614,12 @@ class Book:
         """PnL and return over 7, 30 and 90 days: the book, its parts, and its benchmark."""
         rows = []
         end = self.days[-1]
-        parts = {"HL": self.coins[self.coins["venue"] == "hl"].groupby("day")["pnl"].sum()}
-        if self.kind == "Stocks":
-            parts["IB"] = self.ib_daily
+        hl = self.coins[self.coins["venue"] == "hl"]
+        if self.kind == "Crypto":
+            perps = hl.loc[hl["kind"] == "perp"].groupby("day")["pnl"].sum()
+            parts = {"Perps": perps.reindex(self.days, fill_value=0.0)}
+        else:
+            parts = {"HL": hl.groupby("day")["pnl"].sum(), "IB": self.ib_daily}
         for label, days in WINDOWS.items():
             cut = end - pd.Timedelta(days=days)
             window = self.returns[self.returns.index > cut]
