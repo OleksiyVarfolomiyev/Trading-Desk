@@ -1544,6 +1544,36 @@ function drawIntraday(node, days) {
   Plotly.react(node, traces, layout, CONFIG).then(() => { spreadEndLabels(node.id); markNumericNotes(); });
   return true;
 }
+// The value chart also needs hourly points at D/W; zooming its daily samples only makes a flat line.
+function drawIntradayValue(node, days) {
+  const accounts = (latest && latest.data && latest.data.intraday && latest.data.intraday.accounts) || [];
+  const start = Date.now() - days * 86400000;
+  const source = (latest.data.charts && latest.data.charts.value) || [];
+  const traces = accounts.map((account, i) => {
+    const rows = (account.points || []).filter(([t, value]) => t >= start && isNum(value));
+    if (rows.length < 3) return null;
+    const match = source.findIndex((series) => series.name === account.name);
+    const color = token(`--series-${(match < 0 ? i : match) % 5 + 1}`);
+    return { type: "scatter", mode: "lines", name: account.name, x: rows.map(([t]) => new Date(t)), y: rows.map(([, value]) => value),
+      stackgroup: "value", line: { width: 2, color }, fillcolor: withAlpha(color, 0.18),
+      hovertemplate: "%{fullData.name}: $%{y:,.0f}<extra></extra>" };
+  }).filter(Boolean);
+  if (!traces.length) return false;
+  const annotations = [];
+  let stack = 0;
+  traces.forEach((trace) => {
+    const own = trace.y[trace.y.length - 1]; stack += own;
+    annotations.push({ x: trace.x[trace.x.length - 1], y: stack, xanchor: "left", xshift: 6, showarrow: false, text: usd(own),
+      font: { color: trace.line.color, size: 11 } });
+  });
+  const layout = Object.assign({}, node.layout, { annotations,
+    xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null, rangebreaks: [] }),
+    yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }),
+    margin: Object.assign({}, node.layout.margin, { r: 88 }) });
+  node._orig = null; node._intraday = true;
+  Plotly.react(node, traces, layout, CONFIG).then(() => { spreadEndLabels(node.id); markNumericNotes(); });
+  return true;
+}
 const colorFor = (name) => (name === "BTC" ? token("--kind-crypto") : token("--kind-stocks"));
 
 function zoomCharts() {   // the value charts show the chosen window (All: the whole history)
@@ -1553,7 +1583,8 @@ function zoomCharts() {   // the value charts show the chosen window (All: the w
     const node = document.getElementById(id);
     if (!node || !node.data) return;
     if (id === "chart-twr" && days && days <= 7) { if (drawIntraday(node, days)) return; }          // a day or a week: hourly
-    else if (id === "chart-twr" && node._intraday) { node._intraday = false; if (latest && latest.data) renderCharts(latest.data.charts); return; }   // back to the daily curves
+    else if (id === "chart-value" && days && days <= 7) { if (drawIntradayValue(node, days)) return; }
+    else if ((id === "chart-twr" || id === "chart-value") && node._intraday) { node._intraday = false; if (latest && latest.data) renderCharts(latest.data.charts); return; }   // back to the daily curves
     const rebasedFrom = id === "chart-twr" ? rebaseReturns(node, days) : null;
     if (!days) { Plotly.relayout(node, { "xaxis.autorange": true, "yaxis.autorange": true }).then(() => spreadEndLabels(id)); return; }
     const end = Date.now(), start = Math.min(end - days * 86400000, rebasedFrom || Infinity);

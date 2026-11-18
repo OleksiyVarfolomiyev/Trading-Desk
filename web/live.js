@@ -960,14 +960,19 @@
         const rows = await info({ type: "candleSnapshot", req: { coin, interval: "1h", startTime: from, endTime: end } });
         return (rows || []).map((r) => [r.t, num(r.c)]);
       }).catch(() => []);
-      const hl = traders.filter((a) => a.venue === "hl").map((a) => historyOf[a.id] || []).filter((h) => h.length);
-      const grid = [...new Set(hl.flatMap((h) => h.filter((p) => p.t >= from).map((p) => Math.floor(p.t / 3600000) * 3600000)))].sort((a, b) => a - b);
+      const hl = traders.filter((a) => a.venue === "hl").map((a) => [a, historyOf[a.id] || []]).filter(([, h]) => h.length);
+      const histories = hl.map(([, h]) => h);
+      const grid = [...new Set(histories.flatMap((h) => h.filter((p) => p.t >= from).map((p) => Math.floor(p.t / 3600000) * 3600000)))].sort((a, b) => a - b);
       const at = (h, t) => { let last = null; for (const p of h) { if (p.t <= t) last = p; else break; } return last; };
       const desk = grid.map((t) => {
-        const parts = hl.map((h) => at(h, t)).filter(Boolean);
-        return parts.length === hl.length ? [t, sum(parts.map((p) => p.pnl)), sum(parts.map((p) => p.value))] : null;
+        const parts = histories.map((h) => at(h, t)).filter(Boolean);
+        return parts.length === histories.length ? [t, sum(parts.map((p) => p.pnl)), sum(parts.map((p) => p.value))] : null;
       }).filter(Boolean);
-      return { desk, BTC: await hours(BTC), "S&P500": await hours(SP500) };
+      const accounts = hl.map(([account, history]) => ({ name: account.label || account.name, points: grid.map((t) => {
+        const point = at(history, t);
+        return point ? [t, point.value] : null;
+      }).filter(Boolean) }));
+      return { desk, accounts, BTC: await hours(BTC), "S&P500": await hours(SP500) };
     })();
 
     // -- highlights (desk/overview.py and desk_accounts.py rules)

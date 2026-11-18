@@ -76,11 +76,12 @@ def intraday_series(desk) -> dict:
 
     import pandas as _pd
 
-    out = {"desk": [], "BTC": [], "S&P500": []}
+    out = {"desk": [], "accounts": [], "BTC": [], "S&P500": []}
     try:
         from desk.accounts import accounts_for
 
-        histories = [desk.histories[a.name].copy() for a in accounts_for("hl", desk.accounts) if a.name in desk.histories]
+        named = [(a.name, desk.histories[a.name].copy()) for a in accounts_for("hl", desk.accounts) if a.name in desk.histories]
+        histories = [frame for _, frame in named]
         cutoff = _pd.Timestamp.now(tz="UTC") - _pd.Timedelta(days=8)
         frames = []
         for history in histories:
@@ -93,6 +94,10 @@ def intraday_series(desk) -> dict:
             for stamp, row in combined.iterrows():
                 out["desk"].append([int(stamp.timestamp() * 1000), float(sum(row[(k, "pnl")] for k in range(len(frames)))),
                                     float(sum(row[(k, "accountValue")] for k in range(len(frames))))])
+            out["accounts"] = [{"name": name, "points": [
+                [int(stamp.timestamp() * 1000), float(row[(k, "accountValue")])]
+                for stamp, row in combined.iterrows() if _pd.notna(row[(k, "accountValue")])
+            ]} for k, (name, _) in enumerate(named)]
     except Exception:
         pass
     try:
