@@ -2044,7 +2044,7 @@ function pulseBar(strip) {
   const chart = el("div", { class: "trade-bar", role: "group", "aria-label": "Chart" }, [chartPicker.wrap, show]);
 
   for (const [label, content, face] of [
-    ["Trade", tradeBar(close), "Trade"],
+    ["Trade", tradeBar(close), "▶"],
     ["Chart", chart, icon("chart")],
   ]) {
     const button = el("button", { type: "button", class: "icon-button pulse-action", title: label, "aria-label": label,
