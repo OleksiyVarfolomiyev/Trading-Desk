@@ -828,6 +828,12 @@ function renderTable(id, spec) {
     const classes = [format.num ? "num" : "", tone, key, legColor].filter(Boolean).join(" ");
     // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
     const withDigits = !isAssetColumn(column.key) && /\d/.test(text) ? " digits" : "";
+    if (/^corr(?:elation)?\s+(?:to\s+)?btc(?:\s+30d)?$/i.test(column.key) && isNum(value)) {
+      const strength = Math.min(1, Math.abs(value));
+      const accent = value < 0 ? "--series-2" : "--series-1";
+      const tint = `color-mix(in srgb, var(${accent}) ${strength * 52}%, transparent)`;
+      return el("td", { class: classes + withDigits + " correlation-cell", style: `--correlation-tint:${tint}`, text });
+    }
     if (isAssetColumn(column.key) && text && !/^(?:net\/)?total$/i.test(text) && !ZERO_TEXT.test(text)) {
       const market = (row.__raw && row.__raw[column.key]) || value;
       return el("td", { class: classes }, [assetButton(market, marketName(text),
