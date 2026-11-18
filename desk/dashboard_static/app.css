@@ -643,10 +643,12 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .brow.notable { box-shadow: inset 2px 0 0 var(--warning); }
 .bname { background: transparent; border: 0; font: inherit; font-weight: 600; text-align: left; padding: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btrack { position: relative; height: 16px; }
+.barlist.zero-centered .btrack::after { content: ""; position: absolute; z-index: 1; left: 50%; top: 1px; bottom: 1px; width: 1px; background: var(--axis); pointer-events: none; }
 .bfill { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; }
 .kind-bg-crypto { background: var(--kind-crypto-bg); }
 .kind-bg-stocks { background: var(--kind-stocks-bg); }
 .bfig { position: absolute; top: 0; line-height: 16px; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bfig-inside { z-index: 2; }
 .bacts { display: inline-flex; gap: 1px; min-width: 20px; }
 .bacts .row-act { opacity: 0; }
 .brow:hover .bacts .row-act, .brow:focus-within .bacts .row-act { opacity: 1; }
