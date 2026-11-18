@@ -1523,12 +1523,13 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 
 // ---------------------------------------------------------------- look switches
 // Three switches in the top bar: Numbers or Charts (the tables drawn as charts), a sun or moon for light or dark, and the
-// style: Indie (the desk's own), HL (Hyperliquid) or Apple. Every style has a light and a dark version. The choices are
+// style: Indie (the desk's own), HL (Hyperliquid), Apple or monochrome. Every style has a light and a dark version. The choices are
 // remembered in the browser; the page's head script sets them before first paint (and reads ?mode= ?style= ?view=).
 const VIEW_CHOICES = [["tables", "Numbers (tables)", "table"], ["charts", "Charts", "chart"]];
-const STYLE_CHOICES = [["indie", "Indie", "#898781"], ["hl", "HL", "#50d2c1"], ["apple", "Apple", "#0a84ff"]];
+const STYLE_CHOICES = [["indie", "Indie", "#898781"], ["hl", "HL", "#50d2c1"], ["apple", "Apple", "#0a84ff"], ["mono", "Monochrome", "#666666"]];
 function lookTheme(mode, style) {   // the CSS theme for a style and mode
-  return style === "indie" ? mode : style === "hl" ? (mode === "dark" ? "hl" : "hl-light") : "apple-" + mode;
+  return style === "indie" ? mode : style === "hl" ? (mode === "dark" ? "hl" : "hl-light")
+    : style === "mono" ? "mono-" + mode : "apple-" + mode;
 }
 function icon(kind) {   // 16px line icons, drawn in the button's text colour
   const ns = "http://www.w3.org/2000/svg";

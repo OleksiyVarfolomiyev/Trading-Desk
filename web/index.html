@@ -7,7 +7,7 @@
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="app.css">
 <script>
-  // The look is set before first paint. ?mode=light|dark, ?style=indie|hl|apple, ?view=tables|charts (all remembered).
+  // The look is set before first paint. ?mode=light|dark, ?style=indie|hl|apple|mono, ?view=tables|charts (all remembered).
   // The older ?theme=dark|light|hl|viridis (and a theme the browser remembers) still work: they become a mode and style.
   (function () {
     var root = document.documentElement, params = null, stored = function (key) {
@@ -20,6 +20,7 @@
       if (theme === "light") { mode = "light"; style = "indie"; }
       else if (theme === "dark") { mode = "dark"; style = "indie"; }
       else if (theme === "hl") { mode = "dark"; style = "hl"; }
+      else if (theme === "mono") { mode = "light"; style = "mono"; }
     }
     mode = mode || stored("desk-mode"); style = style || stored("desk-style");
     if (!mode && !style && !theme) {   // a theme remembered by an older version of the page
@@ -28,11 +29,11 @@
       else if (old === "hl") { mode = "dark"; style = "hl"; }
     }
     mode = mode === "light" ? "light" : "dark";
-    style = style === "hl" || style === "apple" ? style : "indie";
+    style = style === "hl" || style === "apple" || style === "mono" ? style : "indie";
     root.setAttribute("data-mode", mode);
     root.setAttribute("data-style", style);
     root.setAttribute("data-theme", theme === "viridis" ? "viridis" : style === "indie" ? mode
-      : style === "hl" ? (mode === "dark" ? "hl" : "hl-light") : "apple-" + mode);
+      : style === "hl" ? (mode === "dark" ? "hl" : "hl-light") : style === "mono" ? "mono-" + mode : "apple-" + mode);
     if (asked("mode") || asked("style") || (theme && theme !== "viridis")) {
       try { localStorage.setItem("desk-mode", mode); localStorage.setItem("desk-style", style); } catch (e) {}
     }
