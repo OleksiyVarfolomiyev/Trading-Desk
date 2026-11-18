@@ -988,11 +988,14 @@ def gross_market_exposure(book: "Book") -> pd.Series:
     return book.coins["value"].abs().groupby(book.coins["day"]).sum().reindex(book.days).fillna(0.0)
 
 
+def invested_class_capital(book: "Book") -> pd.Series:
+    gross = gross_market_exposure(book)
+    return gross.where((gross > 0) & (gross >= 0.01 * book.equity) & (book.equity > 0)).shift(1)
+
+
 def invested_class_returns(book: "Book") -> pd.Series:
     """Book PnL per dollar of prior gross exposure, for an index comparison on invested notional."""
-    gross = gross_market_exposure(book)
-    capital = gross.where((gross > 0) & (gross >= 0.01 * book.equity) & (book.equity > 0))
-    return (book.pnl / capital.shift(1)).reindex(book.returns.index).dropna()
+    return (book.pnl / invested_class_capital(book)).reindex(book.returns.index).dropna()
 
 
 def chart_returns(book: "Book") -> pd.Series:
@@ -1154,6 +1157,25 @@ Book.show_alpha_check = show_alpha_check
 PICKS_MIN_HELD = 0.01   # a day counts when the leg holds at least 1% of equity
 
 
+def decision_marks(book: "Book") -> pd.DataFrame:
+    """Daily price, equal-sized price, execution, and carrying PnL by book."""
+    names = book.coins.sort_values("day").copy()
+    keys = ["account", "kind", "asset"]
+    names["before"] = names.groupby(keys)["value"].shift(1).fillna(0.0)
+    held = names.loc[names["before"].abs() > 0.01].copy()
+    held["side"] = np.sign(held["before"])
+    # Count each distinct market once per side even if several wallets hold it.
+    holdings = held.groupby(["day", "side", "kind", "asset"])[["before", "price"]].sum()
+    holdings["gross"] = holdings["before"].abs()
+    holdings["return"] = holdings["price"] / holdings["gross"]
+    side = holdings.groupby(level=["day", "side"]).agg(gross=("gross", "sum"), mean_return=("return", "mean"))
+    equal_price = (side["gross"] * side["mean_return"]).groupby(level="day").sum()
+
+    marks = names.groupby("day")[["before", "price", "trading", "fees", "funding"]].sum()
+    marks["equal_price"] = equal_price
+    return marks.reindex(book.days).fillna(0.0)
+
+
 def decision_attribution(book: "Book", returns: pd.Series) -> dict:
     """Explain compounded book excess return on matched benchmark endpoints.
 
@@ -1177,21 +1199,7 @@ def decision_attribution(book: "Book", returns: pd.Series) -> dict:
     if not edges:
         return {}
 
-    names = book.coins.sort_values("day").copy()
-    keys = ["account", "kind", "asset"]
-    names["before"] = names.groupby(keys)["value"].shift(1).fillna(0.0)
-    held = names.loc[names["before"].abs() > 0.01].copy()
-    held["side"] = np.sign(held["before"])
-    # Count each distinct market once per side even if several wallets hold it.
-    holdings = held.groupby(["day", "side", "kind", "asset"])[["before", "price"]].sum()
-    holdings["gross"] = holdings["before"].abs()
-    holdings["return"] = holdings["price"] / holdings["gross"]
-    side = holdings.groupby(level=["day", "side"]).agg(gross=("gross", "sum"), mean_return=("return", "mean"))
-    equal_price = (side["gross"] * side["mean_return"]).groupby(level="day").sum()
-
-    marks = names.groupby("day")[["before", "price", "trading", "fees", "funding"]].sum()
-    marks["equal_price"] = equal_price
-    marks = marks.reindex(book.days).fillna(0.0)
+    marks = decision_marks(book)
     equity = book.equity.shift(1).reindex(book.days)
     per_equity = marks.div(equity.where(equity > 0), axis=0).fillna(0.0)
     bench = closes.pct_change(fill_method=None).reindex(book.days).fillna(0.0)

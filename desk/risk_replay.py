@@ -101,11 +101,13 @@ def stop_replay(fills_by_wallet, equity_by_book, windows, now=None):
     for name, periods in windows.items():
         result[name] = {}
         for label, window in periods.items():
-            first, last = (pd.Timestamp(window[key], tz="UTC") for key in ("start", "end"))
+            dates = window.get("days")
+            if dates is None:
+                first, last = (pd.Timestamp(window[key], tz="UTC") for key in ("start", "end"))
             estimates = defaultdict(lambda: [0.0, 0.0])
             identified, incomplete = set(), set()
             for key, day, coin, target, side, exit_price, size, equity in samples.get(name, []):
-                if not first < day <= last:
+                if not (day in dates if dates is not None else first < day <= last):
                     continue
                 identified.add(key)
                 mark = marks.get((coin, target))

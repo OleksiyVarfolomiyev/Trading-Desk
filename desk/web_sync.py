@@ -226,11 +226,13 @@ def trade_stats(fills_by_wallet: dict | None = None) -> dict | None:
 def books_payload() -> dict:
     """Each book's return on trading equity over 1, 7, 30 and 90 days (desk/books.py, the notebooks' numbers), for the
     dashboards' performance table: the books, not the accounts."""
+    from desk.benchmark_regimes import benchmark_regimes
     from desk.books import Book, chart_returns, decision_attribution, invested_class_returns
 
-    rows, series, attribution, class_series, equity = [], {}, {}, {}, {}
+    rows, series, attribution, class_series, equity, books = [], {}, {}, {}, {}, {}
     for kind, options in (("Crypto", {}), ("Stocks", {"since": "2025-01-13"})):
         book = Book(kind, **options).fetch_data()
+        books[kind.lower()] = book
         table = book.performance().set_index("Window")
         rows.append({"Account": kind.lower(),
                      **{f"Return {'24h' if window == '1D' else window}": _clean(float(value))
@@ -243,17 +245,25 @@ def books_payload() -> dict:
         invested = (1 + invested_class_returns(book)).clip(lower=0).cumprod()
         class_series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(float(value))]
                                       for day, value in invested.items()]
+    regimes, dates_by_regime = benchmark_regimes(books)
     fills = {}
     replay = {}
     try:
         from desk.risk_replay import stop_replay
 
         fills = _book_fills()
-        replay = stop_replay(fills, equity, attribution)
+        conditional = {f"{window}:{regime}": {"days": dates} for window, groups in dates_by_regime.items()
+                       for regime, dates in groups.items()}
+        replay = stop_replay(fills, equity, {name: {**periods, **conditional} for name, periods in attribution.items()})
+        for window, groups in regimes.items():
+            for regime, result in groups.items():
+                key = f"{window}:{regime}"
+                result["risk"] = {name: periods.pop(key) for name, periods in replay.items() if key in periods}
     except Exception as error:
         print(f"Risk replay unavailable ({type(error).__name__}).", file=sys.stderr)
     return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series,
-            "class_series": class_series, "attribution": attribution, "risk_replay": replay, "stats": trade_stats(fills)}
+            "class_series": class_series, "attribution": attribution, "risk_replay": replay,
+            "regimes": regimes, "stats": trade_stats(fills)}
 
 
 def push_books(force: bool = False) -> dict | None:

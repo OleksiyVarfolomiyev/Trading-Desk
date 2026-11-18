@@ -1680,6 +1680,7 @@ const BENCHMARK_WINDOWS = {
   "benchmark-intraday": { periods: [["D", 1], ["W", 7]], initial: "W" },
   "benchmark-history": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
   "benchmark-attribution": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
+  "benchmark-regimes": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
 };
 
 function benchmarkCounts(pairs) {
@@ -1793,38 +1794,128 @@ function historicalBenchmarkTable(lines, comparison, days, now) {
   };
 }
 
+const ATTRIBUTION_FACTORS = [
+  ["Picks", "Equal-size holdings within each side versus the same signed exposure in the benchmark"],
+  ["Sizing", "Actual position weights versus equal sizing within each side"],
+  ["Timing", "Changes in daily net exposure plus fills marked to the daily close"],
+  ["Market exposure", "Average net exposure versus a fully invested benchmark"],
+  ["Fees & funding", "Recorded fees and funding"],
+  ["Unattributed", "PnL that could not be linked to the position marks, including unallocated IB results"],
+];
+
+const RM_REPLAY_METHOD = "Verified Hyperliquid protective stops vs holding the same quantity for 24 hours, marked at the next hourly close. Price effect scaled to prior trading equity. Trims, IB stops, fees and funding are outside this replay. The estimate is separate from excess return.";
+function replayTooltip(replay) {
+  if (!replay) return RM_REPLAY_METHOD + " Replay data unavailable.";
+  const counts = replay.covered
+    ? `${wholeUsd(replay.effect)} gross price effect · ${replay.helped} helped · ${replay.hurt} hurt · ${replay.covered}/${replay.identified} matched stop orders.`
+    : "No eligible stop orders with a matched close in this period.";
+  const coverage = replay.coverage_start ? ` Common order-history coverage starts ${replay.coverage_start}.` : "";
+  return `${counts} Order history for ${replay.wallets_read}/${replay.wallets} wallets.${coverage} ${RM_REPLAY_METHOD}`;
+}
+
 function benchmarkAttributionTable(data, period) {
   const crypto = data.attribution?.crypto?.[period], stocks = data.attribution?.stocks?.[period];
   const cryptoReplay = data.risk_replay?.crypto?.[period], stocksReplay = data.risk_replay?.stocks?.[period];
-  const replayMethod = "Verified Hyperliquid protective stops vs holding the same quantity for 24 hours, marked at the next hourly close. Price effect scaled to prior trading equity. Trims, IB stops, fees and funding are outside this replay. The estimate is separate from excess return.";
-  const replayTooltip = (replay) => {
-    if (!replay) return replayMethod + " Replay data unavailable.";
-    const counts = replay.covered
-      ? `${wholeUsd(replay.effect)} gross price effect · ${replay.helped} helped · ${replay.hurt} hurt · ${replay.covered}/${replay.identified} matched stop orders.`
-      : "No eligible stop orders with a matched close in this period.";
-    const coverage = replay.coverage_start ? ` Common order-history coverage starts ${replay.coverage_start}.` : "";
-    return `${counts} Order history for ${replay.wallets_read}/${replay.wallets} wallets.${coverage} ${replayMethod}`;
-  };
-  const definitions = [
-    ["Picks", "Equal-size holdings within each side versus the same signed exposure in the benchmark"],
-    ["Sizing", "Actual position weights versus equal sizing within each side"],
-    ["Timing", "Changes in daily net exposure plus fills marked to the daily close"],
-    ["Market exposure", "Average net exposure versus a fully invested benchmark"],
-    ["Fees & funding", "Recorded fees and funding"],
-    ["Unattributed", "PnL that could not be linked to the position marks, including unallocated IB results"],
-  ];
   return {
     columns: [{ key: "Factor", fmt: "text" }, { key: "Crypto vs BTC", fmt: "spp" }, { key: "Stocks vs SPY", fmt: "spp" }],
     rows: [
-      ...definitions.map(([label, description]) => ({ Factor: label, "Crypto vs BTC": crypto?.parts?.[label],
+      ...ATTRIBUTION_FACTORS.map(([label, description]) => ({ Factor: label, "Crypto vs BTC": crypto?.parts?.[label],
         "Stocks vs SPY": stocks?.parts?.[label], __hover: description })),
       { Factor: "RM replay", "Crypto vs BTC": cryptoReplay?.share, "Stocks vs SPY": stocksReplay?.share,
-        __hover: replayMethod, __cellTitles: { "Crypto vs BTC": replayTooltip(cryptoReplay), "Stocks vs SPY": replayTooltip(stocksReplay) } },
+        __hover: RM_REPLAY_METHOD, __cellTitles: { "Crypto vs BTC": replayTooltip(cryptoReplay), "Stocks vs SPY": replayTooltip(stocksReplay) } },
     ],
     total: { Factor: "Excess return", "Crypto vs BTC": crypto?.excess, "Stocks vs SPY": stocks?.excess,
       __hover: "Compounded difference versus the index in percentage points on desk trading equity. Excludes the RM replay." },
     note: crypto || stocks ? "" : "Attribution data is unavailable for this period",
   };
+}
+
+const MARKET_REGIMES = [
+  ["both_up", "BTC ↑ · SPY ↑", "Both up"],
+  ["btc_up", "BTC ↑ · SPY ↓", "BTC up, SPY down"],
+  ["spy_up", "BTC ↓ · SPY ↑", "BTC down, SPY up"],
+  ["both_down", "BTC ↓ · SPY ↓", "Both down"],
+];
+const REGIME_COMPARISONS = [
+  ["crypto", "Crypto vs BTC"], ["stocks", "Stocks vs SPY"], ["desk_btc", "Desk vs BTC"], ["desk_spy", "Desk vs SPY"],
+];
+
+function regimeBeatTable(data) {
+  return {
+    columns: [{ key: "Market", fmt: "text" }, { key: "Sessions", fmt: "int" },
+      ...REGIME_COMPARISONS.map(([, key]) => ({ key, fmt: "pct" }))],
+    rows: MARKET_REGIMES.map(([key, symbol, label]) => {
+      const period = data[key], n = period?.sessions || 0;
+      const values = {}, titles = {};
+      for (const [comparison, heading] of REGIME_COMPARISONS) {
+        const result = period?.comparisons?.[comparison];
+        values[heading] = n && result ? result.beat / n : null;
+        if (n && result) {
+          const spread = (100 * (result.portfolio - result.index)).toFixed(1);
+          titles[heading] = `${result.beat}/${n} beat · ${result.lag} lagged · ${n - result.beat - result.lag} tied. `
+            + `Across these sessions, $10k became ${wholeUsd(10000 * result.portfolio)} vs ${wholeUsd(10000 * result.index)} in the index (${spread} pp excess).`;
+        }
+      }
+      return { Market: symbol, Sessions: n, ...values, __hover: `${label}. Both indices and all four comparisons share these session dates.`, __cellTitles: titles };
+    }),
+    note: Object.keys(data).length ? "Share of matched SPY sessions won · BTC uses closes on the same UTC dates"
+      : "No matched book and benchmark sessions in this window",
+  };
+}
+
+function renderRegimeDrivers(data) {
+  const id = "benchmark-regime-drivers";
+  const host = document.getElementById("t-" + id);
+  if (!host) return;
+  const selection = scaleChoices[id] || "both_down";
+  let toolbar = host.previousElementSibling;
+  if (!toolbar?.classList.contains("table-periods")) {
+    toolbar = el("div", { class: "scale-chips table-periods", role: "group", "aria-label": "Market direction" });
+    for (const [key, text, title] of MARKET_REGIMES) {
+      const button = el("button", { type: "button", class: "scale-chip", "data-window": key, text, title, "aria-label": title });
+      button.addEventListener("click", () => {
+        scaleChoices[id] = key;
+        saveScaleChoices();
+        feedback("table", "regime", id, key);
+        if (latest?.data) renderBenchmarkTables(latest);
+      });
+      toolbar.append(button);
+    }
+    host.before(toolbar);
+  }
+  for (const button of toolbar.children) {
+    const active = button.dataset.window === selection;
+    button.classList.toggle("on", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  const regime = data[selection];
+  const values = (pick) => Object.fromEntries(REGIME_COMPARISONS.map(([key, label]) => {
+    const result = regime?.comparisons?.[key];
+    return [label, result ? pick(result) : null];
+  }));
+  const cryptoRisk = regime?.risk?.crypto, stocksRisk = regime?.risk?.stocks;
+  const availableRisk = [cryptoRisk, stocksRisk].filter((report) => isNum(report?.share));
+  const deskRisk = availableRisk.length ? availableRisk.reduce((total, report) => total + report.share, 0) : null;
+  const deskTooltip = "Combined stop price effect over prior trading equity. Excluded from excess return. "
+    + `Crypto: ${replayTooltip(cryptoRisk)} Stocks: ${replayTooltip(stocksRisk)}`;
+  renderTable(id, {
+    keepColumns: true, tableOnly: true,
+    columns: [{ key: "Factor", fmt: "text" }, ...REGIME_COMPARISONS.map(([, key]) => ({ key, fmt: "spp" }))],
+    rows: [
+      ...ATTRIBUTION_FACTORS.map(([label, description]) => ({
+        Factor: label, ...values((result) => result.parts[label]),
+        __hover: description + ". Single books use prior gross exposure. Desk uses prior trading equity.",
+      })),
+      { Factor: "RM replay", "Crypto vs BTC": cryptoRisk?.share, "Stocks vs SPY": stocksRisk?.share,
+        "Desk vs BTC": deskRisk, "Desk vs SPY": deskRisk, __hover: RM_REPLAY_METHOD,
+        __cellTitles: { "Crypto vs BTC": replayTooltip(cryptoRisk), "Stocks vs SPY": replayTooltip(stocksRisk),
+          "Desk vs BTC": deskTooltip, "Desk vs SPY": deskTooltip } },
+    ],
+    total: { Factor: "Excess return", ...values((result) => result.portfolio - result.index),
+      __hover: "Compounded book or desk return minus the index return across the selected sessions. Excludes the RM replay." },
+    note: regime?.sessions ? `${regime.sessions} matched sessions · Same window as Beat rates by market direction`
+      : "No matched sessions for this market direction and window",
+  });
 }
 
 function renderBenchmarkTables(doc) {
@@ -1853,6 +1944,12 @@ function renderBenchmarkTables(doc) {
       const active = selected[0] === button.dataset.window;
       button.classList.toggle("on", active);
       button.setAttribute("aria-pressed", String(active));
+    }
+    if (id === "benchmark-regimes") {
+      const data = doc.data.book_comparison?.regimes?.[selected[0]] || {};
+      renderTable(id, { ...regimeBeatTable(data), keepColumns: true, tableOnly: true });
+      renderRegimeDrivers(data);
+      continue;
     }
     const table = id === "benchmark-intraday"
       ? intradayBenchmarkTable(doc.data.intraday || {}, selected[1], now)
@@ -4233,7 +4330,7 @@ document.addEventListener("click", (event) => {
 const SCREENS = ["now", "research"];
 // Research keeps the research items in: the candidates (short and market-making), the strategy result, the long charts, and whatever is pulled from the notebooks.
 const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "hl-desk-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr", "t-benchmark-intraday"],
-  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr", "t-benchmark-history", "t-benchmark-attribution"] };
+  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr", "t-benchmark-history", "t-benchmark-attribution", "t-benchmark-regimes", "t-benchmark-regime-drivers"] };
 function screensFor(card) {
   const id = cardId(card);
   if (card.dataset.published) return "research";
