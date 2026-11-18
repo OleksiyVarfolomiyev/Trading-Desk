@@ -649,6 +649,7 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 .bfill { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; }
 .kind-bg-crypto { background: var(--kind-crypto-bg); }
 .kind-bg-stocks { background: var(--kind-stocks-bg); }
+.barlist.zero-centered .kind-bg-crypto { background: color-mix(in srgb, var(--kind-crypto) 62%, #000); }
 .bfig { position: absolute; top: 0; line-height: 16px; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bacts { display: inline-flex; justify-content: flex-end; gap: 1px; min-width: 20px; }
 .bacts .row-act { opacity: 0; }
