@@ -1265,6 +1265,7 @@ const cleanLine = (text) => String(text).replace(VENUES, "").replace(/\bSP500\b/
   .replace(/\s*\([^)]*\)/g, "")                                                          // no parentheses: that is explanation
   .replace(/(\d+(?:\.\d+)?%)\s+down\b/g, "-$1").replace(/(\d+(?:\.\d+)?%)\s+up\b/g, "$1")   // "1.9% down" is a red 1.9%
 const sentences = (text) => String(text).split(/(?<=[.;?])\s+(?=[A-Z])/).map((part) => part.trim()).filter(Boolean);   // each thought its own line
+const highlightPunctuation = (text) => String(text).replace(/;+\s*$/, "").replace(/\s*;+\s*/g, " · ");
 
 // Gestures on a line or a row: swipe left = hide it / dislike it, double tap (or double click) = like it. The swipe is for touch
 // and pen (a mouse keeps its drag and click behaviour); a line that was swiped slides away before it goes.
@@ -1424,7 +1425,10 @@ function renderHighlights(id, rows, hover = {}) {
   }
   const rank = { critical: 0, watch: 1, "": 2 };
   // A dashboard line, not a sentence: one trailing period goes (several sentences keep theirs)
-  const tidy = (text) => (/\.\s+\S/.test(String(text)) ? String(text) : String(text).replace(/\.\s*$/, ""));
+  const tidy = (text) => {
+    const line = highlightPunctuation(text);
+    return /\.\s+\S/.test(line) ? line : line.replace(/\.\s*$/, "");
+  };
   const ordered = shown.map(([area, text, whole]) => [area, tidy(text), severity(area, whole), whole])
     .sort((a, b) => rank[a[2]] - rank[b[2]]);  // stable: same-level rows keep their order
   const foot = folded.length ? [el("li", {}, [el("button", { type: "button", class: "quiet-toggle", title: "Areas you have dismissed several times: " + [...new Set(folded.map((r) => r[0]))].join(", "),
@@ -1446,7 +1450,8 @@ function renderHighlights(id, rows, hover = {}) {
     response?.button.classList.add("alert-response");
     const positions = symbolActions(whole);
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
-    const item = el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [   // a pop-up only for the headlines around a big move
+    const tooltip = hover[area] || (area === "uPnL" ? "Unrealized PnL since entry as a share of open positions’ entry notional" : "");
+    const item = el("li", { class: level, title: tooltip ? highlightPunctuation(tooltip) : null }, [
       el("div", { class: "hl-text-row" }, [
         el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),
         response?.button,
@@ -2976,7 +2981,7 @@ function lineNodes(text, tint = true) {
   if (found[0].at > 0) nodes.push(...plain(source.slice(0, found[0].at)));
   found.forEach((item, i) => {
     const next = i + 1 < found.length ? found[i + 1].at : source.length;
-    const stop = source.slice(item.end, next).search(/[;.](\s|$)/);
+    const stop = source.slice(item.end, next).search(/[;.](\s|$)|\s·\s/);
     const end = stop >= 0 ? item.end + stop : next;
     const body = source.slice(item.end, end).replace(/^[:\s]+/, "").replace(/,\s*$/, "");
     if (body) nodes.push(tint ? el("span", { class: "kind-run " + (/crypto/i.test(item.word) ? "kind-crypto" : "kind-stocks") }, plain(body)) : el("span", {}, plain(body)));
@@ -3966,7 +3971,7 @@ function reportHtml() {
     const text = (selector) => (tile.querySelector(selector) || {}).textContent || "";
     return `<div class="k"><div class="l">${escape(text(".label"))}</div><div class="v">${escape(text(".value"))}</div><div class="s">${escape(text(".sub"))}</div></div>`;
   }).join("");
-  const rows = (list) => (list || []).map(([area, text]) => `<li><b>${escape(area)}</b> ${escape(text)}</li>`).join("") || "<li>Nothing to report.</li>";
+  const rows = (list) => (list || []).map(([area, text]) => `<li><b>${escape(area)}</b> ${escape(highlightPunctuation(text))}</li>`).join("") || "<li>Nothing to report.</li>";
   const context = { deskValue: (data.kpis || {}).desk_value };
   const titles = { performance: "Performance", strategies: "Performance by strategy", accounts: "Accounts", exposure: "Exposure by asset class",
     positions: "Open positions: crypto", wallets: "Wallets holdings", positions_stocks: "Open positions: stocks and tradfi",
