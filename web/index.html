@@ -70,10 +70,21 @@
 
     <section class="tiles" id="tiles" aria-label="Key numbers"></section>
 
-    <!-- One list, no title: what needs attention first, then what stands out. -->
+    <!-- Separate crypto, stock and desk-wide highlights; each keeps attention above what stands out. -->
     <section class="card highlights-card">
-      <ul class="highlights" id="hl-attention"></ul>
-      <ul class="highlights well" id="hl-well"></ul>
+      <h2>Crypto</h2>
+      <ul class="highlights" id="hl-crypto-attention"></ul>
+      <ul class="highlights well" id="hl-crypto-well"></ul>
+    </section>
+    <section class="card highlights-card">
+      <h2>Stocks</h2>
+      <ul class="highlights" id="hl-stocks-attention"></ul>
+      <ul class="highlights well" id="hl-stocks-well"></ul>
+    </section>
+    <section class="card highlights-card">
+      <h2>Desk Highlights</h2>
+      <ul class="highlights" id="hl-desk-attention"></ul>
+      <ul class="highlights well" id="hl-desk-well"></ul>
     </section>
 
     <!-- The two position tables side by side; the wallets go under whichever is shorter (app.js balanceColumns). -->

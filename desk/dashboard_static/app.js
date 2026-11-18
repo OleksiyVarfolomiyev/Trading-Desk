@@ -1488,7 +1488,9 @@ function render(doc) {
 // The web copy (web/live.js) builds the same document in the browser and sets DESK_SOURCE.
 async function load() {
   try {
-    await loadHighlightState();
+    if (!highlightStateLoaded) loadHighlightState().then(() => {
+      if (latest && latest.data) redrawHighlights();
+    });
     if (window.DESK_SOURCE) {
       latest = await window.DESK_SOURCE();
       render(latest);
