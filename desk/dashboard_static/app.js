@@ -1296,23 +1296,41 @@ function renderAlertStrip(rows, hover = {}) {
   renderHighlights("hl-alert", (rows || []).filter(([area, text]) => severity(area, text) !== ""), hover);
   host.hidden = !host.children.length;
 }
-function alertResponseButton(area, text, monitor) {
+function highlightAction(symbol, label, action) {
+  const button = el("button", { type: "button", class: "hl-act", text: symbol, title: label, "aria-label": label });
+  button.addEventListener("click", action);
+  return button;
+}
+
+function highlightOptions(symbol, label, renderOptions) {
+  const panel = el("div", { class: "highlight-options", hidden: true, role: "group", "aria-label": label });
+  const close = () => {
+    panel.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    button.focus();
+  };
+  const button = highlightAction(symbol, label, () => {
+    if (!panel.hidden) { close(); return; }
+    renderOptions(panel, close);
+    panel.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    panel.querySelector("button")?.focus();
+  });
+  button.setAttribute("aria-expanded", "false");
+  panel.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { event.stopPropagation(); close(); }
+  });
+  return { button, panel };
+}
+
+function alertResponseOptions(area, text, monitor) {
   const equitySelloff = /equity sell[- ]off|stock (?:sell[- ]off|dip)/i.test(`${area} ${text}`);
   const accountAlert = /margin|not reporting|liquidat|data flow down|unreadable accounts/i.test(area);
-  const button = el("button", { type: "button", class: "hl-act alert-response", text: "▶",
-    title: "Response options", "aria-label": `Response options for ${area}` });
-  button.addEventListener("click", () => {
-    const title = equitySelloff ? "Equity sell-off" : area;
-    const { overlay, box } = actionDialog(title);
-    const option = (label, action) => {
-      const choice = el("button", { type: "button", class: "asset-action", text: label });
-      choice.addEventListener("click", () => {
-        feedback("highlight", "response", area, label);
-        overlay.remove();
-        action();
-      });
-      return choice;
-    };
+  return highlightOptions("▶", `Response options for ${area}`, (panel, close) => {
+    const option = (symbol, label, action) => highlightAction(symbol, label, () => {
+      feedback("highlight", "response", area, label);
+      action();
+    });
     const review = (id) => {
       const card = document.getElementById(id)?.closest(".card");
       if (!card || card.hidden) {
@@ -1320,55 +1338,52 @@ function alertResponseButton(area, text, monitor) {
         else notify([], "Exposure data is unavailable");
         return;
       }
+      close();
       setScreen("now");
       if (card.classList.contains("card-off")) setHidden(id, false);
       if (card.classList.contains("card-min")) setMinimized(id, false);
       card.scrollIntoView({ behavior: "smooth", block: "center" });
     };
-    box.replaceChildren(el("h3", { text: title }), el("div", { class: "asset-actions" }, [
+    const trims = el("div", { class: "highlight-trims", hidden: true, role: "group", "aria-label": "Stock and TradFi long trims" });
+    const trimToggle = option("⅓", "Review long trims", () => {
+      trims.hidden = !trims.hidden;
+      trimToggle.setAttribute("aria-expanded", String(!trims.hidden));
+      if (!trims.hidden) trims.replaceChildren(...stockTrimOptions(close));
+    });
+    trimToggle.setAttribute("aria-expanded", "false");
+    panel.replaceChildren(el("div", { class: "highlight-option-row" }, [
       ...(equitySelloff ? [
-        option("Review stock exposure", () => review("t-positions_stocks")),
-        option("Review long trims", reviewStockTrims),
+        option("↗", "Review stock exposure", () => review("t-positions_stocks")),
+        trimToggle,
       ] : [
-        option(accountAlert ? "Review accounts" : "Review exposure", () => review(accountAlert ? "t-accounts" : "t-exposure")),
-        ...(accountAlert ? [option("Refresh data", refreshAlertData)] : []),
+        option("↗", accountAlert ? "Review accounts" : "Review exposure", () => review(accountAlert ? "t-accounts" : "t-exposure")),
+        ...(accountAlert ? [option("↻", "Refresh data", () => { close(); refreshAlertData(); })] : []),
       ]),
-      option("Monitor for changes", monitor),
-    ]), closeButton(overlay));
-    box.querySelector("button")?.focus();
+      option("✓", "Monitor for changes", monitor),
+    ]), trims);
   });
-  return button;
 }
 
-function reviewStockTrims() {
-  const title = "Trim stock and TradFi longs by one third";
-  const { overlay, box } = actionDialog(title);
+function stockTrimOptions(close) {
   const rows = (latest?.data?.tables?.positions_stocks?.rows || [])
     .filter((row) => row.Symbol && isNum(row.Value) && row.Value > 0)
     .sort((a, b) => b.Value - a.Value);
-  const options = rows.map((row) => {
-    const hl = /^HL /.test(String(row.Account || ""));
+  if (!rows.length) return [el("span", { class: "muted", text: "No stock or TradFi longs to trim." })];
+  return rows.map((row) => {
     const name = marketName(row.Symbol);
-    const sentence = `trim the ${row.Symbol} long in ${row.Account} by a third`;
-    const plan = window.DESK_SOURCE && hl;
-    const trim = el("button", { type: "button", class: "asset-action", text: "⅓",
-      title: plan ? "Plan trim" : "Copy trim", "aria-label": `${plan ? "Plan" : "Copy"} trim for ${name} in ${row.Account}` });
-    trim.addEventListener("click", () => {
+    const plan = window.DESK_SOURCE && /^HL /.test(String(row.Account || ""));
+    const trim = highlightAction("⅓", `${plan ? "Plan" : "Copy"} trim for ${name} in ${row.Account}`, () => {
       if (plan) {
-        overlay.remove();
+        close();
         runAction("Trim ⅓", "reduce", 1 / 3, { coin: row.Symbol, wallet: String(row.Account).slice(-4) });
       } else {
-        copyOrder(trim, sentence);
+        copyOrder(trim, `trim the ${row.Symbol} long in ${row.Account} by a third`);
       }
     });
-    return el("div", { class: "alert-position" }, [
+    return el("div", { class: "highlight-option-row" }, [
       el("span", { text: `${name} · ${row.Account}` }), trim,
     ]);
   });
-  box.replaceChildren(el("h3", { text: title }),
-    ...(options.length ? options : [el("p", { class: "muted", text: "No stock or TradFi longs to trim." })]),
-    closeButton(overlay));
-  box.querySelector("button")?.focus();
 }
 
 async function refreshAlertData() {
@@ -1421,18 +1436,22 @@ function renderHighlights(id, rows, hover = {}) {
       feedback("highlight", "read", area, text);
     };
     const monitor = () => { const s = highlightState(); markRead(s); saveHighlightState(s); redrawHighlights(); };
+    const response = level ? alertResponseOptions(area, text, monitor) : null;
+    response?.button.classList.add("alert-response");
+    const positions = symbolActions(whole);
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
     const item = el("li", Object.assign(level ? { class: level } : {}, hover[area] ? { title: hover[area] } : {}), [   // a pop-up only for the headlines around a big move
       el("span", { class: "text" }, [
         ...lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text)),
-        level ? alertResponseButton(area, text, monitor) : null,
+        response?.button,
       ]),   // the uPnL lines carry no background
       el("span", { class: "hl-actions" }, [
-        ...symbolActions(whole),   // act on the symbols it names: run it (plan, then confirm) or copy the order
+        positions?.button,
         act("Read: hide until it changes", "✓", markRead),
         act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),   // stays; tells the model this area earns its place
         act("Not important: stop showing this", "👎", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
       ]),
+      response?.panel, positions?.panel,
     ]);
     gestures(item, {
       dislike: () => { const s = highlightState(); if (!s.deleted.includes(area)) s.deleted.push(area); saveHighlightState(s); feedback("highlight", "not important", area, text); redrawHighlights(); },
@@ -2832,30 +2851,35 @@ function markKinds(node) {   // replace the words in a heading's text nodes, kee
 }
 
 
-// Executable lines: a highlight that names held symbols offers to act on them: trim a third or close, each planned with the
-// daemon (its notices on top) and confirmed in one dialog. Only held HL positions; the web page runs them.
+// Show held-symbol actions in the highlight that names them.
 function symbolActions(text) {
   const found = [...knownSymbols()].filter((s) => new RegExp("(^|[^A-Za-z0-9])" + s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![A-Za-z0-9])", "i").test(text));
   const targets = found.map((symbol) => ({ symbol, rows: assetRows(symbol).filter((r) => isNum(r.Value) && r._table !== "wallets") })).filter(({ rows }) => rows.length);
-  if (!targets.length) return [];
-  const button = el("button", { type: "button", class: "hl-act", title: "Act", "aria-label": "Act on " + targets.map((t) => t.symbol).join(", "), text: "▶" });
-  button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    document.querySelectorAll(".more-menu").forEach((node) => node.remove());
-    const menu = el("div", { class: "more-menu" }, targets.flatMap(({ symbol, rows }) => {
-      const hl = rows.find((r) => /^HL /.test(String(r.Account || "")));
+  if (!targets.length) return null;
+  return highlightOptions("↔", "Act on " + targets.map(({ symbol }) => symbol).join(", "), (panel, close) => {
+    panel.replaceChildren(...targets.map(({ symbol, rows }) => {
+      const hl = rows.find((row) => /^HL /.test(String(row.Account || "")));
       const target = hl ? { coin: hl.Symbol, wallet: String(hl.Account).slice(-4) } : null;
-      return [["Trim ⅓", "reduce", 1 / 3, `trim ${symbol} by a third`], ["Raise ⅓", "add", 1 / 3, `raise ${symbol} by a third`], ["Close", "close", 1, `close ${symbol}`]].map(([label, change, fraction, sentence]) => {
-        const side = symbolSide(symbol);
-        const row = el("button", { type: "button", class: "sections-row tile-pick" }, [el("b", { class: "name-" + (side || symbolKind(symbol)), text: symbol }), el("span", { text: label })]);
-        row.addEventListener("click", () => { menu.remove(); if (target && window.DESK_SOURCE) runAction(label, change, fraction, target); else copyOrder(row, sentence); });
-        return row;
+      const controls = [
+        ["⅓", "Trim ⅓", "reduce", 1 / 3, `trim ${symbol} by a third`],
+        ["▲", "Raise ⅓", "add", 1 / 3, `raise ${symbol} by a third`],
+        ["✕", "Close", "close", 1, `close ${symbol}`],
+      ].map(([glyph, label, change, fraction, sentence]) => {
+        const button = highlightAction(glyph, `${label} ${symbol}`, () => {
+          if (target && window.DESK_SOURCE) {
+            close();
+            runAction(label, change, fraction, target);
+          } else {
+            copyOrder(button, sentence);
+          }
+        });
+        return button;
       });
+      return el("div", { class: "highlight-option-row" }, [
+        el("b", { class: "name-" + (symbolSide(symbol) || symbolKind(symbol)), text: symbol }), ...controls,
+      ]);
     }));
-    button.after(menu);
-    setTimeout(() => document.addEventListener("click", function away(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", away); } }), 0);
   });
-  return [button];
 }
 
 function symbolKind(symbol) {   // crypto or stocks, by the table the symbol is held in (or its venue)
