@@ -1228,6 +1228,12 @@ function withAlpha(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+const DATE_TICK_FORMATS = [
+  { dtickrange: [null, 86400000], value: "%H:%M" },
+  { dtickrange: [86400000, "M1"], value: "%b %d" },
+  { dtickrange: ["M1", "M12"], value: "%b'%y" },
+  { dtickrange: ["M12", null], value: "%Y" },
+];
 function baseLayout(extra) {
   const ink = token("--ink-2"), muted = token("--muted"), grid = token("--grid"), axis = token("--axis");
   return Object.assign({
@@ -1240,7 +1246,7 @@ function baseLayout(extra) {
     modebar: { bgcolor: "rgba(0,0,0,0)", color: muted, activecolor: token("--ink"), orientation: "h" },
     legend: { orientation: "h", x: 0, y: 1, yanchor: "bottom", font: { color: ink } },   // above the plot, inside the top margin
     xaxis: { gridcolor: grid, linecolor: axis, tickfont: { color: muted }, showspikes: true,
-             spikemode: "across", spikethickness: 1, spikecolor: axis, spikedash: "solid" },
+             spikemode: "across", spikethickness: 1, spikecolor: axis, spikedash: "solid", tickformatstops: DATE_TICK_FORMATS },
     yaxis: { gridcolor: grid, linecolor: axis, zerolinecolor: axis, tickfont: { color: muted } },
   }, extra);
 }
@@ -2453,6 +2459,9 @@ function renderPublished(tiles) {
       const base = baseLayout({ hovermode: "closest", margin: { l: 56, r: 24, t: 30, b: 40 }, colorway: [1, 2, 3, 4, 5].map((i) => token("--series-" + i)) });
       const layout = Object.assign({}, base, Object.fromEntries(Object.entries(tile.layout || {}).filter(([key]) => !PUBLISHED_AXES.includes(key))));
       PUBLISHED_AXES.forEach((key) => { if (base[key] || (tile.layout || {})[key]) layout[key] = Object.assign({}, base[key] || {}, (tile.layout || {})[key] || {}); });
+      Object.keys(layout).filter((key) => /^xaxis\d*$/.test(key)).forEach((key) => {
+        layout[key] = Object.assign({}, layout[key], { tickformatstops: DATE_TICK_FORMATS });
+      });
       layout.margin = Object.assign({}, layout.margin, {
         l: Math.min(Number(layout.margin.l) || 40, 52), r: Math.min(Number(layout.margin.r) || 32, 36),
         t: Math.min(Number(layout.margin.t) || 30, 42), b: Math.min(Number(layout.margin.b) || 32, 42),
