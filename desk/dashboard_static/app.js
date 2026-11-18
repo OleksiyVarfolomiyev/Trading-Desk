@@ -286,8 +286,8 @@ const CHART_VIEWS = {
   performance: { kind: "grouped", label: "Account", series: ["D", "W", "M", "90d", "Since start"], by: "window" },
   accounts: { kind: "grouped", label: "Account", series: ["Gross", "Net"] },
   exposure: { kind: "exposure", books: true, label: "Asset class", long: "Long", short: "Short", net: "Net" },
-  positions: { kind: "bars", label: "Symbol", value: "uPnL", text: "D", zeroCentered: true },
-  positions_stocks: { kind: "bars", label: "Symbol", value: "uPnL", text: "D", zeroCentered: true },
+  positions: { kind: "bars", label: "Symbol", value: "uPnL", text: null, zeroCentered: true },
+  positions_stocks: { kind: "bars", label: "Symbol", value: "uPnL", text: null, zeroCentered: true },
   wallets: { kind: "bars", label: "Symbol", value: "% of desk", text: null },
   market_making: { kind: "bars", label: "Coin", value: "Return", text: null },
   strategies: { kind: "bookstack", label: "Strategy" },   // two bars, crypto and stocks, each stacked by strategy
@@ -362,21 +362,25 @@ function renderBarList(id, spec, plan, host) {
   const sizes = list.map((row) => Math.abs(row[plan.value])).sort((a, b) => b - a);
   const cap = sizes.length > 2 ? sizes[1] * BAR_CAP : Infinity;   // one dominant bar is drawn at most 3x the second
   const biggest = Math.min(sizes[0] || 1, cap) || 1;
+  const trackWidth = Math.max(180, (host.clientWidth || 600) - 130);
   const mixed = plan.zeroCentered
     || (list.some((row) => row[plan.value] < 0) && list.some((row) => row[plan.value] > 0));
   const body = el("div", { class: "barlist" + (plan.zeroCentered ? " zero-centered" : "") }, list.map((row) => {
     const value = row[plan.value], share = Math.min(Math.abs(value), cap) / biggest, kind = kindClass(id, row);
     const label = String(row[plan.label] ?? ""), extra = plan.text ? row[plan.text] : null;
-    const width = Math.max(2, share * (mixed ? 50 : 100));
+    const allText = text(plan.value, value), clipped = Math.abs(value) > cap;
+    const proportionalWidth = share * (mixed ? 50 : 100);
+    const readableWidth = plan.zeroCentered && value !== 0
+      ? Math.min(50, (allText.length * 8 + (clipped ? 24 : 12)) / trackWidth * 100) : 0;
+    const width = Math.max(value === 0 ? 2 : 0, proportionalWidth, readableWidth);
     const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
     const inside = el("span", { class: "bfig bfig-inside " + signClass(value),
       style: (mixed ? (value < 0 ? "right:calc(50% + 4px);text-align:right" : "left:calc(50% + 4px)") : "left:4px") + ";color:#fff" },
-      text(plan.value, value));
+      `${clipped ? "» " : ""}${allText}`);
     const endStyle = mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)`;
     const end = plan.text && isNum(extra) ? el("span", { class: "bfig", style: endStyle }, [
       el("span", { class: signClass(extra), text: text(plan.text, extra) }),
     ]) : null;
-    if (Math.abs(value) > cap) inside.prepend(el("span", { text: "» " }));
     const heldSide = (row.__raw && isNum(row.__raw.Value)) ? (row.__raw.Value < 0 ? "short" : "long") : null;   // colour by side, so no long or short word
     const name = el("button", { type: "button", class: "bname name-" + (heldSide || kind), text: friendlyName(label) });
     name.addEventListener("click", () => openAsset(label));
