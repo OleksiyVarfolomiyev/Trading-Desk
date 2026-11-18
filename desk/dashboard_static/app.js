@@ -185,10 +185,10 @@ const POSITION_VIEW = {
   // No Side column: Value is signed and coloured (shorts negative, red), which already says the side.
   // % first; dollars on hover (the row's pop-up); the account is the desk's business
   hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", isNum(r.uPnL) ? `${usd(r.uPnL)} uPnL` : ""].filter(Boolean).join(" · "),
-  columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "D"], ["Funding (APR)"], ["Weight"]],
+  columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["Weight"]],
   // The crypto and the stocks tables sit one above the other: the same columns at the same widths, so Value, uPnL
   // and 24h line up (no column is collapsed or hidden in either).
-  align: { "Symbol": 20, "uPnL": 20, "D": 20, "Funding (APR)": 20, "Weight": 20 },
+  align: { "Symbol": 20, "D": 20, "uPnL": 20, "Funding (APR)": 20, "Weight": 20 },
 };
 const VIEWS = {
   performance: {
@@ -220,8 +220,8 @@ const VIEWS = {
   wallets: {
     derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol }),
     hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", r.Chain, r.Note].filter(Boolean).join(" · "),
-    columns: [["Symbol"], ["uPnL (%)", "uPnL"], ["24h change (%)", "D"], ["Funding (APR)"], ["% of desk"]],
-    align: { "Symbol": 20, "uPnL": 20, "D": 20, "Funding (APR)": 20, "% of desk": 20 },
+    columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["% of desk"]],
+    align: { "Symbol": 20, "D": 20, "uPnL": 20, "Funding (APR)": 20, "% of desk": 20 },
   },
   // The "vs BTC" figure over one period at a time (the card's chips: 1D, 1W, 1M), named with its period; the rest as before.
   candidates: { link: (r) => hlLink(r.Coin),
