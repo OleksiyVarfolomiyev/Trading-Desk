@@ -385,7 +385,9 @@ function renderBarList(id, spec, plan, host) {
     const label = rowLabel(row), extra = plan.text ? row[plan.text] : null;
     const clipped = Math.abs(value) > cap, width = Math.max(2, share * (mixed ? 50 : 100));
     const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
-    const endStyle = mixed ? (value < 0 ? `right:${50 + width}%` : `left:${50 + width}%`) : `left:calc(${width}% + 4px)`;
+    const endStyle = mixed
+      ? (value < 0 ? `right:max(0px,min(${50 + width}%,calc(100% - 88px)))` : `left:max(0px,min(${50 + width}%,calc(100% - 88px)))`)
+      : `left:max(0px,min(calc(${width}% + 4px),calc(100% - 88px)))`;
     const figures = [[plan.value, value], ...(plan.text && plan.text !== plan.value ? [[plan.text, extra]] : [])]
       .filter(([, number]) => number !== null && number !== undefined && number !== "");
     const end = figures.length ? el("span", { class: "bfig", style: endStyle }, [

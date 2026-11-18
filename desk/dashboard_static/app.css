@@ -640,19 +640,19 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 @media (hover: none) { .highlights li .hl-actions { max-height: 24px; opacity: 1; } }
 /* Bar rows: name, bar with its figure, answers on hover. */
 :root { --kind-crypto-bg: color-mix(in srgb, var(--kind-crypto) 80%, transparent); --kind-stocks-bg: color-mix(in srgb, var(--kind-stocks) 80%, transparent); }
-.barlist { display: flex; flex-direction: column; gap: 1px; }
-.brow { display: grid; grid-template-columns: 88px 1fr auto; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 4px; }
+.barlist { display: flex; flex-direction: column; gap: 1px; min-width: 0; max-width: 100%; overflow: hidden; }
+.brow { display: grid; grid-template-columns: minmax(0, 88px) minmax(0, 1fr) auto; align-items: center; gap: 6px; height: 24px; min-width: 0; padding: 0 8px; border-radius: 4px; }
 .barlist.zero-centered .brow { grid-template-columns: 88px minmax(0, 1fr) 84px; }
-.barlist.wide-labels .brow { grid-template-columns: 132px minmax(0, 1fr) auto; }
+.barlist.wide-labels .brow { grid-template-columns: minmax(0, 132px) minmax(0, 1fr) auto; }
 .brow:hover { background: var(--border); }
 .brow.notable { box-shadow: inset 2px 0 0 var(--warning); }
 .bname { background: transparent; border: 0; font: inherit; font-weight: 600; text-align: left; padding: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.btrack { position: relative; height: 16px; }
+.btrack { position: relative; height: 16px; min-width: 0; }
 .barlist.zero-centered .btrack::after { content: ""; position: absolute; z-index: 1; left: 50%; top: 1px; bottom: 1px; width: 1px; background: var(--axis); pointer-events: none; }
 .bfill { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; }
 .kind-bg-crypto { background: var(--kind-crypto-bg); }
 .kind-bg-stocks { background: var(--kind-stocks-bg); }
-.bfig { position: absolute; top: 0; line-height: 16px; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bfig { position: absolute; top: 0; max-width: min(88px, 100%); overflow: hidden; text-overflow: ellipsis; line-height: 16px; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bacts { display: inline-flex; justify-content: flex-end; gap: 1px; min-width: 20px; }
 .bacts .row-act { opacity: 0; }
 .brow:hover .bacts .row-act, .brow:focus-within .bacts .row-act { opacity: 1; }
