@@ -1750,7 +1750,8 @@ function historicalBenchmarkTable(lines, days, now) {
   const percent = (value, count) => count ? value / count : null;
   return {
     columns: [{ key: "Book", fmt: "text" }, { key: "Beat", fmt: "pct" }, { key: "Lagged", fmt: "pct" },
-      { key: "Beat on down days", fmt: "pct" }, { key: "$10k book", fmt: "wholeusd" }, { key: "$10k index", fmt: "wholeusd" }],
+      { key: "Beat on down days", fmt: "pct" }, { key: "Book vs bench (%)", fmt: "spct" },
+      { key: "$10k book", fmt: "wholeusd" }, { key: "$10k index", fmt: "wholeusd" }],
     rows: specs.map(([bookName, bookKey, benchmarkName, benchmarkKey]) => {
       const book = benchmarkLevels(lines, bookKey, today);
       const bench = benchmarkLevels(lines, benchmarkKey, today);
@@ -1769,10 +1770,13 @@ function historicalBenchmarkTable(lines, days, now) {
       const { n, beat, lag, tie } = benchmarkCounts(pairs);
       const down = benchmarkCounts(pairs.filter(([, index]) => index < 0));
       const date = (stamp) => new Date(stamp).toISOString().slice(0, 10);
+      const bookEnd = n ? 10000 * book.get(end) / book.get(start) : null;
+      const benchmarkEnd = n ? 10000 * bench.get(end) / bench.get(start) : null;
       return { Book: `${bookName} vs ${benchmarkName}`, Beat: percent(beat, n), Lagged: percent(lag, n),
         "Beat on down days": percent(down.beat, down.n),
-        "$10k book": n ? 10000 * book.get(end) / book.get(start) : null,
-        "$10k index": n ? 10000 * bench.get(end) / bench.get(start) : null,
+        "Book vs bench (%)": benchmarkEnd > 0 ? bookEnd / benchmarkEnd - 1 : null,
+        "$10k book": bookEnd,
+        "$10k index": benchmarkEnd,
         __hover: n ? `${beat}/${n} beat · ${tie} tied · ${down.beat}/${down.n} on down days · ${date(start)} to ${date(end)}`
           : "No matched book and benchmark closes in this window" };
     }),
