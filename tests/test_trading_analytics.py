@@ -1186,6 +1186,29 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertLessEqual(planned.risk_budget, 40)
         self.assertLessEqual(planned.quantity * market.mark_price / planned.leverage, 10)
 
+    def test_batch_splits_one_risk_budget_and_honors_reviewed_limits(self):
+        from hl_trade import AccountSnapshot, plan_trades
+
+        dates = pd.date_range("2025-01-01", periods=110, tz="UTC")
+        candles = pd.DataFrame({"time": dates, "open": 100, "high": 103, "low": 99, "close": 102})
+        snapshot = AccountSnapshot(1000, 0, 1000, 0, (), 0, 0, ("wallet",))
+        markets = {coin: Market(coin, "", 100, 100, 4, 10) for coin in ("BTC", "ETH")}
+        batch = [{"coin": "BTC", "side": "LONG"}, {"coin": "ETH", "side": "SHORT"}]
+        with patch("hl_trade.fetch_daily_candles", return_value=candles), \
+                patch("hl_trade.fetch_funding_history", return_value=make_funding()), \
+                patch("desk.stress.fit_entry", return_value=(1.0, "")):
+            preview, _ = plan_trades(batch, markets, snapshot)
+            limits = {"BTC": [preview[0].quantity / 2, preview[0].risk_budget],
+                      "ETH": [preview[1].quantity, preview[1].risk_budget / 2]}
+            refreshed, _ = plan_trades(batch, markets, snapshot, reviewed_limits=limits)
+            with self.assertRaisesRegex(ValueError, "90 common"):
+                with patch("hl_trade.fetch_daily_candles", return_value=candles.head(30)):
+                    plan_trades(batch, markets, snapshot)
+        self.assertAlmostEqual(preview[0].risk_budget, 30, places=2)
+        self.assertAlmostEqual(preview[1].risk_budget, 10, places=2)
+        self.assertLessEqual(refreshed[0].quantity, limits["BTC"][0])
+        self.assertLessEqual(refreshed[1].risk_budget, limits["ETH"][1])
+
     def test_conviction_sizes_by_notional_within_margin_and_headroom(self):
         candles, funding = make_candles(), make_funding()
         market = Market("BTC", "", 100, 100, 3, 10)

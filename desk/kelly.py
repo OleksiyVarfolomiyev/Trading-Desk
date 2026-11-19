@@ -24,9 +24,9 @@ MAX_FIT_DAYS = 180
 STEP_DAYS = 30
 
 
-def _project_weights(weights, lower, upper, budget=1.0):
+def _project_weights(weights, lower, upper, budget=1.0, *, fully_invested=False):
     projected=np.clip(weights,lower,upper)
-    if projected.sum()<=budget:
+    if not fully_invested and projected.sum()<=budget:
         return projected
     left=np.min(weights-upper)-1.0
     right=np.max(weights-lower)+1.0
@@ -40,7 +40,7 @@ def _project_weights(weights, lower, upper, budget=1.0):
     return np.clip(weights-right,lower,upper)
 
 
-def _optimize_full_kelly(returns, lower, upper, cash_daily_return, max_iterations=20000):
+def _optimize_full_kelly(returns, lower, upper, cash_daily_return, max_iterations=20000, *, fully_invested=False):
     """Constrained full-Kelly weights by projected gradient ascent on mean log growth.
 
     Converged when a unit gradient step, projected onto the constraints, moves no weight by more
@@ -56,16 +56,19 @@ def _optimize_full_kelly(returns, lower, upper, cash_daily_return, max_iteration
         portfolio_returns=returns@weights+(1.0-weights.sum())*cash_daily_return
         marginal_returns=returns-cash_daily_return
         return -(marginal_returns/(1.0+portfolio_returns[:,None])).mean(axis=0)
-    weights=_project_weights(np.full(returns.shape[1],1.0/returns.shape[1]),lower,upper)
+    def project(weights):
+        return _project_weights(weights, lower, upper, fully_invested=fully_invested)
+
+    weights=project(np.full(returns.shape[1],1.0/returns.shape[1]))
     step_size=1.0
     for _ in range(max_iterations):
         current=objective(weights)
         grad=gradient(weights)
-        if np.max(np.abs(_project_weights(weights-grad,lower,upper)-weights))<KELLY_STATIONARITY_TOL:
+        if np.max(np.abs(project(weights-grad)-weights))<KELLY_STATIONARITY_TOL:
             return weights
         trial=step_size
         for _ in range(100):
-            candidate=_project_weights(weights-trial*grad,lower,upper)
+            candidate=project(weights-trial*grad)
             direction=candidate-weights
             candidate_value=objective(candidate)
             bound=current+grad@direction+(direction@direction)/(2.0*trial)
@@ -84,6 +87,18 @@ def _optimize_full_kelly(returns, lower, upper, cash_daily_return, max_iteration
 
 def daily_cash() -> float:
     return (1 + RISK_FREE_ANNUAL) ** (1 / 365) - 1
+
+
+def half_kelly_risk_shares(history: pd.DataFrame, unit_risk: np.ndarray, budget_fraction: float) -> np.ndarray:
+    """Blend equal modeled risk with log-optimal allocations to fixed-direction signals."""
+    history = history.tail(MAX_FIT_DAYS).dropna()
+    if len(history) < MIN_FIT_DAYS:
+        raise ValueError(f"Half-Kelly sizing requires {MIN_FIT_DAYS} common completed return observations.")
+    scenarios = history.to_numpy(float) * (budget_fraction / unit_risk)
+    if not np.isfinite(scenarios).all() or (scenarios <= -1).any():
+        raise ValueError("Half-Kelly scenarios contain invalid returns or a loss of all desk equity.")
+    full = _optimize_full_kelly(scenarios, 0.0, 1.0, 0.0, fully_invested=True)
+    return (full + 1 / history.shape[1]) / 2
 
 
 def fit_weights(returns: pd.DataFrame) -> pd.Series:

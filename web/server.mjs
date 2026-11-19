@@ -254,23 +254,25 @@ async function saveFeedback(request, response) {
 // confirm is written to ~/.trading-desk/web_actions.log. The daemon's own caps, kill switch and guards apply as always.
 const DAEMON_SOCKET = path.join(HOME, ".trading-desk", "hl_daemon.sock");
 const ACTIONS_LOG = path.join(HOME, ".trading-desk", "web_actions.log");
-const pendingActions = new Map();   // token -> { key, expires }
+const pendingActions = new Map();
 let actionRunning = false;
 
 function daemonCall(message, answer) {
   return new Promise((resolve) => {
     const socket = net.createConnection({ path: DAEMON_SOCKET });
-    let buffer = "", text = "", code = 2;
-    const finish = () => { socket.destroy(); resolve({ code, text }); };
-    socket.setTimeout(240_000, finish);
+    let buffer = "", text = "", code = 2, data;
+    const finish = () => { socket.destroy(); resolve({ code, text, data }); };
+    socket.setEncoding("utf8");
+    socket.setTimeout(message.batch ? 360_000 : 240_000, finish);
     socket.on("connect", () => socket.write(JSON.stringify(message) + "\n"));
     socket.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
+      buffer += chunk;
       let at;
       while ((at = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, at); buffer = buffer.slice(at + 1);
         let item; try { item = JSON.parse(line); } catch (error) { continue; }
         if (item.t === "out") text += item.text;
+        else if (item.t === "data") data = item.data;
         else if (item.t === "ask") { text += item.text + "\n"; socket.write(JSON.stringify({ t: "answer", text: answer ? answer(item.text) : "" }) + "\n"); }
         else if (item.t === "end") { code = Number(item.code); finish(); }
       }
@@ -286,32 +288,49 @@ async function dashboardAction(request, response) {
   if (origin && origin.replace(/^https?:\/\//, "") !== request.headers.host) return send(403, { error: "cross-site request refused" });
   let body = {};
   try { body = JSON.parse((await readBody(request)).toString("utf8") || "{}"); } catch (error) { return send(400, { error: "not JSON" }); }
-  const { stage, change, coin, wallet, token } = body;
+  if (!body || typeof body !== "object") return send(400, { error: "bad request" });
+  const { stage, change, coin, wallet, token, signals } = body;
+  const batch = change === "batch";
   const entry = change === "short" || change === "long";   // a new entry from the trade bar: no fraction, an optional journal label
   const fraction = entry && body.fraction === undefined ? 1 : Number(body.fraction);
   const label = ["directional", "conviction", "hedge", "fade"].includes(body.label) ? body.label : "";
-  if (!["close", "reduce", "add", "short", "long"].includes(change) || !/^[A-Za-z0-9:]{1,24}$/.test(String(coin || "")) || !/^[0-9a-fA-F]{4}$/.test(String(wallet || ""))
-      || !(fraction > 0 && fraction <= 1)) return send(400, { error: "bad request" });
-  const key = JSON.stringify([change, coin, wallet, fraction, label]);
-  const request_ = { cmd: "resize", wallet, coin, change, fraction, label };
+  const market = /^[A-Za-z0-9_]{1,24}(?::[A-Za-z0-9_]{1,24})?$/;
+  if (!/^[0-9a-fA-F]{4}$/.test(String(wallet || ""))) return send(400, { error: "invalid HL wallet" });
+  if (batch ? (!Array.isArray(signals) || signals.length < 2 || signals.length > 10 ||
+      signals.some((row) => !row || typeof row.coin !== "string" || !market.test(row.coin) ||
+        !["LONG", "SHORT"].includes(row.side) || typeof row.dex !== "string" ||
+        (row.dex !== "" && !/^[A-Za-z0-9_]{1,24}$/.test(row.dex))))
+    : (!["close", "reduce", "add", "short", "long"].includes(change) ||
+      !/^[A-Za-z0-9:]{1,24}$/.test(String(coin || "")) || !(fraction > 0 && fraction <= 1))) {
+    return send(400, { error: batch ? "Enter 2–10 valid market and side rows." : "bad request" });
+  }
+  const request_ = batch ? { cmd: "trade", wallet, batch: signals.map(({coin, side, dex}) => ({coin, side, dex})), fast: true }
+    : { cmd: "resize", wallet, coin, change, fraction, label };
+  const key = JSON.stringify(request_);
+  const outputLimit = batch ? 12000 : 4000;
   if (actionRunning) return send(409, { error: "another dashboard action is running" });
   actionRunning = true;
   try {
     if (stage === "plan") {
-      const { code, text } = await daemonCall({ ...request_, live: false });
-      const id = crypto.randomBytes(12).toString("hex");
-      pendingActions.set(id, { key, expires: Date.now() + 120_000 });
-      return send(200, { code, plan: text.slice(-4000), token: code === 0 ? id : null });
+      const { code, text, data } = await daemonCall({ ...request_, live: false });
+      const id = code === 0 && (!batch || data?.limits) ? crypto.randomBytes(12).toString("hex") : null;
+      const now = Date.now();
+      for (const [expiredId, pending] of pendingActions) {
+        if (pending.expires <= now) pendingActions.delete(expiredId);
+      }
+      if (id) pendingActions.set(id, { key, expires: now + 120_000, limits: data?.limits });
+      return send(200, { code, plan: text.slice(-outputLimit), token: id });
     }
     if (stage === "confirm") {
       const pending = pendingActions.get(String(token || ""));
       pendingActions.delete(String(token || ""));
       if (!pending || pending.key !== key || pending.expires < Date.now()) return send(400, { error: "the plan expired or changed: plan it again" });
-      const { code, text } = await daemonCall({ ...request_, live: true }, (prompt) =>
+      const { code, text } = await daemonCall({ ...request_, live: true, limits: pending.limits }, (prompt) =>
         prompt.includes("SUBMIT ORDERS") ? "SUBMIT ORDERS" : prompt.includes("SUBMIT POSITION ACTIONS") ? "SUBMIT POSITION ACTIONS" : prompt.includes("LIVE TRADING") ? "LIVE TRADING" : "");
-      await fsp.appendFile(ACTIONS_LOG, JSON.stringify({ at: new Date().toISOString(), change, coin, wallet, fraction, code,
+      await fsp.appendFile(ACTIONS_LOG, JSON.stringify({ at: new Date().toISOString(), change, coin, wallet, fraction,
+        signals: request_.batch, code,
         result: text.slice(-600) }) + "\n").catch(() => {});
-      return send(200, { code, result: text.slice(-4000) });
+      return send(200, { code, result: text.slice(-outputLimit) });
     }
     return send(400, { error: "stage must be plan or confirm" });
   } finally {

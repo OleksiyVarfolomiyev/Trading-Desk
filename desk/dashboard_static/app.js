@@ -2403,7 +2403,13 @@ function tradeBar(close) {
   });
   const go = el("button", { type: "button", class: "trade-go", text: "▶", title: "Plan the entry", "aria-label": "Plan the entry" });
   go.addEventListener("click", picker.run);
-  return el("div", { class: "trade-bar", role: "group", "aria-label": "Trade" }, [picker.wrap, ...sides, strat, go]);
+  const controls = [picker.wrap, ...sides, strat, go];
+  if (window.DESK_SOURCE) {
+    const batch = el("button", { type: "button", class: "trade-go", text: "Batch", title: "Plan a half-Kelly batch" });
+    batch.addEventListener("click", () => { close(); openBatchTrade(); });
+    controls.push(batch);
+  }
+  return el("div", { class: "trade-bar", role: "group", "aria-label": "Trade" }, controls);
 }
 
 function pulseBar(strip) {
@@ -3717,6 +3723,7 @@ function notify(lines, title) {
   const note = el("div", { class: "notice-card" }, [close, el("b", { text: title }), ...lines.filter(Boolean).map((line) => el("div", { class: "notice-line", text: line }))]);
   close.addEventListener("click", () => note.remove());
   host.append(note);
+  return note;
 }
 
 function actionDialog(title) {
@@ -3735,6 +3742,69 @@ function planLines(text, coin) {   // what matters in the daemon's output: the c
   const mine = lines.filter((line) => line.toLowerCase().includes(name) && !notices.includes(line));
   return { notices, mine: mine.slice(-8) };
 }
+function openBatchTrade() {
+  const title = "Hyperliquid batch · Half Kelly";
+  const { overlay, box } = actionDialog(title);
+  const heading = () => el("h3", { text: title });
+  const wallet = el("input", { class: "trade-input", type: "text", value: "07f2", maxlength: "4", required: true,
+    pattern: "[0-9A-Fa-f]{4}", "aria-label": "HL wallet suffix" });
+  const input = el("textarea", { class: "trade-input batch-signals", rows: "6", required: true, spellcheck: "false",
+    "aria-label": "Batch signals", placeholder: "coin,side,dex\nBTC,LONG\nETH,SHORT" });
+  const status = el("p", { class: "action-line", role: "status" });
+  const preview = el("button", { type: "submit", class: "asset-action lead", text: "Preview batch" });
+  const form = el("form", {}, [
+    el("label", {}, ["HL wallet suffix ", wallet]),
+    el("p", { class: "muted", text: "Paste 2–10 CSV rows with coin, side and optional DEX. The batch shares one standard position’s risk budget." }),
+    input, status, el("div", { class: "asset-actions" }, [preview, closeButton(overlay)]),
+  ]);
+  const edit = () => { box.replaceChildren(heading(), form); input.focus(); };
+  const lines = (message) => el("p", { class: "action-line", text: message });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const rows = input.value.trim().split(/\r?\n/).map((line) => line.split(",").map((cell) => cell.trim()))
+      .filter((row) => row.some(Boolean));
+    if (rows[0]?.[0].toLowerCase() === "coin" && rows[0]?.[1]?.toLowerCase() === "side") rows.shift();
+    if (rows.length < 2 || rows.length > 10 || rows.some(([coin, side, , extra]) =>
+      !coin || !["LONG", "SHORT"].includes(side?.toUpperCase()) || extra !== undefined)) {
+      status.textContent = "Enter 2–10 rows in coin,side,dex format. Use LONG or SHORT.";
+      return;
+    }
+    const body = { change: "batch", wallet: wallet.value.trim(),
+      signals: rows.map(([coin, side, dex = ""]) => ({ coin, side: side.toUpperCase(), dex })) };
+    const post = async (extra) => {
+      try {
+        const response = await fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" },
+          credentials: "same-origin", body: JSON.stringify({ ...body, ...extra }) });
+        return await response.json();
+      } catch (error) { return { error: String(error) }; }
+    };
+    status.textContent = "Planning with live data…";
+    preview.disabled = true;
+    const plan = await post({ stage: "plan" });
+    preview.disabled = false;
+    if (!overlay.isConnected) return;
+    if (!plan.token) {
+      status.textContent = plan.error || plan.plan || "The batch could not be planned.";
+      return;
+    }
+    status.textContent = "";
+    const confirm = el("button", { type: "button", class: "asset-action lead", text: "Submit live batch" });
+    const back = el("button", { type: "button", class: "asset-action", text: "Edit batch" });
+    back.addEventListener("click", edit);
+    confirm.addEventListener("click", async () => {
+      overlay.remove();
+      const pending = notify(["The trading daemon is processing the reviewed orders."], "Submitting batch");
+      const result = await post({ stage: "confirm", token: plan.token });
+      pending.remove();
+      notify([result.error || result.result || "The daemon returned no order details."],
+        result.code === 0 ? "Batch processed" : "Batch requires review");
+      lastRendered = null; load();
+    }, { once: true });
+    box.replaceChildren(heading(), lines(plan.plan), el("div", { class: "asset-actions" }, [confirm, back, closeButton(overlay)]));
+  });
+  edit();
+}
+
 async function runAction(label, change, fraction, target) {
   const coin = target.coin, title = `${label}: ${marketName(coin)} (HL ${target.wallet})`;
   feedback("action", "plan", marketName(coin), label);

@@ -3462,8 +3462,18 @@ class Daemon:
     def _plan(self, request: dict, wallet: str, risk_wallets: list[str]):
         """Plan from live data: (kind, plans, markets, snapshot)."""
         live = bool(request.get("live"))
-        if request.get("signals"):
-            signals = ht.read_signals(Path(request["signals"]))
+        if request.get("signals") or request.get("batch"):
+            signals = (ht.validate_signals(request["batch"]) if request.get("batch")
+                       else ht.read_signals(Path(request["signals"])))
+            limits = request.get("limits") if request.get("batch") and live else None
+            if request.get("batch") and live and (
+                not isinstance(limits, dict)
+                or set(limits) != {signal["coin"] for signal in signals}
+                or any(not isinstance(pair, list) or len(pair) != 2
+                       or any(not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0
+                              for value in pair) for pair in limits.values())
+            ):
+                raise ValueError("Live batch execution requires reviewed quantities and risk limits for every signal.")
             trading = [ht.normalize_market(item["coin"], item.get("dex", "")) for item in signals]
             markets = self.state.markets(trading)
             snapshot = self.state.snapshot(risk_wallets, markets)
@@ -3477,6 +3487,7 @@ class Daemon:
             plans, risk = ht.plan_trades(signals, markets, snapshot, stops=stops,
                                          conviction=bool(request.get("conviction")),
                                          strategy=request.get("strategy") or "directional", label=request.get("label"),
+                                         reviewed_limits=limits,
                                          conviction_pct=float(request.get("conviction_pct") or ht.CONVICTION_NOTIONAL_PCT * 100) / 100)
             ht.print_plan(snapshot, plans, risk)
             return "signals", plans, markets, snapshot
@@ -3492,7 +3503,12 @@ class Daemon:
 
     def trade(self, request: dict, session: Session) -> int:
         began = time.time()
-        if bool(request.get("signals")) == bool(request.get("actions")):
+        batch = request.get("batch")
+        if batch is not None and (not isinstance(batch, list) or not 2 <= len(batch) <= 10
+                                  or request.get("conviction") or request.get("signals")):
+            raise ValueError("A dashboard batch requires 2–10 standard entry signals.")
+        entries = bool(request.get("signals") or batch)
+        if entries == bool(request.get("actions")):
             print("Give either --signals or --actions.")
             return 2
         wallet = self.wallet(request.get("wallet") or "")
@@ -3500,16 +3516,16 @@ class Daemon:
             [wallet] + [self.wallet(item) for item in (request.get("risk_wallets") or self.state.wallets)]))
         live, urgent, fast = bool(request.get("live")), bool(request.get("urgent")), bool(request.get("fast"))
         slippage = float(request.get("slippage") or ht.URGENT_SLIPPAGE * 100) / 100
-        if fast and not request.get("signals"):
+        if fast and not entries:
             print("--fast applies to --signals entries.")
             return 2
-        if urgent and not (request.get("signals") or request.get("actions")):
+        if urgent and not (entries or request.get("actions")):
             print("--urgent applies to --signals entries and --actions reductions.")
             return 2
         if urgent and fast:
             print("Choose --urgent or --fast, not both.")
             return 2
-        if self.paper and request.get("signals") and not urgent and live:
+        if self.paper and entries and not urgent and live:
             print("Paper mode simulates urgent entries only; add --urgent.")
             return 2
         cap = request.get("max_risk_pct")
@@ -3532,6 +3548,12 @@ class Daemon:
             kind, plans, markets, snapshot = self._plan(request, wallet, risk_wallets)
             print(f"(planned in {time.time() - began:.2f}s from live data)")
             if not live:
+                if batch:
+                    limits = {plan.coin: [plan.quantity, plan.risk_budget] for plan in plans}
+                    if not any(plan.quantity > 0 for plan in plans):
+                        print("Every proposed batch quantity is zero or blocked.")
+                        return 2
+                    session.data({"limits": limits})
                 print("Dry run only. No order was sent.")
                 return 0
             if ht.kill_switch_engaged():
@@ -3565,19 +3587,28 @@ class Daemon:
             if session.ask(prompt) != phrase:
                 print("Confirmation did not match; no order was sent.")
                 return 0
+            if ht.kill_switch_engaged():
+                print("Kill switch was engaged during confirmation; no order was sent.")
+                return 2
             confirmed = time.time()
             exchange = self.exchanges[wallet]
             if kind == "signals":
-                active, failures = ht.execute_plans(exchange, wallet, plans, markets, urgent=urgent,
-                                                    slippage=slippage, fast=fast)
-                print(f"Entry orders processed {time.time() - confirmed:.2f}s after confirmation.")
-                for trade in active:
+                def register_guard(trade):
                     if self.paper:
                         print(f"[paper] {trade.plan.coin}: a guard would start here.")
                     else:
                         self.guards.add(wallet, trade, exchange)
                         print(f"{trade.plan.coin}: the net-loss guard runs in the daemon "
                               f"(loss limit ${trade.plan.risk_budget:,.2f}).")
+                if len(plans) > 1:
+                    _, failures = ht.execute_plans(exchange, wallet, plans, markets, urgent=urgent,
+                                                   slippage=slippage, fast=fast, on_active=register_guard)
+                else:
+                    active, failures = ht.execute_plans(exchange, wallet, plans, markets, urgent=urgent,
+                                                        slippage=slippage, fast=fast)
+                    for trade in active:
+                        register_guard(trade)
+                print(f"Entry orders processed {time.time() - confirmed:.2f}s after confirmation.")
                 if failures:
                     print("Some live orders did not complete successfully: " + "; ".join(failures))
                     return 2

@@ -960,6 +960,7 @@ def size_trade(
     maker_fee_rate: float,
     taker_fee_rate: float,
     conviction_notional: float | None = None,
+    max_quantity: float = math.inf,
 ) -> PlannedTrade:
     """Calculate an entry quantity constrained by risk, margin, and leverage.
 
@@ -996,6 +997,7 @@ def size_trade(
     raw_quantity = min(
         available_risk / price_risk_per_unit,
         max(0.0, available_margin) * leverage / market.mark_price,
+        max_quantity,
     )
     if conviction_notional is not None:
         raw_quantity = min(raw_quantity, max(0.0, conviction_notional) / market.mark_price)
@@ -1054,20 +1056,24 @@ def read_signals(path: Path) -> list[dict[str, str]]:
         reader = csv.DictReader(file)
         if reader.fieldnames is None or not {"coin", "side"}.issubset(reader.fieldnames):
             raise ValueError("Signal CSV must include coin and side columns; dex is optional.")
-        signals = []
-        seen_markets: set[tuple[str, str]] = set()
-        for row_number, row in enumerate(reader, start=2):
-            coin = (row.get("coin") or "").strip()
-            side = (row.get("side") or "").strip().upper()
-            if not coin:
-                raise ValueError(f"Signal CSV row {row_number} has an empty coin.")
-            side_to_direction(side)
-            normalized_coin, dex = normalize_market(coin, row.get("dex") or "")
-            key = (normalized_coin, dex)
-            if key in seen_markets:
-                raise ValueError(f"Signal CSV has duplicate entries for market {normalized_coin}.")
-            seen_markets.add(key)
-            signals.append({"coin": coin, "side": side, "dex": (row.get("dex") or "").strip()})
+        return validate_signals(reader)
+
+
+def validate_signals(rows) -> list[dict[str, str]]:
+    signals = []
+    seen_markets: set[tuple[str, str]] = set()
+    for row in rows:
+        coin = (row.get("coin") or "").strip()
+        side = (row.get("side") or "").strip().upper()
+        if not coin:
+            raise ValueError("A signal has an empty coin.")
+        side_to_direction(side)
+        normalized_coin, dex = normalize_market(coin, row.get("dex") or "")
+        key = (normalized_coin, dex)
+        if key in seen_markets:
+            raise ValueError(f"Duplicate entries for market {normalized_coin}.")
+        seen_markets.add(key)
+        signals.append({"coin": normalized_coin, "side": side, "dex": dex})
     if not signals:
         raise ValueError("Signal CSV contains no positions.")
     return signals
@@ -1154,11 +1160,13 @@ def plan_trades(
     conviction_pct: float = CONVICTION_NOTIONAL_PCT,
     strategy: str | None = None,
     label: str | None = None,
+    reviewed_limits: dict[str, list[float]] | None = None,
 ) -> tuple[list[PlannedTrade], float]:
     """Build risk- and margin-limited entry plans and report current portfolio risk.
 
     Current risk includes other desk venues unless ``include_external`` is False. ``stops`` (from
-    ``resting_stops``) prices each open position's risk to its own stop. ``conviction`` plans entries
+    ``resting_stops``) prices each open position's risk to its own stop. Standard batches share
+    one position's risk budget with half-Kelly weights. ``conviction`` plans entries
     without a stop: sized at ``conviction_pct`` of the trading wallet's equity, within its margin and
     the desk's aggregate risk cap.
     """
@@ -1190,6 +1198,40 @@ def plan_trades(
     )
     from desk import stress
 
+    # Give the batch one standard position's risk budget, limited by aggregate headroom.
+    allocations = {}
+    if len(signals) > 1 and not conviction and risk_headroom > 0 and available_margin > 0:
+        from desk.kelly import half_kelly_risk_shares
+        from desk.risk import per_position_budget
+
+        budget = min(risk_headroom, per_position_budget(snapshot.desk_equity))
+        fee_rate = snapshot.maker_fee_rate + snapshot.taker_fee_rate
+        history, unit_risk, keys = [], [], []
+        for signal in signals:
+            coin, dex = normalize_market(signal["coin"], signal.get("dex", ""))
+            key = (coin, dex)
+            market = markets.get(coin)
+            if market is None:
+                raise ValueError(f"Market {coin!r} was not returned by HL metadata.")
+            if key not in caches:
+                caches[key] = (fetch_daily_candles(coin.split(":")[-1], dex),
+                               fetch_funding_history(coin.split(":")[-1], dex))
+            candles, funding = caches[key]
+            daily = candles.set_index("time").sort_index().asfreq("D")
+            returns = daily.close / daily.open.shift(DEFAULT_HORIZON_DAYS - 1) - 1
+            returns = returns.where(daily.close.rolling(DEFAULT_HORIZON_DAYS).count() == DEFAULT_HORIZON_DAYS)
+            history.append((side_to_direction(signal["side"]) * returns - fee_rate).rename(coin))
+            cost = adverse_funding_cost_per_unit(
+                funding, signal["side"], market.oracle_price,
+                horizon_hours=DEFAULT_HORIZON_DAYS * 24, percentile=FUNDING_STRESS_PERCENTILE,
+            )
+            unit_risk.append((STOP_ATR_MULTIPLE * wilder_atr(candles, 14) + cost) / market.mark_price + fee_rate)
+            keys.append(key)
+        shares = half_kelly_risk_shares(pd.concat(history, axis=1).sort_index(), np.array(unit_risk),
+                                        budget / snapshot.desk_equity)
+        allocations = dict(zip(keys, budget * shares))
+        print(f"Half-Kelly batch risk budget: ${budget:,.2f} (50% equal-risk, 50% Kelly).")
+
     plans: list[PlannedTrade] = []
     # Everything open now, as the stress check sees it: HL positions plus the other venues' and wallets'.
     exposures = [(("tradfi perp" if position.dex and position.dex not in ("hyna",) else "crypto perp"), position.coin,
@@ -1216,6 +1258,7 @@ def plan_trades(
                 fetch_funding_history(coin.split(":")[-1], dex),
             )
         candles, funding = caches[key]
+        max_quantity, max_risk = reviewed_limits[coin] if reviewed_limits is not None else (math.inf, math.inf)
         plan = size_trade(
             coin,
             dex,
@@ -1224,12 +1267,15 @@ def plan_trades(
             candles,
             funding,
             snapshot.desk_equity,
-            risk_headroom,
+            min(risk_headroom, allocations.get(key, risk_headroom), max_risk),
             available_margin,
             snapshot.maker_fee_rate,
             snapshot.taker_fee_rate,
             conviction_notional=conviction_pct * snapshot.target_equity if conviction else None,
+            max_quantity=max_quantity,
         )
+        if reviewed_limits is not None and (max_quantity == 0 or max_risk == 0):
+            plan = replace(plan, block_reason="no size was approved for this entry")
         if plan.quantity > 0 and snapshot.desk_equity > 0:
             asset_class = "tradfi perp" if dex and dex != "hyna" else "crypto perp"
             notional = side_to_direction(signal["side"]) * plan.quantity * market.mark_price
@@ -2112,7 +2158,8 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
     for plan in plans:
         print(
             f"{plan.coin} {plan.side}: quantity={plan.quantity:g}, reference=${plan.entry_reference:,.6g}, "
-            + (f"notional=${plan.quantity * plan.entry_reference:,.2f}, CONVICTION: no stop or take-profit "
+            + f"notional=${plan.quantity * plan.entry_reference:,.2f}, "
+            + (f"CONVICTION: no stop or take-profit "
                f"(risk counted at a {STOP_ATR_MULTIPLE:g} x ATR move, ${plan.stop_price:,.6g}), "
                if plan.conviction else f"sizing level=${plan.stop_price:,.6g}, target=${plan.target_price:,.6g}, ")
             + f"risk=${plan.risk_budget:,.2f}, funding reserve/unit=${plan.funding_reserve_per_unit:,.6g}, "
@@ -2933,6 +2980,7 @@ def execute_plans(
     urgent: bool = False,
     slippage: float = URGENT_SLIPPAGE,
     fast: bool = False,
+    on_active: Callable[[ActiveTrade], None] | None = None,
 ) -> tuple[list[ActiveTrade], list[str]]:
     """Enter each planned trade and place its exits; return the trades to guard and any failures.
 
@@ -2944,6 +2992,9 @@ def execute_plans(
     for plan in plans:
         if plan.quantity <= 0:
             continue
+        if kill_switch_engaged():
+            failures.append("Kill switch engaged; remaining entry orders were skipped.")
+            break
         market = markets[plan.coin]
         try:
             # The position read, the leverage update and the urgent entry's mid are independent.
@@ -2980,17 +3031,18 @@ def execute_plans(
             failures.append(f"{plan.coin}: {type(exc).__name__}: {exc}")
             print(f"Skipping {plan.coin} after a live preflight/order error: {exc}")
             continue
-        active.append(
-            ActiveTrade(
-                plan=plan,
-                quantity=quantity,
-                entry_price=entry_price,
-                baseline_quantity=baseline_quantity,
-                stop_oid=0,
-                target_oid=target_oid,
-                started_at=pd.Timestamp.now(tz="UTC"),
-            )
+        trade = ActiveTrade(
+            plan=plan,
+            quantity=quantity,
+            entry_price=entry_price,
+            baseline_quantity=baseline_quantity,
+            stop_oid=0,
+            target_oid=target_oid,
+            started_at=pd.Timestamp.now(tz="UTC"),
         )
+        active.append(trade)
+        if on_active is not None:
+            on_active(trade)
         print(
             f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; "
             f"funding-adjusted loss guard configured."
