@@ -183,8 +183,43 @@ const stockLink = (symbol) => "https://finance.yahoo.com/quote/" + encodeURIComp
 // The change column follows the tile's own scale (D, W or M; hover the title to change it). D is the 24h change in the
 // table; W and M are the price moves over 7 and 30 days from the page's `moves` (a position without history is blank).
 const POSITION_LETTERS = { "1D": "D", "1W": "W", "1M": "M" };
-function positionWindow() { const scale = currentScale("positions"); return scale === "All" ? "1M" : scale; }
-function windowMove(row, scale) {
+const POSITION_DAYS = { "1D": 1, "1W": 7, "1M": 30 };
+const bareSymbol = (symbol) => String(symbol ?? "").split(":").pop().toLowerCase();
+function positionBase(id) { return id === "wallets" ? "positions" : id; }
+// How long a position has been open, from the journal's theses (days held per coin and side); NaN where the desk has no
+// record (IB stocks, wallet tokens, trades opened outside the journal).
+function rowAge(row) {
+  if (row._wallet || !row.Symbol) return NaN;
+  const theses = (latest && latest.data && latest.data.theses) || [];
+  const mine = theses.filter((t) => bareSymbol(t.coin) === bareSymbol(row.Symbol));
+  if (!mine.length) return NaN;
+  const side = isNum(row.Value) ? (row.Value < 0 ? "SHORT" : "LONG") : "";
+  const same = mine.filter((t) => String(t.side).toUpperCase() === side);
+  return Math.max(...(same.length ? same : mine).map((t) => Number(t.days)));
+}
+// The windows a tile can offer: D always; W and M only when some position has been open that long (or its age is not
+// known, so nothing says otherwise); All (since entry) always.
+function positionWindows(id) {
+  const rows = ((((latest && latest.data && latest.data.tables) || {})[positionBase(id)] || {}).rows || []).filter((row) => !row._wallet);
+  const ages = rows.map(rowAge);
+  const offered = ["1D"];
+  for (const name of ["1W", "1M"]) if (!rows.length || ages.some((age) => !isNum(age) || age >= POSITION_DAYS[name])) offered.push(name);
+  return offered.concat("All");
+}
+function positionScale(id) {   // the chosen window, or the longest one the tile has when the choice does not fit it
+  const choice = currentScale("positions");
+  return positionWindows(id).includes(choice) ? choice : "All";
+}
+function positionLetter(id) { return POSITION_LETTERS[positionScale(id)]; }   // none for All: since entry is the uPnL column
+function positionValueKey(id) { return positionLetter(id) || "uPnL"; }       // the column the chart's bars draw
+function sinceEntryMove(row) {   // the price move since entry (a short that gained has a negative move)
+  const gain = row["uPnL (%)"];
+  return isNum(gain) ? (isNum(row.Value) && row.Value < 0 ? -gain : gain) : NaN;
+}
+function windowMove(row, scale) {   // the price move over the window; a position younger than it shows its move since entry
+  if (scale === "All") return sinceEntryMove(row);
+  const age = rowAge(row);
+  if (isNum(age) && age < POSITION_DAYS[scale] && isNum(sinceEntryMove(row))) return sinceEntryMove(row);
   if (scale === "1D") return row["24h change (%)"];
   const moves = (latest && latest.data && latest.data.moves) || {};
   return (moves[marketName(row.Symbol)] || {})[{ "1W": "7", "1M": "30" }[scale]];
@@ -200,31 +235,36 @@ function moveTotal(rows, scale) {   // the book's move over the window: value no
   });
   return base ? change / base : NaN;
 }
-function positionColumns(last) {
-  const columns = [["Symbol"], ["24h change (%)", POSITION_LETTERS[positionWindow()]], ["uPnL (%)", "uPnL"], ["Funding (APR)"], [last]];
+function positionColumns(last, id) {   // All is the uPnL column itself, so the change column goes
+  const letter = positionLetter(id);
+  const columns = [["Symbol"], ...(letter ? [["24h change (%)", letter]] : []), ["uPnL (%)", "uPnL"], ["Funding (APR)"], [last]];
   return pnlUnit === "usd" ? columns.map((column) => (column[0] === "uPnL (%)" ? ["uPnL", "uPnL"] : column)) : columns;
 }
 const POSITION_ALIGN = (last) => ({ "Symbol": 20, "D": 20, "W": 20, "M": 20, "uPnL": 20, "Funding (APR)": 20, [last]: 20 });
-const POSITION_VIEW = {
+const positionView = (id) => ({
   // The change figure is the position's own move (a short whose price fell gained): the highlights' winners and losers, the
   // chart's bars and this column are green and red together, and the total row (the book's gain) is in the same terms.
   derive: (r) => {
-    const move = windowMove(r, positionWindow());
+    const move = windowMove(r, positionScale(id));
     return { Symbol: marketName(r.Symbol), "24h change (%)": r.Symbol && isNum(move) && isNum(r.Value) && r.Value < 0 ? -move : move };   // the total row has no symbol: it is already the book's gain
   },
-  windowTotal: (spec) => (positionWindow() === "1D" ? {} : { "24h change (%)": moveTotal(spec.rows.filter((row) => !row._wallet), positionWindow()) }),
+  windowTotal: (spec) => {   // D is the table's own total unless a position is younger than a day; All is the table's uPnL total
+    const scale = positionScale(id), rows = spec.rows.filter((row) => !row._wallet);
+    if (scale === "All" || (scale === "1D" && !rows.some((row) => rowAge(row) < 1))) return {};
+    return { "24h change (%)": moveTotal(rows, scale) };
+  },
   size: (r) => Math.abs(r.Value),   // rows and bars run largest position first
   // A symbol opens its page: HL's trade page for an HL market, a quote page for an IB stock (as on HL).
   link: (r) => (/^IB/.test(String(r.Account || "")) ? stockLink(r.Symbol) : hlLink(r.Symbol)),
   // No Side column: Value is signed and coloured (shorts negative, red), which already says the side.
   // % first; dollars on hover (the row's pop-up); the account is the desk's business
   hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", isNum(r.uPnL) ? `${usd(r.uPnL)} uPnL` : ""].filter(Boolean).join(" · "),
-  columnsNow: () => positionColumns("Weight"),
+  columnsNow: () => positionColumns("Weight", id),
   columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["Weight"]],
   // The crypto and the stocks tables sit one above the other: the same columns at the same widths, so Value, uPnL
   // and the change line up (no column is collapsed or hidden in either).
   align: POSITION_ALIGN("Weight"),
-};
+});
 const VIEWS = {
   performance: {
     // One window at a time, selected in the table toolbar.
@@ -250,14 +290,14 @@ const VIEWS = {
     columns: [["Asset class"], ["Net / equity", "Net", "slev"], ["Gross / equity", "Gross", "lev"], ["_long", "Long", "pct"],
       ["_short", "Short", "pct"]],
   },
-  positions: POSITION_VIEW,
-  positions_stocks: POSITION_VIEW,
+  positions: positionView("positions"),
+  positions_stocks: positionView("positions_stocks"),
   // Wallet tokens in the positions tables' layout: same columns, order and widths; their share of the desk where
   // the positions show their weight (tokens have no cost basis or funding, so those cells stay empty).
   wallets: {
-    derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol, "24h change (%)": windowMove(r, positionWindow()) }),
+    derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol, "24h change (%)": windowMove(r, positionScale("wallets")) }),
     hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", r.Chain, r.Note].filter(Boolean).join(" · "),
-    columnsNow: () => positionColumns("% of desk"),
+    columnsNow: () => positionColumns("% of desk", "wallets"),
     columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["% of desk"]],
     align: POSITION_ALIGN("% of desk"),
   },
@@ -348,7 +388,7 @@ function chartAxis(format) {  // multiplier and axis look for a cell format
 }
 
 function chartPlan(id, spec) {
-  const preset = CHART_VIEWS[id];
+  const preset = id === "positions" || id === "positions_stocks" ? Object.assign({}, CHART_VIEWS[id], { value: positionValueKey(id) }) : CHART_VIEWS[id];   // the bars follow the tile's window
   const formatOf = (key) => (spec.columns.find((column) => column.key === key) || {}).fmt;
   if (preset) return Object.assign({ columns: spec.columns }, preset);
   // Any other table: its first column names the bars, its key (or first) number column is the bar.
@@ -444,8 +484,8 @@ function renderBarList(id, spec, plan, host) {
     const name = isAssetColumn(plan.label)
       ? assetButton(market, friendlyName(label), "bname name-" + (heldSide || kind))
       : el("span", { class: "bname name-" + (heldSide || kind), text: friendlyName(label) });
-    const move = POSITION_LETTERS[positionWindow()];
-    const notable = [isNum(row[move]) && Math.abs(row[move]) >= 0.05 ? `${text(move, row[move])} ${move}` : "", isNum(row["Funding (APR)"]) && Math.abs(row["Funding (APR)"]) >= 0.5 ? `${text("Funding (APR)", row["Funding (APR)"])} funding` : ""].filter(Boolean).join(" · ");
+    const move = positionLetter(id);
+    const notable = [move && isNum(row[move]) && Math.abs(row[move]) >= 0.05 ? `${text(move, row[move])} ${move}` : "", isNum(row["Funding (APR)"]) && Math.abs(row["Funding (APR)"]) >= 0.5 ? `${text("Funding (APR)", row["Funding (APR)"])} funding` : ""].filter(Boolean).join(" · ");
     const acts = el("span", { class: "bacts" }, []);
     if (id in CANDIDATE_TABLES) candidateRowButtons(id, row).forEach((b) => acts.append(b));
     else if (window.DESK_SOURCE && /^HL /.test(String((row.__raw || {}).Account || "")) && isNum((row.__raw || {}).Value)) {
@@ -619,9 +659,9 @@ function renderTableChart(id, spec, override) {
       textposition: "outside", cliponaxis: false,
       outsidetextfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
       ...(() => {   // a pop-up only where there is something to see: a big 24h move or a funding rate that matters
-        const move = POSITION_LETTERS[positionWindow()];
+        const move = positionLetter(id);
         const notable = (row) => [
-          isNum(row[move]) && Math.abs(row[move]) >= 0.05 ? `${text(move, row[move])} ${move}` : "",
+          move && isNum(row[move]) && Math.abs(row[move]) >= 0.05 ? `${text(move, row[move])} ${move}` : "",
           isNum(row["Funding (APR)"]) && Math.abs(row["Funding (APR)"]) >= 0.5 ? `${text("Funding (APR)", row["Funding (APR)"])} funding` : "",
         ].filter(Boolean).join(" · ");
         const lines = order.map((i) => notable(rows[i]));
@@ -2173,8 +2213,7 @@ function setScale(element, scale) {
   else if (element === "performance") { renderTable("performance", applyView("performance", latest.data.tables.performance, { deskValue: (latest.data.kpis || {}).desk_value })); drawChartScales(); }
   else { zoomCharts(); drawChartScales(); }
 }
-function scaleChips(element, skip = []) {   // the element's own scale buttons, shown on its hover
-  const active = element === "positions" ? positionWindow() : currentScale(element);
+function scaleChips(element, skip = [], active = currentScale(element)) {   // the element's own scale buttons, shown on its hover
   return el("span", { class: "scale-chips" }, SCALES.filter(([name]) => name !== active && !skip.includes(name)).map(([name]) => {
     const chip = el("button", { type: "button", class: "scale-chip", text: { "1D": "D", "1W": "W", "1M": "M" }[name] || name });
     chip.addEventListener("click", (event) => { event.stopPropagation(); setScale(element, name); });
@@ -2190,7 +2229,7 @@ function drawPositionScales() {   // D, W, M on each position tile's title, show
   ["positions", "positions_stocks"].forEach((id) => {
     const host = document.getElementById("t-" + id), title = host && host.closest(".card") && host.closest(".card").querySelector("h2");
     if (!title) return;
-    const old = title.querySelector(".scale-chips"), chips = scaleChips("positions", ["All"]);
+    const old = title.querySelector(".scale-chips"), chips = scaleChips("positions", SCALES.map(([name]) => name).filter((name) => !positionWindows(id).includes(name)), positionScale(id));
     if (old) old.replaceWith(chips); else { const tools = title.querySelector(".card-tools"); if (tools) tools.before(chips); else title.append(chips); }
   });
 }
