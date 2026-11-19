@@ -188,6 +188,25 @@ def _forward_after_trims(pattern: str, hours: int = 24, sign: int = 1) -> Callab
     return live
 
 
+NOTICE_MOVE = re.compile(r"\bBTC \S+ (up|down) in ")
+
+
+def _notice_followthrough(pattern: str, hours: int = 72) -> Callable[["Sources"], list[float]]:
+    """Per "test thesis?" notice: BTC's further move in the direction of the alert over ``hours``. Positive means the
+    adverse move went on after the notice (the thesis was rightly questioned); negative means it reversed."""
+    def live(src: "Sources") -> list[float]:
+        outcomes = []
+        for at, text in log_events(src.log_text, pattern):
+            match = NOTICE_MOVE.search(text)
+            if not match or src.now - at < timedelta(hours=hours) or src.price_at is None:
+                continue
+            start, end = src.price_at("BTC", at), src.price_at("BTC", at + timedelta(hours=hours))
+            if start and end:
+                outcomes.append((1 if match.group(1) == "up" else -1) * (end / start - 1))
+        return outcomes
+    return live
+
+
 def _closed_returns(frame_of: Callable[[Sources], pd.DataFrame], since: str, before: bool,
                     account: str | None = None) -> Callable[[Sources], list[float]]:
     def get(src: Sources) -> list[float]:
@@ -282,8 +301,10 @@ REGISTRY: list[Item] = [
          note="outcome: the trimmed coins' next 24h move (the bounce the shorts no longer pay)"),
     Item("bank-shorts", "Auto: bank shorts on a post-sell-off bounce", "risk", "2026-11-15",
          _rules_row("bank: alts next 24h (net)"), _forward_after_trims(r"^auto bank")),
-    Item("flatten", "Auto: flatten on adverse momentum", "risk", "2026-11-15",
-         _rules_row("flatten: alts next 72h (net)"), _forward_after_trims(r"^auto flatten", hours=72)),
+    Item("flatten", "Auto: test-thesis notice on adverse momentum", "risk", "2026-11-20", None,
+         _notice_followthrough(r"^auto test thesis\?", hours=72),
+         forward_only="a notice since 2026-11-19 (closes nothing): tracks whether the adverse move went on",
+         note="outcome: BTC's further move in the alert's direction over 72h (positive: the adverse move continued)"),
     Item("btc-flip", "Auto: BTC momentum flip", "strategy", "2026-11-15", _rules_row("flip: BTC trail 1.5% (net)"),
          off="off: failed the replay (583 bursts, nothing after costs)"),
     Item("trim-longs", "Auto: trim longs on an extraordinary up day", "risk", "2026-11-15",
@@ -304,9 +325,9 @@ REGISTRY: list[Item] = [
          forward_only="forward-only by design", note="best signal's net return per snapshot at 60 minutes"),
     Item("screener", "Screener short candidates", "strategy", "2026-11-20", None, _screener_live,
          forward_only="history: picks vs basket not established", note="outcome: 7-day move against BTC from each daily snapshot"),
-    Item("take-profits", "Take-profit ladder on crypto entries", "execution", "2026-11-20", None, _count(r"take-profit"),
-         note="rungs at the 50th/75th/90th percentile of past winners' move in ATR units (desk/tp_ladder.json), equal "
-              "parts, never below the entry; crypto only, stocks held passively; no study that the ladder beats one target"),
+    Item("take-profits", "Held take-profit on crypto entries (single target)", "execution", "2026-11-20", None, _count(r"take-profit"),
+         note="one held target at the sizing distance x reward; crypto only, stocks held passively. The take-profit ladder "
+              "(desk/tp_ladder.py) is off until research/tp_ladder_replay.py shows it beats the single target"),
     Item("mm-tuning", "Adaptive market making (c248)", "execution", "2026-11-20", None, _count(r"tuned "),
          note="every 6 hours from the ladders' own fills (markouts 1m/5m/60m, edge per $1K) and the market; bounded steps, "
               "no change under 30 fills (desk/mm_tuning.py); no study that tuning beats fixed settings"),

@@ -2418,7 +2418,7 @@ class Ladders:
         config = ladder_config(coin)
         mid = (bid + ask) / 2
         spacing = max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"])
-        return ladder_quotes(base, base, mid, bid, ask, atr, market.size_decimals, config), spacing
+        return ladder_quotes(base, base, mid, bid, ask, atr, market.size_decimals, config, allow_adds=False), spacing   # take-profit side only
 
     def _mid(self, coin: str, dex: str) -> float:
         """The live mark from the websocket (a price a second for held coins); the book over REST if it is stale."""
@@ -2606,13 +2606,11 @@ class Ladders:
         """A fresh grid of quotes around the mid, kept in memory; the quotes resting on the book are pulled first."""
         wallet, coin, dex, base = ladder["wallet"], ladder["coin"], ladder["dex"], ladder["base"]
         allow_trims = not ladder.get("trims_paused", False)
-        health = self.daemon.margin_guard.latest_health.get(wallet, 0.0)
-        allow_adds = health < config["pause_adds_at_health"]
-        if allow_adds:
-            self.daemon.alerts.clear(f"ladder-adds:{wallet}:{coin}")
-        else:
-            self.daemon.alerts.set(f"ladder-adds:{wallet}:{coin}", f"ladder adds paused (...{wallet[-4:]} {coin})",
-                                   f"The account is {health:.0%} of the way to liquidation, so the ladder only trims.")
+        # A ladder on an individual position quotes only its take-profit side (user, 2026-11-19: "in individual positions
+        # we can only have a ladder on take profit side"); adding to the position is a decision, not a quote. Only the
+        # neutral market-making ladders quote both sides (neutral_quotes).
+        allow_adds = False
+        self.daemon.alerts.clear(f"ladder-adds:{wallet}:{coin}")
         bid, ask = self._book(coin, dex)  # the true book, so no quote crosses it
         mid = (bid + ask) / 2
         market = self.daemon.state.markets([(coin, dex)])[coin]
@@ -2626,7 +2624,7 @@ class Ladders:
         ladder.update(grid=[{**quote, "oid": None} for quote in quotes], oids=[], center=mid, placed_position=position,
                       placed_at=now, spacing=max(config["spacing_atr"] * atr, mid * config["min_spacing_pct"]))
         log(f"ladder ...{wallet[-4:]} {coin}: {len(quotes)} quotes in memory around {mid:.6g} (position {position:g}, "
-            f"base {base:g}{'' if allow_adds else ', adds paused: margin'}{'' if allow_trims else ', trims paused: trend'}); "
+            f"base {base:g}, take-profit side only{'' if allow_trims else ', trims paused: trend'}); "
             "placed as the price nears them")
 
     def _arm(self, ladder: dict, mid: float, exchange, config: dict, now: float) -> None:
@@ -2678,7 +2676,7 @@ AUTO_DEFAULTS = {
     "flip_min_volume": 3.0,
     "flip_trail": 0.015,
     "episode_hours": 12,              # each rule acts once per episode
-    "flatten_on_adverse": True,       # strong momentum against the crypto book: close all crypto, engage the kill switch
+    "flatten_on_adverse": True,       # strong momentum against the crypto book: a "test thesis?" notice (closes nothing since 2026-11-19)
     "flatten_min_volume": 2.0,
 }
 
@@ -2845,18 +2843,35 @@ class AutoTrader:
         return total
 
     def flatten(self, text: str) -> None:
-        """The user's standing order (2026-11-15): "if strong adverse momentum builds up, kill switch, no crypto."
-        Closes every main-DEX crypto position at market and engages the kill switch (no new entries)."""
+        """Strong momentum against the crypto book. Since 2026-11-19 this closes nothing: a trade going against its thesis
+        is tested, not cut blindly (user: "lose a fight, win the battle"; losses are managed by sizing, the trade cap and
+        the desk's guardrails). It raises a "test thesis?" notice with each crypto position's move against its entry and
+        the thesis it was opened for; the event log keeps it so the forward monitor can see whether the adverse move went on."""
         config = auto_config()
-        if not config["flatten_on_adverse"] or ht.kill_switch_engaged() or not self._claim("flatten", config["episode_hours"]):
+        if not config["flatten_on_adverse"] or not self._claim("flatten", config["episode_hours"]):
             return
         picks = self._positions("")
 
         def work() -> str:
-            closed = self._reduce(picks, 1.0)
-            ht.KILL_SWITCH_FILE.write_text(f"Engaged {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} by the auto flatten\n")
-            return f"{text}. Closed all crypto: {closed}. Kill switch engaged: no new entries until it is cleared"
-        self._spawn("flattened crypto", work, [item[1] for item in picks])
+            from desk import journal
+
+            try:
+                entries = [e for e in journal.load() if not e.get("closed")]
+            except Exception:
+                entries = []
+            rows = []
+            for wallet, coin, quantity, upnl in picks:
+                mark = self.daemon.state.mark(coin) or 0.0
+                cost = abs(quantity * mark) - upnl
+                move = upnl / cost if cost > 0 else float("nan")
+                tag = next((str(e.get("strategy") or "") for e in reversed(entries)
+                            if str(e.get("wallet", "")).lower() == wallet[-4:].lower() and e.get("coin") == coin), "")
+                rows.append((move, f"{coin} {'short' if quantity < 0 else 'long'} {_pct(move) if move == move else 'n/a'} "
+                                   f"vs entry ({tag or 'no thesis tag'})"))
+            rows.sort(key=lambda row: row[0] if row[0] == row[0] else 0.0)
+            listed = "; ".join(line for _, line in rows[:8]) or "no crypto positions"
+            return f"{text}. Test thesis? Nothing was closed. Worst against entry: {listed}"
+        self._spawn("test thesis?", work, [item[1] for item in picks])
 
     def flip(self, move: float, volume: float, text: str) -> None:
         config = auto_config()

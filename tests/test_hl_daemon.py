@@ -1048,6 +1048,26 @@ class LadderStopTests(unittest.TestCase):
         self.assertEqual(daemon.alerts.items, {})   # a deliberate close is not something that needs attention
 
 
+class PositionLadderTakeProfitOnlyTests(unittest.TestCase):
+    def test_a_position_ladder_quotes_only_its_take_profit_side(self):
+        from unittest.mock import MagicMock
+
+        wallet = "0xabc0000000000000000000000000000000c248"
+        exchange = MagicMock()
+        daemon = SimpleNamespace(alerts=hl_daemon.Alerts(path=None), exchanges={wallet: exchange},
+                                 margin_guard=SimpleNamespace(latest_health={wallet: 0.0}),
+                                 state=SimpleNamespace(markets=lambda pairs: {"LIT": SimpleNamespace(size_decimals=1)},
+                                                       position=lambda w, c, d: {"entryPx": "9.0"}))
+        ladders = hl_daemon.Ladders(daemon, path=None)
+        ladders._book = lambda coin, dex: (9.99, 10.01)
+        ladder = {"wallet": wallet, "coin": "LIT", "dex": "", "base": 100.0, "grid": [], "oids": [], "fills": 0}
+        config = dict(hl_daemon.LADDER_DEFAULTS)
+        ladders._rebuild(ladder, 100.0, time.time(), config, 1.0, False)   # a long in profit (entry 9, mid 10)
+        self.assertTrue(ladder["grid"])
+        self.assertTrue(all(not quote["is_buy"] and quote["reduce_only"] for quote in ladder["grid"]))   # sells only: no adds
+        self.assertTrue(all(quote["price"] > 9.0 for quote in ladder["grid"]))                           # and never at a loss
+
+
 class SlowPushTests(unittest.TestCase):
     def test_the_regime_reaches_the_relay_when_ib_comes_from_the_relay(self):
         from desk import web_sync
@@ -1264,7 +1284,7 @@ class BuildUpTests(unittest.TestCase):
 
 
 class FlattenTests(unittest.TestCase):
-    def test_flatten_closes_all_crypto_and_engages_the_kill_switch(self):
+    def test_adverse_momentum_raises_a_test_thesis_notice_and_closes_nothing(self):
         import tempfile
         from pathlib import Path
         from types import SimpleNamespace
@@ -1273,14 +1293,23 @@ class FlattenTests(unittest.TestCase):
         hl_daemon.load_trading()
         with tempfile.TemporaryDirectory() as folder, patch.object(hl_daemon, "AUTO_STATE", Path(folder) / "s.json"), \
                 patch.object(hl_daemon.ht, "KILL_SWITCH_FILE", Path(folder) / "KILL_SWITCH"):
-            auto = hl_daemon.AutoTrader(SimpleNamespace(alerts=SimpleNamespace(set=lambda *a, **k: None)))
-            closed = []
-            with patch.object(auto, "_positions", return_value=[("0xa", "WLD", -100.0, 1.0), ("0xa", "ENA", -50.0, -1.0)]), \
-                    patch.object(auto, "_reduce", side_effect=lambda picks, share: closed.extend((c, share) for _, c, _, _ in picks) or "ok"), \
-                    patch.object(auto, "_spawn", side_effect=lambda name, work, coins=None: work()):
-                auto.flatten("test")
-            self.assertEqual(closed, [("WLD", 1.0), ("ENA", 1.0)])
-            self.assertTrue((Path(folder) / "KILL_SWITCH").exists())
+            marks = {"WLD": 1.0, "ENA": 0.1}
+            daemon = SimpleNamespace(alerts=SimpleNamespace(set=lambda *a, **k: None),
+                                     state=SimpleNamespace(mark=lambda coin: marks[coin]))
+            auto = hl_daemon.AutoTrader(daemon)
+            notes = []
+            with patch.object(auto, "_positions", return_value=[("0xa", "WLD", -100.0, 10.0), ("0xa", "ENA", -500.0, -10.0)]), \
+                    patch.object(auto, "_reduce") as reduce, \
+                    patch("desk.journal.load", return_value=[{"wallet": "0xa", "coin": "ENA", "strategy": "fade", "closed": None}]), \
+                    patch.object(auto, "_spawn", side_effect=lambda name, work, coins=None: notes.append((name, work()))):
+                auto.flatten("BTC up 3%")
+            reduce.assert_not_called()
+            self.assertFalse((Path(folder) / "KILL_SWITCH").exists())
+            name, note = notes[0]
+            self.assertEqual(name, "test thesis?")
+            self.assertIn("Nothing was closed", note)
+            self.assertLess(note.index("ENA"), note.index("WLD"))   # worst against its entry first
+            self.assertIn("(fade)", note)
 
 
 class InfoUsageTests(unittest.TestCase):
