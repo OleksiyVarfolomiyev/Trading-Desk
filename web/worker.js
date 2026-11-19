@@ -99,7 +99,38 @@ async function getJSON(url) {
   return response.json();
 }
 
-const hl = (body) => postJSON(HL_INFO, body);
+// Hyperliquid answers 429 when many calls arrive at once (an account read is ~8 calls, per wallet, per
+// viewer). Calls go through a small gate, and a 429 is retried after a short, growing pause.
+let hlActive = 0;
+const hlWaiting = [];
+async function hlGate() {
+  if (hlActive >= 4) await new Promise((resolve) => hlWaiting.push(resolve));
+  hlActive += 1;
+}
+function hlRelease() {
+  hlActive -= 1;
+  const next = hlWaiting.shift();
+  if (next) next();
+}
+async function hl(body) {
+  await hlGate();
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (response.status === 429 && attempt < 3) {
+        const asked = Number(response.headers.get("retry-after")) * 1000;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(asked > 0 ? asked : 600 * 2 ** attempt, 5000)));
+        continue;
+      }
+      if (!response.ok) throw new Error(`${new URL(HL_INFO).host} answered HTTP ${response.status}`);
+      return await response.json();
+    }
+  } finally {
+    hlRelease();
+  }
+}
+const inflight = new Map();   // path -> the read already under way, shared by every viewer asking for it
+const STALE_SECONDS = 900;    // on a failed read the last good answer is served for up to 15 minutes
 
 async function perpDexes() {
   if (!dexCache.dexes || Date.now() - dexCache.at > 3600_000) {
@@ -530,11 +561,19 @@ export default {
     }
     let body;
     try {
-      if (kind === "hl" && what === "account") body = await hlAccount(address);
-      else if (kind === "hl" && what === "portfolio") body = await hl({ type: "portfolio", user: address });
-      else if (kind === "wallet" && !what) body = await walletHoldings(address);
-      else return reply({ error: "unknown request" }, 404);
+      if (!inflight.has(url.pathname)) {
+        const read = (async () => {
+          if (kind === "hl" && what === "account") return hlAccount(address);
+          if (kind === "hl" && what === "portfolio") return hl({ type: "portfolio", user: address });
+          if (kind === "wallet" && !what) return walletHoldings(address);
+          return undefined;
+        })().finally(() => inflight.delete(url.pathname));
+        inflight.set(url.pathname, read);
+      }
+      body = await inflight.get(url.pathname);
+      if (body === undefined) return reply({ error: "unknown request" }, 404);
     } catch (error) {
+      if (remembered && Date.now() - remembered.at < STALE_SECONDS * 1000) return reply(remembered.body, 200, 5);
       return reply({ error: scrub(String(error && error.message || error), address) }, 502);
     }
     const clean = scrub(body, address);
