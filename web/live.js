@@ -1196,7 +1196,7 @@
           const fills = sum(known.map((r) => r.Fills));
           total[k] = fills ? sum(known.map((r) => r[k] * r.Fills)) / fills : NaN;
         });
-        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees", "Funding", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"],
+        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees", "Funding", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued", "Settings"],
           { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "susd", "Funding": "susd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
           { total, key: { "Ladder PnL": "abs" } });
       })(),

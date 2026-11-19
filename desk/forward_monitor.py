@@ -303,8 +303,14 @@ REGISTRY: list[Item] = [
          forward_only="forward-only by design", note="best signal's net return per snapshot at 60 minutes"),
     Item("screener", "Screener short candidates", "strategy", "2026-11-20", None, _screener_live,
          forward_only="history: picks vs basket not established", note="outcome: 7-day move against BTC from each daily snapshot"),
-    Item("take-profits", "Held take-profits on crypto entries", "execution", "2026-11-20", None, _count(r"take-profit"),
-         note="crypto entries only (stocks are held passively); no stop or loss guard"),
+    Item("take-profits", "Take-profit ladder on crypto entries", "execution", "2026-11-20", None, _count(r"take-profit"),
+         note="rungs at the 50th/75th/90th percentile of past winners' move in ATR units (desk/tp_ladder.json), equal "
+              "parts, never below the entry; crypto only, stocks held passively; no study that the ladder beats one target"),
+    Item("mm-tuning", "Adaptive market making (c248)", "execution", "2026-11-20", None, _count(r"tuned "),
+         note="every 6 hours from the ladders' own fills (markouts 1m/5m/60m, edge per $1K) and the market; bounded steps, "
+              "no change under 30 fills (desk/mm_tuning.py); no study that tuning beats fixed settings"),
+    Item("ladder-no-loss", "Ladders never reduce at a loss", "risk", "2026-11-20", None, _count(r"ladder"),
+         note="trims and inventory-reducing quotes only at a better price than the position's entry"),
     Item("cap-flex", "Risk-cap flex, opt-in per trade", "risk", "2026-11-20", None, _count(r"FLEX"),
          note="3-point flex (33% to 36%) used only when chosen on the confirm step or with --use-flex"),
 ]

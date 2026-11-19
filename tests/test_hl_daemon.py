@@ -334,7 +334,8 @@ class DaemonTradeTests(unittest.TestCase):
         self.daemon.state.other = (risk.DeskBook(), time.time())
         self.exchange = MagicMock()
         self.exchange.update_leverage.return_value = {"status": "ok"}
-        self.exchange.order.side_effect = [filled(30, 7.98), statuses({"resting": {"oid": 3}})]
+        # the entry, then the take-profit ladder's rungs (desk/tp_ladder.json: up to three)
+        self.exchange.order.side_effect = [filled(30, 7.98)] + [statuses({"resting": {"oid": 3 + i}}) for i in range(5)]
         self.daemon.exchanges[WALLET] = self.exchange
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -378,10 +379,13 @@ class DaemonTradeTests(unittest.TestCase):
     def test_an_urgent_crypto_entry_places_the_entry_and_a_held_take_profit_no_stop_and_no_guard(self):
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
         self.assertEqual(self.daemon.trade(self.request(live=True), session), 0)
-        entry, target = self.exchange.order.call_args_list   # the desk's rule: no stop or loss guard; crypto takes profit
-        (_, target_is_buy, _, _, target_type), target_kwargs = target
-        self.assertEqual((target_is_buy, target_kwargs), (True, {"reduce_only": True}))   # closes the short
-        self.assertNotIn("trigger", target_type)                                           # a limit, never a stop
+        entry, *targets = self.exchange.order.call_args_list   # the desk's rule: no stop or loss guard; crypto takes profit
+        self.assertGreaterEqual(len(targets), 1)
+        for target in targets:   # a ladder of take-profit rungs, each a reduce-only limit below the short's fill
+            (_, target_is_buy, _, target_price, target_type), target_kwargs = target
+            self.assertEqual((target_is_buy, target_kwargs), (True, {"reduce_only": True}))   # closes the short
+            self.assertNotIn("trigger", target_type)                                           # a limit, never a stop
+            self.assertLess(target_price, 7.98)                                                # never at a loss
         (coin, is_buy, size, limit, order_type), kwargs = entry
         self.assertEqual((coin, is_buy, order_type, kwargs), ("AVAX", False, {"limit": {"tif": "Ioc"}},
                                                               {"reduce_only": False}))
@@ -413,7 +417,7 @@ class DaemonTradeTests(unittest.TestCase):
         line = next(text for text in self.output.getvalue().splitlines() if text.startswith("AVAX SHORT"))
         self.assertIn("of the wallet", line)
         self.assertIn("of the risk cap (risk budget and volatility)", line)
-        self.assertIn("no stop or loss guard, take-profit", line)
+        self.assertIn("no stop or loss guard, take-profit", line)   # the ladder (desk/tp_ladder.py) or the single target
         self.assertNotIn("expected 5d PnL", self.output.getvalue())
 
     def test_the_kill_switch_blocks_live_orders(self):
@@ -429,7 +433,7 @@ class DaemonTradeTests(unittest.TestCase):
             self.daemon.trade(self.request(live=True), FakeSession("LIVE TRADING", "SUBMIT ORDERS"))
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
         self.assertEqual(self.daemon.trade(self.request(live=True, ignore_unreachable=True), session), 0)
-        self.assertEqual(self.exchange.order.call_count, 2)   # the entry and its held take-profit: no stop
+        self.assertGreaterEqual(self.exchange.order.call_count, 2)   # the entry and its take-profit rungs: no stop
 
     def test_a_one_off_risk_cap_is_restored_afterwards(self):
         cap = ht.MAX_TOTAL_RISK_PCT

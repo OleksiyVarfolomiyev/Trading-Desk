@@ -37,7 +37,8 @@ DISPLAY_TIMEZONE = "America/New_York"  # the desk's clock: times are shown in Ea
 MARKOUT_MINUTES = (1, 15)
 MARKOUT_DAYS = 3  # HL serves about 3.5 days of 1-minute candles
 COLUMNS = ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees",
-           "Funding", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued"]
+           "Funding", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued",
+           "Settings"]   # the ladder's spacing, size and lean, and its last re-evaluation (desk/mm_tuning.py)
 FORMATS = {"Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "susd",
            "Funding": "susd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps",
            "Position vs base": "spct", "Quotes": "int", "Queued": "int"}
@@ -202,7 +203,8 @@ def minute_closes(coin: str, since_ms: int) -> pd.Series:
 
 def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
                         queued: dict[tuple[str, str], int] | None = None,
-                        status: dict[tuple[str, str], str] | None = None) -> pd.DataFrame:
+                        status: dict[tuple[str, str], str] | None = None,
+                        settings: dict[tuple[str, str], str] | None = None) -> pd.DataFrame:
     """One row per coin the ladders ever quoted (running or stopped, in any wallet), over all its ladder fills since the
     first one: a restart does not reset it. The total row is the whole of market making since it started.
 
@@ -260,7 +262,8 @@ def market_making_frame(quotes: dict[tuple[str, str], int] | None = None,
                    "Since": _since(pd.Timestamp(first_ms, unit="ms", tz="UTC")), "_first": first_ms, **measured, **markouts(own, closes),
                    "Position vs base": size / base - 1 if ladder and base else float("nan"),
                    "Quotes": (quotes or {}).get((short_id(wallet), coin), float("nan")),
-                   "Queued": (queued or {}).get((short_id(wallet), coin), float("nan"))}
+                   "Queued": (queued or {}).get((short_id(wallet), coin), float("nan")),
+                   "Settings": (settings or {}).get((short_id(wallet), coin), "") if ladder else ""}
             rows.append(row)
     return _by_coin(rows)
 
@@ -294,7 +297,8 @@ def _by_coin(rows: list[dict]) -> pd.DataFrame:
                     "_first": group[0]["_first"], **total,
                     "Markout 1m (bps)": weighted("Markout 1m (bps)"), "Markout 15m (bps)": weighted("Markout 15m (bps)"),
                     "Position vs base": pick["Position vs base"], "Quotes": sum(row["Quotes"] for row in live if row["Quotes"] == row["Quotes"]) if live else float("nan"),
-                    "Queued": sum(row["Queued"] for row in live if row["Queued"] == row["Queued"]) if live else float("nan")})
+                    "Queued": sum(row["Queued"] for row in live if row["Queued"] == row["Queued"]) if live else float("nan"),
+                    "Settings": pick.get("Settings", "")})
     return pd.DataFrame(out, columns=COLUMNS + ["_first"]).drop(columns="_first")
 
 

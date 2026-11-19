@@ -1121,7 +1121,8 @@ class Alerts:
                          "status": (("neutral, quoting" if item.get("ranging") else "neutral, waiting for a range")
                                     if item.get("neutral")
                                     else f"quoting, trims paused (trend {item['trend'][0]:.2f})" if item.get("trims_paused")
-                                    else "quoting")}
+                                    else "quoting"),
+                         "tuning": ladder_tuning_text(item["coin"])}
                         for item in list(daemon.ladders.ladders.values())]
         if time.time() - self.market_making_at < 300:
             return
@@ -1130,7 +1131,8 @@ class Alerts:
 
         frame = market_making.market_making_frame({(item["wallet"], item["coin"]): item["quotes"] for item in self.ladders},
                                                   {(item["wallet"], item["coin"]): item["queued"] for item in self.ladders},
-                                                  {(item["wallet"], item["coin"]): item["status"] for item in self.ladders})
+                                                  {(item["wallet"], item["coin"]): item["status"] for item in self.ladders},
+                                                  {(item["wallet"], item["coin"]): item.get("tuning", "") for item in self.ladders})
         rows = json.loads(frame.to_json(orient="records"))
         if [row.get("Fills") for row in rows] != [row.get("Fills") for row in self.market_making] or len(rows) != len(self.market_making):
             self.dirty = True
@@ -2031,6 +2033,7 @@ LADDER_TREND_REGIME_ER = 0.6   # a 5-day efficiency ratio this high is a trend r
 NEUTRAL_DEFAULTS = {"level_usd": 11.0, "max_levels": 5, "skew": 0.5}
 NEUTRAL_RANGE_ER = 0.4
 LADDER_CLOID_PREFIX = "0x1add"   # marks the ladder's own orders (client order ids)
+MM_TUNE_SECONDS = 6 * 3600       # how often the ladders are re-evaluated from their fills and the market (desk/mm_tuning.py)
 MIN_ORDER_USD = 10.0
 LEVEL_FLOOR_MARGIN = 1.1   # a level raised to the minimum is sized 10% over it, so a small price move keeps it valid
 
@@ -2139,6 +2142,37 @@ def neutral_quotes(position: float, mid: float, best_bid: float, best_ask: float
     return quotes
 
 
+def ladder_tuning_text(coin: str) -> str:
+    """The ladder's current settings and its last re-evaluation, short, for the market-making tile."""
+    from desk import mm_tuning
+
+    config = ladder_config(coin)
+    text = (f"spacing {config['spacing_atr']:.2g} ATR, size {config['add_level_pct']:.0%}/{config['trim_level_pct']:.0%}, "
+            f"lean {config['add_first']:.2g}")
+    state = mm_tuning.last_state()
+    result = next((item for item in state.get("results", []) if item.get("coin") == coin), None)
+    if result:
+        when = str(state.get("at", ""))[:10]
+        text += f"; {when}: " + ("; ".join(result.get("reasons") or []) or result.get("status", ""))
+    return text
+
+
+def no_loss_reduce(quotes: list[dict], position: float, entry: float | None) -> list[dict]:
+    """Drop every quote that would reduce the position at a worse price than its entry (the desk's rule since 2026-11-19:
+    ladders take profit, they never cut losses). A quote reduces when it trades against the position (a sell under a
+    long, a buy under a short); adds and quotes on a flat position are kept. Without a known entry nothing is dropped."""
+    if not position or not entry or entry <= 0:
+        return quotes
+    long = position > 0
+    kept = []
+    for quote in quotes:
+        reduces = (not quote["is_buy"]) if long else quote["is_buy"]
+        if reduces and (quote["price"] <= entry if long else quote["price"] >= entry):
+            continue
+        kept.append(quote)
+    return kept
+
+
 def arm_plan(grid: list[dict], mid: float, spacing: float, config: dict, now: float) -> tuple[list[dict], list[dict]]:
     """Which in-memory quotes to place on the book and which to pull: ``(to_place, to_cancel)``.
 
@@ -2181,6 +2215,55 @@ class Ladders:
         self.lock = threading.RLock()
         self.ladders: dict[tuple[str, str], dict] = {}
         self.backoff_until = 0.0
+        self.next_tune = time.time() + 600   # the first re-evaluation ten minutes after a start, then every MM_TUNE_SECONDS
+
+    # -- adaptive market making (desk/mm_tuning.py): the ladders' own fills and the market, every few hours
+    def _funding_apr(self, coin: str, dex: str) -> float:
+        state = self.daemon.state
+        with state.lock:
+            meta, ctxs = state.meta.get(dex), state.ctxs.get(dex)
+        try:
+            names = [asset["name"] for asset in (meta or {}).get("universe", [])]
+            return float((ctxs or [])[names.index(coin)].get("funding") or 0) * 8760
+        except (ValueError, IndexError, TypeError, AttributeError):
+            return float("nan")
+
+    def tune(self) -> list[dict]:
+        """Re-evaluate every running ladder from its fills since it started and the market; apply the bounded changes
+        (each coin's own entry in ladder.json), log them with their statistics, and raise the rest as notices."""
+        from desk import market_making, mm_tuning
+
+        with self.lock:
+            items = list(self.ladders.values())
+        if not items:
+            return []
+        results, fills_by_wallet = [], {}
+        for ladder in items:
+            wallet, coin, dex = ladder["wallet"], ladder["coin"], ladder["dex"]
+            started_ms = int(pd.Timestamp(ladder["started"], tz="UTC").timestamp() * 1000)
+            if wallet not in fills_by_wallet:
+                earliest = min(int(pd.Timestamp(item["started"], tz="UTC").timestamp() * 1000) for item in items if item["wallet"] == wallet)
+                fills_by_wallet[wallet] = market_making.ladder_fill_rows(wallet, earliest)
+            fills = [fill for fill in fills_by_wallet[wallet] if fill["coin"] == coin and int(fill["time"]) >= started_ms]
+            closes = market_making.minute_closes(coin, started_ms) if len(fills) >= mm_tuning.MIN_FILLS else None
+            bid, ask = self._book(coin, dex)
+            mid = (bid + ask) / 2
+            atr = self._atr(ladder)
+            base = float(ladder.get("base") or 0)
+            result = mm_tuning.evaluate(
+                coin, fills, [int(t) for t in closes.index] if closes is not None else [],
+                [float(v) for v in closes.to_numpy()] if closes is not None else [], ladder_config(coin),
+                spread_bps=(ask - bid) / mid * 1e4 if mid else float("nan"), atr_bps=atr / mid * 1e4 if mid else float("nan"),
+                funding_apr=self._funding_apr(coin, dex), base_side=1.0 if base >= 0 else -1.0)
+            if ladder.get("neutral"):   # a neutral ladder's size and lean are its own settings: only the spacing is tuned
+                result["changes"] = {key: value for key, value in result["changes"].items() if key == "spacing_atr"}
+            results.append(result)
+            for reason in result.get("reasons", []):
+                log(f"ladder ...{wallet[-4:]} {coin}: tuned {reason}")
+            for notice in result["notices"]:
+                self.daemon.alerts.set(f"mm-tune:{wallet}:{coin}", f"market making: {coin}", notice, ttl=MM_TUNE_SECONDS + 600)
+        mm_tuning.apply(results, LADDER_CONFIG)
+        return results
 
     # -- bookkeeping
     def save(self) -> None:
@@ -2349,6 +2432,12 @@ class Ladders:
         while not self.daemon.stopped.wait(2):
             if time.time() < self.backoff_until:
                 continue
+            if time.time() >= self.next_tune:
+                self.next_tune = time.time() + MM_TUNE_SECONDS
+                try:
+                    self.tune()
+                except Exception as exc:   # the ladders keep quoting on their current settings
+                    log(f"ladder tuning failed ({type(exc).__name__}: {exc}); next try in {MM_TUNE_SECONDS // 3600} hours")
             with self.lock:
                 items = list(self.ladders.values())
             for ladder in items:
@@ -2457,6 +2546,7 @@ class Ladders:
             quotes = neutral_quotes(position, book_mid, bid, ask, spacing, market.size_decimals, int(config["levels"]),
                                     neutral["level_usd"], int(neutral["max_levels"]), neutral["skew"],
                                     allow_adds=ladder["ranging"] and health < config["pause_adds_at_health"])
+            quotes = no_loss_reduce(quotes, position, self._entry(wallet, coin, dex))   # inventory is only reduced at a profit
             live = [quote["oid"] for quote in ladder["grid"] if quote.get("oid")]
             if live:
                 self.daemon.exchanges[wallet].bulk_cancel([{"coin": coin, "oid": oid} for oid in live])
@@ -2503,6 +2593,15 @@ class Ladders:
                                text, ttl=86400)
         return True
 
+    def _entry(self, wallet: str, coin: str, dex: str) -> float | None:
+        """The position's average entry price from the live state (None when unknown)."""
+        record = self.daemon.state.position(wallet, coin, dex) or {}
+        try:
+            entry = float(record.get("entryPx") or 0)
+        except (TypeError, ValueError):
+            return None
+        return entry if entry > 0 else None
+
     def _rebuild(self, ladder: dict, position: float, now: float, config: dict, atr: float, filled: bool) -> None:
         """A fresh grid of quotes around the mid, kept in memory; the quotes resting on the book are pulled first."""
         wallet, coin, dex, base = ladder["wallet"], ladder["coin"], ladder["dex"], ladder["base"]
@@ -2518,6 +2617,7 @@ class Ladders:
         mid = (bid + ask) / 2
         market = self.daemon.state.markets([(coin, dex)])[coin]
         quotes = ladder_quotes(position, base, mid, bid, ask, atr, market.size_decimals, config, allow_adds, allow_trims)
+        quotes = no_loss_reduce(quotes, position, self._entry(wallet, coin, dex))   # trims only above the entry (long)
         live = [quote["oid"] for quote in ladder["grid"] if quote.get("oid")] or ladder["oids"]
         if live:
             self.daemon.exchanges[wallet].bulk_cancel([{"coin": coin, "oid": oid} for oid in live])
@@ -3445,7 +3545,7 @@ class Daemon:
                              "health": {wallet[-4:]: share for wallet, share in self.margin_guard.latest_health.items()}},
             "ladders": [{"wallet": item["wallet"][-4:], "coin": item["coin"], "base": item["base"],
                          "quotes": len(item["oids"]), "queued": max(0, len(item.get("grid", [])) - len(item["oids"])),
-                         "center": item["center"], "fills": item["fills"]}
+                         "center": item["center"], "fills": item["fills"], "tuning": ladder_tuning_text(item["coin"])}
                         for item in list(self.ladders.ladders.values())],
             "trails": [{"wallet": item["wallet"][-4:], "coin": item["coin"], "pct": item["pct"], "stop": item["stop"],
                         "extreme": item["extreme"]} for item in list(self.trails.trails.values())],
