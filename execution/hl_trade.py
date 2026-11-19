@@ -192,6 +192,19 @@ class PlannedTrade:
     stress_note: str = ""     # the scenario stress check's warning, or why it cut or refused the entry
     strategy: str = "directional"  # the journal's tag: directional, conviction or hedge (desk/journal.py)
     rule_notes: str = ""      # warnings from the desk's own trade history (desk/trade_rules.py)
+    flex_quantity: float = 0.0  # the size the 3-point cap flex would allow, when it is larger (offered, never used silently)
+    flex_risk: float = 0.0
+    flexed: bool = False      # planned with the flex the user chose for this trade
+
+    @property
+    def held_take_profit(self) -> bool:
+        """A crypto entry gets the daemon's held take-profit (no stop, no loss guard); stocks and tradfi are held passively."""
+        return self.bare and is_crypto_dex(self.dex)
+
+
+def is_crypto_dex(dex: str) -> bool:
+    """HL's main DEX (and hyna) list crypto; the other HIP-3 DEXes list stocks and tradfi (desk/stress.py's split)."""
+    return not dex or dex == "hyna"
 
 
 @dataclass
@@ -1168,6 +1181,7 @@ def plan_trades(
     label: str | None = None,
     reviewed_limits: dict[str, list[float]] | None = None,
     bare: bool = True,
+    use_flex: bool = False,
 ) -> tuple[list[PlannedTrade], float]:
     """Build risk- and margin-limited entry plans and report current portfolio risk.
 
@@ -1177,7 +1191,11 @@ def plan_trades(
     ``notional`` is the opt-in explicit amount (dollars, picked at the trade): each entry is that notional instead of
     the risk budget, within its margin and the desk's aggregate risk cap. There is no preset large size. The label (or
     ``strategy``) is the journal's tag; it never changes the size. ``bare`` (default) places no stop, take-profit or
-    loss guard.
+    loss guard; a crypto entry gets a held take-profit (``PlannedTrade.held_take_profit``).
+
+    The aggregate cap is MAX_TOTAL_RISK_PCT. The 3-point flex (CONVICTION_CAP_FLEX) is never used silently: with
+    ``use_flex`` False the plans are at the normal cap, and each plan the flex would enlarge carries that size in
+    ``flex_quantity`` so the user can choose it (dashboard "Use flex", command line ``--use-flex``).
     """
     if notional is not None and not (math.isfinite(notional) and notional > 0):
         raise ValueError("An explicit entry amount must be a positive number of dollars.")
@@ -1202,8 +1220,12 @@ def plan_trades(
             stop_price=nearest_stop(position, stops),
         )
 
-    total_risk_cap = snapshot.desk_equity * (MAX_TOTAL_RISK_PCT + (CONVICTION_CAP_FLEX if large else 0.0))
+    total_risk_cap = snapshot.desk_equity * (MAX_TOTAL_RISK_PCT + (CONVICTION_CAP_FLEX if use_flex else 0.0))
     risk_headroom = total_risk_cap - current_risk
+    from desk.risk import per_position_budget as _per_position_budget
+
+    # The cap binds when the headroom is below what the entry asks for: then the flex could offer more.
+    cap_binds = large or risk_headroom < _per_position_budget(snapshot.desk_equity)
     available_margin = max(
         0.0,
         snapshot.target_equity * (1 - RESERVE_PCT) - snapshot.target_margin_used,
@@ -1301,16 +1323,16 @@ def plan_trades(
             plan = replace(plan, block_reason="no size was approved for this entry")
         if plan.quantity > 0 and snapshot.desk_equity > 0:
             asset_class = "tradfi perp" if dex and dex != "hyna" else "crypto perp"
-            notional = side_to_direction(signal["side"]) * plan.quantity * market.mark_price
-            fraction, note = stress.fit_entry(exposures, snapshot.desk_equity, asset_class, coin, notional)
+            signed = side_to_direction(signal["side"]) * plan.quantity * market.mark_price
+            fraction, note = stress.fit_entry(exposures, snapshot.desk_equity, asset_class, coin, signed)
             if fraction < 1.0:
                 step = 10 ** -market.size_decimals
                 cut = round(math.floor(plan.quantity * fraction / step + 1e-12) * step, market.size_decimals)
                 plan = replace(plan, quantity=cut, risk_budget=plan.risk_budget * (cut / plan.quantity) if plan.quantity else 0.0,
                                block_reason=plan.block_reason or ("" if cut > 0 else note))
-                notional = side_to_direction(signal["side"]) * cut * market.mark_price
+                signed = side_to_direction(signal["side"]) * cut * market.mark_price
             plan = replace(plan, stress_note=note)
-            exposures.append((asset_class, coin, notional))
+            exposures.append((asset_class, coin, signed))
         from desk import trade_rules
 
         tag = label if label in ENTRY_LABELS else (strategy if strategy in ENTRY_LABELS else "directional")   # the picked label is the tag
@@ -1319,6 +1341,20 @@ def plan_trades(
         plans.append(plan)
         risk_headroom -= plan.risk_budget
         available_margin -= plan.quantity * market.mark_price / plan.leverage
+    if use_flex:
+        plans = [replace(plan, flexed=True) for plan in plans]
+    elif cap_binds and plans:
+        # What the flex would allow, planned the same way but quietly; offered on the plan, never applied by itself.
+        import contextlib
+        import io
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            flexed, _ = plan_trades(signals, markets, snapshot, include_external=include_external, stops=stops,
+                                    notional=notional, strategy=strategy, label=label, reviewed_limits=reviewed_limits,
+                                    bare=bare, use_flex=True)
+        wider = {plan.coin: plan for plan in flexed}
+        plans = [replace(plan, flex_quantity=wider[plan.coin].quantity, flex_risk=wider[plan.coin].risk_budget)
+                 if plan.coin in wider and wider[plan.coin].quantity > plan.quantity + 1e-12 else plan for plan in plans]
     return plans, current_risk
 
 
@@ -2180,7 +2216,7 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
     used = current_risk
     for plan in plans:
         notional = plan.quantity * plan.entry_reference
-        cap = snapshot.desk_equity * (MAX_TOTAL_RISK_PCT + (CONVICTION_CAP_FLEX if plan.large else 0.0))
+        cap = snapshot.desk_equity * (MAX_TOTAL_RISK_PCT + (CONVICTION_CAP_FLEX if plan.flexed else 0.0))
         used += plan.risk_budget
         left = cap - used
         # The size in the terms that matter: dollars, and what it takes of the wallet and of the desk's risk cap.
@@ -2193,8 +2229,12 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
         print(
             f"{plan.coin} {plan.side}: quantity={plan.quantity:g}, reference=${plan.entry_reference:,.6g}, "
             + share
-            + (f"no stop, take-profit or loss guard (sizing level ${plan.stop_price:,.6g} = {STOP_ATR_MULTIPLE:g} x ATR), "
+            + ((f"no stop or loss guard, take-profit ${plan.target_price:,.6g} held by the daemon "
+                f"(sizing level ${plan.stop_price:,.6g} = {STOP_ATR_MULTIPLE:g} x ATR), " if plan.held_take_profit
+                else f"no stop, take-profit or loss guard: stocks are held passively (sizing level ${plan.stop_price:,.6g} "
+                     f"= {STOP_ATR_MULTIPLE:g} x ATR), ")
                if plan.bare else f"sizing level=${plan.stop_price:,.6g}, target=${plan.target_price:,.6g}, ")
+            + (f"risk cap with the 3-point flex you chose ({_pct(MAX_TOTAL_RISK_PCT + CONVICTION_CAP_FLEX)}), " if plan.flexed else "")
             + f"funding reserve/unit=${plan.funding_reserve_per_unit:,.6g}, "
             f"estimated entry+exit fees=${notional * (plan.maker_fee_rate + plan.taker_fee_rate):,.2f}"
             + (f" — BLOCKED: {plan.block_reason}" if plan.block_reason else "")
@@ -2203,6 +2243,16 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
             + (f" — NOTE: {plan.rule_notes}" if plan.rule_notes and not plan.block_reason else "")
             + f" [{plan.strategy}]"
         )
+        if plan.flex_quantity > plan.quantity:
+            flex_cap = snapshot.desk_equity * (MAX_TOTAL_RISK_PCT + CONVICTION_CAP_FLEX)
+            flex_notional = plan.flex_quantity * plan.entry_reference
+            wallet = (lambda value: _pct(value / snapshot.target_equity) if snapshot.target_equity > 0 else "n/a")
+            print(f"{plan.coin}: FLEX: the {MAX_TOTAL_RISK_PCT * 100:g}% risk cap limits this entry to ${notional:,.0f} "
+                  f"({wallet(notional)} of the wallet, risk {_pct(plan.risk_budget / cap) if cap > 0 else 'n/a'} of the cap); "
+                  f"with the 3-point flex ({_pct(MAX_TOTAL_RISK_PCT + CONVICTION_CAP_FLEX)}) it could be ${flex_notional:,.0f} "
+                  f"({wallet(flex_notional)} of the wallet, risk {_pct(plan.flex_risk / flex_cap) if flex_cap > 0 else 'n/a'} "
+                  "of the flexed cap). Choose Use flex (dashboard) or --use-flex (command line); otherwise it goes at "
+                  + ("the normal size." if plan.quantity > 0 else "nothing: the normal cap leaves no room."))
 
 
 def print_protection_plans(plans: list[ProtectionPlan]) -> None:
@@ -3050,9 +3100,19 @@ def execute_plans(
                 journal.record_entry(wallet, plan.coin, plan.side, plan.strategy, thesis=PENDING_THESIS)
             except Exception as exc:
                 print(f"{plan.coin}: the journal entry was not saved ({type(exc).__name__}: {exc}).")
+            if plan.bare and plan.held_take_profit:
+                # Crypto: a reduce-only take-profit, which the daemon adopts and holds in memory (on the book only as
+                # the price nears it); no stop and no loss guard.
+                try:
+                    _place_entry_target(exchange, plan, quantity, entry_price, market.size_decimals)
+                    print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; take-profit placed for the "
+                          "daemon to hold; no stop or loss guard (the daemon's margin guard still watches the account).")
+                except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as exc:
+                    failures.append(f"{plan.coin}: entry filled but take-profit placement failed ({exc})")
+                continue
             if plan.bare:
                 print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; no stop, take-profit or loss "
-                      "guard (the desk's rule; the daemon's margin guard still watches the account).")
+                      "guard: stocks are held passively (the daemon's margin guard still watches the account).")
                 continue
             target_oid = 0
             try:
@@ -3339,6 +3399,12 @@ def main(argv: list[str] | None = None) -> int:
         "wallet's margin and the aggregate risk cap. There is no preset large size.",
     )
     parser.add_argument(
+        "--use-flex",
+        action="store_true",
+        help="With --signals: let entries use the 3-point risk-cap flex (33%% -> 36%% of desk equity). Never applied "
+        "without this flag; the plan says when an entry would need it.",
+    )
+    parser.add_argument(
         "--slippage",
         type=float,
         default=URGENT_SLIPPAGE * 100,
@@ -3537,7 +3603,8 @@ def main(argv: list[str] | None = None) -> int:
         risk_wallets = read_target_wallets(args.wallet, args.risk_wallets)
         snapshot = urgent_fees(attach_other_venues(collect_snapshot(risk_wallets, dexes, markets), args), args.urgent)
         stops = resting_stops(risk_wallets, sorted({position.dex for position in snapshot.positions}))
-        sizing = dict(notional=args.notional, strategy="conviction" if args.conviction else args.strategy)
+        sizing = dict(notional=args.notional, strategy="conviction" if args.conviction else args.strategy,
+                      use_flex=args.use_flex)
         plans, current_risk = plan_trades(signals, markets, snapshot, stops=stops, **sizing)
         if args.urgent:
             print(f"Urgent entry: immediate-or-cancel at most {args.slippage:g}% from the mid (taker fee).")

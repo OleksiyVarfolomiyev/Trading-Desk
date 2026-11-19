@@ -1261,7 +1261,7 @@ class TradeAnalyticsTests(unittest.TestCase):
 
         from hl_trade import AccountSnapshot, print_plan
 
-        snapshot = AccountSnapshot(1000, 0, 1000, 0, (), 0, 0, ("wallet",))   # cap $360 with the amount flex, budget $40
+        snapshot = AccountSnapshot(1000, 0, 1000, 0, (), 0, 0, ("wallet",))   # cap $330, budget $40
         plan = size_trade("BTC", "", "LONG", Market("BTC", "", 100, 100, 3, 10), make_candles(), make_funding(),
                           equity=1_000, risk_headroom=500, available_margin=10_000, maker_fee_rate=0.0001,
                           taker_fee_rate=0.0004, large_notional=900)
@@ -1271,6 +1271,34 @@ class TradeAnalyticsTests(unittest.TestCase):
                 print_plan(snapshot, [dataclasses.replace(plan, risk_budget=risk)], 0.0)
             self.assertEqual("WARNING: leaves" in out.getvalue(), warned)
             self.assertIn("explicit amount, opt-in", out.getvalue())
+
+    def test_the_cap_flex_is_offered_never_used_silently_and_applies_only_when_chosen(self):
+        import contextlib
+        import io
+
+        from hl_trade import AccountSnapshot, plan_trades, print_plan
+
+        # Cap $330 (33%), $320 already at risk: $10 of headroom, below the $40 budget; the flex (36%) adds $30.
+        snapshot = AccountSnapshot(1000, 0, 1000, 0, (), 0, 0, ("wallet",), external_risk=320)
+        markets = {"BTC": Market("BTC", "", 100, 100, 4, 10)}
+        with patch("hl_trade.fetch_daily_candles", return_value=make_candles()), \
+                patch("hl_trade.fetch_funding_history", return_value=make_funding()), \
+                patch("desk.stress.fit_entry", return_value=(1.0, "")):
+            normal, _ = plan_trades([{"coin": "BTC", "side": "LONG"}], markets, snapshot, include_external=True)
+            flexed, _ = plan_trades([{"coin": "BTC", "side": "LONG"}], markets, snapshot, use_flex=True)
+            amount, _ = plan_trades([{"coin": "BTC", "side": "LONG"}], markets, snapshot, notional=900)
+        self.assertLessEqual(normal[0].risk_budget, 10 + 1e-6)          # the normal cap binds
+        self.assertFalse(normal[0].flexed)
+        self.assertGreater(normal[0].flex_quantity, normal[0].quantity)  # the flexed size is offered
+        self.assertTrue(flexed[0].flexed)
+        self.assertAlmostEqual(flexed[0].quantity, normal[0].flex_quantity)
+        self.assertLessEqual(amount[0].risk_budget, 10 + 1e-6)          # an explicit amount gets no silent flex either
+        self.assertGreater(amount[0].flex_quantity, amount[0].quantity)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            print_plan(snapshot, normal, 320.0)
+        self.assertIn("BTC: FLEX:", out.getvalue())
+        self.assertIn("--use-flex", out.getvalue())
 
     def test_open_risk_runs_to_the_resting_stop_when_there_is_one(self):
         from hl_trade import Position, nearest_stop, position_risk
@@ -1294,11 +1322,24 @@ class TradeAnalyticsTests(unittest.TestCase):
         market = Market("BTC", "", 100, 100, 3, 10)
         plan = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
                           available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004)
+        # Crypto: the entry and a take-profit the daemon then holds in memory; no stop, no guard.
         with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
                 patch.object(hl_trade, "_set_leverage"), \
                 patch.object(hl_trade, "_place_entry", return_value=(plan.quantity, 100.0)), \
-                patch.object(hl_trade, "_place_entry_target") as exits:
+                patch.object(hl_trade, "_place_entry_target", return_value=7) as exits:
             active, failures = hl_trade.execute_plans(MagicMock(), "0xabc", [plan], {"BTC": market})
+        exits.assert_called_once()
+        self.assertTrue(plan.held_take_profit)
+        self.assertEqual((active, failures), ([], []))
+        # Stocks and tradfi (HIP-3 DEXes) are held passively: no take-profit either.
+        stock_market = Market("xyz:NVDA", "xyz", 100, 100, 3, 10)
+        stock = dataclasses.replace(plan, coin="xyz:NVDA", dex="xyz")
+        self.assertFalse(stock.held_take_profit)
+        with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
+                patch.object(hl_trade, "_set_leverage"), \
+                patch.object(hl_trade, "_place_entry", return_value=(stock.quantity, 100.0)), \
+                patch.object(hl_trade, "_place_entry_target") as exits:
+            active, failures = hl_trade.execute_plans(MagicMock(), "0xabc", [stock], {"xyz:NVDA": stock_market})
         exits.assert_not_called()
         self.assertEqual((active, failures), ([], []))
         normal = dataclasses.replace(plan, bare=False)   # the old exits remain available to code that asks for them
