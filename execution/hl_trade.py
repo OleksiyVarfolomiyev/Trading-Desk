@@ -2221,12 +2221,6 @@ def _validate_address(address: str, label: str) -> None:
         raise ValueError(f"Provide a valid 42-character 0x-prefixed {label}.")
 
 
-def _ladder_text() -> str:
-    from desk import tp_ladder
-
-    return tp_ladder.describe(tp_ladder.load())
-
-
 def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_risk: float) -> None:
     """Display account limits, estimated existing risk, and proposed entry details."""
     print(f"Risk wallets: {len(snapshot.risk_wallets)}")
@@ -2266,7 +2260,7 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
         print(
             f"{plan.coin} {plan.side}: quantity={plan.quantity:g}, reference=${plan.entry_reference:,.6g}, "
             + share
-            + ((f"no stop or loss guard, {_ladder_text()} held by the daemon "
+            + ((f"no stop or loss guard, take-profit ${plan.target_price:,.6g} held by the daemon "
                 f"(sizing level ${plan.stop_price:,.6g} = {STOP_ATR_MULTIPLE:g} x ATR), " if plan.held_take_profit
                 else f"no stop, take-profit or loss guard: stocks are held passively (sizing level ${plan.stop_price:,.6g} "
                      f"= {STOP_ATR_MULTIPLE:g} x ATR), ")
@@ -3141,10 +3135,11 @@ def execute_plans(
                 # Crypto: a reduce-only take-profit, which the daemon adopts and holds in memory (on the book only as
                 # the price nears it); no stop and no loss guard.
                 try:
-                    placed = _place_entry_target_ladder(exchange, plan, quantity, entry_price, market.size_decimals)
-                    print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; take-profit ladder placed for the "
-                          f"daemon to hold ({', '.join(f'{size:g} at ${price:,.6g}' for price, size in placed)}); no stop, "
-                          "no loss guard and no rung below the entry (the daemon's margin guard still watches the account).")
+                    # One held take-profit (the ladder in desk/tp_ladder.py is off until a replay on all trades shows it
+                    # beats the single target: user, 2026-11-19).
+                    _place_entry_target(exchange, plan, quantity, entry_price, market.size_decimals)
+                    print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; take-profit placed for the "
+                          "daemon to hold; no stop or loss guard (the daemon's margin guard still watches the account).")
                 except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as exc:
                     failures.append(f"{plan.coin}: entry filled but take-profit placement failed ({exc})")
                 continue

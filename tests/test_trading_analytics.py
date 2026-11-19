@@ -1326,7 +1326,7 @@ class TradeAnalyticsTests(unittest.TestCase):
         with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
                 patch.object(hl_trade, "_set_leverage"), \
                 patch.object(hl_trade, "_place_entry", return_value=(plan.quantity, 100.0)), \
-                patch.object(hl_trade, "_place_entry_target_ladder", return_value=[(99.0, plan.quantity)]) as exits:
+                patch.object(hl_trade, "_place_entry_target", return_value=7) as exits:
             active, failures = hl_trade.execute_plans(MagicMock(), "0xabc", [plan], {"BTC": market})
         exits.assert_called_once()
         self.assertTrue(plan.held_take_profit)
@@ -1338,7 +1338,7 @@ class TradeAnalyticsTests(unittest.TestCase):
         with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
                 patch.object(hl_trade, "_set_leverage"), \
                 patch.object(hl_trade, "_place_entry", return_value=(stock.quantity, 100.0)), \
-                patch.object(hl_trade, "_place_entry_target_ladder") as exits:
+                patch.object(hl_trade, "_place_entry_target") as exits:
             active, failures = hl_trade.execute_plans(MagicMock(), "0xabc", [stock], {"xyz:NVDA": stock_market})
         exits.assert_not_called()
         self.assertEqual((active, failures), ([], []))
