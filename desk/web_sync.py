@@ -223,6 +223,12 @@ def trade_stats(fills_by_wallet: dict | None = None) -> dict | None:
         return None
 
 
+def common_start(returns_of: dict):
+    """The later of the books' first return days (None without returns): where a side-by-side comparison starts."""
+    firsts = [returns.index.min() for returns in returns_of.values() if len(returns)]
+    return max(firsts) if firsts else None
+
+
 def books_payload() -> dict:
     """Each book's return on trading equity over 1, 7, 30 and 90 days (desk/books.py, the notebooks' numbers), for the
     dashboards' performance table: the books, not the accounts."""
@@ -230,6 +236,7 @@ def books_payload() -> dict:
     from desk.books import Book, chart_returns, decision_attribution, invested_class_returns
 
     rows, series, attribution, class_series, equity, books = [], {}, {}, {}, {}, {}
+    returns_of = {}
     for kind, options in (("Crypto", {}), ("Stocks", {"since": "2025-01-13"})):
         book = Book(kind, **options).fetch_data()
         books[kind.lower()] = book
@@ -238,22 +245,28 @@ def books_payload() -> dict:
                      **{f"Return {'24h' if window == '1D' else window}": _clean(float(value))
                         for window, value in table["Return (on equity)"].items()}})
         returns = chart_returns(book).dropna()
+        returns_of[kind.lower()] = returns
         growth = (1 + returns).cumprod()
-        attribution[kind.lower()] = decision_attribution(book, returns)
-        if kind == "Crypto":   # picks with beta-weighted exposure, for the Picks row's hover (the stocks inputs are not reliable yet)
-            try:
-                from desk.beta_attribution import beta_picks
-
-                for window, picks in beta_picks(book, returns).items():
-                    if window in attribution["crypto"]:
-                        attribution["crypto"][window]["picks_beta"] = _clean(picks)
-            except Exception as error:
-                print(f"Beta-adjusted picks unavailable ({type(error).__name__}).", file=sys.stderr)
         equity[kind.lower()] = book.equity.shift(1)
         series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(round(float(value) - 1, 5))] for day, value in growth.items()]
         invested = (1 + invested_class_returns(book)).clip(lower=0).cumprod()
         class_series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(float(value))]
                                       for day, value in invested.items()]
+    # The attribution table shows the books side by side for each window, so both start on the same day: the later of
+    # their first days (a book with a longer history is not compared over days the other did not trade).
+    start = common_start(returns_of)
+    for name, returns in returns_of.items():
+        attribution[name] = decision_attribution(books[name], returns[returns.index >= start] if start is not None else returns)
+    if "crypto" in returns_of:   # picks with beta-weighted exposure, for the Picks row's hover (the stocks inputs are not reliable yet)
+        try:
+            from desk.beta_attribution import beta_picks
+
+            crypto_returns = returns_of["crypto"]
+            for window, picks in beta_picks(books["crypto"], crypto_returns[crypto_returns.index >= start] if start is not None else crypto_returns).items():
+                if window in attribution["crypto"]:
+                    attribution["crypto"][window]["picks_beta"] = _clean(picks)
+        except Exception as error:
+            print(f"Beta-adjusted picks unavailable ({type(error).__name__}).", file=sys.stderr)
     regimes, dates_by_regime = benchmark_regimes(books)
     fills = {}
     replay = {}
