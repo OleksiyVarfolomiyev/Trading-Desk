@@ -27,6 +27,21 @@ def simulated(days=400, names=40, seed=3):
 
 
 class FactorRiskTests(unittest.TestCase):
+    def test_point_in_time_size_matches_static_when_it_never_changes(self):
+        returns, caps, market = simulated(days=200)
+        frame = pd.DataFrame([caps.to_numpy()] * len(returns), index=returns.index, columns=caps.index)
+        static = fr.estimate(returns, caps, market)
+        moving = fr.estimate(returns, frame, market)
+        pd.testing.assert_frame_equal(static["factors"], moving["factors"])
+
+    def test_point_in_time_size_skips_names_without_a_size_that_day(self):
+        returns, caps, market = simulated(days=200)
+        frame = pd.DataFrame([caps.to_numpy()] * len(returns), index=returns.index, columns=caps.index)
+        frame.loc[frame.index[150]:, "C0"] = np.nan
+        fit = fr.estimate(returns, frame, market)
+        self.assertNotIn("C0", fit["designs"][returns.index[160]].index)
+        self.assertIn("C0", fit["designs"][returns.index[100]].index)
+
     def test_standardize_is_cap_weighted_mean_zero_and_unit_sd(self):
         rng = np.random.default_rng(0)
         values = pd.Series(rng.normal(5, 2, 30)); weights = pd.Series(rng.uniform(1, 9, 30))

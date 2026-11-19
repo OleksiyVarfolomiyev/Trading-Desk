@@ -31,7 +31,7 @@ def winsorize_rows(returns: pd.DataFrame, lower: float = 0.01, upper: float = 0.
     return returns.clip(lower=low, upper=high, axis=0)
 
 
-def raw_exposures(returns: pd.DataFrame, caps: pd.Series, market: pd.Series) -> dict[str, pd.DataFrame]:
+def raw_exposures(returns: pd.DataFrame, caps: pd.Series | pd.DataFrame, market: pd.Series) -> dict[str, pd.DataFrame]:
     """Style characteristics on each date, using returns up to the day before only.
 
     Momentum: 30-day log return ending 4 days back (skips the last 3 days). Reversal: last 5 days, negated so a
@@ -45,8 +45,11 @@ def raw_exposures(returns: pd.DataFrame, caps: pd.Series, market: pd.Series) -> 
     mkt = np.log1p(market)
     covariance = log.rolling(60, min_periods=40).cov(mkt)
     beta = covariance.div(mkt.rolling(60, min_periods=40).var(), axis=0).shift(1)
-    size = pd.DataFrame(np.tile(np.log(caps.reindex(returns.columns).to_numpy(dtype=float)), (len(returns), 1)),
-                        index=returns.index, columns=returns.columns)
+    if isinstance(caps, pd.DataFrame):   # point-in-time size (a date x coin frame)
+        size = np.log(caps.reindex(index=returns.index, columns=returns.columns).astype(float))
+    else:
+        size = pd.DataFrame(np.tile(np.log(caps.reindex(returns.columns).to_numpy(dtype=float)), (len(returns), 1)),
+                            index=returns.index, columns=returns.columns)
     return {"Momentum": momentum, "Reversal": reversal, "Volatility": volatility, "Beta": beta, "Size": size}
 
 
@@ -71,22 +74,31 @@ def design(exposures: dict[str, pd.DataFrame], date, weights: pd.Series, names: 
     return pd.DataFrame(frame)
 
 
-def estimate(returns: pd.DataFrame, caps: pd.Series, market: pd.Series, styles: tuple[str, ...] = STYLES,
+def estimate(returns: pd.DataFrame, caps: pd.Series | pd.DataFrame, market: pd.Series, styles: tuple[str, ...] = STYLES,
              min_names: int = MIN_NAMES) -> dict:
-    """Daily cross-sectional WLS. Returns factor returns, specific returns and the per-date exposure matrices."""
-    caps = caps.dropna()
+    """Daily cross-sectional WLS. Returns factor returns, specific returns and the per-date exposure matrices.
+
+    ``caps`` is a Series (today's cap, a static ranking) or a date x coin frame (point-in-time size, known the day before,
+    for example trailing dollar volume); a frame's last row stands in for the size buckets of the specific risk.
+    """
+    point_in_time = isinstance(caps, pd.DataFrame)
+    caps_by_date = caps.reindex(index=returns.index).where(lambda f: f > 0) if point_in_time else None
+    caps = caps_by_date.ffill().iloc[-1].dropna() if point_in_time else caps.dropna()
     returns = returns[[c for c in returns.columns if c in caps.index]]
     clean = winsorize_rows(returns)
-    exposures = raw_exposures(returns, caps, market)
+    exposures = raw_exposures(returns, caps_by_date if point_in_time else caps, market)
     sqrt_cap = np.sqrt(caps)
     factors, specific, designs = {}, {}, {}
     for date in clean.index:
         y = clean.loc[date]
         usable = [c for c in clean.columns if pd.notna(y[c]) and all(pd.notna(exposures[s].loc[date, c]) for s in styles if s != "Size")]
+        if point_in_time:   # a name with no size known that day cannot be weighted
+            usable = [c for c in usable if pd.notna(caps_by_date.loc[date, c])]
         if len(usable) < min_names:
             continue
-        x = design(exposures, date, sqrt_cap**2, usable, styles)
-        root = np.sqrt(sqrt_cap[usable].to_numpy(dtype=float))
+        day_caps = caps_by_date.loc[date] if point_in_time else sqrt_cap**2
+        x = design(exposures, date, day_caps, usable, styles)
+        root = np.sqrt(np.sqrt(day_caps[usable].to_numpy(dtype=float)))
         coefficients, _, rank, _ = np.linalg.lstsq(x.to_numpy() * root[:, None], y[usable].to_numpy(dtype=float) * root, rcond=None)
         if rank < x.shape[1]:
             continue

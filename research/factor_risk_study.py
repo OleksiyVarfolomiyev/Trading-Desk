@@ -41,6 +41,27 @@ def cached_returns() -> pd.DataFrame:
     return frame.pct_change(fill_method=None).iloc[1:]
 
 
+def panel_inputs() -> tuple[pd.DataFrame, pd.DataFrame] | None:
+    """Returns and point-in-time size from the backfilled research panel (research/backfill_hl_history.py).
+
+    Crypto perps only (the HIP-3 equity perps are stocks). Size and the weights are the trailing 30-day median dollar
+    volume, known the day before: a liquidity proxy for market cap, which has no point-in-time history for most coins.
+    """
+    from desk.hl import signal_research as sr
+
+    panel = {coin: frame for coin, frame in sr.load_panel().items() if ":" not in coin and len(frame) >= 60}
+    if len(panel) < 30:
+        return None
+    frames = sr.frames(panel)
+    close = frames["close"]
+    close.index = close.index.tz_localize(None)
+    volume = frames["dollar_volume"]
+    volume.index = volume.index.tz_localize(None)
+    returns = close.pct_change(fill_method=None).iloc[1:]
+    size = volume.rolling(30, min_periods=20).median().shift(1).reindex(returns.index)
+    return returns, size
+
+
 def current_caps() -> pd.Series:
     table = pd.read_csv(ROOT / "data" / "market_caps.csv")
     table = table[table["date"] == table["date"].max()]
@@ -131,12 +152,17 @@ def forecast_summary(records: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> int:
-    returns = cached_returns()
-    caps = current_caps()
+    inputs = panel_inputs()
+    if inputs is not None:
+        returns, caps = inputs
+        print("source: backfilled panel, size = trailing 30-day median dollar volume (point-in-time)")
+    else:
+        returns, caps = cached_returns(), current_caps()
+        print("source: cached candles, size = today's market cap (static)")
     market = returns["BTC"]
     fit = fr.estimate(returns, caps, market)
     factors = fit["factors"]
-    print(f"{len(factors)} days, {len(returns.columns)} coins in candles, {len(fit['caps'].index.intersection(returns.columns))} with a market cap")
+    print(f"{len(factors)} days, {len(returns.columns)} coins in candles, {len(fit['caps'].index.intersection(returns.columns))} with a size")
     print("average names per day:", round(np.mean([len(d) for d in fit['designs'].values()]), 1))
     table = factor_table(factors)
     pd.set_option("display.width", 220)

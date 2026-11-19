@@ -93,3 +93,13 @@ The stock book is small, so a full Russell model is overkill and the data is mis
 - **Factors (t >= 2 in both halves):** none kept. Market, momentum, volatility, beta and size are indistinguishable from zero; reversal is negative (t -2.1 first half, -0.8 second) and fails the second half. Risk factors need no premium to be useful, so the real test is the forecast.
 - **Risk forecast (60 random long/short and 30 long-only portfolios, 20-day horizon, QLIKE vs the portfolio's trailing 60-day vol, which is what the live ex-ante row is):** the full model's bias statistic is 0.87/0.97 (long/short) and 0.93/0.97 (long only) in the two halves, against 0.96/1.08 and 0.93/1.14 for trailing vol. Its QLIKE gain is not significant in both halves: long/short -0.02 (t -1.3) then +0.07 (t 2.0); long only +0.11 (t 2.9) then +0.14 (t 1.3). The market-only model is worse for long-only portfolios.
 - **Verdict:** a modest, unestablished edge over trailing vol. No dashboard tile, no daemon use. Revisit after the history backfill and point-in-time caps.
+
+## Results, longer data (2026-11-18)
+
+Backfill: `research/backfill_hl_history.py` pulled daily candles with volume for all 235 main-DEX perps (delisted included) back to 2023-11, then the HIP-3 equity perps (stocks, kept out of the crypto model) and hourly funding for the 40 most liquid perps; slow and resumable. The study now uses that panel: 526 estimation days, about 178 names a day (before: 638 days, about 84 names, only 35 with cap history).
+
+Size and the regression weights are the trailing 30-day median dollar volume, known the day before (point-in-time liquidity proxy; point-in-time market cap is not available for most coins, CoinGecko history covers about a year).
+
+- **Factors:** none passes t >= 2 with the same sign in both halves. Volatility is negative in both halves (t -1.1, -1.7; -1.9 overall), Beta turns positive in the second half (t 2.1), Reversal and Size are zero. Nothing to show.
+- **Risk forecast** (60 long/short and 30 long-only random portfolios, 20-day horizon, vs trailing 60-day vol): the QLIKE gain is positive in both halves for every case but not significant in both. Full model: long/short +0.042 (t 1.9) and +0.047 (t 1.7); long only +0.045 (t 1.3) and +0.164 (t 1.1). The market-only model does as well (long/short +0.033, t 1.8, and +0.039, t 3.0). Bias stays near 1 (full model 0.97 and 0.96 long/short, 0.84 and 0.95 long only; trailing vol 1.05 and 1.04, 0.92 and 1.16).
+- **Verdict:** the style factors add nothing beyond a market factor; the forecast edge over trailing vol is consistent in sign but not established. Model stays off the dashboard and daemon. Next: sectors for the 235 coins (the one missing block) and the stock model on the HIP-3 history.
