@@ -3616,12 +3616,22 @@ async function openAsset(symbol, targetCard = null) {
       chart.replaceChildren();
       const entry = rows.map((row) => row["Avg price"]).find(isNum);
       const border = token("--grid"), ink = token("--ink-2");
+      // The library draws times in UTC; the desk reads Eastern time (as every other time on the page).
+      const et = (options) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", ...options });
+      const tickClock = et({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" }), tickDay = et({ day: "numeric" });
+      const tickMonth = et({ month: "short" }), tickYear = et({ year: "numeric" });
+      const cursorTime = et({ month: "short", day: "numeric", ...(minutes < 1440 ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } : {}) });
       const instance = LightweightCharts.createChart(chart, {
         autoSize: true,
+        localization: { timeFormatter: (seconds) => cursorTime.format(new Date(seconds * 1000)) },
         layout: { background: { type: "solid", color: token("--surface") }, textColor: ink, attributionLogo: true },
         grid: { vertLines: { color: border }, horzLines: { color: border } },
         rightPriceScale: { borderColor: border, scaleMargins: { top: 0.35, bottom: 0.25 } },
-        timeScale: { borderColor: border, timeVisible: minutes < 1440, secondsVisible: false, rightOffset: 2, allowBoldLabels: false },
+        timeScale: { borderColor: border, timeVisible: minutes < 1440, secondsVisible: false, rightOffset: 2, allowBoldLabels: false,
+          tickMarkFormatter: (seconds, type) => {   // 0 year, 1 month, 2 day, 3 and 4 time of day
+            const date = new Date(seconds * 1000);
+            return type === 0 ? tickYear.format(date) : type === 1 ? tickMonth.format(date) : type === 2 ? tickDay.format(date) : tickClock.format(date);
+          } },
         crosshair: { vertLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") },
           horzLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") } },
         handleScroll: true, handleScale: true,
