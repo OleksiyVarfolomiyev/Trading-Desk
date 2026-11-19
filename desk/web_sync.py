@@ -240,6 +240,15 @@ def books_payload() -> dict:
         returns = chart_returns(book).dropna()
         growth = (1 + returns).cumprod()
         attribution[kind.lower()] = decision_attribution(book, returns)
+        if kind == "Crypto":   # picks with beta-weighted exposure, for the Picks row's hover (the stocks inputs are not reliable yet)
+            try:
+                from desk.beta_attribution import beta_picks
+
+                for window, picks in beta_picks(book, returns).items():
+                    if window in attribution["crypto"]:
+                        attribution["crypto"][window]["picks_beta"] = _clean(picks)
+            except Exception as error:
+                print(f"Beta-adjusted picks unavailable ({type(error).__name__}).", file=sys.stderr)
         equity[kind.lower()] = book.equity.shift(1)
         series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(round(float(value) - 1, 5))] for day, value in growth.items()]
         invested = (1 + invested_class_returns(book)).clip(lower=0).cumprod()
@@ -261,9 +270,28 @@ def books_payload() -> dict:
                 result["risk"] = {name: periods.pop(key) for name, periods in replay.items() if key in periods}
     except Exception as error:
         print(f"Risk replay unavailable ({type(error).__name__}).", file=sys.stderr)
+    incomplete = {name: list(book.incomplete) for name, book in books.items() if getattr(book, "incomplete", None)}
     return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series,
             "class_series": class_series, "attribution": attribution, "risk_replay": replay,
-            "regimes": regimes, "stats": trade_stats(fills)}
+            "regimes": regimes, "stats": trade_stats(fills), "incomplete": incomplete}
+
+
+INCOMPLETE_KEEP_SECONDS = 6 * 3600   # a build missing an account or an input is not published over a good one for this long
+
+
+def keep_previous_books(payload: dict, previous_file=None, now: float | None = None) -> bool:
+    """True when this build left an account or input out (HL throttled a wallet, Yahoo closes failed) and the last saved
+    build is recent: the numbers of a partial build jump (Picks moved 3 pp between two fetches), so the last whole one
+    stays until a complete build or INCOMPLETE_KEEP_SECONDS pass."""
+    import time
+
+    if not payload.get("incomplete"):
+        return False
+    path = previous_file or BOOKS_FILE
+    try:
+        return (now or time.time()) - path.stat().st_mtime < INCOMPLETE_KEEP_SECONDS
+    except OSError:
+        return False
 
 
 def push_books(force: bool = False) -> dict | None:
@@ -274,6 +302,14 @@ def push_books(force: bool = False) -> dict | None:
     if not force and BOOKS_FILE.exists() and time.time() - BOOKS_FILE.stat().st_mtime < BOOKS_EVERY_SECONDS:
         return None
     payload = books_payload()
+    if keep_previous_books(payload):
+        from desk import degraded
+
+        for name, left_out in payload["incomplete"].items():
+            degraded.report(f"{name} book", "partial build kept out: " + ", ".join(left_out))
+        print("Books build left out " + "; ".join(f"{n}: {', '.join(v)}" for n, v in payload["incomplete"].items())
+              + ": keeping the last whole one.", file=sys.stderr)
+        return None
     if payload["stats"] is None:
         try:
             previous = json.loads(BOOKS_FILE.read_text())

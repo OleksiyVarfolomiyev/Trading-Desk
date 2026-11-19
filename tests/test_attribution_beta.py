@@ -99,6 +99,17 @@ class BetaAttributionTests(unittest.TestCase):
         self.assertEqual(set(table["Period"]), {"first half", "second half"})
         self.assertEqual(set(table["Weights"]), {"Dollar", "Beta"})
 
+    def test_beta_picks_match_the_beta_weighted_attribution(self):
+        from unittest import mock
+
+        from desk import beta_attribution
+
+        with mock.patch.object(beta_attribution, "asset_closes_for", lambda book, asset, venue, lookback: self.closes[asset]):
+            picks = beta_attribution.beta_picks(self.book, self.returns)
+        expected = beta_test.attribute(self.book, self.returns, self.betas)["All"]["parts"]["Picks"]
+        self.assertAlmostEqual(picks["All"], expected, places=10)
+        self.assertNotAlmostEqual(picks["All"], beta_test.attribute(self.book, self.returns, None)["All"]["parts"]["Picks"], places=4)
+
 
 if __name__ == "__main__":
     unittest.main()

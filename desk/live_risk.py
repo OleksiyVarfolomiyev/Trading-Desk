@@ -59,7 +59,7 @@ def yahoo_stock_closes(symbol: str, days: int) -> pd.Series:
         series = pd.Series(saved["closes"], dtype=float)
         series.index = pd.to_datetime(series.index)
     else:
-        series = yahoo_closes(symbol.replace(" ", "-"), end - pd.Timedelta(days=days + 10), end)
+        series = yahoo_closes(symbol.replace(" ", "-"), end - pd.Timedelta(days=days + 10), end, strict=True)
         if not series.empty:
             write_cache_json(name, {"day": f"{end:%Y-%m-%d}", "days": days,
                                     "closes": {f"{k:%Y-%m-%d}": float(v) for k, v in series.items()}})

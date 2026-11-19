@@ -106,7 +106,9 @@ def yahoo_ticker(symbol: str, exchange: str) -> str | None:
     return (re.sub(r"d$", "", symbol) + suffix) if suffix else None  # IB writes German listings as RHMd
 
 
-def yahoo_closes(ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
+def yahoo_closes(ticker: str, start: pd.Timestamp, end: pd.Timestamp, strict: bool = False) -> pd.Series:
+    """Daily closes by date. An unknown ticker gives an empty series; with ``strict``, a request that stays throttled (429) or
+    fails on Yahoo's side (5xx) raises instead, so a failed fetch is not mistaken for a symbol without history."""
     import time
 
     for attempt in range(4):  # Yahoo throttles bursts: wait and ask again
@@ -116,6 +118,8 @@ def yahoo_closes(ticker: str, start: pd.Timestamp, end: pd.Timestamp) -> pd.Seri
         if response.status_code != 429:
             break
         time.sleep(2 * (attempt + 1))
+    if strict and (response.status_code == 429 or response.status_code >= 500):
+        response.raise_for_status()
     result = (response.json().get("chart") or {}).get("result") if response.ok else None
     if not result or not result[0].get("timestamp"):
         return pd.Series(dtype=float)

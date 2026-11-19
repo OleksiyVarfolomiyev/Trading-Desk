@@ -1895,7 +1895,10 @@ function benchmarkAttributionTable(data, period) {
     columns: [{ key: "Factor", fmt: "text" }, { key: "Crypto vs BTC", fmt: "spp" }, { key: "Stocks vs SPY", fmt: "spp" }],
     rows: [
       ...ATTRIBUTION_FACTORS.map(([label, description]) => ({ Factor: label, "Crypto vs BTC": crypto?.parts?.[label],
-        "Stocks vs SPY": stocks?.parts?.[label], __hover: description })),
+        "Stocks vs SPY": stocks?.parts?.[label], __hover: description,
+        // Crypto picks again with each market's beta to BTC taken out (trailing 90 days): how much of them was beta.
+        ...(label === "Picks" && isNum(crypto?.picks_beta)
+          ? { __cellTitles: { "Crypto vs BTC": `${FORMATS.spp.text(crypto.picks_beta)} beta-adjusted (names' moves net of their beta to BTC)` } } : {}) })),
       { Factor: "RM replay", "Crypto vs BTC": cryptoReplay?.share, "Stocks vs SPY": stocksReplay?.share,
         __hover: RM_REPLAY_METHOD, __cellTitles: { "Crypto vs BTC": replayTooltip(cryptoReplay), "Stocks vs SPY": replayTooltip(stocksReplay) } },
     ],

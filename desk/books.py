@@ -342,6 +342,7 @@ class Book:
         self.benchmark = KINDS[kind]
         self.desk = DeskAccounts(data_dir=data_dir)
         self.notes: list[str] = []
+        self.incomplete: list[str] = []   # accounts or inputs a build could not read (see fetch_data)
         self.coins = pd.DataFrame()
 
     # -- data ------------------------------------------------------------------------------------------------------
@@ -361,14 +362,24 @@ class Book:
         self.desk.fetch_data(detect_regime=False, refresh_history=self._history_stale())
         self.overview = self.desk.overview
         frames = []
+        self.incomplete = list(self.desk.excluded)   # accounts left out of this build: its numbers are not the whole book
         for account, job in jobs:
             if account.name in self.desk.excluded:
                 continue
             try:
                 frame, notes = job.result()
             except Exception as exc:
-                self.notes.append(f"{account.name}: PnL per coin unavailable ({type(exc).__name__}: {exc}).")
-                continue
+                # HL throttles bursts (429): ask again once, after a pause, before leaving the wallet out.
+                import time as _time
+
+                _time.sleep(5)
+                try:
+                    frame, notes = hl_wallet_pnl(account.id, self.days)
+                except Exception as retry:
+                    self.notes.append(f"{account.name}: PnL per coin unavailable ({type(retry).__name__}: {retry}).")
+                    self.incomplete.append(account.name)
+                    degraded.report(f"{account.name} PnL per coin", retry)
+                    continue
             frame["account"] = account.name
             frames.append(frame)
             self.notes += [f"{account.name}: {note}." for note in notes]
@@ -451,7 +462,11 @@ class Book:
             def read(symbol):
                 try:
                     return symbol, live_risk.yahoo_stock_closes(symbol, self.history_days + 10)
-                except Exception:
+                except KeyError:   # Yahoo does not know the symbol (delisted or renamed): left out, as the note says
+                    return symbol, None
+                except Exception as exc:   # a throttled or failed request is not "no closes": the build is incomplete
+                    degraded.report(f"Yahoo closes {symbol}", exc)
+                    self.incomplete.append(f"{symbol} closes")
                     return symbol, None
 
             from concurrent.futures import ThreadPoolExecutor
