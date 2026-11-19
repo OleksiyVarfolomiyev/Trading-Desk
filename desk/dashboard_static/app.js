@@ -2068,8 +2068,20 @@ async function load() {
   }
 }
 
+// A tab left open across a deploy reloads itself when the script on the server changes.
+const SCRIPT_URL = document.currentScript ? document.currentScript.src : "app.js";
+let scriptStamp = null;
+async function reloadIfNewBuild() {
+  try {
+    const head = await fetch(SCRIPT_URL, { method: "HEAD", cache: "no-cache" });
+    const stamp = [head.headers.get("etag"), head.headers.get("last-modified"), head.headers.get("content-length")].join("|");
+    if (scriptStamp && stamp !== scriptStamp && stamp !== "||") location.reload();
+    scriptStamp = stamp;
+  } catch (error) { /* offline: try again next time */ }
+}
+
 function poll() {          // the one polling loop
-  load().finally(() => setTimeout(poll, POLL_MS));
+  reloadIfNewBuild().then(() => load()).finally(() => setTimeout(poll, POLL_MS));
 }
 
 // Redraw charts in the other theme's colors when the system theme changes.
