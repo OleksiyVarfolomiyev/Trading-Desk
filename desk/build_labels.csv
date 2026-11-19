@@ -1,0 +1,516 @@
+hash,effect,purpose,confidence,why
+27610f6,new,research,high,"first crypto correlation, constrained-Kelly and portfolio metrics study"
+0c0833e,fix,research,medium,repairs the price fetch the portfolio study ran on
+0a0da27,improve,overhead,medium,logging in the analysis notebook
+b60f39c,new,risk,low,first Hyperliquid account notebook: positions and PnL of the live accounts
+1403726,improve,research,low,notebook version bump of the portfolio study and HL notebook
+25d4999,new,risk,high,VaR and historical vol on the HL account
+f04b7ed,new,overhead,high,readme
+5189d4d,improve,overhead,high,renaming notebooks
+d422505,new,research,high,"VaR, HV and a factor model in the portfolio study"
+775b468,improve,research,medium,asset universe of the portfolio study
+8e9809b,new,execution,medium,fees and funding against PnL per account: what trading costs
+85e1fca,fix,risk,medium,spot balances valued correctly in the account view
+96e9369,improve,risk,low,HL account notebooks update
+354b412,improve,overhead,high,readme for users
+0a4f43b,improve,overhead,medium,user-friendly notebook version (same analysis)
+adbc4cf,improve,risk,medium,funding % highlighted on the accounts
+519c000,improve,research,high,portfolio study reads the assets actually held in the wallets
+e7bfb91,new,research,high,long/short portfolio analysis
+449b73f,new,risk,high,fixed-fractional sizing in the multi-account analytics
+cc1174a,improve,overhead,medium,visual improvements to notebooks
+4b2a6f6,improve,overhead,high,readme
+7c9d7f2,new,execution,high,backtesting and order execution from the notebooks
+3ed7787,improve,overhead,high,gitignore for the virtual environment
+d7cfdb9,new,risk,high,account net exposure and funding summary
+56b52c2,improve,risk,high,portfolio risk calculations and Sortino
+2366e2d,improve,risk,medium,risk calculations and labels
+83c8e79,new,strategy,high,ladder orders: the market-making strategy begins
+decad0a,fix,research,medium,funding chart and PnL calculation fixes in the analytics
+136acc3,improve,overhead,medium,idle account periods clipped from charts
+1ee9eda,fix,execution,medium,execution code fix
+5d9a111,new,strategy,medium,market research and highlights: what to look at trading
+adcedea,improve,overhead,high,files moved into subfolders
+fc18852,improve,research,medium,data fetch and use in portfolio analytics
+f83e7f6,improve,research,high,portfolio factor analysis
+ede1e3a,fix,risk,medium,account analytics fixes
+571a13f,fix,risk,high,PnL calculation fixed
+45a7b5c,new,execution,high,kill switch and execution quality measures
+8b988c2,improve,research,medium,crypto and tradfi analysed apart
+f45761f,new,risk,high,bootstrap VaR
+ccb716e,improve,research,high,"alpha, beta and Sharpe estimates"
+0892865,new,risk,medium,wallets and IB accounts read into the desk
+e382e66,new,risk,medium,wallets and IB accounts: the whole book in one place
+3243f00,improve,research,high,factor analysis extended
+b4c1907,new,risk,medium,highlights across the desk: what needs attention
+2103a55,new,risk,medium,"dashboard: live positions, exposure and PnL in one screen"
+fbfcbf4,fix,risk,medium,dashboard runs without the IB connection
+5f6760a,fix,risk,medium,dashboard without IB fix
+39273bd,new,risk,high,liquidation prices
+d8465bb,new,research,high,regime-aware portfolio analysis
+9c6cfa0,new,risk,high,style betas per regime per unit of gross exposure
+47532fb,improve,overhead,medium,dashboard visual update
+50c4a6c,improve,overhead,medium,visual and code improvements
+d62d99d,new,risk,low,"version 2: dashboard, IB accounts, portfolio analytics"
+dda9c66,new,risk,high,BTC hedge and liquidation calculation fix
+599943f,fix,risk,low,assorted dashboard and account fixes
+c31f120,fix,research,low,small fixes in analytics modules
+3857724,improve,overhead,medium,visual update
+01ff048,new,execution,high,IB executor modes and order handling
+e4f9d98,improve,overhead,high,cosmetics
+d4217fc,improve,overhead,high,cosmetics
+eb0967f,improve,overhead,low,dashboard update
+cdcdcd7,improve,execution,high,lower latency between decision and order
+47605dc,new,overhead,medium,web dashboard: the same numbers on a second surface
+486ce1e,improve,overhead,high,trigger a Cloudflare build
+0739c4d,improve,overhead,high,privacy of account ids
+bebda31,improve,overhead,high,deploy variables kept
+25e16b4,improve,overhead,medium,performance and privacy fixes
+608302a,improve,risk,medium,same position columns everywhere; SPY on the web dashboard
+c1a7c91,improve,research,medium,IB statement data for the books
+18de022,improve,research,medium,saved daily HL and IB history for the web view
+a0a02de,improve,research,medium,daily history saved without a dashboard running
+ca41626,fix,execution,medium,fail fast when TWS stops answering instead of hanging an order; no + signs
+5550318,new,execution,medium,performance 1Y and since inception; spot executor
+a1d62b8,new,execution,medium,reduce-only limit chase; 24h change total
+3c8b962,fix,risk,high,IB stocks in holdings risk via Yahoo when TWS is silent
+412647b,improve,research,medium,wallet tokens in the performance table
+48425cf,improve,overhead,high,wallet account naming
+fc0bbf4,improve,research,medium,performance table Since column
+490c0b7,fix,risk,high,wallet balances from one correct source
+3fdf9e8,new,risk,high,margin guard and per-wallet margin warnings
+f472761,improve,risk,high,margin guard acts on account-wide liquidation risk
+4960908,new,strategy,high,"conviction trades, wider stops and a regime watch"
+5ff10de,new,strategy,high,market-making ladders run in the daemon
+d0d26ff,new,risk,medium,data-flow checks and desk alerts so stale numbers are not traded on
+f37ab04,improve,risk,medium,notebooks say which accounts are missing
+cd87c49,improve,overhead,medium,"Eastern time, no + signs, MM cell fix"
+c1d2675,new,risk,high,scenario stress testing
+60096c9,improve,risk,medium,unrealized PnL split by venue
+0c41a91,improve,execution,high,ladder quotes held in memory and placed near price; key setup retry
+31167df,new,research,high,signal research module
+b7c3350,new,strategy,high,"screener, strategy results and review flags fed hourly"
+5a42e52,improve,strategy,high,ladders pause trims in a trend; MM markouts; strategy credit
+5d61d4d,improve,execution,high,"take-profits held in daemon memory, placed as price nears"
+edc5439,improve,strategy,medium,crypto and stocks ranked apart in movers and research
+d52a6d7,improve,overhead,high,zero amounts as empty cells
+19c0bd9,improve,overhead,high,wallet holdings moved down the page
+98ad8ba,fix,research,medium,young account window returns show
+9e4cb87,improve,risk,medium,hedge outside the risk cap; chart labels
+f7c7c64,improve,strategy,high,per-coin ladder settings
+41663ee,fix,overhead,high,percent tick format on chart labels
+07527ed,improve,risk,medium,open positions split into crypto and stocks
+9b12c7d,improve,overhead,high,section order
+0074e62,improve,overhead,high,section order
+7ada886,new,risk,medium,funding column on open positions
+5b53cd4,improve,risk,medium,funding APR on positions; funding by strategy
+e2057a9,improve,strategy,medium,funding on ladder inventory in the MM table
+c50d8c3,new,execution,medium,desk server: the daemon trades around the clock instead of when the Mac is awake
+d4a52ad,improve,overhead,high,server setup and key storage details
+0457164,new,execution,high,alert before the API wallet expires so the daemon can keep signing
+7badad4,improve,overhead,high,retire Cloudflare
+51ea435,new,execution,high,adverse funding alerts; maker-first reductions with urgent close
+c4fb7b9,improve,overhead,high,status chips placement
+4d001eb,improve,overhead,high,status chips placement
+a7fd6ad,improve,overhead,high,layout gap
+986e00b,improve,overhead,high,layout and spacing
+e77faeb,improve,overhead,high,status indicator removed
+21665de,improve,overhead,high,percent over dollars wording
+cd05b82,improve,risk,medium,highlights rows trimmed to what needs action
+5f129a0,improve,overhead,high,progress bar and alert titles
+f2dc38f,improve,risk,medium,one risk row: open risk vs cap
+d6d1703,improve,overhead,high,test runner
+65e493b,improve,strategy,high,short candidates show crowding
+71a50aa,improve,risk,medium,one funding row of payers; chart labels
+6c23746,improve,strategy,high,regime row with evidence vs base rate
+2829df0,improve,overhead,high,readable formats everywhere
+470ebe5,improve,overhead,medium,"front-end decision pass: formats, hidden empties"
+ace23a1,improve,overhead,high,no + signs
+bd6e0f7,fix,strategy,high,ladders table crash
+dfc99f5,improve,overhead,medium,reader pass on table columns
+b8fdd3c,fix,risk,high,unstaking VVV counted in desk value
+dc72ac7,fix,risk,medium,unstaking VVV counted on the relay and page too
+e85b5e1,improve,overhead,high,chart title wording
+67281a3,new,strategy,high,every open records its strategy; new fade strategy for one-day overshoots
+4689b77,new,risk,high,alt rally and stock dip alerts that recommend cutting gross
+504f31c,new,strategy,medium,"market context and event framework: mood, crowding, hacks, unlocks logged with reactions"
+2925efa,new,execution,high,fade entry modes: rigid stop or stop-free sized to the risk budget
+47067bf,improve,overhead,high,chart tick formats
+2702041,new,risk,high,squeeze alert on an open position running against it with crowded funding
+fc68b86,improve,risk,high,squeeze stalled becomes the cue to cut
+253a8d6,improve,risk,medium,concise squeeze notes; regime and wallet data reach the web hourly
+f5013dc,improve,overhead,medium,position table layout; held coins leave short candidates; /ship skill
+1e6ed0d,improve,research,high,strategy performance covers IB's open positions
+f1c44da,new,risk,medium,live tie-out check: tables that disagree raise a warning
+07d6891,improve,overhead,high,dashboard sign-in page
+4988b80,improve,overhead,high,wallets table placement
+a117c47,improve,overhead,high,position tables side by side
+f786297,improve,overhead,high,MM tables side by side
+28aa498,fix,research,high,journal keeps IB strategy tags; daemon closes entries only for accounts it read
+75f4b62,improve,overhead,high,page paints before the chart library loads
+95043d6,improve,risk,high,accounts table carries open risk against the cap
+4860ee7,improve,strategy,high,MM candidates leave out coins already market-made
+9ccc550,improve,strategy,high,one rule: held or recently traded coins leave candidate lists
+00b4b30,improve,overhead,medium,notebook column trims
+e2fc276,improve,overhead,high,spot closes named by token
+ed1cf76,fix,overhead,high,chart end label background
+f9c5034,improve,research,medium,Expected PnL columns in their own table
+72bb1f6,fix,overhead,high,chart crash on bar traces
+9a53ea7,improve,overhead,high,venue prefixes dropped in notebook tables
+0e78b5a,improve,overhead,high,metrics row split into three tables
+e5ddcfd,improve,overhead,high,fewer decimals
+7f0e4e7,fix,overhead,high,notebook module reload retries
+47384af,fix,research,high,analyze_performance Sharpe column and annualisation
+e347c20,fix,strategy,high,ladders on HIP-3 markets could not quote (wrong candle name)
+51e89f8,fix,research,high,strategy uPnL live so strategy and account tables tie out
+bb84266,fix,research,medium,live strategy uPnL reaches the web every minute
+2d8ffdb,fix,research,high,Expected PnL dropped: the trailing mean did not predict
+daff8da,fix,research,high,expected price PnL removed from trade notebook
+f2a7c90,improve,strategy,high,MM table consolidated since market making began
+7bd3171,fix,strategy,high,MM spread captured paired FIFO: trend timing was charged to the spread
+2eeb755,improve,strategy,high,MM table one row per coin across wallets
+8e9a247,improve,strategy,high,"ladder guardrails: min size, self-stop on losing round trips; event log; state backup"
+083cd70,new,strategy,high,momentum watch: BTC/ETH bounce reads take profits on shorts
+6877915,new,execution,high,trailing reduce-only stop ratcheted every 5 s
+f3ab12d,improve,strategy,high,momentum alert reads funding: natural flow vs crowded squeeze
+1520910,new,strategy,high,extraordinary days: trim longs or shorts on 2-sigma moves
+966b3cb,improve,strategy,high,momentum fading: nothing to chase
+b91e3aa,new,strategy,high,"auto-trading the desk's rules: bank half of shorts, trim on extraordinary days, flip on bursts"
+2646ea1,improve,strategy,high,ladder verdict regime-aware: losing ladder not stopped while trending
+62db807,new,risk,high,"auto flatten on strong BTC momentum against the book, kill switch on"
+750e4b4,improve,risk,medium,wallet read failures as red status chips
+9c40a65,new,research,high,crypto and stock books with their own beta; HL value history repaired
+3e5a0de,improve,strategy,high,"auto trading follows the Binance replay: ride 2-sigma up days, flip off"
+cf23c69,new,risk,high,"short-book watch: shorts running past their beta, BTC turning green"
+35f17f0,improve,risk,high,"risk by book: crypto vs BTC, stocks vs SPY, beta per $ held"
+3d133a6,improve,overhead,high,terse highlights wording
+575f351,improve,overhead,high,"Total row naming, no 100% totals"
+f56d1b3,fix,execution,medium,HL info requests retry dropped connections (reads behind orders)
+48cbd47,improve,overhead,high,notebook text trimmed
+fd82113,improve,overhead,high,book chart simplified
+a809e60,improve,overhead,high,book chart daily bars
+0be7e16,fix,research,medium,books tie-out residual explained
+380dcec,new,research,high,factor model of the books' actual returns with split-sample validation
+6a4c370,fix,research,high,factor model fits only active days
+eb1b6ad,improve,overhead,high,notebooks load faster
+6393dcb,new,strategy,high,neutral two-sided ladders only while the coin ranges
+a080e44,new,research,high,"picks vs the same dollars in the benchmark, with a t-stat"
+5c2dce0,fix,overhead,high,candle cache parallel write
+81ce796,fix,research,high,IB per-stock PnL from the activity statements
+87dbc72,fix,research,high,picks vs SPY includes IB stocks; sold positions flat
+710bd3f,improve,research,high,books reach back past a year
+17540ca,improve,research,medium,picks added in % of dollars held
+4347187,improve,research,high,stocks notebook covers IB's whole history
+ee5646d,fix,research,high,picks count a day only when the leg holds 1% of equity
+af05d96,improve,overhead,high,column order
+9c5912d,fix,risk,high,equity is trading equity everywhere: like with like
+0441823,improve,risk,medium,wallets table with 24h moves in the positions layout
+ade5ea6,improve,overhead,high,stocks notebook loads faster
+41ca980,improve,overhead,high,picks chart colours
+1553e52,fix,overhead,medium,module function for trading equity after reload
+2ca8098,fix,research,high,picks like with like and tied out to the book
+a722bcc,fix,research,high,picks chart counts entry days at closing size
+820da02,fix,research,high,"PnL by market and side, one side rule; legs and picks tie out"
+8b4481f,improve,overhead,high,chart start
+94b0e6c,improve,overhead,high,chart legend
+aca5be1,improve,overhead,high,table removed
+c20b765,improve,overhead,high,table removed
+d569415,fix,overhead,high,caches on local disk under Dropbox
+cdd1540,new,execution,high,build-ups grow a position to its risk budget as caps allow
+d092670,improve,execution,high,build-ups open a position not yet open
+24e369c,new,research,medium,MM fill test; neutral ladder --force through a trend
+e3022dd,new,research,high,returns on closed positions and their distribution
+0c2003b,improve,research,high,closed positions from IB statements; closes dataset
+c596ebe,new,research,medium,fills per day against daily return
+2147b2e,improve,overhead,high,HL colour scheme
+39334cc,fix,risk,medium,uPnL % over entry cost
+c0b837e,fix,risk,medium,uPnL by book matches the positions table
+70526ac,new,overhead,high,chart view of every table
+5e20bf7,improve,overhead,high,chart view labels
+f9e6005,improve,overhead,high,spacing
+40e78f3,improve,overhead,high,chart view labels
+33060ed,improve,overhead,high,chart view labels
+0101bf1,improve,overhead,high,viridis theme
+17afebc,improve,overhead,high,chart view axes
+09913ab,improve,overhead,high,chart view grouping
+3c79a6e,improve,overhead,high,colours
+9b48940,improve,overhead,high,chart view labels
+15185f0,improve,overhead,high,colours
+0934218,improve,overhead,high,colours
+33ea65c,improve,overhead,high,theme switch
+9e48e9b,improve,overhead,high,theme switch
+2793c8a,improve,overhead,high,switch icons
+2740461,improve,overhead,high,chart view colours
+e5aae20,improve,overhead,high,chart view labels
+f8367e5,improve,overhead,high,chart view outlier bar
+e8190b3,improve,overhead,high,chips only on failure
+bda32a9,improve,overhead,high,colours
+d6590eb,improve,overhead,high,colours back
+98f7c8c,improve,strategy,medium,advisory hidden once an auto rule acted
+a771f86,fix,overhead,high,switches redraw at once
+b4801d3,fix,overhead,high,chart view bar names
+b3b9465,improve,overhead,high,styles and modes
+5df2638,improve,overhead,high,icon
+892c202,improve,overhead,medium,sections as windows; feedback logging
+42b9015,new,overhead,high,save tile as image
+2e9e3bc,improve,overhead,medium,hide numbers; tile feed foundation
+9969af5,improve,overhead,medium,"symbol links, $/% switch, price strip, report"
+0c75581,new,research,high,"trade debrief: thesis, market path, execution"
+fa26162,improve,overhead,high,icons
+39ef282,improve,research,high,trade debrief chart
+812863a,improve,overhead,high,drag
+7ff071b,improve,overhead,high,key-number tiles as windows
+7f4d69e,improve,overhead,high,price strip suggestions
+46fa932,improve,overhead,medium,published tiles render; sections menu; privacy blur
+7d15167,improve,overhead,medium,asset tile from highlight symbols; usage learning
+ed92434,improve,overhead,medium,learning loop and source watch adapt the dashboard
+6438a0d,new,overhead,medium,reference watch of other products' pages
+c267002,new,execution,high,act on HL positions from the dashboard: plan then confirm through the daemon
+fda165a,improve,overhead,high,asset class dots
+5bfb66a,improve,overhead,high,tinted runs
+574704c,improve,overhead,high,highlights name symbol and side
+e1a7cac,improve,overhead,high,tile ordering
+391e1c3,improve,risk,medium,"page leads with attention, positions and risk"
+a989c48,improve,overhead,high,tools on hover
+b8c2692,improve,risk,medium,key numbers lead with drawdown and leverage
+2ff825a,improve,overhead,high,tile layout
+33e475c,new,risk,high,"unprotect: drop stops, loss guards and take-profits on directional positions"
+6876983,fix,risk,high,unprotect matches ladder positions in any case
+c24c314,improve,risk,medium,unprotect says what it leaves alone
+e0c9ccc,improve,overhead,high,highlight wording
+a13489c,improve,overhead,high,key number format; strip reorder
+812a9c5,improve,risk,medium,"key numbers are now: uPnL, risk room under the cap, leverage, drawdown"
+21762ac,improve,overhead,medium,time scale chips on the now tile and value charts
+bd02641,improve,overhead,high,chart tools and table filter
+3ba77bf,new,strategy,high,"candidates answered in place: refuse, bookmark, act"
+f62bc4f,improve,overhead,high,scales per element
+d6e357a,improve,overhead,high,thumbs on highlights
+221fc94,improve,overhead,high,chart tool icons
+3878e04,improve,overhead,high,chart tools
+11d2cc2,improve,overhead,high,chart hovers
+5f628d5,improve,overhead,high,bar pop-ups
+08a03f1,improve,overhead,high,layout
+0c9aa32,improve,research,high,performance by book; strategies split by book
+550e372,improve,overhead,medium,highlights card; % first; return chart books
+589635f,improve,overhead,medium,accounts card removed; MM as % of volume
+b07ea8c,improve,overhead,high,one performance window
+87250e1,improve,overhead,high,strip suggestions
+c7328cc,improve,overhead,high,+ adds related analytics
+c0b3a7c,improve,overhead,high,layout details
+fb9f4bc,fix,research,medium,strategies split on the web (chart was blank)
+6744b7b,improve,overhead,high,margins
+bebd715,improve,overhead,high,masonry layout
+677e519,improve,overhead,high,0% tile hidden
+cc188d2,improve,risk,high,risk tile as a gauge of the cap used
+c1a78ff,improve,overhead,high,highlights without titles
+3964f01,improve,overhead,high,lazy chart drawing
+3f6794b,fix,overhead,high,highlight width
+140e01a,improve,overhead,high,regime rank rounding
+7ef670f,improve,overhead,medium,"dashboard batch: executable highlight actions, layout"
+eae49ff,improve,research,medium,one performance tile by book and strategy
+4aeb16e,improve,overhead,high,strip numbers
+77ca5cb,improve,overhead,high,colours and labels
+ecaaf5d,improve,overhead,high,drag and drop
+5c6e03b,fix,overhead,high,return chart over a day
+fc0931c,fix,overhead,high,saved arrangement could stop the dashboard loading
+d0516f0,improve,overhead,high,bar colours
+38e983c,improve,overhead,high,highlight wording
+7615165,improve,overhead,high,colours
+cf29cb7,improve,overhead,high,tinted runs
+12fcc06,improve,overhead,high,alert wording
+c155376,improve,overhead,high,menu naming
+1deeee1,improve,strategy,medium,candidates vs BTC over a chosen period
+c013533,fix,overhead,high,strip suggestion pick
+de1a83d,improve,overhead,high,label
+e641669,improve,risk,medium,uPnL tile change over D/W/M on what is held
+25bd742,improve,overhead,high,columns
+a1e3fbc,improve,overhead,high,sort order
+5464136,improve,overhead,high,tile resize
+872eee4,improve,overhead,high,symbol pages window
+bad8743,improve,overhead,high,tint
+2d7ed2d,improve,overhead,high,layout history
+d23f6b7,improve,overhead,high,column width
+da4d750,improve,overhead,high,column resize
+e81e7da,improve,overhead,high,strip field
+e0681dc,improve,overhead,high,strip order
+d229e5f,improve,overhead,high,label
+e4e8996,improve,overhead,high,period letters
+c38cd2d,improve,overhead,high,tile placement
+2835c06,improve,execution,medium,"bar rows act: trim/close, refuse/bookmark/act"
+0d32be8,new,research,medium,exchange-token hypothesis test; highlight read logic
+8a559ae,improve,overhead,high,top bar and menu
+ffd7797,improve,overhead,high,swipe gestures
+a71b869,improve,overhead,high,"no blinking, fewer pop-ups"
+ae3ac66,improve,execution,medium,confirm closes at once; ladders stop from rows; ROE column
+ab62adf,improve,execution,medium,"pulse chips trim, raise, close"
+2675120,improve,overhead,high,screens swipe
+af427e5,improve,overhead,high,research screen
+74b1781,improve,overhead,high,research screen layout
+b6fbf32,improve,risk,medium,hourly curves for D and W against benchmarks
+5e7a5cd,improve,overhead,medium,concise alerts; actions on highlights
+f2a4a83,improve,overhead,high,notebooks follow the dashboard
+3f05ca0,improve,risk,medium,"uPnL as % of price move, ROE removed"
+da6c865,new,risk,medium,stress and thesis-clock tiles; phone push for new alerts
+e7d296f,improve,risk,high,funding no longer counts against the risk cap
+ce53a90,improve,risk,high,thesis entries may use 3 points beyond the cap
+bae821e,improve,overhead,high,tiles shown from the start
+18c2bfb,improve,overhead,high,chart height; push config
+2be4598,improve,strategy,medium,winners and losers are today's moves
+b3371a3,improve,risk,high,"phone push only for immediate attention: margin, daemon down, stale data"
+23432e2,fix,execution,high,dashboard entries confirm the submit step
+8e9a9b7,improve,overhead,high,background
+01c9e2a,improve,overhead,high,dialog icons
+6d2afab,improve,strategy,medium,advisories go quiet once trimmed
+a2c8ed4,improve,research,high,dashboard shorts journalled as fades
+9c8b685,improve,risk,high,stress tile: room under the limit; alt shock calibrated on history
+3fd6c77,improve,execution,high,maker and taker read per strategy
+cdea7c1,improve,overhead,high,push log
+cf34f51,improve,overhead,high,chart height
+c640220,fix,overhead,high,hidden sized tile
+addceb7,improve,overhead,high,layout
+b1ca0fa,improve,overhead,medium,published tiles follow desk rules; DeepAlpha on reference watch
+f086af7,fix,overhead,high,decode packed numbers
+6797595,fix,overhead,high,end labels
+cc2a259,improve,overhead,medium,published return charts; HL 429 retry in browser
+08d95e0,improve,overhead,high,gitignore chart images
+8c1b298,improve,overhead,high,project moved out of Dropbox
+6946100,fix,research,high,stocks performance skips all-cash days
+bf4e3fc,new,execution,high,"trade bar: asset, side, label, plan and confirm"
+97c610b,improve,overhead,medium,notebooks follow the dashboard; more dashboard options
+c8ec7d3,fix,risk,medium,server receives IB data so the stocks book is not flat
+435295e,improve,overhead,high,test expectation
+5ecb920,fix,risk,medium,server overview reads IB from the relay
+f8fe428,improve,research,medium,HL notebook analytics as dashboard options
+b7528f8,improve,research,high,daily market cap and volume for the universe
+3ca1cec,improve,strategy,high,short candidates favour coins that follow the market
+b81f119,improve,strategy,high,short candidates flag coins Kelly would hold long
+cdd7124,new,research,high,"desk vs Kelly portfolio on traded coins, walk-forward"
+07564e5,fix,execution,high,stop-free sizing rounds to size steps (HL refused orders)
+a9b7ddd,new,research,high,"factor models, attribution, rolling betas on real history"
+52383e9,improve,overhead,high,bar names
+eea01de,improve,overhead,high,bar colour
+ba0e51c,new,research,high,pump-and-dump replay net of costs (not adopted)
+5480383,fix,research,high,dump-phase study paths (not adopted)
+625cf33,improve,overhead,high,sync read highlights across devices
+34ae4f9,fix,overhead,high,highlight state merge
+0406d1b,improve,overhead,high,position chart direction
+5201332,improve,research,high,research market data refreshed
+a32cfb1,improve,overhead,high,position chart colours
+49b4733,improve,overhead,medium,PnL bars and daily move
+e9caedb,improve,overhead,high,bars centred
+fc95f29,improve,overhead,high,bars without labels
+af00a72,improve,overhead,high,bar labels
+622f394,improve,overhead,high,label contrast
+2ad4ed4,improve,overhead,high,bar tracks
+08be987,improve,overhead,high,bar labels
+fa7b3ac,improve,overhead,high,label colours
+a7b2b29,improve,overhead,high,orange
+2192306,improve,overhead,high,bar labels
+56aa989,improve,overhead,high,abbreviations
+7096d81,improve,overhead,high,values at bar ends
+2c96ee0,improve,overhead,high,values at bar ends
+924b3a2,improve,overhead,high,orange
+a9e8947,fix,risk,high,sold rebalance residuals left out of open positions
+c3a98ce,fix,overhead,high,performance chart labels
+cf49cc9,improve,overhead,high,values on bars
+7317af3,fix,overhead,high,pulse bar refresh
+3e9ced4,improve,overhead,high,bars anchored at zero
+d9aba17,improve,overhead,high,label room
+22a9756,improve,overhead,medium,hourly account values on the D chart
+2e84ca8,improve,overhead,high,labels hidden
+ea0c98d,improve,overhead,high,default window
+e54a083,improve,overhead,medium,chart and asset picker updates
+8cf544d,improve,overhead,high,menu toggles
+16277b5,improve,overhead,high,chart controls and privacy
+4b8d380,improve,overhead,high,menu toggles
+014d38b,improve,overhead,high,menus and spacing
+f8da40a,improve,overhead,high,tooltips removed
+66c956b,improve,overhead,high,headings removed
+3ddf003,improve,overhead,high,hover colours
+5408c0c,improve,overhead,high,hover precision
+b332253,improve,overhead,high,date labels
+ec260d2,improve,overhead,high,bars fit
+bbe18e0,improve,overhead,high,menu grouping
+47cc5ea,improve,strategy,medium,candidate notes as coloured signals
+568f97b,improve,overhead,high,highlights by asset class
+5d19fbd,improve,overhead,high,desk-wide highlights section
+8e635c7,improve,overhead,high,highlights render without blocking
+0f82bc7,fix,overhead,high,bounded startup waits
+398bc5e,fix,overhead,high,bounded refresh duration
+9b1696c,fix,overhead,high,syntax error
+4b11009,improve,overhead,high,monochrome theme
+da4477f,improve,overhead,high,time range chips
+cd4006b,new,strategy,low,candle charts in asset tiles to read entries and exits
+aa46f62,improve,overhead,high,symbols open asset tiles
+7f77ec9,fix,overhead,high,asset charts visible
+0506d9e,improve,overhead,high,symbols open charts
+71ce5bc,improve,overhead,high,chart tiles and period controls
+3f9f0bf,improve,overhead,high,candle colours
+fec76c8,improve,overhead,high,palette
+2648300,improve,overhead,high,leg label colours
+3395387,improve,overhead,high,correlation shading
+971a27e,improve,overhead,high,correlation colours
+f1c8e76,improve,overhead,high,table accents
+1996c5e,improve,overhead,high,weights as bars
+dbf80af,improve,execution,low,response options on priority alerts
+5951484,improve,overhead,high,column order
+2958024,improve,overhead,high,correlation scales
+26b5ab9,improve,overhead,high,inline action options
+c8b53f6,fix,overhead,high,pulse EV kept across refreshes
+1b352db,improve,risk,medium,exposure table by asset class with balanced exposures
+1b6b184,improve,overhead,high,contrast
+b03806e,fix,research,high,perpetual PnL in crypto performance windows
+fa877b5,improve,research,medium,daily row in book performance windows
+2886fce,improve,overhead,high,alignment
+006d0f2,improve,overhead,high,chart ticks
+62dcc06,improve,overhead,high,sticky pulse bar
+0fffca9,improve,execution,low,trade and chart menus on the pulse bar
+6313a3b,improve,overhead,high,switch assets in chart tiles
+1f3a809,improve,overhead,high,icon
+72fdf44,improve,overhead,high,punctuation
+2b9d43b,improve,overhead,high,icon
+4a76d0e,new,research,high,intraday and historical benchmark comparisons
+96b157e,new,research,high,excess return attributed to trading decisions
+bd5289c,improve,research,medium,relative ending value in comparisons
+1334619,improve,overhead,high,bold on hover
+a5b59ce,improve,research,high,whole desk vs invested book comparisons
+a3e0b9c,improve,research,high,both books vs each index
+3fef450,improve,overhead,high,row labels
+706e13f,new,research,high,replay of verified protective stops
+62b6f0a,new,research,high,benchmark beat rates and drivers by market regime
+428a636,improve,research,medium,watch persistent benchmark strengths and weaknesses
+2dab3cf,improve,overhead,high,label colour
+d254a31,improve,overhead,high,label case
+d0a3e4d,fix,research,high,benchmark dates matched across comparisons
+b94b707,fix,research,high,shared window for historical comparisons
+242b11e,improve,risk,high,no exchange stop-loss on new trades (stops cost more than they saved)
+f3e277f,improve,research,medium,time scale on market direction return drivers
+8941900,new,execution,high,half-Kelly batch execution
+a7cbb35,improve,execution,medium,batch execution controls
+b39f853,improve,overhead,high,refresh problems as chips
+f498f0b,improve,overhead,high,tab reloads on deploy
+a44abc2,fix,risk,medium,relay retries HL 429s and serves the last good read: positions stay visible
+c80f77d,improve,execution,medium,daemon request rate logged to keep it under HL limits
+a11bc59,new,research,high,order-book wall and spoof signal logger with forward test
+1db25ab,new,research,high,crypto factor risk model and validation (not adopted)
+37b008e,fix,risk,medium,silently blanked data shows as failed chips
+078b9c9,fix,research,high,forward test with one snapshot per coin
+05186a0,improve,research,medium,logger runs as a service so the forward test accrues data
+c7f42ed,improve,research,high,HL history backfill and factor model revalidation (not adopted)
+0f54cd1,improve,strategy,low,volume under asset candle charts
+69ccb99,new,research,high,sector blocks and stock risk model (not adopted)
+873dc1b,fix,overhead,high,resized candle tile growing
+dd62c4b,improve,overhead,high,candle times in ET
+a3942df,improve,strategy,low,live candle charts
+4c5008b,improve,risk,medium,D/W/M scales on open positions
+fa7f4c5,improve,overhead,high,correlation dot dropped
+8084108,improve,risk,medium,position time controls follow the chart and fit each book
+e3df93a,fix,strategy,medium,candidates tile bottom asset clickable again
+cd80fed,improve,execution,low,asset fields autofill in the trade bar
+0bcf5b1,new,research,high,beta-weighted attribution experiment
+61de961,new,overhead,high,commit history labelling and build tiles
+4165e7a,improve,research,high,beta-adjusted picks on hover; partial builds no longer replace whole ones
+fb19e84,new,overhead,medium,"model of commits against risk and reward (build process, not trading)"
+ca5c998,improve,overhead,high,build vs risk/reward tiles
+0e0bbb5,fix,overhead,high,zero labels on commit bars
+ec84b90,fix,risk,high,betas for new HL markets and PAXG from their underlying

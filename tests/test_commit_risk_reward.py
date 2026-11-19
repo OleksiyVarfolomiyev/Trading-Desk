@@ -71,27 +71,43 @@ class VerdictTests(unittest.TestCase):
 
 
 class MapTests(unittest.TestCase):
-    rows = [{"hash": str(i), "area": area, "added": "10", "removed": "5"} for i, area in enumerate(["ui", "ui", "daemon", "signals"])]
+    rows = [{"hash": str(i), "purpose": purpose, "added": "10", "removed": "5"}
+            for i, purpose in enumerate(["overhead", "overhead", "risk", "strategy"])]
 
     def test_effort_shares_sum_to_one(self):
-        table = crr.effort_by_area(self.rows)
+        table = crr.effort_by_purpose(self.rows)
         self.assertAlmostEqual(table["Commits %"].sum(), 1.0)
         self.assertAlmostEqual(table["Churn %"].sum(), 1.0)
-        self.assertEqual(table.iloc[0]["Area"], "ui")
+        self.assertEqual(table.iloc[0]["Purpose"], "overhead")
 
-    def test_outcome_shares_sum_to_one_and_ui_gets_none(self):
-        share = crr.outcome_by_area({"Picks": 0.04, "Sizing": 0.03, "Timing": 0.1, "Market exposure": 0.3, "Fees & funding": -0.02}, 2.0)
+    def test_outcome_shares_sum_to_one_and_overhead_gets_none(self):
+        share = crr.outcome_by_purpose({"Picks": 0.04, "Sizing": 0.03, "Timing": 0.1, "Market exposure": 0.3, "Fees & funding": -0.02}, 2.0)
         self.assertAlmostEqual(sum(share.values()), 1.0)
-        self.assertNotIn("ui", share)
+        self.assertNotIn("overhead", share)
+        self.assertEqual(set(share), set(build_history.RESULT_PURPOSES))
+
+    def test_every_driver_is_moved_by_a_result_purpose(self):
+        for purposes in crr.DRIVERS.values():
+            self.assertTrue(set(purposes) <= set(build_history.RESULT_PURPOSES))
 
     def test_events_sit_on_real_commit_days(self):
         days = {row["date_et"][:10] for row in build_history.read_csv()}
-        for date, area, _ in crr.EVENTS:
+        for date, purpose, _ in crr.EVENTS:
             self.assertIn(date, days)
-            self.assertIn(area, build_history.AREAS)
+            self.assertIn(purpose, build_history.RESULT_PURPOSES)
 
     def test_every_event_is_confounded_by_a_neighbour(self):
         self.assertTrue(all(row["others_within"] >= 1 for row in crr.confounding()))
+
+    def test_refresh_effort_keeps_the_tests_and_relabels_the_map(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "r.json"
+            path.write_text(crr.RESULT_PATH.read_text())
+            result = crr.refresh_effort(self.rows, path)
+            self.assertEqual({r["Purpose"] for r in result["effort"]}, {"overhead", "risk", "strategy"})
+            self.assertEqual(result["regime"], json.loads(crr.RESULT_PATH.read_text())["regime"])
+            table = crr.table_rows(result)
+            self.assertEqual(table.loc[table.Purpose == "overhead", "Moves"].iloc[0], "nothing directly")
 
 
 class TileTests(unittest.TestCase):
@@ -104,6 +120,19 @@ class TileTests(unittest.TestCase):
             self.assertEqual(table["kind"], "table")
             self.assertEqual(chart["kind"], "chart")
             self.assertEqual(len(chart["data"]), 2)
+            overhead = table["rows"][[r["Purpose"] for r in table["rows"]].index("overhead")]
+            self.assertIsNone(overhead["Outcome share"])   # absent, not 0%
+            self.assertIsNone(overhead["Rule changes"])
+
+    def test_chart_shares_are_whole_percents_without_zero_bars(self):
+        with tempfile.TemporaryDirectory() as folder:
+            crr.publish_cached(directory=Path(folder), push=False)
+            chart = json.loads((Path(folder) / "build-risk-reward-chart.json").read_text())
+            outcome = chart["data"][1]
+            self.assertIn(None, outcome["y"])                       # overhead: no bar
+            for value in [v for trace in chart["data"] for v in trace["y"] if v is not None]:
+                self.assertEqual(round(value, 2), value)
+            self.assertEqual(chart["layout"]["yaxis"]["tickformat"], ".0%")
 
 
 if __name__ == "__main__":

@@ -6,9 +6,10 @@
 Three parts, with the limits said up front: the build history covers 34 days (2026-10-16 on), and 8 of its 10 rule changes
 landed in the last 8 days, so a before/after test has one regime change and 8 days after it.
 
-A. Effort map. Each area's share of commits and of code churn (desk/build_history.csv) beside the size of the return drivers
-   it can move (the benchmark attribution's Picks, Sizing, Timing, Market exposure and Fees & funding, and the risk
-   drivers). Which area can move which driver is a judgement (``DRIVERS``), not an estimate.
+A. Effort map. Each purpose's share of commits and of code churn (desk/build_history.csv, labelled by the result a commit
+   served: research, strategy, execution, risk or overhead) beside the size of the return and risk drivers it moves (the
+   benchmark attribution's Picks, Sizing, Timing, Market exposure and Fees & funding, and drawdown). The purpose-to-driver
+   map (``DRIVERS``) follows from the labels' definitions; overhead moves none.
 B. Event study. ``EVENTS`` lists the commits that changed how the desk trades. Windows around events overlap (``confounded``),
    so the test is the one that can be run: the book's daily return on its benchmark's return and a post-change dummy
    (``regime_test``), compared with the same test at every other split date (``placebo``). A result counts only when |t| is at
@@ -32,60 +33,62 @@ SIGNIFICANT_T = 2.0
 MIN_SIDE = 7          # days either side of a split for the regime test
 CONFOUND_DAYS = 3     # another rule change within this many days confounds an event
 
-# The commits that changed how the desk trades (behaviour), curated from the labelled history: (date, area, what changed).
+# The commits that changed how the desk trades (behaviour), curated from the labelled history: (date, purpose, what changed).
 EVENTS = [
-    ("2026-11-02", "daemon", "Ladder orders (market making starts)"),
-    ("2026-11-04", "daemon", "Kill switch and execution quality"),
-    ("2026-11-11", "daemon", "Margin guard on account-wide liquidation risk; wider HL stops; conviction trades; ladders in the daemon"),
-    ("2026-11-12", "daemon", "Take-profits and ladder quotes held in daemon memory; per-coin ladder settings"),
-    ("2026-11-13", "daemon", "Fade entry modes (stop=none)"),
-    ("2026-11-14", "journal", "Auto-trading standing order: bank half of each crypto short in profit; regime-aware ladders"),
-    ("2026-11-15", "daemon", "Auto flatten on strong BTC momentum; auto trading follows the Binance replay; neutral ladders"),
-    ("2026-11-16", "daemon", "Build-ups to the full risk budget; unprotect drops stops and guards on directional positions"),
-    ("2026-11-17", "daemon", "Funding out of the risk cap; thesis entries beyond the cap; stop-free sizing"),
-    ("2026-11-18", "daemon", "No exchange stop-loss on new trades; half-Kelly batch execution"),
+    ("2026-11-02", "strategy", "Ladder orders (market making starts)"),
+    ("2026-11-04", "execution", "Kill switch and execution quality"),
+    ("2026-11-11", "risk", "Margin guard on account-wide liquidation risk; wider HL stops; conviction trades; ladders in the daemon"),
+    ("2026-11-12", "execution", "Take-profits and ladder quotes held in daemon memory; per-coin ladder settings"),
+    ("2026-11-13", "execution", "Fade entry modes (stop=none)"),
+    ("2026-11-14", "strategy", "Auto-trading standing order: bank half of each crypto short in profit; regime-aware ladders"),
+    ("2026-11-15", "strategy", "Auto flatten on strong BTC momentum; auto trading follows the Binance replay; neutral ladders"),
+    ("2026-11-16", "risk", "Build-ups to the full risk budget; unprotect drops stops and guards on directional positions"),
+    ("2026-11-17", "risk", "Funding out of the risk cap; thesis entries beyond the cap; stop-free sizing"),
+    ("2026-11-18", "risk", "No exchange stop-loss on new trades; half-Kelly batch execution"),
 ]
 BURST_START = "2026-11-11"   # the day the rule changes begin to bunch (the margin guard, wider stops, conviction trades)
 
-# Which areas can move which driver of risk and reward (judgement). The driver's size is shared equally among them.
+# Which purpose moves which driver of risk and reward: research and strategy choose the names (picks), strategy and execution
+# set when (timing), execution pays the costs, risk sets exposure, sizing and drawdown. A driver's size is shared equally among
+# the purposes that move it; overhead moves none.
 DRIVERS = {
-    "Picks": ["signals", "journal"],
-    "Sizing": ["daemon"],
-    "Timing": ["daemon", "signals"],
-    "Market exposure": ["daemon", "signals"],
-    "Fees & funding": ["daemon", "hl"],
-    "Drawdown and leverage": ["daemon"],
+    "Picks": ["research", "strategy"],
+    "Timing": ["strategy", "execution"],
+    "Fees & funding": ["execution"],
+    "Market exposure": ["risk"],
+    "Sizing": ["risk"],
+    "Drawdown and leverage": ["risk"],
 }
 
 
 # ---------------------------------------------------------------------------------------------------------------- A
-def effort_by_area(rows: list[dict]) -> pd.DataFrame:
-    """Commits and code churn per area from the labelled history, as shares of the total."""
+def effort_by_purpose(rows: list[dict]) -> pd.DataFrame:
+    """Commits and code churn per purpose from the labelled history, as shares of the total."""
     frame = pd.DataFrame(rows)
     if frame.empty:
-        return pd.DataFrame(columns=["Area", "Commits", "Commits %", "Churn %", "Rule changes"])
+        return pd.DataFrame(columns=["Purpose", "Commits", "Commits %", "Churn %", "Rule changes"])
     frame["churn"] = pd.to_numeric(frame["added"], errors="coerce").fillna(0) + pd.to_numeric(frame["removed"], errors="coerce").fillna(0)
-    grouped = frame.groupby("area").agg(commits=("hash", "count"), churn=("churn", "sum"))
-    events = Counter(area for _, area, _ in EVENTS)
-    out = pd.DataFrame({"Area": grouped.index, "Commits": grouped["commits"].to_numpy(),
+    grouped = frame.groupby("purpose").agg(commits=("hash", "count"), churn=("churn", "sum"))
+    events = Counter(purpose for _, purpose, _ in EVENTS)
+    out = pd.DataFrame({"Purpose": grouped.index, "Commits": grouped["commits"].to_numpy(),
                         "Commits %": (grouped["commits"] / grouped["commits"].sum()).to_numpy(),
                         "Churn %": (grouped["churn"] / max(grouped["churn"].sum(), 1)).to_numpy(),
-                        "Rule changes": [events.get(area, 0) for area in grouped.index]})
+                        "Rule changes": [events.get(purpose, 0) for purpose in grouped.index]})
     return out.sort_values("Commits", ascending=False).reset_index(drop=True)
 
 
-def outcome_by_area(parts: dict[str, float], risk_size: float) -> dict[str, float]:
-    """Each area's share of the drivers it can move. ``parts`` are the attribution's pp (absolute size is used);
-    ``risk_size`` is the drawdown-and-leverage driver on the same scale. Shares sum to 1 over the areas that move a driver."""
+def outcome_by_purpose(parts: dict[str, float], risk_size: float) -> dict[str, float]:
+    """Each purpose's share of the drivers it moves. ``parts`` are the attribution's pp (absolute size is used);
+    ``risk_size`` is the drawdown-and-leverage driver on the same scale. Shares sum to 1 over the purposes that move one."""
     sizes = {name: abs(float(parts.get(name, 0.0) or 0.0)) for name in DRIVERS if name != "Drawdown and leverage"}
     sizes["Drawdown and leverage"] = abs(float(risk_size))
     total = sum(sizes.values())
     share: dict[str, float] = {}
     if not total:
         return share
-    for name, areas in DRIVERS.items():
-        for area in areas:
-            share[area] = share.get(area, 0.0) + sizes[name] / total / len(areas)
+    for name, purposes in DRIVERS.items():
+        for purpose in purposes:
+            share[purpose] = share.get(purpose, 0.0) + sizes[name] / total / len(purposes)
     return share
 
 
@@ -170,8 +173,8 @@ def period_stats(frame: pd.DataFrame) -> dict:
 def confounding(events: list[tuple[str, str, str]] = EVENTS, days: int = CONFOUND_DAYS) -> list[dict]:
     """For each rule change, how many other rule changes fall within ``days`` days either side."""
     dates = [pd.Timestamp(d) for d, _, _ in events]
-    return [{"date": d, "area": a, "what": w, "others_within": sum(1 for o in dates if o != day and abs((o - day).days) <= days)}
-            for (d, a, w), day in zip(events, dates)]
+    return [{"date": d, "purpose": p, "what": w, "others_within": sum(1 for o in dates if o != day and abs((o - day).days) <= days)}
+            for (d, p, w), day in zip(events, dates)]
 
 
 def verdict(test: dict, plc: dict) -> tuple[str, str]:
@@ -218,7 +221,7 @@ def daily_panel(book) -> pd.DataFrame:
 def analyse(panels: dict[str, pd.DataFrame], attribution: dict[str, dict], rows: list[dict], since: str = "2026-10-16") -> dict:
     """Everything the notes and tiles show, from the books' panels, their attribution (``decision_attribution``'s 30-day
     window per book, the build's own period) and the labelled history."""
-    effort = effort_by_area(rows)
+    effort = effort_by_purpose(rows)
     risk, tests = {}, {}
     for kind, panel in panels.items():
         window = panel.loc[since:]
@@ -231,29 +234,51 @@ def analyse(panels: dict[str, pd.DataFrame], attribution: dict[str, dict], rows:
     for kind, panel in panels.items():
         parts = (attribution.get(kind) or {}).get("parts", {})
         risk_size = 100 * abs(risk[kind]["since"].get("max_drawdown", 0.0))   # the worst fall, in pp of equity like the parts
-        outcome[kind] = outcome_by_area({k: 100 * v for k, v in parts.items()}, risk_size)
+        outcome[kind] = outcome_by_purpose({k: 100 * v for k, v in parts.items()}, risk_size)
     return {"since": since, "effort": effort.to_dict("records"), "risk": risk, "regime": tests, "outcome": outcome,
             "attribution": {k: (v or {}).get("parts", {}) for k, v in attribution.items()},
             "confounding": confounding(), "burst_start": BURST_START}
 
 
 # ---------------------------------------------------------------------------------------------------------------- tiles
+def refresh_effort(rows: list[dict], path: Path = RESULT_PATH) -> dict:
+    """The saved result with its effort map and outcome shares recomputed from the current labels (no book reads): the
+    attribution parts and the drawdown are kept from the last ``run``."""
+    result = json.loads(path.read_text())
+    result["effort"] = effort_by_purpose(rows).to_dict("records")
+    result["outcome"] = {kind: outcome_by_purpose({k: 100 * v for k, v in parts.items()}, 100 * abs(result["risk"][kind]["since"].get("max_drawdown", 0.0)))
+                         for kind, parts in result["attribution"].items()}
+    result["confounding"] = confounding()
+    path.write_text(json.dumps(result, indent=1, default=float))
+    return result
+
+
 def table_rows(result: dict) -> pd.DataFrame:
-    """The Build vs risk/reward table: per area, effort against the drivers it can move, with the evidence level."""
+    """The Build vs risk/reward table: per purpose, effort against the drivers it moves, with the evidence level."""
     effort = pd.DataFrame(result["effort"])
     outcome = pd.DataFrame(result["outcome"]).fillna(0.0)
     share = outcome.mean(axis=1) if not outcome.empty else pd.Series(dtype=float)
-    can_move = {area: [name for name, areas in DRIVERS.items() if area in areas] for area in effort["Area"]}
+    can_move = {purpose: [name for name, purposes in DRIVERS.items() if purpose in purposes] for purpose in effort["Purpose"]}
     established = any(entry["verdict"][0] == "established" for entry in result["regime"].values())
     rows = []
     for _, row in effort.iterrows():
-        drivers = can_move.get(row["Area"], [])
-        rows.append({"Area": row["Area"], "Commits": row["Commits %"], "Churn": row["Churn %"],
+        drivers = can_move.get(row["Purpose"], [])
+        rows.append({"Purpose": row["Purpose"], "Commits": row["Commits %"], "Churn": row["Churn %"],
                      "Rule changes": int(row["Rule changes"]),
-                     "Outcome share": float(share.get(row["Area"], 0.0)),
+                     "Outcome share": float(share.get(row["Purpose"], 0.0)),
                      "Moves": ", ".join(drivers) if drivers else "nothing directly",
-                     "Evidence": ("rule changes helped" if established and row["Rule changes"] else "not established") if drivers else "n/a"})
+                     "Evidence": ("rule changes helped" if established and row["Rule changes"] else "not established") if drivers else None})
     return pd.DataFrame(rows)
+
+
+def blank_zeros(frame: pd.DataFrame) -> pd.DataFrame:
+    """A table as the reader sees it: a number that is zero (or rounds to it) is blank, absent is absent."""
+    out = frame.astype(object).copy()
+    for column in out.columns:
+        numbers = pd.to_numeric(out[column], errors="coerce")
+        if numbers.notna().any():
+            out[column] = [None if pd.notna(n) and abs(n) < 0.005 else v for v, n in zip(out[column], numbers)]
+    return out
 
 
 def publish_cached(path: Path = RESULT_PATH, hours: float = 24 * 14, push: bool = True, directory: Path | None = None) -> list[str]:
@@ -266,13 +291,16 @@ def publish_cached(path: Path = RESULT_PATH, hours: float = 24 * 14, push: bool 
         return []
     result = json.loads(path.read_text())
     table = table_rows(result)
-    figure = go.Figure([go.Bar(name="Effort (commits)", x=table["Area"], y=table["Commits"]),
-                        go.Bar(name="Outcome (drivers it can move)", x=table["Area"], y=table["Outcome share"])])
-    figure.update_layout(barmode="group")
+    # Both series are shares in whole percent on one axis; a zero is no bar (overhead moves no driver: absent, not 0%).
+    share = lambda values: [round(float(v), 2) if v and round(float(v), 2) else None for v in values]
+    figure = go.Figure([go.Bar(name="Share of commits", x=table["Purpose"], y=share(table["Commits"])),
+                        go.Bar(name="Share of the drivers it moves", x=table["Purpose"], y=share(table["Outcome share"]))])
+    figure.update_layout(barmode="group", yaxis={"tickformat": ".0%"})
+    table = blank_zeros(table)
     common = {"hours": hours, "relevance": 0.1, "push": False, "directory": directory}
     tile_feed.publish(table, "Build vs risk/reward: effort and outcome", reason="where the build effort goes against where P&L and risk come from",
                       key="build-risk-reward-table", formats={"Commits": "pct", "Churn": "pct", "Outcome share": "pct", "Rule changes": "num"}, **common)
-    tile_feed.publish(figure, "Build vs risk/reward: effort against outcome share", reason="share of commits against share of the drivers an area can move",
+    tile_feed.publish(figure, "Build vs risk/reward: effort against outcome share", reason="share of commits against share of the drivers each purpose moves",
                       key="build-risk-reward-chart", formats=None, **common)
     if push:
         tile_feed.push_to_web(directory)
@@ -294,8 +322,8 @@ def write_charts(result: dict, panels: dict[str, pd.DataFrame]) -> None:
     fig, ax = plt.subplots(figsize=(9, 3.6))
     index = np.arange(len(table))
     ax.bar(index - 0.2, 100 * table["Commits"], 0.4, label="share of commits")
-    ax.bar(index + 0.2, 100 * table["Outcome share"], 0.4, label="share of the drivers the area can move")
-    ax.set_xticks(index, table["Area"])
+    ax.bar(index + 0.2, 100 * table["Outcome share"], 0.4, label="share of the drivers the purpose moves")
+    ax.set_xticks(index, table["Purpose"])
     ax.set_ylabel("%")
     ax.legend(frameon=False)
     ax.spines[["top", "right"]].set_visible(False)
@@ -327,7 +355,7 @@ def write_notes(result: dict, panels: dict[str, pd.DataFrame]) -> None:
     write_charts(result, panels)
     pct = lambda x, d=1: "n/a" if x is None or not np.isfinite(x) else f"{100 * x:.{d}f}%"
     table = table_rows(result)
-    effort = "\n".join(f"| {r.Area} | {r.Commits:.0%} | {r.Churn:.0%} | {r._4} | {r._5:.0%} | {r.Moves} | {r.Evidence} |"
+    effort = "\n".join(f"| {r.Purpose} | {r.Commits:.0%} | {r.Churn:.0%} | {r._4} | {r._5:.0%} | {r.Moves} | {r.Evidence} |"
                         for r in table.rename(columns={"Rule changes": "_4", "Outcome share": "_5"}).itertuples())
     risk_rows = []
     for kind, entry in result["risk"].items():
@@ -344,42 +372,46 @@ def write_notes(result: dict, panels: dict[str, pd.DataFrame]) -> None:
     crypto = panels["Crypto"].loc[result["since"]:]
     gap = (crypto["ret"].fillna(0) - (panels["Crypto"]["net"].shift(1) * panels["Crypto"]["bench"]).loc[result["since"]:].fillna(0)).cumsum() * 100
     gap_total, gap_before = float(gap.iloc[-1]), float(gap.loc[:pd.Timestamp(result["burst_start"]) - pd.Timedelta(days=1)].iloc[-1])
-    events = "\n".join(f"| {e['date']} | {e['area']} | {e['what']} | {e['others_within']} |" for e in result["confounding"])
+    events = "\n".join(f"| {e['date']} | {e['purpose']} | {e['what']} | {e['others_within']} |" for e in result["confounding"])
     attribution = result["attribution"]
+    of = lambda purpose, column: float(table.loc[table.Purpose == purpose, column].iloc[0]) if (table.Purpose == purpose).any() else 0.0
+    commits = sum(int(r["Commits"]) for r in result["effort"])
+    result_share = 1 - of("overhead", "Commits")
     text = f"""# Commits against risk and reward
 
-Written by `python -m desk.commit_risk_reward run` (tiles: `publish`). Data: `desk/build_history.csv` (509 commits, 2026-10-16 to
-2026-11-19), the books' daily series on desk trading equity, and the 30-day benchmark attribution.
+Written by `python -m desk.commit_risk_reward run` (tiles: `publish`). Data: `desk/build_history.csv` ({commits} commits from 2026-10-16,
+each labelled by the result it served: research, strategy, execution, risk or overhead), the books' daily series on desk trading
+equity, and the 30-day benchmark attribution.
 
 **Power, up front.** The build covers 34 days. Eight of its ten rule changes landed in the last 8 days (from {result['burst_start']}),
 so the only before/after test that can be run has one regime change and 8 days after it. Nothing below clears the desk's bar
 (t of at least 2 and the same sign in both halves) for rule changes helping risk-adjusted return.
 
-## A. Where the effort goes, and what it can move
+## A. Where the effort goes, and what it moves
 
-| Area | Commits | Churn | Rule changes | Share of the drivers it can move | Which drivers | Evidence that its changes helped |
+| Purpose | Commits | Churn | Rule changes | Share of the drivers it moves | Which drivers | Evidence that its changes helped |
 |---|---|---|---|---|---|---|
 {effort}
 
-The "can move" mapping is a judgement (`DRIVERS` in `desk/commit_risk_reward.py`): Picks to signals and journal; Sizing to the
-daemon; Timing and Market exposure to the daemon and signals; Fees & funding to the daemon and HL; drawdown and leverage to the
-daemon. A driver's size is its absolute pp in the 30-day attribution (crypto and stocks averaged), and drawdown is the worst
-fall since the build began; each driver is shared equally among the areas that can move it.
+The purpose-to-driver map (`DRIVERS` in `desk/commit_risk_reward.py`) follows from the labels: Picks to research and strategy;
+Timing to strategy and execution; Fees & funding to execution; Market exposure, Sizing and drawdown to risk; overhead moves none.
+A driver's size is its absolute pp in the 30-day attribution (crypto and stocks averaged), and drawdown is the worst fall since
+the build began; each driver is shared equally among the purposes that move it.
 
-- **UI is {table.loc[table.Area == 'ui', 'Commits'].iloc[0]:.0%} of commits and {table.loc[table.Area == 'ui', 'Churn'].iloc[0]:.0%} of churn and moves no driver directly.** It works through decisions the desk then takes.
-- **The daemon is {table.loc[table.Area == 'daemon', 'Commits'].iloc[0]:.0%} of commits and {table.loc[table.Area == 'daemon', 'Outcome share'].iloc[0]:.0%} of the outcome drivers.** Signals is {table.loc[table.Area == 'signals', 'Commits'].iloc[0]:.0%} of commits and {table.loc[table.Area == 'signals', 'Outcome share'].iloc[0]:.0%} of the drivers.
+- **Overhead is {of('overhead', 'Commits'):.0%} of commits and {of('overhead', 'Churn'):.0%} of churn and moves no driver.** Only {result_share:.0%} of commits served a trading result.
+- **Risk is {of('risk', 'Commits'):.0%} of commits and {of('risk', 'Outcome share'):.0%} of the drivers** (market exposure dominates the crypto attribution). Execution is {of('execution', 'Commits'):.0%} of commits and {of('execution', 'Outcome share'):.0%} of the drivers; strategy {of('strategy', 'Commits'):.0%} and {of('strategy', 'Outcome share'):.0%}; research {of('research', 'Commits'):.0%} and {of('research', 'Outcome share'):.0%}.
 
 ![effort and outcome](commit_risk_reward.png)
 
 Crypto, 30 days (pp of equity): Picks {100 * attribution['Crypto'].get('Picks', 0):.1f}, Sizing {100 * attribution['Crypto'].get('Sizing', 0):.1f}, Timing {100 * attribution['Crypto'].get('Timing', 0):.1f}, Market exposure {100 * attribution['Crypto'].get('Market exposure', 0):.1f}, Fees & funding {100 * attribution['Crypto'].get('Fees & funding', 0):.1f}.
-Stocks: Picks {100 * attribution['Stocks'].get('Picks', 0):.1f}, Sizing {100 * attribution['Stocks'].get('Sizing', 0):.1f}, Timing {100 * attribution['Stocks'].get('Timing', 0):.1f}, Market exposure {100 * attribution['Stocks'].get('Market exposure', 0):.1f}, Fees & funding {100 * attribution['Stocks'].get('Fees & funding', 0):.1f}. The stocks inputs moved between fetches a few minutes apart in the beta-weight test, so read the stocks parts loosely.
+Stocks: Picks {100 * attribution['Stocks'].get('Picks', 0):.1f}, Sizing {100 * attribution['Stocks'].get('Sizing', 0):.1f}, Timing {100 * attribution['Stocks'].get('Timing', 0):.1f}, Market exposure {100 * attribution['Stocks'].get('Market exposure', 0):.1f}, Fees & funding {100 * attribution['Stocks'].get('Fees & funding', 0):.1f}. The stocks inputs were made reproducible on 2026-11-19 (failed wallet and Yahoo reads no longer drop names silently); this run uses them.
 
 ## B. Rule changes: before and after
 
 Ten behaviour-changing commits (daemon rules, stops, auto-trading, sizing, guards, ladders, thesis rules), curated in `EVENTS`. Each has
 other rule changes within {CONFOUND_DAYS} days, so no event has a clean window (last column):
 
-| Date | Area | What changed | Other changes within {CONFOUND_DAYS} days |
+| Date | Purpose | What changed | Other changes within {CONFOUND_DAYS} days |
 |---|---|---|---|
 {events}
 
@@ -408,18 +440,18 @@ most of the gain was the net short earning BTC's fall. The book did finish {gap_
 
 Established:
 - The daily return of the crypto book tracks its exposure-weighted BTC move (matched beta {result['regime']['Crypto']['test']['beta_matched']:.2f}): the P&L since the build is mostly Market exposure and Timing, not selection.
-- Effort and outcome are far apart: most commits are UI, while the drivers sit in the daemon and signals.
+- Effort and outcome are far apart: most commits are overhead, and the drivers that sized the P&L (market exposure, timing) are risk and strategy work.
 - No rule change has a clean before/after window.
 
 Not established (each fails t of at least 2 in both halves, or the placebo): that the rule changes raised risk-adjusted return, for crypto or stocks; that any single rule (auto flatten, build-ups, stop-free entries, ladders) helped or hurt.
 
 ## Focus, with the evidence level
 
-1. **Keep rule changes apart and dated, then judge them one at a time.** Evidence: structural (none of the ten events has a clean window). Ship at most one behaviour change per week, label it `feat(daemon)`, and write down the expected effect on a named driver first.
-2. **Test the daemon's rules on replays before live.** Evidence: structural. The daemon is the one area that moves sizing, timing, exposure and drawdown, and the live record cannot isolate its changes; replays can (as the Binance and stop replays did).
+1. **Keep rule changes apart and dated, then judge them one at a time.** Evidence: structural (none of the ten events has a clean window). Ship at most one behaviour change per week, label it by the result it serves (`new(risk)`, `improve(strategy)`), and write down the expected effect on a named driver first.
+2. **Test strategy, execution and risk rules on replays before live.** Evidence: structural. These purposes move sizing, timing, exposure and drawdown, and the live record cannot isolate their changes; replays can (as the Binance and stop replays did).
 3. **Measure exposure-matched return as the desk's skill number.** Evidence: strong for crypto in this sample. Raw return flatters a bigger bet in a falling market (+2.2% a day raw against {pct(result['regime']['Crypto']['test']['gamma'], 2)} matched).
-4. **Spend less on UI polish unless it changes a decision.** Evidence: descriptive (UI is the largest share of commits and moves no driver directly). It is not evidence that the UI is worthless: the decision tools sit there.
-5. **Fix the stocks inputs before reading the stocks book.** Evidence: the stocks Picks and Sizing moved between runs a few minutes apart in the beta-weight test, so no stocks conclusion above rests on them.
+4. **Spend less on overhead.** Evidence: descriptive ({of('overhead', 'Commits'):.0%} of commits moved no research, strategy, execution or risk result). Dashboard work that supports a decision is labelled by that decision, so this share is presentation and tooling only.
+5. **Read the stocks book again once it has more history on the fixed inputs.** Evidence: its Picks and Sizing moved between runs before the 2026-11-19 fix, and every stocks test here is far from t of 2.
 
 Revisit after 60 or more active days with at most one behaviour change per week.
 """

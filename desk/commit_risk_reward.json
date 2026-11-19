@@ -2,74 +2,39 @@
  "since": "2026-10-16",
  "effort": [
   {
-   "Area": "ui",
-   "Commits": 289,
-   "Commits %": 0.5677799607072691,
-   "Churn %": 0.37967841816502795,
+   "Purpose": "overhead",
+   "Commits": 277,
+   "Commits %": 0.537864077669903,
+   "Churn %": 0.2555162696724798,
    "Rule changes": 0
   },
   {
-   "Area": "analytics",
-   "Commits": 88,
-   "Commits %": 0.17288801571709234,
-   "Churn %": 0.12440925634200663,
+   "Purpose": "research",
+   "Commits": 84,
+   "Commits %": 0.16310679611650486,
+   "Churn %": 0.2667747766907699,
    "Rule changes": 0
   },
   {
-   "Area": "daemon",
-   "Commits": 40,
-   "Commits %": 0.07858546168958742,
-   "Churn %": 0.14449454071378132,
-   "Rule changes": 9
+   "Purpose": "risk",
+   "Commits": 80,
+   "Commits %": 0.1553398058252427,
+   "Churn %": 0.2427956188855806,
+   "Rule changes": 4
   },
   {
-   "Area": "signals",
-   "Commits": 34,
-   "Commits %": 0.06679764243614932,
-   "Churn %": 0.08764734640664892,
-   "Rule changes": 0
+   "Purpose": "strategy",
+   "Commits": 41,
+   "Commits %": 0.07961165048543689,
+   "Churn %": 0.08251807741386644,
+   "Rule changes": 3
   },
   {
-   "Area": "hl",
-   "Commits": 24,
-   "Commits %": 0.047151277013752456,
-   "Churn %": 0.12736976478896192,
-   "Rule changes": 0
-  },
-  {
-   "Area": "factor",
-   "Commits": 8,
-   "Commits %": 0.015717092337917484,
-   "Churn %": 0.059699060242272804,
-   "Rule changes": 0
-  },
-  {
-   "Area": "relay",
-   "Commits": 8,
-   "Commits %": 0.015717092337917484,
-   "Churn %": 0.013403769895159977,
-   "Rule changes": 0
-  },
-  {
-   "Area": "journal",
-   "Commits": 7,
-   "Commits %": 0.0137524557956778,
-   "Churn %": 0.008854364712912163,
-   "Rule changes": 1
-  },
-  {
-   "Area": "ib",
-   "Commits": 6,
-   "Commits %": 0.011787819253438114,
-   "Churn %": 0.01688033027323592,
-   "Rule changes": 0
-  },
-  {
-   "Area": "web",
-   "Commits": 5,
-   "Commits %": 0.009823182711198428,
-   "Churn %": 0.037563148459992396,
-   "Rule changes": 0
+   "Purpose": "execution",
+   "Commits": 33,
+   "Commits %": 0.06407766990291262,
+   "Churn %": 0.15239525733730327,
+   "Rule changes": 3
   }
  ],
  "risk": {
@@ -81,7 +46,7 @@
     "ratio": 0.25969578244381425,
     "max_drawdown": -0.01891329991047319,
     "benchmark_daily": -0.0039866751562375995,
-    "net": -0.22949048355692933,
+    "net": -0.22949048355692936,
     "gross": 0.39126683028811704,
     "fees_and_funding_daily": -0.000792275796669571
    },
@@ -92,7 +57,7 @@
     "ratio": 0.6059948962000404,
     "max_drawdown": -0.02423899373013738,
     "benchmark_daily": -0.01913133816734587,
-    "net": -0.8414517967039277,
+    "net": -0.8414517967039276,
     "gross": 0.841602784168601,
     "fees_and_funding_daily": -0.0004796405152083993
    },
@@ -112,8 +77,8 @@
    "before": {
     "days": 26,
     "mean_daily": -0.003953513769521722,
-    "vol_daily": 0.01910532019165033,
-    "ratio": -0.20693260986275128,
+    "vol_daily": 0.019105320191650333,
+    "ratio": -0.20693260986275125,
     "max_drawdown": -0.11789728101333619,
     "benchmark_daily": -0.0010353520738522598,
     "net": 0.6926663118215767,
@@ -123,8 +88,8 @@
    "after": {
     "days": 8,
     "mean_daily": -0.002367654082822259,
-    "vol_daily": 0.011221429659040221,
-    "ratio": -0.2109939780190866,
+    "vol_daily": 0.011221429659040223,
+    "ratio": -0.21099397801908656,
     "max_drawdown": -0.03648834348316632,
     "benchmark_daily": -0.0032884155906648255,
     "net": 0.48086710734338334,
@@ -151,18 +116,18 @@
     "alpha": 0.00024896843912637303,
     "beta_matched": 1.0939801507283926,
     "gamma": -0.0007576308916369236,
-    "t_gamma": -0.19003827429323808,
+    "t_gamma": -0.19003827429323822,
     "gamma_plain": 0.021858327962622146,
     "days_before": 356,
     "days_after": 8,
     "gamma_first_half": -0.011305664138809512,
-    "gamma_second_half": 0.0036589567994247114
+    "gamma_second_half": 0.00365895679942471
    },
    "placebo": {
     "splits": 351,
-    "actual_t": -0.19003827429323808,
+    "actual_t": -0.19003827429323822,
     "share_as_large": 0.9943019943019943,
-    "largest_other_t": 2.260608615557608
+    "largest_other_t": 2.2606086155577225
    },
    "verdict": [
     "not established",
@@ -174,17 +139,17 @@
     "split": "2026-11-11",
     "alpha": -9.818058052417017e-05,
     "beta_matched": 0.9544750250615428,
-    "gamma": -6.456799571446115e-06,
-    "t_gamma": -0.0038961930644797076,
-    "gamma_plain": 0.00029066004701873167,
+    "gamma": -6.456799571446549e-06,
+    "t_gamma": -0.00389619306447997,
+    "gamma_plain": 0.00029066004701873123,
     "days_before": 624,
     "days_after": 8,
-    "gamma_first_half": 0.00039974062153528785,
-    "gamma_second_half": -0.0004209345721759277
+    "gamma_first_half": 0.00039974062153528764,
+    "gamma_second_half": -0.00042093457217592944
    },
    "placebo": {
     "splits": 619,
-    "actual_t": -0.0038961930644797076,
+    "actual_t": -0.00389619306447997,
     "share_as_large": 1.0,
     "largest_other_t": 2.420968420842103
    },
@@ -196,94 +161,94 @@
  },
  "outcome": {
   "Crypto": {
-   "signals": 0.4414459622680071,
-   "journal": 0.0313319517242069,
-   "daemon": 0.5095827101314546,
-   "hl": 0.017639375876331506
+   "research": 0.0313319517242069,
+   "strategy": 0.15313651195388805,
+   "execution": 0.15708331198234415,
+   "risk": 0.658448224339561
   },
   "Stocks": {
-   "signals": 0.15443397400171704,
-   "journal": 0.08490526601268586,
-   "daemon": 0.7568062213202993,
-   "hl": 0.0038545386652977156
+   "research": 0.08490526601268589,
+   "strategy": 0.10846133634498024,
+   "execution": 0.03126514766288979,
+   "risk": 0.7753682499794441
   }
  },
  "attribution": {
   "Crypto": {
    "Picks": 0.03985881495814397,
-   "Sizing": 0.027810426948622537,
+   "Sizing": 0.02781042694862253,
    "Timing": 0.154953175914095,
    "Market exposure": 0.3667716946555956,
    "Fees & funding": -0.022439860281306602,
-   "Unattributed": 3.805881341299353e-17
+   "Unattributed": 3.917047997553334e-17
   },
   "Stocks": {
-   "Picks": -0.03164000326268785,
-   "Sizing": -0.009441729649420184,
-   "Timing": -0.008778185113495077,
+   "Picks": -0.03164000326268786,
+   "Sizing": -0.00944172964942019,
+   "Timing": -0.008778185113495072,
    "Market exposure": 0.017131733681114526,
    "Fees & funding": 0.001436396370608559,
-   "Unattributed": -0.00030000503120274476
+   "Unattributed": -0.0003000050312027381
   }
  },
  "confounding": [
   {
    "date": "2026-11-02",
-   "area": "daemon",
+   "purpose": "strategy",
    "what": "Ladder orders (market making starts)",
    "others_within": 1
   },
   {
    "date": "2026-11-04",
-   "area": "daemon",
+   "purpose": "execution",
    "what": "Kill switch and execution quality",
    "others_within": 1
   },
   {
    "date": "2026-11-11",
-   "area": "daemon",
+   "purpose": "risk",
    "what": "Margin guard on account-wide liquidation risk; wider HL stops; conviction trades; ladders in the daemon",
    "others_within": 3
   },
   {
    "date": "2026-11-12",
-   "area": "daemon",
+   "purpose": "execution",
    "what": "Take-profits and ladder quotes held in daemon memory; per-coin ladder settings",
    "others_within": 4
   },
   {
    "date": "2026-11-13",
-   "area": "daemon",
+   "purpose": "execution",
    "what": "Fade entry modes (stop=none)",
    "others_within": 5
   },
   {
    "date": "2026-11-14",
-   "area": "journal",
+   "purpose": "strategy",
    "what": "Auto-trading standing order: bank half of each crypto short in profit; regime-aware ladders",
    "others_within": 6
   },
   {
    "date": "2026-11-15",
-   "area": "daemon",
+   "purpose": "strategy",
    "what": "Auto flatten on strong BTC momentum; auto trading follows the Binance replay; neutral ladders",
    "others_within": 6
   },
   {
    "date": "2026-11-16",
-   "area": "daemon",
+   "purpose": "risk",
    "what": "Build-ups to the full risk budget; unprotect drops stops and guards on directional positions",
    "others_within": 5
   },
   {
    "date": "2026-11-17",
-   "area": "daemon",
+   "purpose": "risk",
    "what": "Funding out of the risk cap; thesis entries beyond the cap; stop-free sizing",
    "others_within": 4
   },
   {
    "date": "2026-11-18",
-   "area": "daemon",
+   "purpose": "risk",
    "what": "No exchange stop-loss on new trades; half-Kelly batch execution",
    "others_within": 3
   }

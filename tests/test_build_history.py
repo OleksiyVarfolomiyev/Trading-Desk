@@ -1,4 +1,4 @@
-"""The build history: commit labels, the committed csv and the dashboard tiles (desk/build_history.py)."""
+"""The build history: purpose labels, the committed csv and the dashboard tiles (desk/build_history.py)."""
 
 import sys
 import tempfile
@@ -10,104 +10,123 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from desk import build_history as bh  # noqa: E402
 
 
-def row(day, kind, area, files="desk/a.py", subject="s", added=1, removed=0, confidence="high"):
-    return {"hash": "h" + day + kind + area, "date_et": f"2026-11-{day} 10:00", "kind": kind, "area": area, "confidence": confidence,
-            "subject": subject, "files": files, "added": added, "removed": removed}
+def row(day, effect, purpose, files="desk/a.py", subject="s", added=1, removed=0, confidence="high", why=""):
+    return {"hash": "h" + day + effect + purpose, "date_et": f"2026-11-{day} 10:00", "effect": effect, "purpose": purpose,
+            "confidence": confidence, "why": why, "subject": subject, "files": files, "added": added, "removed": removed}
 
 
 class ClassifyTests(unittest.TestCase):
+    def test_a_settled_label_wins(self):
+        labels = {"x0": {"effect": "fix", "purpose": "risk", "confidence": "high", "why": "betas from the wrong dex"}}
+        self.assertEqual(bh.classify("x0", "Colour tweak", ["desk/dashboard_static/app.css"], labels),
+                         ("fix", "risk", "high", "betas from the wrong dex"))
+
     def test_a_labelled_subject_keeps_its_label(self):
-        self.assertEqual(bh.classify("x1", "fix(ui): stop a tile growing", ["desk/a.py"]), ("fix", "ui", "high"))
+        self.assertEqual(bh.classify("x1", "improve(execution): maker-first reductions", ["execution/hl_trade.py"], {})[:3],
+                         ("improve", "execution", "high"))
 
-    def test_fix_words_make_a_fix_and_dashboard_files_make_ui(self):
-        kind, area, _ = bh.classify("x2", "Fix chart crash on bar traces", ["desk/dashboard_static/app.js", "tests/test_x.py"])
-        self.assertEqual((kind, area), ("fix", "ui"))
+    def test_rules_read_purpose_not_tool(self):
+        self.assertEqual(bh.classify("x2", "Margin guard on account-wide liquidation risk", ["execution/hl_daemon.py"], {})[1], "risk")
+        self.assertEqual(bh.classify("x3", "Short candidates flag crowded funding", ["desk/screener.py"], {})[1], "strategy")
+        self.assertEqual(bh.classify("x4", "Pump and dump replay net of costs", ["research/pump.py"], {})[1], "research")
+        self.assertEqual(bh.classify("x5", "Batch execution with plan and confirm", ["desk/dashboard_static/app.js"], {})[1], "execution")
 
-    def test_daemon_files_and_words(self):
-        kind, area, _ = bh.classify("x3", "Take-profits held in daemon memory", ["execution/hl_daemon.py", "tests/test_hl_daemon.py"])
-        self.assertEqual((kind, area), ("feat", "daemon"))
+    def test_presentation_changes_are_overhead(self):
+        self.assertEqual(bh.classify("x6", "Softer candle colours", ["desk/dashboard_static/app.css"], {})[1], "overhead")
+        self.assertEqual(bh.classify("x7", "Update notes", ["README.md"], {})[1], "overhead")
 
-    def test_readme_only_is_docs_and_deploy_only_is_infra(self):
-        self.assertEqual(bh.classify("x4", "Update notes", ["README.md"])[0], "docs")
-        self.assertEqual(bh.classify("x5", "Add a systemd unit", ["deploy/systemd/a.service"])[0], "infra")
+    def test_effect_from_the_subject(self):
+        self.assertEqual(bh.classify("x8", "Fix chart crash on bar traces", ["desk/charts.py"], {})[0], "fix")
+        self.assertEqual(bh.classify("x9", "Add a stress tile", ["desk/stress.py"], {})[0], "new")
+        self.assertEqual(bh.classify("xa", "Stress tile reads the room left", ["desk/stress.py"], {})[0], "improve")
 
-    def test_research_only_changes_are_research(self):
-        self.assertEqual(bh.classify("x6", "Pump and dump replay", ["research/pump.py", "tests/test_pump.py"])[0], "research")
-
-    def test_a_dashboard_factor_model_is_not_research(self):
-        kind, _, _ = bh.classify("x7", "Dashboard options: factor models side by side", ["desk/dashboard_static/app.js", "desk/books.py"])
-        self.assertEqual(kind, "feat")
-
-    def test_manual_overrides_win_and_say_so(self):
-        bh.OVERRIDES["zz"] = ("infra", "relay")
-        try:
-            self.assertEqual(bh.classify("zz", "Fix everything", ["desk/a.py"]), ("infra", "relay", "manual"))
-        finally:
-            del bh.OVERRIDES["zz"]
-
-    def test_vague_subjects_are_low_confidence(self):
-        self.assertEqual(bh.classify("x8", "small fixes", ["desk/overview.py"])[2], "low")
-
-    def test_every_label_is_in_the_vocabulary(self):
-        for commit in bh.rows_from(bh.read_git()[-40:]):
-            self.assertIn(commit["kind"], bh.KINDS)
-            self.assertIn(commit["area"], bh.AREAS)
+    def test_rule_labels_are_never_high_confidence(self):
+        self.assertIn(bh.classify("xb", "Something else entirely", ["desk/a.py"], {})[2], ("low", "medium"))
 
 
 class FileTests(unittest.TestCase):
-    def test_committed_csv_has_a_row_for_each_label_and_valid_values(self):
+    def test_every_commit_up_to_the_relabel_is_settled_by_hand_with_a_reason(self):
+        labels = bh.load_labels()
+        self.assertGreaterEqual(len(labels), 515)
+        for entry in labels.values():
+            self.assertIn(entry["effect"], bh.EFFECTS)
+            self.assertIn(entry["purpose"], bh.PURPOSES)
+            self.assertIn(entry["confidence"], ("high", "medium", "low"))
+            self.assertTrue(entry["why"].strip())
+
+    def test_committed_csv_rows_are_valid_and_unique(self):
         rows = bh.read_csv()
-        self.assertGreater(len(rows), 400)
+        self.assertGreaterEqual(len(rows), 515)
         self.assertEqual(len({r["hash"] for r in rows}), len(rows))
         for r in rows:
-            self.assertIn(r["kind"], bh.KINDS)
-            self.assertIn(r["area"], bh.AREAS)
+            self.assertIn(r["effect"], bh.EFFECTS)
+            self.assertIn(r["purpose"], bh.PURPOSES)
             self.assertEqual(list(r)[:len(bh.COLUMNS)], bh.COLUMNS)
 
     def test_update_adds_only_commits_it_has_not_seen(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "h.csv"
             first = bh.update(path)
-            self.assertGreater(first, 400)
+            self.assertGreater(first, 500)
             self.assertEqual(bh.update(path), 0)
+
+    def test_an_old_kind_area_file_is_rebuilt(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "h.csv"
+            path.write_text("hash,date_et,kind,area,confidence,subject,files,added,removed\nabc,2026-11-01 10:00,feat,ui,high,s,,1,0\n")
+            self.assertGreater(bh.update(path), 500)
+            self.assertIn("purpose", bh.read_csv(path)[0])
 
 
 class SummaryTests(unittest.TestCase):
-    rows = [row("01", "feat", "ui", "desk/a.py;desk/b.py", added=10, removed=2), row("01", "fix", "ui", "desk/a.py", added=1, removed=1),
-            row("02", "fix", "ui", "desk/a.py", added=3), row("02", "research", "factor", "research/f.py", "Sector blocks not adopted"),
-            row("03", "feat", "daemon", "execution/d.py", added=5)]
+    rows = [row("01", "new", "risk", "desk/a.py;desk/b.py", added=10, removed=2), row("01", "fix", "risk", "desk/a.py", added=1, removed=1),
+            row("02", "fix", "overhead", "desk/a.py", added=3), row("02", "new", "research", "research/f.py", "Sector blocks", why="not adopted"),
+            row("03", "improve", "execution", "execution/d.py", added=5)]
 
-    def test_commits_per_day_by_kind(self):
+    def test_commits_per_day_by_purpose(self):
         days = bh.per_day(self.rows)
-        self.assertEqual(days["2026-11-01"], {"feat": 1, "fix": 1})
-        self.assertEqual(days["2026-11-02"], {"fix": 1, "research": 1})
+        self.assertEqual(days["2026-11-01"], {"risk": 2})
+        self.assertEqual(days["2026-11-02"], {"overhead": 1, "research": 1})
 
-    def test_area_table_has_fix_share_and_lines_changed(self):
-        ui = next(r for r in bh.by_area(self.rows) if r["Area"] == "ui")
-        self.assertEqual(ui["Commits"], 3)
-        self.assertAlmostEqual(ui["Fix share"], 2 / 3)
-        self.assertEqual(ui["Lines changed"], 12 + 2 + 3)
+    def test_effort_by_purpose_shares_and_fix_share(self):
+        table = {r["Purpose"]: r for r in bh.by_purpose(self.rows)}
+        self.assertAlmostEqual(sum(r["Commits %"] for r in table.values()), 1.0)
+        self.assertAlmostEqual(sum(r["Churn %"] for r in table.values()), 1.0)
+        self.assertAlmostEqual(table["risk"]["Fix share"], 0.5)
+        self.assertAlmostEqual(table["risk"]["Churn %"], 14 / 23)
 
-    def test_hotspots_count_fixes_and_skip_data_files(self):
+    def test_effect_split(self):
+        risk = next(r for r in bh.by_effect(self.rows) if r["Purpose"] == "risk")
+        self.assertEqual((risk["New"], risk["Improve"], risk["Fix"]), (1, 0, 1))
+
+    def test_hotspots_count_fixes_and_say_what_they_served(self):
         top = bh.hotspots(self.rows)[0]
-        self.assertEqual((top["File"], top["Commits"], top["Fixes"]), ("desk/a.py", 3, 2))
+        self.assertEqual((top["File"], top["Commits"], top["Fixes"], top["Mostly"]), ("desk/a.py", 3, 2, "risk"))
         self.assertEqual(top["Last fix"], "2026-11-02")
 
-    def test_research_outcomes_flag_the_ones_not_adopted(self):
+    def test_research_outcomes_read_the_reason_too(self):
         self.assertEqual(bh.research_outcomes(self.rows)[0]["Outcome"], "not adopted")
-
-    def test_a_research_commit_without_a_verdict_is_unstated(self):
-        outcomes = {r["Research"]: r["Outcome"] for r in bh.research_outcomes(self.rows + [row("04", "research", "signals", "research/x.py", "A study")])}
+        outcomes = {r["Research"]: r["Outcome"] for r in bh.research_outcomes(self.rows + [row("04", "new", "research", "research/x.py", "A study")])}
         self.assertEqual(outcomes["A study"], "unstated")
 
     def test_publish_writes_the_history_tiles_and_the_risk_reward_pair_without_pushing(self):
         with tempfile.TemporaryDirectory() as folder:
             csv_path = Path(folder) / "h.csv"
             bh.write_csv(self.rows, csv_path)
-            keys = bh.publish(csv_path, push=False, directory=Path(folder) / "tiles")
-            self.assertEqual([k for k in keys if k.startswith("build-history")].__len__(), 4)
-            self.assertEqual(keys[4:], ["build-risk-reward-table", "build-risk-reward-chart"])   # from desk/commit_risk_reward.json
-            self.assertEqual(len(list((Path(folder) / "tiles").glob("*.json"))), 6)
+            tiles = Path(folder) / "tiles"
+            tiles.mkdir()
+            (tiles / "build-history-areas.json").write_text("{}")   # the old tile goes
+            keys = bh.publish(csv_path, push=False, directory=tiles)
+            self.assertEqual(len([k for k in keys if k.startswith("build-history")]), 5)
+            self.assertEqual(keys[5:], ["build-risk-reward-table", "build-risk-reward-chart"])
+            self.assertFalse((tiles / "build-history-areas.json").exists())
+            self.assertEqual(len(list(tiles.glob("*.json"))), 7)
+            import json
+            effects = json.loads((tiles / "build-history-effects.json").read_text())["rows"]
+            risk = next(r for r in effects if r["Purpose"] == "risk")
+            self.assertIsNone(risk["Improve"])   # no risk improvements: blank, not 0
+            days = json.loads((tiles / "build-history-days.json").read_text())["data"]
+            self.assertNotIn(0, [v for trace in days for v in trace["y"]])
 
 
 if __name__ == "__main__":
