@@ -1,0 +1,32 @@
+{
+ "levels_atr": [
+  0.48,
+  0.79,
+  1.5
+ ],
+ "shares": [
+  0.333333,
+  0.333333,
+  0.333334
+ ],
+ "basis": "median, 75th and 90th percentile of 299 winning HL crypto trades' move in ATR units",
+ "halves": [
+  [
+   0.34,
+   0.72,
+   1.56
+  ],
+  [
+   0.62,
+   0.83,
+   1.29
+  ]
+ ],
+ "winners": 299,
+ "quantiles": [
+  0.5,
+  0.75,
+  0.9
+ ],
+ "as_of": "2026-11-19"
+}

@@ -1957,6 +1957,37 @@ def _place_entry_target(exchange: Any, plan: PlannedTrade, quantity: float, entr
         return _submit_protection_order(exchange, plan.coin, plan.side, quantity, target, "target")
 
 
+def _place_entry_target_ladder(exchange: Any, plan: PlannedTrade, quantity: float, entry_price: float,
+                               size_decimals: int) -> list[tuple[float, float]]:
+    """Scale out of a crypto entry with post-only reduce-only take-profit rungs in the profit direction (desk/tp_ladder.py:
+    levels fitted from the desk's winners, equal parts). Every rung is at least a tick into profit from the fill: no rung
+    reduces the position at a worse price than its entry. Returns the rungs placed as (price, quantity)."""
+    from desk import tp_ladder
+
+    direction = side_to_direction(plan.side)
+    atr = plan.stop_distance / STOP_ATR_MULTIPLE if plan.stop_distance else 0.0
+    distance = plan.price_stop_distance or plan.stop_distance
+    tick = _price_tick(entry_price, size_decimals)
+    planned = tp_ladder.rungs(entry_price, direction, atr, quantity, size_decimals, tick, MIN_ORDER_VALUE_USD,
+                              tp_ladder.load(), distance * REWARD_RISK_RATIO)
+    exit_side = "SHORT" if direction > 0 else "LONG"
+    placed = []
+    for price, size in planned:
+        price = _round_price(price, size_decimals)
+        if direction * (price - entry_price) <= 0:   # rounding must not bring a rung back to the entry or past it
+            price = _round_price(entry_price + direction * tick, size_decimals)
+        try:
+            _submit_protection_order(exchange, plan.coin, plan.side, size, price, "target")
+        except RuntimeError as exc:
+            if "post only" not in str(exc).lower():
+                raise
+            passive = post_only_price(plan.coin, plan.dex, exit_side, size_decimals)
+            price = max(price, passive) if direction > 0 else min(price, passive)
+            _submit_protection_order(exchange, plan.coin, plan.side, size, price, "target")
+        placed.append((price, size))
+    return placed
+
+
 def _cancel_if_open(exchange: Any, coin: str, wallet: str, oid: int) -> None:
     """Cancel an order only when the exchange reports it is still active."""
     status = _order_status(wallet, oid).get("order", {})
@@ -2190,6 +2221,12 @@ def _validate_address(address: str, label: str) -> None:
         raise ValueError(f"Provide a valid 42-character 0x-prefixed {label}.")
 
 
+def _ladder_text() -> str:
+    from desk import tp_ladder
+
+    return tp_ladder.describe(tp_ladder.load())
+
+
 def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_risk: float) -> None:
     """Display account limits, estimated existing risk, and proposed entry details."""
     print(f"Risk wallets: {len(snapshot.risk_wallets)}")
@@ -2229,7 +2266,7 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
         print(
             f"{plan.coin} {plan.side}: quantity={plan.quantity:g}, reference=${plan.entry_reference:,.6g}, "
             + share
-            + ((f"no stop or loss guard, take-profit ${plan.target_price:,.6g} held by the daemon "
+            + ((f"no stop or loss guard, {_ladder_text()} held by the daemon "
                 f"(sizing level ${plan.stop_price:,.6g} = {STOP_ATR_MULTIPLE:g} x ATR), " if plan.held_take_profit
                 else f"no stop, take-profit or loss guard: stocks are held passively (sizing level ${plan.stop_price:,.6g} "
                      f"= {STOP_ATR_MULTIPLE:g} x ATR), ")
@@ -3104,9 +3141,10 @@ def execute_plans(
                 # Crypto: a reduce-only take-profit, which the daemon adopts and holds in memory (on the book only as
                 # the price nears it); no stop and no loss guard.
                 try:
-                    _place_entry_target(exchange, plan, quantity, entry_price, market.size_decimals)
-                    print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; take-profit placed for the "
-                          "daemon to hold; no stop or loss guard (the daemon's margin guard still watches the account).")
+                    placed = _place_entry_target_ladder(exchange, plan, quantity, entry_price, market.size_decimals)
+                    print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; take-profit ladder placed for the "
+                          f"daemon to hold ({', '.join(f'{size:g} at ${price:,.6g}' for price, size in placed)}); no stop, "
+                          "no loss guard and no rung below the entry (the daemon's margin guard still watches the account).")
                 except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as exc:
                     failures.append(f"{plan.coin}: entry filled but take-profit placement failed ({exc})")
                 continue
