@@ -3655,6 +3655,34 @@ async function openAsset(symbol, targetCard = null) {
       if (isNum(entry)) series.createPriceLine({ price: entry, color: token("--muted"), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
         axisLabelVisible: true, title: "Entry" });
       instance.timeScale().fitContent();
+      // Keep it live: every 10 seconds the newest candles replace or extend the last ones (paused while the tab is hidden).
+      (async () => {
+        const live = () => !controller.signal.aborted && chart.isConnected && chart._candleSeries === series;
+        while (live()) {
+          await new Promise((resolve) => setTimeout(resolve, 10000));
+          if (!live()) return;
+          if (document.hidden) continue;
+          try {
+            const now = Date.now();
+            const reply = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+              body: JSON.stringify({ type: "candleSnapshot", req: { coin: hlName, interval, startTime: now - 3 * minutes * 60000, endTime: now } }) });
+            if (!reply.ok || !live()) continue;
+            const fresh = (await reply.json()).map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h),
+              low: Number(c.l), close: Number(c.c), volume: Number(c.v) }))
+              .filter((c) => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite)).sort((a, b) => a.time - b.time);
+            for (const c of fresh) {
+              if (c.time < data[data.length - 1].time) continue;
+              series.update(c);
+              const last = bars[bars.length - 1];
+              if (Number.isFinite(c.volume)) {
+                if (last && last.time === c.time) bars[bars.length - 1] = c; else bars.push(c);
+                volume.update({ time: c.time, value: c.volume, color: withAlpha(c.close >= c.open ? token("--good-text") : token("--bad-text"), 0.4) });
+              }
+              if (c.time === data[data.length - 1].time) data[data.length - 1] = c; else data.push(c);
+            }
+          } catch (error) { /* a missed update is made up by the next one */ }
+        }
+      })();
     } catch (error) {
       if (!controller.signal.aborted) chart.textContent = "Candles could not be loaded.";
     }
