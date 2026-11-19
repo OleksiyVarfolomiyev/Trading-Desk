@@ -544,6 +544,14 @@ def main(argv: list[str] | None = None) -> int:
         print(pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"), "daily sync")
         for line in daily_sync():
             print("  " + line)
+        try:   # the build history: label new commits, refresh the notes and the dashboard's Build history tiles
+            from desk import build_history
+
+            added = build_history.update()
+            build_history.write_notes()
+            print(f"  build history: {added} new commits labelled; tiles {', '.join(build_history.publish())}")
+        except Exception as exc:
+            print(f"  build history not refreshed ({type(exc).__name__}: {exc})")
     if args.seed_history:
         print("Saved daily points on the relay:", seed_history())
     if args.push_wallets:
