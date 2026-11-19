@@ -9,17 +9,26 @@ Risk of a portfolio w: ``x'Fx + sum(w_i^2 s_i^2)`` with ``x = X'w``, F the facto
 correction, eigenvalues floored) and s_i^2 the specific variance (EWMA of squared residuals, shrunk toward the
 median of the coin's size bucket).
 
+Sector blocks (optional, ``sectors`` from desk/crypto_sectors.csv): a 0/1 column per sector with at least
+MIN_SECTOR names that day, with the usual Barra constraint that the cap-weighted sum of the sector factor returns is
+zero, so they sit beside the market column without being collinear with it.
+
 Limits, stated where the numbers are used: the cached candles carry no volume, and market cap history exists for
-35 coins only, so size and the regression weights use today's cap (a static ranking; stable but not point-in-time).
-There is no sector map for the 100 coins, so there are no sector blocks. See research/factor_risk_study.py for the
-validation (a factor is shown only if t >= 2 in both halves).
+35 coins only, so size and the regression weights use today's cap (a static ranking; stable but not point-in-time),
+unless a point-in-time size frame (for example trailing dollar volume) is given. See research/factor_risk_study.py
+for the validation (a factor is shown only if t >= 2 in both halves).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
+SECTOR_FILE = Path(__file__).resolve().parent / "crypto_sectors.csv"
+SECTOR_PREFIX = "Sector: "
+MIN_SECTOR = 4
 STYLES = ("Momentum", "Reversal", "Volatility", "Beta", "Size")
 MIN_NAMES = 20
 
@@ -53,6 +62,23 @@ def raw_exposures(returns: pd.DataFrame, caps: pd.Series | pd.DataFrame, market:
     return {"Momentum": momentum, "Reversal": reversal, "Volatility": volatility, "Beta": beta, "Size": size}
 
 
+def load_sectors(path: Path = SECTOR_FILE) -> pd.Series:
+    """Coin -> sector, from the reviewable file desk/crypto_sectors.csv."""
+    table = pd.read_csv(path)
+    return table.set_index("coin")["sector"]
+
+
+def sector_columns(sectors: pd.Series) -> list[str]:
+    return [SECTOR_PREFIX + name for name in sorted(sectors.dropna().unique())]
+
+
+def sector_dummies(names: list[str], sectors: pd.Series, columns: list[str]) -> pd.DataFrame:
+    """0/1 sector columns for ``names``; a sector with fewer than MIN_SECTOR of them today is all zeros."""
+    mapped = sectors.reindex(names)
+    out = pd.DataFrame({c: (mapped == c.removeprefix(SECTOR_PREFIX)).astype(float) for c in columns}, index=names)
+    return out.loc[:, out.sum() >= MIN_SECTOR].reindex(columns=columns, fill_value=0.0)
+
+
 def standardize(values: pd.Series, weights: pd.Series) -> pd.Series:
     """Cap-weighted mean 0 and equal-weighted sd 1 across the names that have a value; missing become 0."""
     ok = values.notna() & weights.notna()
@@ -74,8 +100,33 @@ def design(exposures: dict[str, pd.DataFrame], date, weights: pd.Series, names: 
     return pd.DataFrame(frame)
 
 
+def constrained_wls(x: pd.DataFrame, y: np.ndarray, root: np.ndarray, caps: np.ndarray, sector_cols: list[str]) -> tuple[np.ndarray, int, int] | None:
+    """WLS with the cap-weighted sum of the present sector slopes forced to zero. Returns (slopes, rank, free columns)."""
+    present = [c for c in sector_cols if x[c].sum() > 0]
+    values = x.to_numpy(dtype=float)
+    if len(present) < 2:
+        keep = [c for c in x.columns if c not in sector_cols]
+        design_free = x[keep].to_numpy(dtype=float)
+        coefficients, _, rank, _ = np.linalg.lstsq(design_free * root[:, None], y * root, rcond=None)
+        full = pd.Series(0.0, index=x.columns)
+        full[keep] = coefficients
+        return full.to_numpy(), rank, design_free.shape[1]
+    sector_weight = {c: float((x[c].to_numpy() * caps).sum()) for c in present}
+    last = present[-1]
+    free = x.drop(columns=[last]).copy()
+    for c in present[:-1]:
+        free[c] = x[c] - sector_weight[c] / sector_weight[last] * x[last]
+    free = free.drop(columns=[c for c in sector_cols if c not in present])
+    coefficients, _, rank, _ = np.linalg.lstsq(free.to_numpy(dtype=float) * root[:, None], y * root, rcond=None)
+    slopes = pd.Series(coefficients, index=free.columns)
+    full = pd.Series(0.0, index=x.columns)
+    full[slopes.index] = slopes
+    full[last] = -sum(sector_weight[c] * slopes[c] for c in present[:-1]) / sector_weight[last]
+    return full.to_numpy(), rank, free.shape[1]
+
+
 def estimate(returns: pd.DataFrame, caps: pd.Series | pd.DataFrame, market: pd.Series, styles: tuple[str, ...] = STYLES,
-             min_names: int = MIN_NAMES) -> dict:
+             min_names: int = MIN_NAMES, sectors: pd.Series | None = None) -> dict:
     """Daily cross-sectional WLS. Returns factor returns, specific returns and the per-date exposure matrices.
 
     ``caps`` is a Series (today's cap, a static ranking) or a date x coin frame (point-in-time size, known the day before,
@@ -89,6 +140,7 @@ def estimate(returns: pd.DataFrame, caps: pd.Series | pd.DataFrame, market: pd.S
     exposures = raw_exposures(returns, caps_by_date if point_in_time else caps, market)
     sqrt_cap = np.sqrt(caps)
     factors, specific, designs = {}, {}, {}
+    sector_cols = sector_columns(sectors) if sectors is not None else []
     for date in clean.index:
         y = clean.loc[date]
         usable = [c for c in clean.columns if pd.notna(y[c]) and all(pd.notna(exposures[s].loc[date, c]) for s in styles if s != "Size")]
@@ -99,8 +151,14 @@ def estimate(returns: pd.DataFrame, caps: pd.Series | pd.DataFrame, market: pd.S
         day_caps = caps_by_date.loc[date] if point_in_time else sqrt_cap**2
         x = design(exposures, date, day_caps, usable, styles)
         root = np.sqrt(np.sqrt(day_caps[usable].to_numpy(dtype=float)))
-        coefficients, _, rank, _ = np.linalg.lstsq(x.to_numpy() * root[:, None], y[usable].to_numpy(dtype=float) * root, rcond=None)
-        if rank < x.shape[1]:
+        if sector_cols:
+            x = pd.concat([x[["Market"]], sector_dummies(usable, sectors, sector_cols), x[list(styles)]], axis=1)
+            solved = constrained_wls(x, y[usable].to_numpy(dtype=float), root, day_caps[usable].to_numpy(dtype=float), sector_cols)
+            coefficients, rank, needed = solved
+        else:
+            coefficients, _, rank, _ = np.linalg.lstsq(x.to_numpy() * root[:, None], y[usable].to_numpy(dtype=float) * root, rcond=None)
+            needed = x.shape[1]
+        if rank < needed:
             continue
         factors[date] = pd.Series(coefficients, index=x.columns)
         specific[date] = y[usable] - x.to_numpy() @ coefficients
@@ -163,7 +221,7 @@ def portfolio_risk(weights: pd.Series, exposure: pd.DataFrame, covariance: pd.Da
 
 def model_at(fit: dict, position: int, halflife_cov: float = 90, styles: tuple[str, ...] | None = None) -> tuple[pd.DataFrame, pd.Series] | None:
     """Covariance and specific variance using factor and specific returns up to and including row ``position``."""
-    factors = fit["factors"].iloc[: position + 1]
+    factors = fit["factors"].iloc[: position + 1].fillna(0.0)   # a sector too thin on a day has no slope that day
     if styles is not None:
         factors = factors[["Market", *styles]]
     if len(factors) < 120:

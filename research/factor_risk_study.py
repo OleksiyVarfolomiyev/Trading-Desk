@@ -93,17 +93,28 @@ def random_portfolios(names: list[str], rng: np.random.Generator, long_short: in
     return out
 
 
-def forecast_test(fit: dict, portfolios: list[pd.Series], keep: list[str]) -> pd.DataFrame:
-    """For each origin, predicted daily vol (full model, market-only, trailing realised) vs the next 20 days."""
+def forecast_test(fit: dict, portfolios: list[pd.Series], keep: list[str], sector_fit: dict | None = None) -> pd.DataFrame:
+    """For each origin, predicted daily vol (full model, market-only, trailing realised) vs the next 20 days.
+
+    With ``sector_fit`` (the same model with sector blocks) two more rows are scored: the full model with sectors
+    and market plus sectors only.
+    """
     dates = fit["factors"].index
+    if sector_fit is not None:
+        dates = dates.intersection(sector_fit["factors"].index)
     returns = fit["returns"]
     records = []
     for pos in range(BURN, len(dates) - HORIZON, STEP):
         origin = dates[pos]
-        models = {"Full model": (fit["factors"].columns[1:].tolist(), fr.model_at(fit, pos)),
-                  "Market only": ([], fr.model_at(fit, pos, styles=()))}
+        models = {"Full model": (fit["factors"].columns[1:].tolist(), fr.model_at(fit, fit["factors"].index.get_loc(origin))),
+                  "Market only": ([], fr.model_at(fit, fit["factors"].index.get_loc(origin), styles=()))}
+        if sector_fit is not None:
+            at = sector_fit["factors"].index.get_loc(origin)
+            sector_names = [c for c in sector_fit["factors"].columns if c.startswith(fr.SECTOR_PREFIX)]
+            models["Full model + sectors"] = (sector_fit["factors"].columns[1:].tolist(), fr.model_at(sector_fit, at))
+            models["Market + sectors"] = (sector_names, fr.model_at(sector_fit, at, styles=tuple(sector_names)))
         nxt = dates[pos + 1]
-        exposure = fit["designs"][nxt]
+        exposure = (sector_fit or fit)["designs"][nxt]
         future = returns.loc[dates[pos + 1: pos + 1 + HORIZON]]
         history = returns.loc[:origin].tail(60)
         for pid, w in enumerate(portfolios):
@@ -170,7 +181,12 @@ def main() -> int:
     table.to_csv(OUT / "factor_risk_factors.csv")
     names = sorted(set(fit["caps"].index) & set(returns.columns))
     rng = np.random.default_rng(7)
-    records = forecast_test(fit, random_portfolios(names, rng, 60, 30), names)
+    sector_fit = fr.estimate(returns, caps, market, sectors=fr.load_sectors())
+    sector_table = factor_table(sector_fit["factors"])
+    print("with sector blocks:")
+    print(sector_table.round(4).to_string())
+    sector_table.to_csv(OUT / "factor_risk_factors_sectors.csv")
+    records = forecast_test(fit, random_portfolios(names, rng, 60, 30), names, sector_fit)
     summary = forecast_summary(records)
     print(summary.round(3).to_string())
     summary.to_csv(OUT / "factor_risk_forecast.csv")

@@ -96,5 +96,46 @@ class FactorRiskTests(unittest.TestCase):
         self.assertLess(out["a"], own_a)   # pulled toward its bucket's median
 
 
+class SectorBlockTests(unittest.TestCase):
+    def sectors(self, names=40):
+        return pd.Series([("A", "B", "C")[i % 3] for i in range(names)], index=[f"C{i}" for i in range(names)])
+
+    def test_sector_slopes_are_cap_weighted_to_zero_each_day(self):
+        returns, caps, market = simulated(days=200)
+        sectors = self.sectors()
+        fit = fr.estimate(returns, caps, market, sectors=sectors)
+        for date in fit["factors"].index[::20]:
+            design = fit["designs"][date]
+            weight = {c: (design[c] * caps.reindex(design.index)).sum() for c in design if c.startswith(fr.SECTOR_PREFIX)}
+            slopes = fit["factors"].loc[date]
+            self.assertAlmostEqual(sum(weight[c] * slopes[c] for c in weight) / sum(weight.values()), 0.0, places=9)
+
+    def test_sector_model_recovers_a_planted_sector_move(self):
+        returns, caps, market = simulated(days=200)
+        sectors = self.sectors()
+        move = pd.Series(np.random.default_rng(5).normal(0, 0.05, len(returns)), index=returns.index)
+        returns = returns.copy()
+        for name in sectors.index[sectors == "A"]:
+            returns[name] += move
+        fit = fr.estimate(returns, caps, market, styles=(), sectors=sectors)   # styles would pick up the planted move's momentum
+        gap = fit["factors"][fr.SECTOR_PREFIX + "A"] - fit["factors"][fr.SECTOR_PREFIX + "B"]   # the market column absorbs part of A's own move
+        self.assertGreater(gap.corr(move), 0.95)
+
+    def test_thin_sector_has_no_exposure_and_the_fit_still_works(self):
+        returns, caps, market = simulated(days=120)
+        sectors = self.sectors()
+        sectors.iloc[:2] = "Tiny"   # two names: below MIN_SECTOR
+        fit = fr.estimate(returns, caps, market, sectors=sectors)
+        design = fit["designs"][fit["factors"].index[-1]]
+        self.assertEqual(float(design[fr.SECTOR_PREFIX + "Tiny"].sum()), 0.0)
+        self.assertFalse(fit["factors"].drop(columns=fr.SECTOR_PREFIX + "Tiny").isna().any().any())
+
+    def test_sector_file_covers_the_panel_coins_with_known_sectors(self):
+        sectors = fr.load_sectors()
+        self.assertIn("BTC", sectors.index)
+        self.assertTrue(sectors.notna().all())
+        self.assertGreaterEqual(sectors.value_counts().min(), fr.MIN_SECTOR)
+
+
 if __name__ == "__main__":
     unittest.main()
