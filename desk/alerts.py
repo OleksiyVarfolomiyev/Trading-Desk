@@ -12,7 +12,6 @@ import re
 import time
 from pathlib import Path
 
-import pandas as pd
 from desk.numbers import clock
 
 ALERTS_FILE = Path.home() / ".trading-desk" / "daemon_alerts.json"

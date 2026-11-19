@@ -36,7 +36,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from desk import emphasis
+from desk import degraded, emphasis
 from desk.privacy import mask
 from desk.day_change import DayChange, desk_day_change, position_changes, position_funding
 from desk.overview import day_change_total, funding_total, with_position_returns
@@ -65,7 +65,8 @@ def _stress_profile(overview) -> dict:
     try:
         exposures = [row for snapshot in overview.snapshots for row in stress.position_exposures(snapshot)]
         return stress.profile(exposures, overview.desk_equity)
-    except Exception:
+    except Exception as exc:
+        degraded.report("Stress", exc)
         return {}
 
 
@@ -114,8 +115,8 @@ def intraday_series(desk) -> dict:
                  float(row.xs("accountValue", level=1).sum())]
                 for stamp, row in joined.iterrows()
             ]
-    except Exception:
-        pass
+    except Exception as exc:
+        degraded.report("Matched PnL", exc)
     try:
         from desk.hl.trade_analytics import post_info
 
@@ -125,8 +126,8 @@ def intraday_series(desk) -> dict:
             if dex:
                 request["dex"] = dex
             out[name] = [[int(row["t"]), float(row["c"])] for row in (post_info(request) or [])]
-    except Exception:
-        pass
+    except Exception as exc:
+        degraded.report("Benchmarks", exc)
     return out
 
 
@@ -162,8 +163,8 @@ def position_moves(overview) -> dict:
                         moves[str(days)] = float(position.mark_price) / float(before.iloc[-1]) - 1
                 if moves:
                     out[key] = moves
-    except Exception:
-        return out
+    except Exception as exc:
+        degraded.report("7d and 30d moves", exc)
     return out
 
 
@@ -610,7 +611,8 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         from desk.day_change import position_changes
 
         wallet_moves = position_changes(overview._wallets())
-    except Exception:
+    except Exception as exc:
+        degraded.report("Wallet moves", exc)
         wallet_moves = {}
     holdings = overview.wallet_holdings_frame(moves=wallet_moves)
     if len(holdings):  # from WALLET_MIN_SHARE of the desk up: smaller holdings are dust for decisions
@@ -730,6 +732,10 @@ class Dashboard:
                 self.last_seen[account.name] = now
             rows.append({"name": account.name, "venue": account.venue, "ok": problem is None,
                          "problem": problem, "last_seen": self.last_seen.get(account.name)})
+        names = {row["name"] for row in rows}
+        for row in degraded.rows():   # data that could not be built: a chip each, like an unreadable account
+            if row["name"] not in names:
+                rows.append(row)
         return rows
 
     def refresh(self) -> None:
@@ -739,22 +745,26 @@ class Dashboard:
         with self.lock:
             self.status.update(refreshing=True, last_attempt=pd.Timestamp.now(tz="UTC").isoformat())
             self._publish()
+        degraded.clear()
         try:
             self.desk.fetch_data(refresh_history=history, record_ib_history=record)
             try:
                 day = desk_day_change(self.desk.overview.snapshots)
-            except Exception:  # the tile then shows no 24-hour change; everything else still updates
+            except Exception as exc:  # the tile then shows no 24-hour change; everything else still updates
                 traceback.print_exc()
+                degraded.report("24h change", exc)
                 day = None
             try:
                 moves = position_changes(self.desk.overview.snapshots)
-            except Exception:  # the 24h column is then blank
+            except Exception as exc:  # the 24h column is then blank
                 traceback.print_exc()
+                degraded.report("24h moves", exc)
                 moves = None
             try:
                 funding = position_funding(self.desk.overview.snapshots)
-            except Exception:  # the funding column is then blank
+            except Exception as exc:  # the funding column is then blank
                 traceback.print_exc()
+                degraded.report("Funding", exc)
                 funding = None
             payload = build_payload(self.desk, day, moves, funding)
             payload["accounts_status"] = self.account_status(payload["problems"])

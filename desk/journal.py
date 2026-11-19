@@ -24,7 +24,6 @@ import pandas as pd
 from desk import market_making
 
 import os
-from desk.numbers import usd as _usd
 
 JOURNAL_FILE = Path(__file__).resolve().parents[1] / "data" / "trade_journal.json"
 

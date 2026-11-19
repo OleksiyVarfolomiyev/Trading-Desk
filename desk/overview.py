@@ -14,9 +14,9 @@ import pandas as pd
 
 from desk.accounts import Account, accounts_for, ib_data_dir, load_accounts
 from desk.privacy import account_file
-from desk import emphasis
+from desk import degraded, emphasis
 from desk.hl.account_analytics import display_interactive_table
-from desk.notebook_highlights import HighlightsState, money, percent, signed_money
+from desk.notebook_highlights import HighlightsState, money, percent
 from desk.notebook_highlights import dashboard_rows, show as show_highlights
 from desk.risk import (
     MAX_TOTAL_RISK_PCT,
@@ -493,13 +493,15 @@ class DeskOverview:
             from desk.day_change import position_changes
 
             moves = position_changes(self.snapshots)
-        except Exception:
+        except Exception as exc:
+            degraded.report("24h moves", exc)
             moves = {}
         try:
             from desk.day_change import position_funding
 
             funding = position_funding(self.snapshots)
-        except Exception:
+        except Exception as exc:
+            degraded.report("Funding", exc)
             funding = {}
         frame = with_position_returns(frame, moves, funding)
         if kind is not None:
@@ -826,7 +828,8 @@ class DeskOverview:
                 from desk.day_change import position_changes
 
                 moves = position_changes(self.snapshots)
-            except Exception:
+            except Exception as exc:
+                degraded.report("24h moves", exc)
                 moves = {}
             def day_move(item):
                 label, position = item
@@ -862,7 +865,8 @@ class DeskOverview:
                     from desk.day_change import position_funding
 
                     funding = position_funding(self.snapshots)
-                except Exception:  # no funding row then; the rest of the highlights stand
+                except Exception as exc:  # no funding row then; the rest of the highlights stand
+                    degraded.report("Funding", exc)
                     funding = {}
             row = funding_watch.attention_row([(f"{p.symbol} {p.side.lower()}", funding[label, p.symbol],
                                                 p.notional_usd) for label, p in positions if (label, p.symbol) in funding])

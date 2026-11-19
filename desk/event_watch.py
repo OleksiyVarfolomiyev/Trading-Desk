@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]

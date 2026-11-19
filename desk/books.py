@@ -23,12 +23,12 @@ from __future__ import annotations
 from desk.overview import trading_equity as _trading_equity
 
 import math
-from typing import Iterable
 
 import numpy as np
 import pandas as pd
 from IPython.display import display
 
+from desk import degraded
 from desk.charts import show as show_chart
 from desk.overview import SYMBOLIC_HOLDINGS
 from desk.numbers import pct as _pct, since as _since, usd as _usd
@@ -221,7 +221,8 @@ def ib_statement_fills(folder) -> tuple[pd.DataFrame, pd.Timestamp | None]:
     for path in sorted(Path(folder).glob("ib_statement_*.csv")) + sorted(Path(folder).glob("transactions.csv")):
         try:
             sections = ib_statement.read_sections(path)
-        except Exception:
+        except Exception as exc:
+            degraded.report("IB statements", f"{path.name}: {type(exc).__name__}: {exc}")
             continue
         end = re.search(r"_(\d{8})\.csv$", path.name)
         for row in sections.get("Trades", []):
@@ -443,7 +444,8 @@ class Book:
             ib_refs = {}
             try:
                 ib_refs = self.desk._ib_closes([p.ref for p in snapshot.positions if p.ref]) or {}
-            except Exception:
+            except Exception as exc:
+                degraded.report("IB closes", exc)
                 ib_refs = {}
 
             def read(symbol):

@@ -27,7 +27,7 @@ from desk.privacy import account_file
 from desk.hl.account_analytics import display_interactive_table, fetch_btc_candles, update_portfolio_history
 from desk.hl.trade_analytics import bootstrap_btc_regression, bootstrap_var, time_weighted_index
 from desk.live_risk import MIN_RATIO_DAYS, book_line as live_risk_line
-from desk.notebook_highlights import HighlightsState, percent, signed_money
+from desk.notebook_highlights import HighlightsState, percent
 from desk.notebook_highlights import dashboard_rows, show as show_highlights
 from desk.overview import DeskOverview
 from desk import emphasis

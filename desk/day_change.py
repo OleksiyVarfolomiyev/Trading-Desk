@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from desk import degraded
+
 DAY = pd.Timedelta(hours=24)
 
 
@@ -101,7 +103,8 @@ def desk_day_change(snapshots, now: pd.Timestamp | None = None) -> DayChange | N
         try:
             changes = fetch_changes_24h({key for snapshot in wallets
                                          for key in token_keys(snapshot.positions).values()})
-        except Exception:  # every wallet ends up in ``missing`` below
+        except Exception as exc:  # every wallet ends up in ``missing`` below
+            degraded.report("Wallet moves", exc)
             changes = {}
     for snapshot in snapshots:
         try:
@@ -167,7 +170,8 @@ def position_changes(snapshots, now: pd.Timestamp | None = None) -> dict[tuple[s
 
         try:
             contexts = fetch_market_contexts(sorted({position.ref for _, position in by_venue["hl"]}))
-        except Exception:
+        except Exception as exc:
+            degraded.report("Funding", exc)
             contexts = {}
         for label, position in by_venue["hl"]:
             context = contexts.get((position.ref or "HL", position.symbol), {})
@@ -187,7 +191,8 @@ def position_changes(snapshots, now: pd.Timestamp | None = None) -> dict[tuple[s
                 try:
                     then, latest, _ = yahoo.price_change(position.symbol, now - DAY)
                     moves[position.symbol] = latest / then - 1 if then > 0 else float("nan")
-                except Exception:
+                except Exception as exc:
+                    degraded.report("Stock moves", f"{position.symbol}: {type(exc).__name__}: {exc}")
                     moves[position.symbol] = float("nan")
             if math.isfinite(moves[position.symbol]):
                 changes[label, position.symbol] = moves[position.symbol]
@@ -198,7 +203,8 @@ def position_changes(snapshots, now: pd.Timestamp | None = None) -> dict[tuple[s
         keys = token_keys([position for _, position in by_venue["onchain"]])
         try:
             moves = fetch_changes_24h(set(keys.values()))
-        except Exception:
+        except Exception as exc:
+            degraded.report("Wallet moves", exc)
             moves = {}
         for label, position in by_venue["onchain"]:
             move = moves.get(keys.get(position.ref, ""))

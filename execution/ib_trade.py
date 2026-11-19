@@ -33,7 +33,6 @@ from desk.risk import (  # noqa: E402
     REWARD_RISK_RATIO,
     STOP_ATR_MULTIPLE,
     DeskBook,
-    estimated_commission_usd,
     other_venue_book,
     per_position_budget,
     print_book,
