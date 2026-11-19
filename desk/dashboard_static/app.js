@@ -888,10 +888,6 @@ function renderTable(id, spec) {
         ]),
       ]);
     }
-    if (/^corr(?:elation)?\s+(?:to\s+)?btc(?:\s+30d)?$/i.test(column.key) && isNum(value)) {
-      const strength = Math.min(1, Math.abs(value)) * 100;
-      return el("td", { class: classes + withDigits + " correlation-cell", style: `--correlation-strength:${strength}%`, text });
-    }
     if (isAssetColumn(column.key) && text && !/^(?:net\/)?total$/i.test(text) && !ZERO_TEXT.test(text)) {
       const market = (row.__raw && row.__raw[column.key]) || value;
       return el("td", { class: classes }, [assetButton(market, marketName(text),
