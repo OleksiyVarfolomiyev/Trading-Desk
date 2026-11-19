@@ -440,7 +440,7 @@ bbe18e0,improve,overhead,high,menu grouping
 9b1696c,fix,overhead,high,syntax error
 4b11009,improve,overhead,high,monochrome theme
 da4477f,improve,overhead,high,time range chips
-cd4006b,new,strategy,low,candle charts in asset tiles to read entries and exits
+cd4006b,new,overhead,high,candle charts in asset tiles (user: candle charts are overhead)
 aa46f62,improve,overhead,high,symbols open asset tiles
 7f77ec9,fix,overhead,high,asset charts visible
 0506d9e,improve,overhead,high,symbols open charts
@@ -497,11 +497,11 @@ a11bc59,new,research,high,order-book wall and spoof signal logger with forward t
 078b9c9,fix,research,high,forward test with one snapshot per coin
 05186a0,improve,research,medium,logger runs as a service so the forward test accrues data
 c7f42ed,improve,research,high,HL history backfill and factor model revalidation (not adopted)
-0f54cd1,improve,strategy,low,volume under asset candle charts
+0f54cd1,improve,overhead,high,volume under asset candle charts (user: candle charts are overhead)
 69ccb99,new,research,high,sector blocks and stock risk model (not adopted)
 873dc1b,fix,overhead,high,resized candle tile growing
 dd62c4b,improve,overhead,high,candle times in ET
-a3942df,improve,strategy,low,live candle charts
+a3942df,improve,overhead,high,live candle charts (user: candle charts are overhead)
 4c5008b,improve,risk,medium,D/W/M scales on open positions
 fa7f4c5,improve,overhead,high,correlation dot dropped
 8084108,improve,risk,medium,position time controls follow the chart and fit each book

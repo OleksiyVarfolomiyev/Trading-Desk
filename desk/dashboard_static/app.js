@@ -86,6 +86,7 @@ const FORMATS = {
   // Basis points, coloured by sign (markouts).
   sbps: { text: (v) => (isNum(v) ? v.toFixed(1) : ""), num: true, signed: true },
   int: { text: (v) => (isNum(v) ? Math.round(v).toLocaleString("en-US") : ""), num: true },
+  regime: { text: (v) => (v === null || v === undefined ? "" : String(v)), num: false },
   text: { text: (v) => (v === null || v === undefined ? "" : String(v)), num: false },
   // LONG green, SHORT red.
   side: { text: (v) => (v === null || v === undefined ? "" : String(v)), num: false, side: true },
@@ -932,6 +933,11 @@ function renderTable(id, spec) {
           el("span", { class: "weight-fill" + kind, style: `width:${share}%` }),
         ]),
       ]);
+    }
+    if (column.fmt === "regime" && value) {   // "↑↓": BTC's arrow in the crypto colour, SPY's in the stocks colour
+      const [crypto, stocks] = [...String(value)];
+      return el("td", { class: classes + " regime-cell" }, [el("span", { style: "color:var(--kind-crypto)", text: crypto }),
+        el("span", { style: "color:var(--kind-stocks)", text: stocks })]);
     }
     if (isAssetColumn(column.key) && text && !/^(?:net\/)?total$/i.test(text) && !ZERO_TEXT.test(text)) {
       const market = (row.__raw && row.__raw[column.key]) || value;
@@ -1851,7 +1857,7 @@ function historicalBenchmarkTable(lines, comparison, days, now) {
   const percent = (value, count) => count ? value / count : null;
   return {
     columns: [{ key: "Comparison", fmt: "text" }, { key: "Beat", fmt: "pct" }, { key: "Lagged", fmt: "pct" },
-      { key: "Beat on down days", fmt: "pct" }, { key: "Book vs bench (%)", fmt: "spct" },
+      { key: "Beat on down days", fmt: "pct" }, { key: "Book vs bench", fmt: "spct" },
       { key: "$10k desk/book", fmt: "wholeusd" }, { key: "$10k index", fmt: "wholeusd" }],
     rows: specs.flatMap(({ name: bookName, book, benchmark: benchmarkName, bench, sessions }) => {
       const matched = comparable ? sessions.filter(([from, to]) => from >= start && to <= end) : [];
@@ -1863,7 +1869,7 @@ function historicalBenchmarkTable(lines, comparison, days, now) {
         const bookEnd = comparable ? 10000 * levels.get(end) / levels.get(start) : null;
         return { Comparison: `${name} vs ${benchmarkName}`, Beat: percent(beat, n), Lagged: percent(lag, n),
           "Beat on down days": percent(down.beat, down.n),
-          "Book vs bench (%)": benchmarkEnd > 0 ? bookEnd / benchmarkEnd - 1 : null,
+          "Book vs bench": benchmarkEnd > 0 ? bookEnd / benchmarkEnd - 1 : null,
           "$10k desk/book": bookEnd, "$10k index": benchmarkEnd,
           __hover: comparable
             ? `${date(start)} to ${date(end)}` + (n ? ` · ${beat}/${n} beat · ${tie} tied · ${down.beat}/${down.n} on down days` : "")
@@ -1965,10 +1971,11 @@ function reviewBenchmarkDrivers() {
 
 function regimeBeatTable(data) {
   return {
-    columns: [{ key: "Market", fmt: "text" }, { key: "Sessions", fmt: "int" },
+    columns: [{ key: "Market", fmt: "regime" }, { key: "Sessions", fmt: "pct" },
       ...REGIME_COMPARISONS.map(([, key]) => ({ key, fmt: "pct" }))],
     rows: MARKET_REGIMES.map(([key, symbol, label]) => {
       const period = data[key], n = period?.sessions || 0;
+      const all = MARKET_REGIMES.reduce((sum, [other]) => sum + (data[other]?.sessions || 0), 0);
       const values = {}, titles = {};
       for (const [comparison, heading] of REGIME_COMPARISONS) {
         const result = period?.comparisons?.[comparison];
@@ -1979,7 +1986,8 @@ function regimeBeatTable(data) {
             + `Across these sessions, $10k became ${wholeUsd(10000 * result.portfolio)} vs ${wholeUsd(10000 * result.index)} in the index (${spread} pp excess).`;
         }
       }
-      return { Market: symbol, Sessions: n, ...values, __hover: `${label}. Both indices and all four comparisons share these session dates.`, __cellTitles: titles };
+      // The market direction as two arrows in the asset classes' colours (BTC crypto, SPY stocks); the words are on hover.
+      return { Market: symbol.replace(/[^↑↓]/g, ""), Sessions: all && n ? n / all : null, ...values, __hover: `${label}. Both indices and all four comparisons share these session dates.`, __cellTitles: titles };
     }),
     note: Object.keys(data).length ? "Share of matched SPY sessions won · BTC uses closes on the same UTC dates"
       : "No matched book and benchmark sessions in this window",

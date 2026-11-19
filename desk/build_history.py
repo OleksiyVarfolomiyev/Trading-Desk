@@ -271,7 +271,7 @@ def publish(path: Path = CSV_PATH, hours: float = 24 * 14, push: bool = True, di
     for effect in EFFECTS:
         name = effect.capitalize()
         shares = [row[name] / (sum(row[e.capitalize()] for e in EFFECTS) or 1) for row in effects]
-        mix.add_bar(name=name, x=[row["Purpose"] for row in effects], y=[share or None for share in shares])
+        mix.add_bar(name=name, x=[row["Purpose"] for row in effects], y=[share or None for share in shares], textposition="none")
     mix.update_layout(barmode="stack", yaxis={"tickformat": ".0%", "range": [0, 1]})
     common = {"hours": hours, "relevance": 0.1, "push": False, "directory": directory}
     keys = []

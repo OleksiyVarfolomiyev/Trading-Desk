@@ -440,7 +440,7 @@ bbe18e0,2026-11-18 00:36,improve,overhead,high,menu grouping,Group Add Layer fav
 9b1696c,2026-11-18 01:12,fix,overhead,high,syntax error,Fix highlights startup syntax error,desk/dashboard_static/app.js,1,1
 4b11009,2026-11-18 09:42,improve,overhead,high,monochrome theme,Add monochrome dashboard theme,desk/dashboard_static/app.css;desk/dashboard_static/app.js;desk/dashboard_static/index.html;web/index.html,32,9
 da4477f,2026-11-18 09:48,improve,overhead,high,time range chips,Show only alternate chart time ranges,desk/dashboard_static/app.js,5,5
-cd4006b,2026-11-18 09:57,new,strategy,low,candle charts in asset tiles to read entries and exits,Add lightweight candlestick charts to asset tiles,desk/dashboard_static/app.js;desk/dashboard_static/index.html;web/index.html,37,13
+cd4006b,2026-11-18 09:57,new,overhead,high,candle charts in asset tiles (user: candle charts are overhead),Add lightweight candlestick charts to asset tiles,desk/dashboard_static/app.js;desk/dashboard_static/index.html;web/index.html,37,13
 aa46f62,2026-11-18 10:17,improve,overhead,high,symbols open asset tiles,Open table symbols in dashboard asset tiles,desk/dashboard_static/app.js,5,3
 7f77ec9,2026-11-18 10:27,fix,overhead,high,asset charts visible,Make table asset charts visible and clickable,desk/dashboard_static/app.css;desk/dashboard_static/app.js,9,8
 0506d9e,2026-11-18 10:34,improve,overhead,high,symbols open charts,Make every table asset symbol open its chart,desk/dashboard_static/app.js,2,2
@@ -497,11 +497,11 @@ a11bc59,2026-11-18 22:38,new,research,high,order-book wall and spoof signal logg
 078b9c9,2026-11-18 22:50,fix,research,high,forward test with one snapshot per coin,Handle a log with one snapshot per coin in the order-book forward test,desk/book_signals.py;tests/test_book_signals.py,8,1
 05186a0,2026-11-18 22:52,improve,research,medium,logger runs as a service so the forward test accrues data,Add a systemd unit for the order-book signal logger,deploy/systemd/desk-signals.service,15,0
 c7f42ed,2026-11-18 22:58,improve,research,high,HL history backfill and factor model revalidation (not adopted),Backfill Hyperliquid history and revalidate the factor model on it,desk/factor_risk.py;research/backfill_hl_history.py;research/factor_model_plan.md;research/factor_risk_study.py;tests/test_factor_risk.py,142,12
-0f54cd1,2026-11-18 23:08,improve,strategy,low,volume under asset candle charts,Show volume under the asset candle charts,desk/dashboard_static/app.js,13,3
+0f54cd1,2026-11-18 23:08,improve,overhead,high,volume under asset candle charts (user: candle charts are overhead),Show volume under the asset candle charts,desk/dashboard_static/app.js,13,3
 69ccb99,2026-11-18 23:11,new,research,high,sector blocks and stock risk model (not adopted),"Add crypto sector blocks and a Fama-French stock risk model, both validated and not adopted",desk/crypto_sectors.csv;desk/factor_risk.py;desk/stock_risk.py;research/factor_model_plan.md;research/factor_risk_study.py;research/stock_risk_study.py;tests/test_factor_risk.py;tests/test_stock_risk.py,435,13
 873dc1b,2026-11-18 23:16,fix,overhead,high,resized candle tile growing,Stop a resized candle tile from growing without end,desk/dashboard_static/app.css,5,0
 dd62c4b,2026-11-18 23:23,improve,overhead,high,candle times in ET,Show candle chart times in Eastern time,desk/dashboard_static/app.js,11,1
-a3942df,2026-11-19 09:34,improve,strategy,low,live candle charts,Keep candle charts live,desk/dashboard_static/app.js,28,0
+a3942df,2026-11-19 09:34,improve,overhead,high,live candle charts (user: candle charts are overhead),Keep candle charts live,desk/dashboard_static/app.js,28,0
 4c5008b,2026-11-19 09:44,improve,risk,medium,D/W/M scales on open positions,"Add D, W and M scales to the open positions tiles",desk/dashboard_static/app.js,60,13
 fa7f4c5,2026-11-19 09:52,improve,overhead,high,correlation dot dropped,Drop the colour dot from the correlation column,desk/dashboard_static/app.css;desk/dashboard_static/app.js,0,13
 8084108,2026-11-19 10:32,improve,risk,medium,position time controls follow the chart and fit each book,Make the open-positions time controls follow the chart and fit each book,desk/dashboard_static/app.js,60,21
@@ -516,3 +516,6 @@ ca5c998,2026-11-19 13:31,improve,overhead,high,build vs risk/reward tiles,feat(u
 ec84b90,2026-11-19 14:43,fix,risk,high,betas for new HL markets and PAXG from their underlying,fix(analytics): give new HL markets and PAXG a beta from their underlying's history,desk/beta_attribution.py;desk/listings.py;desk/live_risk.py;tests/test_listings.py,126,2
 ea13264,2026-11-19 15:04,improve,overhead,high,labelled in its subject,improve(overhead): chart bar labels show no zeros and at most three digits,desk/dashboard_static/app.js,10,2
 2fa8f04,2026-11-19 15:06,improve,overhead,high,labelled in its subject,improve(overhead): label every commit by the trading result it served,desk/build_history.csv;desk/build_history.py;desk/build_labels.csv;desk/commit_risk_reward.json;desk/commit_risk_reward.py;research/commit_risk_reward.md;research/commit_risk_reward.png;tests/test_build_history.py;tests/test_commit_risk_reward.py,357,309
+6f7281a,2026-11-19 15:06,improve,overhead,high,labelled in its subject,improve(overhead): label the two latest commits in the build history,desk/build_history.csv,0,0
+5b4906d,2026-11-19 15:20,improve,overhead,high,labelled in its subject,improve(overhead): no commit counts on the build-history bars,desk/build_history.py;desk/dashboard_static/app.js,2,2
+395ad78,2026-11-19 15:53,improve,overhead,high,labelled in its subject,improve(overhead): build history tiles as charts,desk/build_history.py;tests/test_build_history.py,39,18
