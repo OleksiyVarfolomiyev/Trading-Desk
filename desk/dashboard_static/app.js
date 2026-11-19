@@ -1914,7 +1914,8 @@ function benchmarkAttributionTable(data, period) {
         __hover: RM_REPLAY_METHOD, __cellTitles: { "Crypto vs BTC": replayTooltip(cryptoReplay), "Stocks vs SPY": replayTooltip(stocksReplay) } },
     ],
     total: { Factor: "Excess return", "Crypto vs BTC": crypto?.excess, "Stocks vs SPY": stocks?.excess,
-      __hover: "Compounded difference versus the index in percentage points on desk trading equity. Excludes the RM replay." },
+      __hover: "Compounded difference versus the index in percentage points on desk trading equity. Excludes the RM replay. "
+        + "Both books start on the same day; stocks vs SPY run on SPY sessions, so at a weekend they end on Friday's close." },
     note: crypto || stocks ? "" : "Attribution data is unavailable for this period",
   };
 }
@@ -2288,28 +2289,33 @@ function rebaseReturns(node, days) {
   node._orig = node._orig || node.data.map((trace) => ({ x: trace.x.slice(), y: trace.y.slice() }));
   const start = days ? Date.now() - days * 86400000 : null;
   let baseTime = start;
-  // Over a window every line ends on the last day all of them have (the books are built to yesterday's close, the desk
-  // and indices run to now): one start, one end, so the desk sits between its books.
-  // (Only the desk and the books set it: an index that does not trade at weekends must not cut the others back to Friday.)
-  const ends = node._orig.map((trace, i) => [trace, (node.data[i] || {}).name || ""])
+  // Every view compares like with like (desk policy: one start, one end, one base): the lines start on the first day the
+  // desk and both books all have and end on the last such day (the books are built to yesterday's close, the desk and the
+  // indices run to now), and each is rebased there, so the desk sits between its books. Only the desk and the books set
+  // the window: an index that does not trade at weekends must not cut the others back to Friday.
+  const spans = node._orig.map((trace, i) => [trace, (node.data[i] || {}).name || ""])
     .filter(([trace, name]) => trace.x.length && /^(total|desk|crypto|stocks)/i.test(name))
-    .map(([trace]) => new Date(trace.x[trace.x.length - 1]).getTime());
-  const commonEnd = start && ends.length ? Math.min(...ends) : Infinity;
+    .map(([trace]) => [new Date(trace.x[0]).getTime(), new Date(trace.x[trace.x.length - 1]).getTime()]);
+  const compared = spans.length > 1;   // the desk alone (no book lines yet) is not cut
+  const commonStart = compared ? Math.max(...spans.map(([first]) => first)) : -Infinity;
+  const commonEnd = compared ? Math.min(...spans.map(([, last]) => last)) : Infinity;
+  const from = Math.max(start ?? -Infinity, commonStart);
   const cut = node._orig.map((trace) => {
     const keep = trace.x.map((x) => new Date(x).getTime() <= commonEnd);
     return { x: trace.x.filter((_, i) => keep[i]), y: trace.y.filter((_, i) => keep[i]) };
   });
   const ys = cut.map((trace) => {
-    if (!start) return trace.y;
+    if (!Number.isFinite(from)) return trace.y;
     // the base is the last point at or before the window's start (daily points: yesterday's close for a day), so a
-    // short window shows the move from there to now, not a flat line
+    // short window shows the move from there to now, not a flat line; points before it are dropped
     let first = -1;
-    trace.x.forEach((x, i) => { if (new Date(x).getTime() <= start) first = i; });
-    if (first < 0) first = trace.x.findIndex((x) => new Date(x).getTime() >= start);
+    trace.x.forEach((x, i) => { if (new Date(x).getTime() <= from) first = i; });
+    if (first < 0) first = trace.x.findIndex((x) => new Date(x).getTime() >= from);
     if (first < 0) return trace.y;
-    baseTime = Math.min(baseTime, new Date(trace.x[first]).getTime());
+    baseTime = Math.min(baseTime ?? Infinity, new Date(trace.x[first]).getTime());
+    trace.x = trace.x.slice(first);
     const base = 1 + trace.y[first] / 100;
-    return trace.y.map((y) => Math.round(10000 * ((1 + y / 100) / base - 1)) / 100);
+    return trace.y.slice(first).map((y) => Math.round(10000 * ((1 + y / 100) / base - 1)) / 100);
   });
   Plotly.restyle(node, { x: cut.map((trace) => trace.x), y: ys });
   const notes = (node.layout.annotations || []).map((note) => Object.assign({}, note));

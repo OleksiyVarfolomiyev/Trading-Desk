@@ -1250,7 +1250,8 @@
     notes.push("SPY is Yahoo Finance's daily close, read through the relay; S&P 500 beta in the risk table uses HL's S&P 500 perp, which trades every day like the crypto book.");
     notes.push("Current-holdings risk is a historical simulation: today's positions moved by each of the last 90 days' prices.");
     [...new Set(riskNotes)].forEach((note) => notes.push(`Open risk: ${note}`));
-    reconcile(tables).reverse().forEach((row) => attention.unshift(row));   // tables that should tie out and don't
+    // Tables that should tie out and don't, and compared figures whose windows differ (desk/reconcile.py windows): first.
+    reconcile(tables).concat(reconcileWindows(twr, (bookPerf && bookPerf.attribution) || {})).reverse().forEach((row) => attention.unshift(row));
 
     return plain({
       kpis: {
@@ -1331,6 +1332,42 @@
     compare("uPnL", "strategies", columnSum(tables.strategies, "uPnL"), "accounts", columnSum(tables.accounts, "uPnL / equity"));
     compare("desk shares", "accounts", rowSum([tables.accounts], "% of desk"), "expected", 1);
     compare("position weights", "crypto and stocks", rowSum([tables.positions, tables.positions_stocks], "Weight"), "expected", 1);
+    return found;
+  }
+
+  // Figures compared in one table or chart share their start, end and base, as desk/reconcile.py windows: a book line
+  // ending more than a day before the desk, lines with no common day, and attribution windows that differ between the
+  // books (a gap of Saturdays and Sundays only is allowed: stocks run on SPY sessions).
+  function reconcileWindows(lines, attribution) {
+    const day = (text) => { const t = Date.parse(String(text || "").slice(0, 10) + "T00:00:00Z"); return Number.isFinite(t) ? t : null; };
+    const show = (t, year) => new Date(t).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", ...(year ? { year: "2-digit" } : {}) });
+    const weekendGap = (a, b) => {
+      const [low, high] = a < b ? [a, b] : [b, a];
+      if (high === low) return false;
+      for (let t = low + DAY_MS; t <= high; t += DAY_MS) { const w = new Date(t).getUTCDay(); if (w !== 0 && w !== 6) return false; }
+      return true;
+    };
+    const found = [];
+    const spans = {};
+    (lines || []).forEach((line) => {
+      const match = /^(total|desk|crypto|stocks)/i.exec(String(line.name || ""));
+      const days = (line.x || []).map(day).filter((t) => t !== null);
+      if (match && days.length) spans[/^(total|desk)$/i.test(match[1]) ? "desk" : match[1].toLowerCase()] = [days[0], days[days.length - 1]];
+    });
+    if (spans.desk && Object.keys(spans).length > 1) {
+      Object.entries(spans).forEach(([name, [, last]]) => {
+        if (name !== "desk" && (spans.desk[1] - last) / DAY_MS > 1) found.push(["Windows differ", `return chart: ${name} ends ${show(last)}, desk ${show(spans.desk[1])}`]);
+      });
+      const values = Object.values(spans);
+      if (Math.max(...values.map(([first]) => first)) > Math.min(...values.map(([, last]) => last))) found.push(["Windows differ", "return chart: the desk and book lines share no days"]);
+    }
+    const crypto = attribution.crypto || {}, stocks = attribution.stocks || {};
+    Object.keys(crypto).filter((window) => window in stocks).forEach((window) => {
+      const pairs = ["start", "end"].map((edge) => [day((crypto[window] || {})[edge]), day((stocks[window] || {})[edge])]);
+      if (pairs.some(([a, b]) => a === null || b === null)) return;
+      if (pairs.every(([a, b]) => a === b || weekendGap(a, b))) return;
+      found.push(["Windows differ", `excess return ${window}: crypto ${show(pairs[0][0], true)} to ${show(pairs[1][0])}, stocks ${show(pairs[0][1], true)} to ${show(pairs[1][1])}`]);
+    });
     return found;
   }
 

@@ -43,6 +43,54 @@ class TieOutTests(unittest.TestCase):
         self.assertEqual(reconcile.checks({"accounts": self.tables()["accounts"]}), [])
 
 
+class WindowTests(unittest.TestCase):
+    """Figures compared in one table or chart share their start, end and base."""
+
+    def line(self, name, first, last):
+        return {"name": name, "x": [first, last], "y": [0, 1]}
+
+    def test_books_a_day_behind_the_desk_are_in_line(self):
+        twr = [self.line("Desk (HL + IB)", "2025-01-01", "2026-11-19"), self.line("crypto", "2025-11-20", "2026-11-18"),
+               self.line("stocks", "2025-01-14", "2026-11-18"), self.line("SPY", "2025-01-01", "2026-11-14")]
+        self.assertEqual(reconcile.windows({"twr": twr}, {}), [])   # the chart cuts to Nov 18; SPY does not set the end
+
+    def test_a_stale_book_is_flagged(self):
+        twr = [self.line("Desk (HL + IB)", "2025-01-01", "2026-11-19"), self.line("crypto", "2025-11-20", "2026-11-15")]
+        self.assertEqual(reconcile.windows({"twr": twr}, {}), [("Windows differ", "return chart: crypto ends Nov 15, desk Nov 19")])
+
+    def test_lines_without_a_common_day_are_flagged(self):
+        twr = [self.line("Desk (HL + IB)", "2026-11-10", "2026-11-19"), self.line("stocks", "2025-01-01", "2025-02-01")]
+        texts = [text for _, text in reconcile.windows({"twr": twr}, {})]
+        self.assertIn("return chart: the desk and book lines share no days", texts)
+
+    def test_attribution_windows_that_differ_are_flagged(self):
+        comparison = {"attribution": {"crypto": {"All": {"start": "2025-11-20", "end": "2026-11-18"}},
+                                      "stocks": {"All": {"start": "2025-01-14", "end": "2026-11-18"}}}}
+        self.assertEqual(reconcile.windows({}, comparison),
+                         [("Windows differ", "excess return All: crypto Nov 20 '25 to Nov 18, stocks Jan 14 '25 to Nov 18")])
+
+    def test_a_weekend_gap_from_spy_sessions_is_allowed(self):
+        # Sunday: crypto ends Saturday's close, stocks Friday's (2026-11-20 is a Friday).
+        comparison = {"attribution": {"crypto": {"W": {"start": "2026-11-14", "end": "2026-11-21"}},
+                                      "stocks": {"W": {"start": "2026-11-13", "end": "2026-11-20"}}}}
+        self.assertEqual(reconcile.windows({}, comparison), [])
+
+    def test_a_weekday_gap_is_not_a_weekend_gap(self):
+        comparison = {"attribution": {"crypto": {"W": {"start": "2026-11-11", "end": "2026-11-18"}},
+                                      "stocks": {"W": {"start": "2026-11-11", "end": "2026-11-17"}}}}
+        self.assertEqual(len(reconcile.windows({}, comparison)), 1)
+
+    def test_books_start_side_by_side_comparisons_together(self):
+        import pandas as pd
+
+        from desk.web_sync import common_start
+
+        crypto = pd.Series([0.01], index=pd.to_datetime(["2025-11-20"], utc=True))
+        stocks = pd.Series([0.01, 0.0], index=pd.to_datetime(["2025-01-14", "2025-11-20"], utc=True))
+        self.assertEqual(common_start({"crypto": crypto, "stocks": stocks}), pd.Timestamp("2025-11-20", tz="UTC"))
+        self.assertIsNone(common_start({}))
+
+
 # One name per thing on every client surface. Each banned label maps to the name the desk uses for it; add a
 # pair whenever two tables are found calling the same thing by different names.
 SAME_THING = {

@@ -58,3 +58,70 @@ def checks(tables: dict[str, dict]) -> list[tuple[str, str]]:
     compare("position weights", "crypto and stocks", _row_sum([tables.get("positions"), tables.get("positions_stocks")], "Weight"),
             "expected", 1.0)
     return found
+
+
+# ---------------------------------------------------------------------------------------------------------------- windows
+# Figures compared in one table or chart share their start, end and base (desk policy). ``windows`` flags what the page
+# cannot line up by itself: a book line ending more than a day before the desk (a stale book build: the chart would cut
+# every line back to it), comparison lines that never overlap, and attribution windows that differ between the books.
+# Stocks vs SPY run on SPY sessions, so at a weekend their window can end (or start) on Friday's close while crypto's
+# runs on: a gap made only of Saturdays and Sundays is allowed (the attribution table's hover says so).
+WINDOW_LAG_DAYS = 1   # the books are built to yesterday's close; the desk runs to today
+
+
+def _day(text) -> "datetime.date | None":
+    import datetime as _dt
+
+    try:
+        return _dt.date.fromisoformat(str(text)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _weekend_gap(a, b) -> bool:
+    """True when every day after the earlier date up to the later one is a Saturday or a Sunday."""
+    import datetime as _dt
+
+    low, high = sorted((a, b))
+    days = [low + _dt.timedelta(days=n) for n in range(1, (high - low).days + 1)]
+    return bool(days) and all(day.weekday() >= 5 for day in days)
+
+
+def _chart_lines(lines: list[dict]) -> dict[str, tuple]:
+    """The return chart's desk and book lines -> (first day, last day)."""
+    import re
+
+    out = {}
+    for line in lines or []:
+        name = str(line.get("name") or "")
+        match = re.match(r"^(total|desk|crypto|stocks)", name, re.I)
+        days = [_day(x) for x in line.get("x") or []]
+        days = [day for day in days if day]
+        if match and days:
+            out["desk" if match.group(1).lower() in ("total", "desk") else match.group(1).lower()] = (days[0], days[-1])
+    return out
+
+
+def windows(charts: dict | None, comparison: dict | None) -> list[tuple[str, str]]:
+    found = []
+    lines = _chart_lines((charts or {}).get("twr") or [])
+    if "desk" in lines and len(lines) > 1:
+        desk_end = lines["desk"][1]
+        for name, (first, last) in lines.items():
+            if name != "desk" and (desk_end - last).days > WINDOW_LAG_DAYS:
+                found.append(("Windows differ", f"return chart: {name} ends {last:%b %-d}, desk {desk_end:%b %-d}"))
+        start, end = max(first for first, _ in lines.values()), min(last for _, last in lines.values())
+        if start > end:
+            found.append(("Windows differ", "return chart: the desk and book lines share no days"))
+    attribution = (comparison or {}).get("attribution") or {}
+    crypto, stocks = attribution.get("crypto") or {}, attribution.get("stocks") or {}
+    for window in [w for w in crypto if w in stocks]:
+        a, b = crypto[window] or {}, stocks[window] or {}
+        pairs = [(_day(a.get(edge)), _day(b.get(edge))) for edge in ("start", "end")]
+        if any(x is None or y is None for x, y in pairs):
+            continue
+        if all(x == y or _weekend_gap(x, y) for x, y in pairs):
+            continue
+        found.append(("Windows differ", f"excess return {window}: crypto {pairs[0][0]:%b %-d '%y} to {pairs[1][0]:%b %-d}, "
+                                        f"stocks {pairs[0][1]:%b %-d '%y} to {pairs[1][1]:%b %-d}"))
+    return found

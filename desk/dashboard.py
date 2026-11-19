@@ -673,11 +673,12 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
 
     from desk import reconcile
 
-    attention = reconcile.checks(tables) + attention   # tables that should tie out and don't: first
-    notes = list(desk.notes)
-    notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     books_by_kind(tables)
     book_comparison = book_comparison_now()
+    # Tables that should tie out and don't, and compared figures whose windows differ: first.
+    attention = reconcile.checks(tables) + reconcile.windows({"twr": twr}, book_comparison) + attention
+    notes = list(desk.notes)
+    notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     book_comparison["desk_series"] = [
         [stamp.strftime("%Y-%m-%d"), float(level)] for stamp, level in _daily(desk.index).items()
     ]
