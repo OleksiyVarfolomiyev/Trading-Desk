@@ -284,7 +284,15 @@ def books_payload() -> dict:
     except Exception as error:
         print(f"Risk replay unavailable ({type(error).__name__}).", file=sys.stderr)
     incomplete = {name: list(book.incomplete) for name, book in books.items() if getattr(book, "incomplete", None)}
-    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series,
+    desk_series = []
+    try:   # the desk (HL + IB, no wallet tokens): the books' returns weighted by their trading equity (desk/drawdown.py)
+        from desk.drawdown import desk_returns
+
+        growth = (1 + desk_returns(returns_of, equity)).cumprod()
+        desk_series = [[day.strftime("%Y-%m-%d"), _clean(round(float(value) - 1, 5))] for day, value in growth.items()]
+    except Exception as error:
+        print(f"Desk series unavailable ({type(error).__name__}).", file=sys.stderr)
+    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series, "desk_series": desk_series,
             "class_series": class_series, "attribution": attribution, "risk_replay": replay,
             "regimes": regimes, "stats": trade_stats(fills), "incomplete": incomplete}
 
@@ -601,6 +609,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  build history: {added} new commits labelled; tiles {', '.join(build_history.publish())}")
         except Exception as exc:
             print(f"  build history not refreshed ({type(exc).__name__}: {exc})")
+        try:   # drawdown by period (fiduciary view), tolerance alerts and the quarterly/yearly report (desk/drawdown.py)
+            from desk import drawdown
+
+            tiles = drawdown.publish()
+            sent = drawdown.notify(drawdown.load_levels(), drawdown.tolerance())
+            reports = [str(drawdown.write_report(kind)) for kind in drawdown.report_due()]
+            print(f"  drawdown: tiles {', '.join(tiles)}" + (f"; push {sent}" if sent else "")
+                  + (f"; reports {', '.join(reports)}" if reports else ""))
+        except Exception as exc:
+            print(f"  drawdown not refreshed ({type(exc).__name__}: {exc})")
         try:   # every prod rule's live record against its history (desk/forward_monitor.py)
             from desk import forward_monitor
 

@@ -119,6 +119,7 @@ class Item:
     off: str = ""                   # set when the rule is switched off (why)
     forward_only: str = ""          # no backtest by design or a failed one: the live record must show an edge (t>=2 both halves)
     note: str = ""
+    monitor: str = ""               # monitoring, not a trading rule (alert only): no edge to test, shown with this status
 
 
 @dataclass
@@ -311,6 +312,9 @@ REGISTRY: list[Item] = [
               "no change under 30 fills (desk/mm_tuning.py); no study that tuning beats fixed settings"),
     Item("ladder-no-loss", "Ladders never reduce at a loss", "risk", "2026-11-20", None, _count(r"ladder"),
          note="trims and inventory-reducing quotes only at a better price than the position's entry"),
+    Item("dd-tolerance", "Desk drawdown tolerance alert", "risk", "2026-11-20", None, None,
+         monitor="monitoring, alert only", note="the investor's accepted drawdown (desk/fiduciary.json); attention at 75% "
+         "of it and at it, phone push on a new level; nothing trades on it (desk/drawdown.py)"),
     Item("cap-flex", "Risk-cap flex, opt-in per trade", "risk", "2026-11-20", None, _count(r"FLEX"),
          note="3-point flex (33% to 36%) used only when chosen on the confirm step or with --use-flex"),
 ]
@@ -337,7 +341,9 @@ def evaluate(src: Sources, registry: list[Item] = REGISTRY) -> list[dict]:
         except Exception as exc:
             live, item_error = [], f"live data unreadable ({type(exc).__name__})"
         result = drift(live, expected)
-        if item.off:
+        if item.monitor:
+            status = item.monitor
+        elif item.off:
             status = item.off
         elif item_error:
             status = item_error
@@ -384,7 +390,7 @@ def attention(rows: list[dict]) -> list[list[str]]:
     missing_history = [r["Rule"] for r in rows if r["Status"] == "no historical test"]
     if missing_history:
         out.append(["No historical test", "; ".join(missing_history) + "."])
-    missing_forward = [r["Rule"] for r in rows if not r.get("forward") and not r["Status"].startswith("off")]
+    missing_forward = [r["Rule"] for r in rows if not r.get("forward") and not r["Status"].startswith(("off", "monitoring"))]
     if missing_forward:
         out.append(["No forward test", "; ".join(missing_forward) + "."])
     return out

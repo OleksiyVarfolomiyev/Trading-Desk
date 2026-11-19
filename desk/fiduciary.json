@@ -1,0 +1,4 @@
+{
+  "drawdown_tolerance": null,
+  "_note": "The drawdown from the desk's high (HL + IB) the investor accepts, e.g. 0.2 for 20%. Empty: the drawdown tile shows drawdown only. Alert only: nothing trades on it (desk/drawdown.py)."
+}
