@@ -3200,7 +3200,7 @@ function decoratePublishedBars(traces, layout) {
   const good = token("--good-text") || token("--good"), bad = token("--bad-text") || token("--critical");
   let horizontal = false;
   const data = traces.map((source) => {
-    if (source.type !== "bar") return source;
+    if (source.type !== "bar" || source.textposition === "none") return source;   // "none": the figure asked for unlabelled bars
     const trace = Object.assign({}, source);
     horizontal = horizontal || trace.orientation === "h";
     const key = trace.orientation === "h" ? "x" : "y";

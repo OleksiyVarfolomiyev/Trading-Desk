@@ -252,7 +252,7 @@ def publish(path: Path = CSV_PATH, hours: float = 24 * 14, push: bool = True, di
         return []
     days = per_day(rows)
     # A purpose absent that day is no segment: a 0 would be labelled on the bar.
-    figure = go.Figure([go.Bar(name=purpose, x=list(days), y=[days[day].get(purpose) or None for day in days]) for purpose in PURPOSES
+    figure = go.Figure([go.Bar(name=purpose, x=list(days), y=[days[day].get(purpose) or None for day in days], textposition="none") for purpose in PURPOSES
                         if any(days[day].get(purpose) for day in days)])
     figure.update_layout(barmode="stack", yaxis={"tickformat": "d"})
     common = {"hours": hours, "relevance": 0.1, "push": False, "directory": directory}
