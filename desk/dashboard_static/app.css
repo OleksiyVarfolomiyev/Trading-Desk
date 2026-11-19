@@ -701,7 +701,8 @@ button.bname:hover, button.bname:focus-visible { font-weight: 700; }
 .bfill { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; }
 .kind-bg-crypto { background: var(--kind-crypto-bg); }
 .kind-bg-stocks { background: var(--kind-stocks-bg); }
-.bfig { position: absolute; top: 0; max-width: min(88px, 100%); overflow: hidden; text-overflow: ellipsis; line-height: 16px; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* A figure that has no room past its bar sits on it: a surface-coloured pill keeps it readable over the bar colour. */
+.bfig { position: absolute; top: 0; z-index: 2; padding: 0 3px; border-radius: 3px; background: var(--surface); max-width: min(88px, 100%); overflow: hidden; text-overflow: ellipsis; line-height: 16px; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .bacts { display: inline-flex; justify-content: flex-end; gap: 1px; min-width: 20px; }
 .bacts .row-act { opacity: 0; }
 .brow:hover .bacts .row-act, .brow:focus-within .bacts .row-act { opacity: 1; }
@@ -798,3 +799,4 @@ select.trade-input { width: auto; appearance: none; -webkit-appearance: none; ba
 .trade-side.long[aria-pressed="true"] { color: #16a34a; border-color: #16a34a; opacity: 1; }
 .trade-side.short[aria-pressed="true"] { color: #dc2626; border-color: #dc2626; opacity: 1; }
 .trade-go { opacity: 1; }
+.regime-cell span + span { margin-left: 6px; }
