@@ -2331,6 +2331,18 @@ function drawIntraday(node, days) {
   if (btc) lines.push(["BTC", btc, { width: 1.4, dash: "dot", color: colorFor("BTC") }]);
   const sp = rebased(data["S&P500"] || [], (row) => row[1]);
   if (sp) lines.push(["S&P500", sp, { width: 1.4, dash: "dot", color: colorFor("S&P500") }]);
+  // The crypto and stocks books have daily points only (the Mac's hourly book build): drawn from the window's first
+  // daily close, so they show at W; a single day has too few points for a line.
+  const daily = (latest && latest.data && latest.data.charts && latest.data.charts.twr) || [];
+  for (const [kind, color] of [["crypto", "--kind-crypto"], ["stocks", "--kind-stocks"]]) {
+    const series = daily.find((line) => new RegExp("^" + kind, "i").test(line.name));
+    if (!series || !series.levels) continue;
+    const kept = series.x.map((day, i) => [Date.parse(String(day).slice(0, 10) + "T00:00:00Z"), series.levels[i]])
+      .filter(([t, level]) => t >= start - 86400000 && isNum(level) && level > 0);
+    if (kept.length < 2) continue;
+    lines.push([kind, { x: kept.map(([t]) => new Date(t)), y: kept.map(([, level]) => Math.round(10000 * (level / kept[0][1] - 1)) / 100) },
+      { width: 1.8, color: token(color) }]);
+  }
   if (!lines.length) return false;
   const traces = lines.map(([name, line, style]) => colorHover({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
     customdata: line.y.map((v) => readablePct(v / 100)), hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>" }));
