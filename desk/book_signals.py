@@ -172,7 +172,8 @@ def evaluate(frame: pd.DataFrame, signals_to_test: list[str], horizon_min: int, 
     if frame.empty:
         return pd.DataFrame(columns=["Signal", "Times", "Net bps", "t", "t first half", "t second half", "Verdict"])
     frame = forward_returns(frame, horizon_min)
-    lags = max(1, horizon_min // max(1, int(frame.groupby("coin")["time"].diff().dt.total_seconds().median() // 60 or 1)))
+    step = frame.groupby("coin")["time"].diff().dt.total_seconds().median()   # NaN while each coin has one snapshot
+    lags = max(1, horizon_min // max(1, int(step // 60))) if pd.notna(step) else 1
     rows = []
     for name in signals_to_test:
         if name not in frame:

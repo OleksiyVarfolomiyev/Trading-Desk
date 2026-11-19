@@ -124,6 +124,12 @@ class ForwardTestTests(unittest.TestCase):
         result = book_signals.evaluate(synthetic_log(True, n=10), ["imbalance_10bp"], horizon_min=5)
         self.assertEqual(result.iloc[0]["Verdict"], "not enough snapshots yet")
 
+    def test_single_snapshot_per_coin_is_not_judged(self):
+        frame = synthetic_log(True, n=10)
+        one = frame.groupby("coin").head(1)
+        result = book_signals.evaluate(one, ["imbalance_10bp"], horizon_min=60)
+        self.assertEqual(result.iloc[0]["Verdict"], "not enough snapshots yet")
+
 
 if __name__ == "__main__":
     unittest.main()
