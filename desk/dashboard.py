@@ -654,13 +654,13 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     # and their values are only recorded from run to run. Once two days exist, a separate line shows
     # the desk value including them, from the first recorded day only.
     with_wallets = _value_with_wallets(value_series, _wallet_value_series(desk, start))
-    # The return chart is the tiles' series (``headline``: wallets included when they have history), as % since
-    # its start, so the desk line ends at the "TW return" tile; the benchmarks start the same day.
-    index = _daily(headline)
+    # The return chart's desk line is HL + IB without wallet tokens, like the crypto and stocks books drawn with it
+    # (like with like: the books exclude wallets), as % since its start; the benchmarks start the same day.
+    index = _daily(desk.index)
     index.index = index.index.normalize()
-    twr = [{"name": "Total" if headline is not desk.index else "Desk (HL + IB)",
+    twr = [{"name": "Desk (HL + IB)",
             "x": [ts.strftime("%Y-%m-%d") for ts in index.index], "levels": index.tolist(),
-            "y": (100 * (index / headline.iloc[0] - 1)).round(2).tolist()}]
+            "y": (100 * (index / index.iloc[0] - 1)).round(2).tolist()}]
     for name in ("BTC", "SPY"):
         if name in desk.benchmarks:
             prices = desk.benchmarks[name].dropna()

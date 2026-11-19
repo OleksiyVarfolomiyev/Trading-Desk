@@ -942,10 +942,11 @@
     };
     // The return chart is the tiles' series (``headline``: wallets included when they have history), as % since its
     // start, so the desk line ends at the "TW return" tile; the benchmarks start the same day.
-    const chartIndex = headline.series || index, chartStart = headline.start;
+    // The desk line is HL + IB without wallet tokens, like the crypto and stocks books drawn with it.
+    const chartIndex = index, chartStart = index.length ? index[0].t : headline.start;
     const indexDays = dailyLast(chartIndex, "v");
     const firstLevel = chartIndex.length ? chartIndex[0].v : 1;
-    const twr = [{ name: headline.series ? "Total" : "Desk (HL + IB)", x: [...indexDays.keys()], levels: [...indexDays.values()],
+    const twr = [{ name: "Desk (HL + IB)", x: [...indexDays.keys()], levels: [...indexDays.values()],
       y: [...indexDays.values()].map((v) => Math.round(1e4 * (v / firstLevel - 1)) / 1e2) }];
     const benchmarkDays = Math.ceil((now - chartStart) / DAY_MS) + 2;
     const rebased = (name, rows) => {  // rows: [{t, c}] daily closes
