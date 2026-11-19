@@ -2840,8 +2840,8 @@ function adoptCard(card) {
     const more = tool("card-more", "Add a layer: more on this", "+", () => openMoreMenu(card, more));
     addResizeHandle(card);
     addColumnHandle(card);
-    card.append(el("div", { class: "card-foot" }, thumbs(cardTitle(card), "section")));   // bottom left, on hover: clear of the heading
     const tools = el("span", { class: "card-tools" }, [
+      ...thumbs(cardTitle(card), "section"),   // in the heading's tools: a footer over the bottom row blocked clicks on its asset
       more,
       ...chartTools(),
       ...(filter ? [filter] : []),
