@@ -3746,31 +3746,62 @@ function openBatchTrade() {
   const title = "Hyperliquid batch · Half Kelly";
   const { overlay, box } = actionDialog(title);
   const heading = () => el("h3", { text: title });
-  const wallet = el("input", { class: "trade-input", type: "text", value: "07f2", maxlength: "4", required: true,
-    pattern: "[0-9A-Fa-f]{4}", "aria-label": "HL wallet suffix" });
-  const input = el("textarea", { class: "trade-input batch-signals", rows: "6", required: true, spellcheck: "false",
-    "aria-label": "Batch signals", placeholder: "coin,side,dex\nBTC,LONG\nETH,SHORT" });
+  const tables = (latest && latest.data && latest.data.tables) || {};
+  const walletIds = new Set(["07f2"]);
+  for (const id of ["accounts", "positions", "positions_stocks"])
+    for (const row of ((tables[id] || {}).rows || [])) {
+      const match = String(row.Account || "").match(/HL\s+([0-9a-f]{4})$/i);
+      if (match) walletIds.add(match[1].toLowerCase());
+    }
+  const wallet = el("select", { class: "trade-input", "aria-label": "Hyperliquid wallet" },
+    [...walletIds].map((id) => el("option", { value: id, text: `HL ${id}` })));
+  const rows = el("div", { class: "batch-rows" });
   const status = el("p", { class: "action-line", role: "status" });
   const preview = el("button", { type: "submit", class: "asset-action lead", text: "Preview batch" });
+  const add = el("button", { type: "button", class: "asset-action", text: "+ Add market" });
   const form = el("form", {}, [
-    el("label", {}, ["HL wallet suffix ", wallet]),
-    el("p", { class: "muted", text: "Paste 2–10 CSV rows with coin, side and optional DEX. The batch shares one standard position’s risk budget." }),
-    input, status, el("div", { class: "asset-actions" }, [preview, closeButton(overlay)]),
+    el("label", { class: "batch-wallet" }, ["Wallet ", wallet]),
+    el("p", { class: "muted", text: "Choose 2–10 markets. The batch shares one standard position’s risk budget." }),
+    rows, status, el("div", { class: "asset-actions batch-edit-actions" }, [add, preview, closeButton(overlay)]),
   ]);
-  const edit = () => { box.replaceChildren(heading(), form); input.focus(); };
+  const marketChoices = () => {
+    const choices = new Map();
+    tradeAssets().forEach((name) => {
+      const market = universeMap[name.toLowerCase()] || name;
+      choices.set(market, friendlyName(market));
+    });
+    Object.values(universeMap).filter(Boolean).forEach((market) => choices.set(market, friendlyName(market)));
+    return [...choices].sort((a, b) => a[1].localeCompare(b[1]));
+  };
+  const addRow = (selected = "") => {
+    if (rows.children.length >= 10) return;
+    const market = el("select", { class: "trade-input batch-market", required: true, "aria-label": "Market" }, [
+      el("option", { value: "", text: "Choose market", disabled: true, selected: !selected }),
+      ...marketChoices().map(([value, text]) => el("option", { value, text, selected: value === selected })),
+    ]);
+    const side = el("select", { class: "trade-input batch-side", "aria-label": "Side" }, [
+      el("option", { value: "LONG", text: "Long" }), el("option", { value: "SHORT", text: "Short" }),
+    ]);
+    const remove = el("button", { type: "button", class: "batch-remove", text: "×", title: "Remove market", "aria-label": "Remove market" });
+    const row = el("div", { class: "batch-row" }, [market, side, remove]);
+    remove.addEventListener("click", () => { row.remove(); add.disabled = false; });
+    rows.append(row);
+    add.disabled = rows.children.length >= 10;
+  };
+  add.addEventListener("click", () => addRow());
+  const edit = () => { box.replaceChildren(heading(), form); };
   const lines = (message) => el("p", { class: "action-line", text: message });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const rows = input.value.trim().split(/\r?\n/).map((line) => line.split(",").map((cell) => cell.trim()))
-      .filter((row) => row.some(Boolean));
-    if (rows[0]?.[0].toLowerCase() === "coin" && rows[0]?.[1]?.toLowerCase() === "side") rows.shift();
-    if (rows.length < 2 || rows.length > 10 || rows.some(([coin, side, , extra]) =>
-      !coin || !["LONG", "SHORT"].includes(side?.toUpperCase()) || extra !== undefined)) {
-      status.textContent = "Enter 2–10 rows in coin,side,dex format. Use LONG or SHORT.";
+    const signals = [...rows.querySelectorAll(".batch-row")].map((row) => {
+      const coin = row.querySelector(".batch-market").value;
+      return { coin, side: row.querySelector(".batch-side").value, dex: coin.includes(":") ? coin.split(":", 1)[0] : "" };
+    });
+    if (signals.length < 2 || new Set(signals.map((signal) => signal.coin)).size !== signals.length) {
+      status.textContent = signals.length < 2 ? "Choose at least two markets." : "Choose each market once.";
       return;
     }
-    const body = { change: "batch", wallet: wallet.value.trim(),
-      signals: rows.map(([coin, side, dex = ""]) => ({ coin, side: side.toUpperCase(), dex })) };
+    const body = { change: "batch", wallet: wallet.value, signals };
     const post = async (extra) => {
       try {
         const response = await fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -3802,7 +3833,8 @@ function openBatchTrade() {
     }, { once: true });
     box.replaceChildren(heading(), lines(plan.plan), el("div", { class: "asset-actions" }, [confirm, back, closeButton(overlay)]));
   });
-  edit();
+  box.replaceChildren(heading(), el("p", { class: "muted", text: "Loading Hyperliquid markets…" }));
+  loadUniverse().then(() => { addRow(); addRow(); edit(); });
 }
 
 async function runAction(label, change, fraction, target) {
