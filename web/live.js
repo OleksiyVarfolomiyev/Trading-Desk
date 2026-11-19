@@ -1298,7 +1298,7 @@
       theses: (research && research.theses) || [],
       usage_model: usageModel,
       tiles: ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now()),
-      charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [] },
+      charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [], managed_since: (bookPerf && bookPerf.managed_since) || "2026-10-16" },
       problems, notes,
       accounts_status: status,
     });

@@ -1728,10 +1728,17 @@ function renderCharts(charts) {
   const drawn = (charts.twr || []).map((s, i) => [s, twr[i]]).filter(([s]) => s.y.length);
   const labels = endLabels(charts.twr || [], (v) => readablePct(v / 100)).map((label, i) => Object.assign(label, {
     text: `${shortName(drawn[i][0].name)} ${label.text}`, font: { size: 11, color: drawn[i][1].line.color || token("--ink-2") } }));
+  // Where the managed desk begins (the repo start, its risk measures): a thin vertical line with the explanation on hover;
+  // before it the book was held passively (IB long only, crypto untraded).
+  const managed = charts.managed_since, lastDay = Math.max(0, ...(charts.twr || []).flatMap((s) => (s.x || []).map((x) => Date.parse(x) || 0)));
+  const firstDay = Math.min(Infinity, ...(charts.twr || []).flatMap((s) => (s.x || []).map((x) => Date.parse(x) || Infinity)));
+  const markManaged = managed && Date.parse(managed) > firstDay && Date.parse(managed) < lastDay;
   const twrLayout = baseLayout({
     showlegend: false,   // the colours and the end labels name the lines
-    annotations: labels,
-    shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }],
+    annotations: labels.concat(markManaged ? [{ x: managed, xref: "x", y: 1, yref: "paper", yanchor: "top", xanchor: "left", showarrow: false,
+      text: "managed", font: { size: 10, color: token("--muted") }, hovertext: `The managed desk begins ${managed} (the repo start). Before it: IB held long only, crypto untraded.` }] : []),
+    shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }]
+      .concat(markManaged ? [{ type: "line", xref: "x", yref: "paper", x0: managed, x1: managed, y0: 0, y1: 1, line: { color: token("--muted"), width: 1, dash: "dot" } }] : []),
   });
   twrLayout.yaxis = Object.assign({}, twrLayout.yaxis, { ticksuffix: "%" });
   Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => { spreadEndLabels("chart-twr"); markNumericNotes(); zoomCharts(); drawChartScales(); });

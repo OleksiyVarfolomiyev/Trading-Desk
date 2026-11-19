@@ -58,6 +58,53 @@ class MeasureTests(unittest.TestCase):
         self.assertTrue(all(books == {"desk", "crypto", "stocks"} for books in by_period.values()))
         self.assertIn("Since Nov 20 '25", by_period)
 
+    def test_short_window_has_no_year_rows_and_names_its_inception(self):
+        idx = pd.date_range("2026-10-15", "2026-11-18", freq="D")
+        levels = {"desk": pd.Series(1 + 0.001 * pd.Series(range(len(idx))).values, index=idx)}
+        labels = [row["Period"] for row in dd.period_table(levels, inception=pd.Timestamp("2026-10-16"))]
+        self.assertIn("Since Oct 16 '26", labels)
+        self.assertNotIn("2026", labels)
+
+
+class EraTests(unittest.TestCase):
+    def books(self, folder):
+        idx = pd.date_range("2025-01-14", "2026-11-18", freq="D")
+        # stocks fall through 2026-10 (passive era includes a drawdown), then recover inside the managed era
+        stocks = [[d.strftime("%Y-%m-%d"), (-0.0004 * i if d < pd.Timestamp("2026-10-16") else -0.0004 * 640 + 0.001 * (i - 640))]
+                  for i, d in enumerate(idx)]
+        crypto = [[d.strftime("%Y-%m-%d"), 0.001 * i] for i, d in enumerate(idx) if d >= pd.Timestamp("2025-11-20")]
+        desk = [[d.strftime("%Y-%m-%d"), 0.0002 * i] for i, d in enumerate(idx)]
+        path = Path(folder) / "books.json"
+        path.write_text(json.dumps({"series": {"crypto": crypto, "stocks": stocks}, "desk_series": desk}))
+        return path
+
+    def test_managed_since_is_the_repo_start(self):
+        self.assertEqual(dd.managed_since(), pd.Timestamp("2026-10-16"))
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(dd.managed_since(Path(folder) / "none.json"), pd.Timestamp(dd.MANAGED_SINCE))
+
+    def test_managed_levels_start_at_the_close_before_the_repo_start(self):
+        with tempfile.TemporaryDirectory() as folder:
+            levels = dd.load_levels(self.books(folder))
+        for series in levels.values():
+            self.assertEqual(series.index[0], pd.Timestamp("2026-10-15"))
+            self.assertAlmostEqual(series.iloc[0], 1.0)
+
+    def test_passive_table_puts_stocks_beside_spy_over_the_same_days(self):
+        spy_idx = pd.date_range("2025-01-14", "2026-12-01", freq="D")
+        spy = pd.Series(range(100, 100 + len(spy_idx)), index=spy_idx, dtype=float)
+        with tempfile.TemporaryDirectory() as folder:
+            rows = dd.passive_table(self.books(folder), spy=spy)
+        self.assertEqual([r["Held"] for r in rows][:2], ["Stocks (IB, long only)", "SPY, same days"])
+        self.assertEqual(rows[0]["To"], rows[1]["To"])
+        self.assertEqual(rows[0]["From"], rows[1]["From"])
+        self.assertEqual(rows[0]["To"], "Oct 15 '26")   # nothing from the managed era
+
+    def test_alert_uses_the_managed_desk_only(self):
+        rows = dd.alerts({"desk": series([1.0, 1.0, 0.84])}, 0.20)
+        self.assertEqual(len(rows), 1)
+        self.assertIn("Managed desk", rows[0][1])
+
 
 class ToleranceTests(unittest.TestCase):
     def test_tolerance_empty_by_default(self):
@@ -89,23 +136,40 @@ class ToleranceTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
-    def test_quarter_report_and_due(self):
+    def books(self, folder):
         idx = pd.date_range("2025-11-20", "2026-11-18", freq="D")
         payload = {"series": {"crypto": [[d.strftime("%Y-%m-%d"), 0.001 * i] for i, d in enumerate(idx)],
                               "stocks": [[d.strftime("%Y-%m-%d"), -0.0005 * i] for i, d in enumerate(idx)]},
                    "desk_series": [[d.strftime("%Y-%m-%d"), 0.0002 * i] for i, d in enumerate(idx)]}
+        books = Path(folder) / "books.json"
+        books.write_text(json.dumps(payload))
+        return books
+
+    def test_passive_quarter_report_is_labelled_and_has_no_tolerance(self):
+        spy_idx = pd.date_range("2025-01-01", "2026-12-01", freq="D")
+        spy = pd.Series(range(100, 100 + len(spy_idx)), index=spy_idx, dtype=float)
         with tempfile.TemporaryDirectory() as folder:
-            books = Path(folder) / "books.json"
-            books.write_text(json.dumps(payload))
+            books = self.books(folder)
             out = Path(folder) / "reports"
             today = pd.Timestamp("2026-11-19")
             self.assertEqual(dd.report_due(today, out), ["Q", "Y"])
-            target = dd.write_report("Q", today, books, out)
+            target = dd.write_report("Q", today, books, out, spy=spy)
             self.assertEqual(target.name, "2026Q3.md")
             text = target.read_text()
-            self.assertIn("| desk |", text)
-            self.assertIn("tolerance", text.lower())
+            self.assertIn("passive era", text)
+            self.assertIn("SPY, same days", text)
+            self.assertNotIn("tolerance", text.lower().replace("no drawdown tolerance", ""))
             self.assertEqual(dd.report_due(today, out), ["Y"])
+
+    def test_managed_quarter_report_has_the_desk_and_tolerance(self):
+        with tempfile.TemporaryDirectory() as folder:
+            books = self.books(folder)
+            out = Path(folder) / "reports"
+            target = dd.write_report("Q", pd.Timestamp("2027-01-05"), books, out)
+            text = target.read_text() if target else ""
+        self.assertIn("managed desk", text)
+        self.assertIn("| desk |", text)
+        self.assertIn("tolerance", text.lower())
 
 
 class MonitorTests(unittest.TestCase):

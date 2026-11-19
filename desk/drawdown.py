@@ -35,6 +35,17 @@ REPORTS = REPO / "research" / "reports"
 ALERT_STATE = REPO / "data" / "drawdown_alert.json"
 NAMES = ("desk", "crypto", "stocks")
 WARN_SHARE = 0.75   # the early warning: three quarters of the tolerance
+MANAGED_SINCE = "2026-10-16"   # the repo start: the desk's risk measures (caps, guardrails, the short leg) begin here
+
+
+def managed_since(path: Path | None = None) -> pd.Timestamp:
+    """First day of the managed desk (desk/fiduciary.json "managed_since", the repo start). Before it the book was held
+    passively: IB long only, crypto untraded. Reports separate the two eras."""
+    try:
+        value = json.loads((path or CONFIG).read_text()).get("managed_since")
+    except (OSError, ValueError):
+        value = None
+    return pd.Timestamp(value or MANAGED_SINCE)
 
 
 # ------------------------------------------------------------------------------------------------------------- series
@@ -57,8 +68,8 @@ def desk_returns(returns_of: dict[str, pd.Series], equity: dict[str, pd.Series])
     return pd.Series(out, dtype=float).sort_index()
 
 
-def load_levels(path: Path | None = None) -> dict[str, pd.Series]:
-    """Growth of 1 for the desk and each book, from the hourly books file, cut to the first day all of them exist."""
+def load_raw(path: Path | None = None) -> dict[str, pd.Series]:
+    """Growth of 1 for the desk and each book over everything the books file has (each series from its own first day)."""
     from desk.web_sync import BOOKS_FILE
 
     data = json.loads((path or BOOKS_FILE).read_text())
@@ -70,7 +81,24 @@ def load_levels(path: Path | None = None) -> dict[str, pd.Series]:
         points = [(day, value) for day, value in raw.get(name, []) if value is not None]
         if len(points) >= 2:
             levels[name] = pd.Series([1 + v for _, v in points], index=pd.to_datetime([d for d, _ in points])).sort_index()
-    return common_window(levels)
+    return levels
+
+
+def load_levels(path: Path | None = None, era: str = "managed", since: pd.Timestamp | None = None) -> dict[str, pd.Series]:
+    """Growth of 1 for the desk and each book, cut to the first day all of them exist. ``era`` "managed" (default) starts
+    at the close before the managed desk's first day, so its first day's move counts; "passive" is everything before it."""
+    levels = load_raw(path)
+    since = since if since is not None else managed_since()
+    out = {}
+    for name, s in levels.items():
+        if era == "managed":
+            before = s[s.index < since]
+            cut = pd.concat([before.iloc[-1:], s[s.index >= since]])
+        else:
+            cut = s[s.index < since]
+        if len(cut) >= 2 and cut.iloc[0] > 0:
+            out[name] = cut / cut.iloc[0]
+    return common_window(out) if era == "managed" else out
 
 
 def common_window(levels: dict[str, pd.Series]) -> dict[str, pd.Series]:
@@ -134,27 +162,31 @@ def period_stats(levels: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> d
             "from": path.index[0], "to": path.index[-1], "partial": len(before) == 0 and start < levels.index[0]}
 
 
-def periods(first: pd.Timestamp, last: pd.Timestamp, months: int = 3, quarters: int = 4) -> list[tuple[str, str, pd.Timestamp, pd.Timestamp]]:
-    """(kind, label, start, end): the latest months and quarters, every year, and the whole window."""
+def periods(first: pd.Timestamp, last: pd.Timestamp, months: int = 3, quarters: int = 4,
+            inception: pd.Timestamp | None = None) -> list[tuple[str, str, pd.Timestamp, pd.Timestamp]]:
+    """(kind, label, start, end): the latest months and quarters, every year (only once the window is a year long, else
+    the whole window says it), and the whole window, named from ``inception`` when given."""
     out = []
     for p in pd.period_range(first, last, freq="M")[-months:][::-1]:
         out.append(("M", p.start_time.strftime("%b '%y"), p.start_time, min(p.end_time.normalize(), last)))
     for p in pd.period_range(first, last, freq="Q")[-quarters:][::-1]:
         out.append(("Q", f"Q{p.quarter} '{p.start_time:%y}", p.start_time, min(p.end_time.normalize(), last)))
-    for p in pd.period_range(first, last, freq="Y")[::-1]:
-        out.append(("Y", str(p.year), p.start_time, min(p.end_time.normalize(), last)))
-    out.append(("All", f"Since {first:%b %-d '%y}", first, last))
+    if (last - first).days >= 365:
+        for p in pd.period_range(first, last, freq="Y")[::-1]:
+            out.append(("Y", str(p.year), p.start_time, min(p.end_time.normalize(), last)))
+    named = inception if inception is not None else first
+    out.append(("All", f"Since {named:%b %-d '%y}", first, last))
     return out
 
 
-def period_table(levels: dict[str, pd.Series]) -> list[dict]:
+def period_table(levels: dict[str, pd.Series], inception: pd.Timestamp | None = None) -> list[dict]:
     """Rows for the tile: each period, the desk then the books."""
     if not levels:
         return []
     first = max(s.index.min() for s in levels.values())
     last = min(s.index.max() for s in levels.values())
     rows = []
-    for kind, label, start, end in periods(first, last):
+    for kind, label, start, end in periods(first, last, inception=inception):
         for name in NAMES:
             if name not in levels:
                 continue
@@ -166,6 +198,58 @@ def period_table(levels: dict[str, pd.Series]) -> list[dict]:
                 note += ", period to date"
             rows.append({"Period": label, "Book": name, **{k: stats[k] for k in ("Return", "Max DD", "DD at end", "Under water",
                          "Return / max DD", "Status")}, "_kind": kind, "_window": note})
+    return rows
+
+
+# ------------------------------------------------------------------------------------------------ the passive era
+def spy_closes(days: int = 800) -> pd.Series:
+    """SPY's daily closes from Yahoo (what the passive stock book accepted); empty when it cannot be read."""
+    try:
+        from desk.live_risk import yahoo_stock_closes
+
+        closes = yahoo_stock_closes("SPY", days)
+        closes.index = pd.to_datetime(closes.index).tz_localize(None).normalize()
+        return closes.dropna().sort_index()
+    except Exception as exc:
+        from desk import degraded
+
+        degraded.report("SPY history", exc)
+        return pd.Series(dtype=float)
+
+
+def passive_stats(levels: pd.Series, start: pd.Timestamp | None = None, end: pd.Timestamp | None = None) -> dict | None:
+    start = start if start is not None else levels.index[0]
+    end = end if end is not None else levels.index[-1]
+    return period_stats(levels, start, end)
+
+
+def passive_table(path: Path | None = None, since: pd.Timestamp | None = None, spy: pd.Series | None = None) -> list[dict]:
+    """The passive era (before the managed desk), each series over its own window: the stock book beside SPY over the same
+    window (the drawdown it accepted), then crypto and the desk as held. ``From``/``To`` are the window's first and last day."""
+    passive = load_levels(path, era="passive", since=since)
+    if not passive:
+        return []
+    spy = spy_closes() if spy is None else spy
+    rows = []
+
+    def row(name, label, levels):
+        stats = passive_stats(levels)
+        if stats is None:
+            return
+        rows.append({"Held": label, "From": f"{levels.index[0]:%b %-d '%y}", "To": f"{levels.index[-1]:%b %-d '%y}",
+                     "Return": stats["Return"], "Max DD": stats["Max DD"], "DD at end": stats["DD at end"],
+                     "Under water": stats["Under water"], "Return / max DD": stats["Return / max DD"]})
+
+    if "stocks" in passive:
+        stocks = passive["stocks"]
+        row("stocks", "Stocks (IB, long only)", stocks)
+        window = spy[(spy.index >= stocks.index[0]) & (spy.index <= stocks.index[-1])] if len(spy) else spy
+        if len(window) >= 2:
+            row("spy", "SPY, same days", window / window.iloc[0])
+    if "crypto" in passive:
+        row("crypto", "Crypto (untraded)", passive["crypto"])
+    if "desk" in passive:
+        row("desk", "Desk as held", passive["desk"])
     return rows
 
 
@@ -202,9 +286,9 @@ def alerts(levels: dict[str, pd.Series], limit: float | None) -> list[list[str]]
     current = float(drawdowns(desk).iloc[-1])
     level = alert_level(current, limit)
     if level == "breach":
-        return [["Drawdown past tolerance", f"Desk {_pct(current)} from its high; tolerance {_pct(-limit)}. Review exposure."]]
+        return [["Drawdown past tolerance", f"Managed desk {_pct(current)} from its high; tolerance {_pct(-limit)}. Review exposure."]]
     if level == "warn":
-        return [["Drawdown nearing tolerance", f"Desk {_pct(current)} from its high; tolerance {_pct(-limit)}."]]
+        return [["Drawdown nearing tolerance", f"Managed desk {_pct(current)} from its high; tolerance {_pct(-limit)}."]]
     return []
 
 
@@ -262,26 +346,37 @@ def underwater_figure(levels: dict[str, pd.Series]):
     return figure
 
 
-def publish(push: bool = True, directory: Path | None = None, path: Path | None = None) -> list[str]:
+def publish(push: bool = True, directory: Path | None = None, path: Path | None = None, spy: pd.Series | None = None) -> list[str]:
+    """Three tiles: the managed desk's drawdown by period and from its high (the desk's record, from the repo start), and
+    the passive era before it, shown apart (stocks beside SPY, the drawdown that book accepted)."""
     from desk import tile_feed
 
+    since = managed_since()
     levels = load_levels(path)
     if not levels:
         return []
     limit = tolerance()
-    rows = period_table(levels)
+    rows = period_table(levels, inception=since)
     table = pd.DataFrame([{k: v for k, v in row.items() if not k.startswith("_")} for row in rows])
-    window = f"{min(s.index.min() for s in levels.values()):%b %-d '%y}"
-    reason = (f"drawdown by period, desk (HL + IB) and books, from {window} when all three trade"
+    reason = (f"managed desk (HL + IB) and books from {since:%b %-d '%y}, the repo start"
               + (f"; tolerance {_pct(-limit)}" if limit else "; no tolerance set"))
     common = {"hours": 48, "relevance": 0.1, "push": False, "directory": directory}
-    tile_feed.publish(table, "Drawdown by period", reason=reason, key="drawdown-periods",
-                      formats={"Return": "spct", "Max DD": "spct", "DD at end": "spct", "Under water": "num",
-                               "Return / max DD": "num"}, attention=alerts(levels, limit), **common)
-    tile_feed.publish(underwater_figure(levels), "Drawdown from the high", reason=reason, key="drawdown-underwater", **common)
+    formats = {"Return": "spct", "Max DD": "spct", "DD at end": "spct", "Under water": "num", "Return / max DD": "num"}
+    tile_feed.publish(table, "Drawdown by period, managed desk", reason=reason, key="drawdown-periods", formats=formats,
+                      attention=alerts(levels, limit), **common)
+    tile_feed.publish(underwater_figure(levels), "Drawdown from the high, managed desk", reason=reason, key="drawdown-underwater", **common)
+    keys = ["drawdown-periods", "drawdown-underwater"]
+    passive = passive_table(path, since, spy)
+    if passive:
+        tile_feed.publish(pd.DataFrame(passive), "Drawdown before the managed desk", key="drawdown-passive", formats=formats,
+                          reason=f"passive holding before {since:%b %-d '%y}: IB long only (SPY beside it), crypto untraded; not the desk's record",
+                          **common)
+        keys.append("drawdown-passive")
+    else:
+        tile_feed.withdraw("drawdown-passive", push=False, directory=directory)
     if push:
         tile_feed.push_to_web(directory)
-    return ["drawdown-periods", "drawdown-underwater"]
+    return keys
 
 
 # ------------------------------------------------------------------------------------------------------------- report
@@ -294,18 +389,25 @@ def finished_period(kind: str, today: pd.Timestamp | None = None) -> pd.Period:
 
 
 def write_report(kind: str = "Q", today: pd.Timestamp | None = None, path: Path | None = None,
-                 out_dir: Path | None = None) -> Path | None:
-    """Write research/reports/<period>.md: return, max DD vs tolerance, worst month, recovery, excess-return drivers."""
+                 out_dir: Path | None = None, spy: pd.Series | None = None) -> Path | None:
+    """Write research/reports/<period>.md. A period inside the managed era reports the desk: return, max DD vs tolerance,
+    worst month, recovery, the excess-return drivers. A period before the repo start is the passive era (IB long only,
+    crypto untraded): labelled as such, the stock book beside SPY, with no tolerance or drivers (those are the desk's)."""
     from desk.web_sync import BOOKS_FILE
 
     period = finished_period(kind, today)
+    since = managed_since()
+    start, end = period.start_time, period.end_time.normalize()
+    if end < since:
+        return _write_passive_report(period, start, end, since, path, out_dir, spy)
     levels = load_levels(path)
     if not levels:
         return None
-    start, end = period.start_time, period.end_time.normalize()
+    start = max(start, since)
     limit = tolerance()
-    lines = [f"# Desk report {period}", "",
-             f"Window: {start:%b %-d, %Y} to {end:%b %-d, %Y}. Returns are time-weighted on trading equity (HL + IB, no "
+    lines = [f"# Desk report {period}: managed desk", "",
+             f"Window: {start:%b %-d, %Y} to {end:%b %-d, %Y}. The managed desk begins {since:%b %-d, %Y} (the repo start; earlier "
+             "periods are the passive era and are reported apart). Returns are time-weighted on trading equity (HL + IB, no "
              f"wallet tokens); every series is measured from {min(s.index.min() for s in levels.values()):%b %-d, %Y}, "
              "when the desk and both books trade.", "",
              "| Book | Return | Max drawdown | Drawdown at end | Longest under water | Status |", "|---|---|---|---|---|---|"]
@@ -319,12 +421,12 @@ def write_report(kind: str = "Q", today: pd.Timestamp | None = None, path: Path 
     desk = period_stats(levels["desk"], start, end) if "desk" in levels else None
     lines.append("")
     if limit is None:
-        lines.append("Drawdown tolerance: not set (desk/fiduciary.json).")
+        lines.append("Drawdown tolerance (managed desk): not set (desk/fiduciary.json).")
     elif desk and desk["Max DD"]:
         used = -desk["Max DD"] / limit
-        lines.append(f"Drawdown tolerance {_pct(-limit)}: the desk's deepest drawdown used {used:.0%} of it.")
+        lines.append(f"Drawdown tolerance {_pct(-limit)} (managed desk): its deepest drawdown used {used:.0%} of it.")
     if "desk" in levels:
-        months = [(p, period_stats(levels["desk"], p.start_time, min(p.end_time.normalize(), end)))
+        months = [(p, period_stats(levels["desk"], max(p.start_time, start), min(p.end_time.normalize(), end)))
                   for p in pd.period_range(start, end, freq="M")]
         months = [(p, s) for p, s in months if s and s["Max DD"]]
         if months:
@@ -351,11 +453,51 @@ def write_report(kind: str = "Q", today: pd.Timestamp | None = None, path: Path 
             lines.append(f"| Excess return | {excess[0]} | {excess[1]} |")
     except (OSError, ValueError, StopIteration):
         pass
+    return _save(period, lines, out_dir)
+
+
+def _save(period: pd.Period, lines: list[str], out_dir: Path | None) -> Path:
     folder = out_dir or REPORTS
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"{period}.md"
     target.write_text("\n".join(lines) + "\n")
     return target
+
+
+def _write_passive_report(period, start, end, since, path, out_dir, spy) -> Path | None:
+    """The passive era's period: each series over the period's days it has, the stock book beside SPY (what it accepted)."""
+    raw = load_raw(path)
+    spy = spy_closes() if spy is None else spy
+    lines = [f"# Report {period}: passive era, before the managed desk", "",
+             f"Window: {start:%b %-d, %Y} to {end:%b %-d, %Y}. This is before the managed desk ({since:%b %-d, %Y}, the repo "
+             "start): IB was held long only and accepted SPY-like drawdowns, crypto was not traded. It is not the desk's record, "
+             "so there is no drawdown tolerance or excess-return attribution here. Each row starts on its own first day "
+             "(shown); returns are time-weighted.", "",
+             "| Held | From | Return | Max drawdown | Drawdown at end | Longest under water | Status |", "|---|---|---|---|---|---|---|"]
+    sources = [("Stocks (IB, long only)", raw.get("stocks")), ("SPY, same days", None),
+               ("Crypto (untraded)", raw.get("crypto")), ("Desk as held", raw.get("desk"))]
+    stocks_stats = None
+    for label, levels in sources:
+        if label.startswith("SPY"):
+            if stocks_stats is None or not len(spy):
+                continue
+            window = spy[(spy.index >= stocks_stats["from"]) & (spy.index <= stocks_stats["to"])]
+            if len(window) < 2:
+                continue
+            levels = window / window.iloc[0]
+            stats = period_stats(levels, levels.index[0], levels.index[-1])
+        else:
+            stats = period_stats(levels[levels.index < since], start, end) if levels is not None else None
+            if label.startswith("Stocks"):
+                stocks_stats = stats
+        if not stats:
+            continue
+        lines.append(f"| {label} | {stats['from']:%b %-d, %Y} | {_pct(stats['Return'])} | "
+                     f"{_pct(stats['Max DD']) if stats['Max DD'] else ''} | {_pct(stats['DD at end']) if stats['DD at end'] else ''} | "
+                     f"{str(stats['Under water']) + ' days' if stats['Under water'] else ''} | {stats['Status']} |")
+    if len(lines) <= 8:
+        return None
+    return _save(period, lines, out_dir)
 
 
 def report_due(today: pd.Timestamp | None = None, out_dir: Path | None = None) -> list[str]:

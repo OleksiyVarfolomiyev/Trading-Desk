@@ -292,7 +292,10 @@ def books_payload() -> dict:
         desk_series = [[day.strftime("%Y-%m-%d"), _clean(round(float(value) - 1, 5))] for day, value in growth.items()]
     except Exception as error:
         print(f"Desk series unavailable ({type(error).__name__}).", file=sys.stderr)
-    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "rows": rows, "series": series, "desk_series": desk_series,
+    from desk.drawdown import managed_since
+
+    return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "managed_since": managed_since().strftime("%Y-%m-%d"),
+            "rows": rows, "series": series, "desk_series": desk_series,
             "class_series": class_series, "attribution": attribution, "risk_replay": replay,
             "regimes": regimes, "stats": trade_stats(fills), "incomplete": incomplete}
 

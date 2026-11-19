@@ -235,6 +235,12 @@ def book_lines(start) -> list[dict]:
     return lines
 
 
+def _managed_since() -> str:
+    from desk import drawdown
+
+    return drawdown.managed_since().strftime("%Y-%m-%d")
+
+
 def usage_model_now() -> dict:
     try:
         from desk import usage_model
@@ -699,6 +705,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
                        "hover": daemon_alerts.hovers(daemon_alerts.read())},  # headlines around a big move
         "tables": tables,
         "charts": {"value": value_series, "value_with_wallets": with_wallets, "twr": twr,
+                   "managed_since": _managed_since(),   # the repo start: the return chart marks where the managed desk begins
                    # Stretches with no trading on any account, collapsed on the value chart.
                    "value_idle": [[start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), (end - start).days]
                                   for start, end in desk.idle_periods()]},
