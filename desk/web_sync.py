@@ -601,6 +601,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  build history: {added} new commits labelled; tiles {', '.join(build_history.publish())}")
         except Exception as exc:
             print(f"  build history not refreshed ({type(exc).__name__}: {exc})")
+        try:   # every prod rule's live record against its history (desk/forward_monitor.py)
+            from desk import forward_monitor
+
+            result = forward_monitor.run()
+            flagged = [row["Rule"] for row in result["items"] if row["Status"] == "live drift"]
+            print(f"  forward monitor: {len(result['items'])} rules" + (f"; live drift: {', '.join(flagged)}" if flagged else ""))
+        except Exception as exc:
+            print(f"  forward monitor not run ({type(exc).__name__}: {exc})")
     if args.seed_history:
         print("Saved daily points on the relay:", seed_history())
     if args.push_wallets:

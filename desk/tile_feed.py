@@ -52,16 +52,20 @@ def _table(frame, formats: dict[str, str] | None) -> dict:
 
 
 def publish(content, title: str, reason: str = "", relevance: float = 0.7, hours: float = 24.0, key: str | None = None,
-            formats: dict[str, str] | None = None, push: bool = True, directory: Path | None = None) -> dict:
+            formats: dict[str, str] | None = None, push: bool = True, directory: Path | None = None,
+            attention: list | None = None) -> dict:
     """Put a Plotly figure or a DataFrame on the dashboard. ``relevance`` (0 to 1) is how much it matters now: it ranks
     against the built-in tiles; ``reason`` says why it is shown; it expires after ``hours``. Publishing the same ``key``
-    again replaces the tile."""
+    again replaces the tile. ``attention`` rows ([title, text]) are added to both dashboards' attention list while the
+    tile is live."""
     directory = directory or TILES_DIR
     body = _chart(content) if hasattr(content, "to_plotly_json") or hasattr(content, "to_dict") and hasattr(content, "layout") \
         else _table(content, formats)
     now = time.time()
     tile = {"key": key or _slug(title), "title": title, "reason": reason, "relevance": max(0.0, min(1.0, float(relevance))),
             "created": now, "expires": now + hours * 3600, **body}
+    if attention:
+        tile["attention"] = [[str(title), str(text)] for title, text in attention]
     text = json.dumps(tile)
     if len(text) > MAX_BYTES:
         raise ValueError(f"the tile is {len(text) // 1000} KB; the limit is {MAX_BYTES // 1000} KB (fewer points or rows)")

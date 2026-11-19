@@ -20,3 +20,5 @@ research/data/hl_book_exposure_weekly.csv
 tests/.test_map.json
 charts/
 research/data/orderbook_signals/
+data/forward/
+data/forward_monitor.json

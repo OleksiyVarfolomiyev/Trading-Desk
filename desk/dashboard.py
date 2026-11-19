@@ -677,6 +677,8 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
     book_comparison = book_comparison_now()
     # Tables that should tie out and don't, and compared figures whose windows differ: first.
     attention = reconcile.checks(tables) + reconcile.windows({"twr": twr}, book_comparison) + attention
+    # Rows a published tile carries (the forward monitor's "Live drift" and "No historical / forward test").
+    attention += [list(row) for tile in published_tiles() for row in tile.get("attention", [])]
     notes = list(desk.notes)
     notes += [f"{snapshot.label}: {note}" for snapshot in overview.snapshots for note in snapshot.notes]
     book_comparison["desk_series"] = [

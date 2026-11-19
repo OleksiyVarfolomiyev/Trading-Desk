@@ -1252,6 +1252,9 @@
     [...new Set(riskNotes)].forEach((note) => notes.push(`Open risk: ${note}`));
     // Tables that should tie out and don't, and compared figures whose windows differ (desk/reconcile.py windows): first.
     reconcile(tables).concat(reconcileWindows(twr, (bookPerf && bookPerf.attribution) || {})).reverse().forEach((row) => attention.unshift(row));
+    // Rows a published tile carries (the forward monitor's "Live drift" and "No historical / forward test").
+    ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now())
+      .forEach((tile) => (tile.attention || []).forEach((row) => attention.push(row)));
 
     return plain({
       kpis: {
