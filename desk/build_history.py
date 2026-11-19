@@ -296,7 +296,8 @@ def publish(path: Path = CSV_PATH, hours: float = 24 * 14, push: bool = True, di
     if not rows:
         return []
     days = per_day(rows)
-    figure = go.Figure([go.Bar(name=kind, x=list(days), y=[days[day].get(kind, 0) for day in days]) for kind in KINDS
+    # A kind absent that day is no segment: a 0 would be labelled on the bar.
+    figure = go.Figure([go.Bar(name=kind, x=list(days), y=[days[day].get(kind) or None for day in days]) for kind in KINDS
                         if any(days[day].get(kind) for day in days)])
     figure.update_layout(barmode="stack")
     common = {"hours": hours, "relevance": 0.1, "push": False, "directory": directory}
