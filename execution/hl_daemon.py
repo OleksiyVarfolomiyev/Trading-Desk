@@ -3306,7 +3306,17 @@ class Daemon:
             return 0
         if command == "unprotect":
             return self.unprotect(request)
-        if command == "resize" and str(request.get("change")) in ("short", "long"):   # a candidate acted on from the dashboard
+        if command == "resize" and str(request.get("change")) in ("short", "long"):   # a new entry from the dashboard
+            label = str(request.get("label") or "")
+            if label not in ht.ENTRY_LABELS:   # the label is the strategy; an entry without one is not sent
+                print("Pick a label (directional, fade, hedge or conviction) before planning the entry; nothing was planned.")
+                return 2
+            notional = request.get("notional")   # an explicit amount is an opt-in picked at the trade; no preset size
+            try:
+                notional = float(notional) if notional not in (None, "") else None
+            except (TypeError, ValueError):
+                print("The entry amount must be a number of dollars; nothing was planned.")
+                return 2
             wallet = self.wallet(str(request.get("wallet") or "07f2"))
             coin = str(request.get("coin", "")).strip()
             coin = coin if ":" in coin else coin.upper()
@@ -3316,10 +3326,10 @@ class Daemon:
             if not self.trade_lock.acquire(timeout=PROMPT_TIMEOUT_SECONDS):
                 print("Another trade is waiting for confirmation in the daemon; try again shortly.")
                 return 2
-            try:   # thesis trades go in without a stop or take-profit (the desk's rule since 2026-11-17)
+            try:   # sized from the risk budget and the asset's volatility (a batch of one); no stop or take-profit
                 return self.trade({"cmd": "trade", "wallet": wallet, "live": bool(request.get("live")), "signals": str(path),
-                                   "fast": True, "conviction": True, "ignore_unreachable": True, "label": request.get("label"),
-                                   "strategy": "fade" if str(request["change"]).lower() == "short" else "directional"}, session)
+                                   "fast": True, "notional": notional, "ignore_unreachable": True, "label": label,
+                                   "strategy": label}, session)
             finally:
                 self.trade_lock.release()
         if command == "resize":   # the dashboard's actions on an open position: plan (dry run), then live once confirmed there
@@ -3487,11 +3497,12 @@ class Daemon:
                                            external_exposures=tuple(desk_exposures(book)))
             snapshot = ht.urgent_fees(snapshot, bool(request.get("urgent")))
             stops = ht.resting_stops(risk_wallets, sorted({position.dex for position in snapshot.positions}))
-            plans, risk = ht.plan_trades(signals, markets, snapshot, stops=stops,
-                                         conviction=bool(request.get("conviction")),
-                                         strategy=request.get("strategy") or "directional", label=request.get("label"),
-                                         reviewed_limits=limits,
-                                         conviction_pct=float(request.get("conviction_pct") or ht.CONVICTION_NOTIONAL_PCT * 100) / 100)
+            # Every entry is sized from the risk budget and the asset's volatility; a different size is only an explicit
+            # dollar amount picked at the trade ("notional"); the old "conviction" flag is now just the conviction tag.
+            notional = float(request["notional"]) if request.get("notional") not in (None, "") else None
+            strategy = "conviction" if request.get("conviction") else (request.get("strategy") or "directional")
+            plans, risk = ht.plan_trades(signals, markets, snapshot, stops=stops, notional=notional,
+                                         strategy=strategy, label=request.get("label"), reviewed_limits=limits)
             ht.print_plan(snapshot, plans, risk)
             return "signals", plans, markets, snapshot
         actions = ht.read_position_actions(Path(request["actions"]))
@@ -3508,7 +3519,7 @@ class Daemon:
         began = time.time()
         batch = request.get("batch")
         if batch is not None and (not isinstance(batch, list) or not 2 <= len(batch) <= 10
-                                  or request.get("conviction") or request.get("signals")):
+                                  or request.get("notional") or request.get("signals")):
             raise ValueError("A dashboard batch requires 2–10 standard entry signals.")
         entries = bool(request.get("signals") or batch)
         if entries == bool(request.get("actions")):
@@ -3900,15 +3911,14 @@ def main(argv: list[str] | None = None) -> int:
                        "--actions, reduce/close at market at once instead of resting post-only for up to 60s")
     trade.add_argument("--fast", action="store_true",
                        help="post-only limit re-priced every 2s until fully filled (stops if the price runs away)")
-    trade.add_argument("--strategy", choices=("directional", "hedge"), default="directional",
-                       help="the journal's tag for the position (--conviction tags it conviction)")
+    trade.add_argument("--strategy", choices=("directional", "fade", "hedge", "conviction"), default="directional",
+                       help="the journal's tag for the position; it never changes the size")
     trade.add_argument("--thesis", help="why the trade is opened, in a sentence: written to the journal and shown on the thesis tile")
     trade.add_argument("--conviction", action="store_true",
-                       help="high-conviction entry: no stop, take-profit or loss guard, sized by --conviction-pct")
-    from desk.risk import CONVICTION_NOTIONAL_PCT
-
-    trade.add_argument("--conviction-pct", type=float, default=CONVICTION_NOTIONAL_PCT * 100,
-                       help="with --conviction: notional as a percent of the trading wallet's equity")
+                       help="tag the entry conviction (same as --strategy conviction); the size stays risk-based")
+    trade.add_argument("--notional", type=float,
+                       help="opt in to an explicit entry amount in dollars instead of the risk-based size (one position's "
+                       "risk budget over the asset's volatility); still within the margin and the aggregate risk cap")
     trade.add_argument("--slippage", type=float, default=URGENT_SLIPPAGE_PCT,
                        help=f"with --urgent: percent beyond the mid the entry may pay (default {URGENT_SLIPPAGE_PCT:g})")
     trade.add_argument("--max-risk-pct", type=float, help="aggregate risk cap for this run only, in percent")
@@ -3954,7 +3964,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.urgent and args.fast:
             parser.error("choose --urgent or --fast, not both.")
         request = {"cmd": "trade", "wallet": args.wallet, "live": args.live, "urgent": args.urgent, "fast": args.fast,
-                   "conviction": args.conviction, "conviction_pct": args.conviction_pct, "strategy": args.strategy,
+                   "conviction": args.conviction, "notional": args.notional, "strategy": args.strategy,
                    "slippage": args.slippage, "max_risk_pct": args.max_risk_pct,
                    "ignore_unreachable": args.ignore_unreachable,
                    "risk_wallets": [item.strip() for item in args.risk_wallets.split(",")] if args.risk_wallets else None,

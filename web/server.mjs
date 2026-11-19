@@ -294,6 +294,10 @@ async function dashboardAction(request, response) {
   const entry = change === "short" || change === "long";   // a new entry from the trade bar: no fraction, an optional journal label
   const fraction = entry && body.fraction === undefined ? 1 : Number(body.fraction);
   const label = ["directional", "conviction", "hedge", "fade"].includes(body.label) ? body.label : "";
+  // An entry's size is the risk-based one unless the user typed an explicit dollar amount at the trade (opt-in).
+  const notional = entry && body.notional !== undefined && body.notional !== null && body.notional !== "" ? Number(body.notional) : null;
+  if (entry && !label) return send(400, { error: "Pick a label (directional, fade, hedge or conviction) before planning." });
+  if (notional !== null && !(notional > 0 && notional < 1e7)) return send(400, { error: "The entry amount must be a positive number of dollars." });
   const market = /^[A-Za-z0-9_]{1,24}(?::[A-Za-z0-9_]{1,24})?$/;
   if (!/^[0-9a-fA-F]{4}$/.test(String(wallet || ""))) return send(400, { error: "invalid HL wallet" });
   if (batch ? (!Array.isArray(signals) || signals.length < 2 || signals.length > 10 ||
@@ -305,7 +309,7 @@ async function dashboardAction(request, response) {
     return send(400, { error: batch ? "Enter 2–10 valid market and side rows." : "bad request" });
   }
   const request_ = batch ? { cmd: "trade", wallet, batch: signals.map(({coin, side, dex}) => ({coin, side, dex})), fast: true }
-    : { cmd: "resize", wallet, coin, change, fraction, label };
+    : { cmd: "resize", wallet, coin, change, fraction, label, ...(notional !== null ? { notional } : {}) };
   const key = JSON.stringify(request_);
   const outputLimit = batch ? 12000 : 4000;
   if (actionRunning) return send(409, { error: "another dashboard action is running" });
@@ -327,7 +331,7 @@ async function dashboardAction(request, response) {
       if (!pending || pending.key !== key || pending.expires < Date.now()) return send(400, { error: "the plan expired or changed: plan it again" });
       const { code, text } = await daemonCall({ ...request_, live: true, limits: pending.limits }, (prompt) =>
         prompt.includes("SUBMIT ORDERS") ? "SUBMIT ORDERS" : prompt.includes("SUBMIT POSITION ACTIONS") ? "SUBMIT POSITION ACTIONS" : prompt.includes("LIVE TRADING") ? "LIVE TRADING" : "");
-      await fsp.appendFile(ACTIONS_LOG, JSON.stringify({ at: new Date().toISOString(), change, coin, wallet, fraction,
+      await fsp.appendFile(ACTIONS_LOG, JSON.stringify({ at: new Date().toISOString(), change, coin, wallet, fraction, label, notional,
         signals: request_.batch, code,
         result: text.slice(-600) }) + "\n").catch(() => {});
       return send(200, { code, result: text.slice(-outputLimit) });

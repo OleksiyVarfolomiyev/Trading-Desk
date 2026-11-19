@@ -2514,7 +2514,7 @@ function tradeBar(close) {
     b.addEventListener("click", () => { tradeSide = value; sides.forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
     return b;
   });
-  const strat = el("select", { class: "trade-input", "aria-label": "Strategy", title: "Strategy tag (optional)" },
+  const strat = el("select", { class: "trade-input", "aria-label": "Strategy", title: "Strategy label (asked before planning if not picked here)" },
     [["", "strat"], ["directional", "directional"], ["conviction", "conviction"], ["hedge", "hedge"], ["fade", "fade"]]
       .map(([value, text]) => el("option", { value, text })));
   const picker = assetPicker("Asset to trade", (coin) => {
@@ -4017,13 +4017,44 @@ function openBatchTrade() {
   loadUniverse().then(() => { addRow(); addRow(); edit(); });
 }
 
+// A new entry first asks for its label (the strategy: none is preselected unless the trade bar's choice came with it) and,
+// only if wanted, an explicit dollar amount; left empty, the size is the risk budget over the asset's volatility.
+function pickEntry(label, change, target) {
+  const title = `${label}: ${marketName(target.coin)} (HL ${target.wallet})`;
+  const { overlay, box } = actionDialog(title);
+  let chosen = ["directional", "fade", "hedge", "conviction"].includes(target.label) ? target.label : "";
+  const plan = el("button", { type: "button", class: "asset-action lead", text: "Plan", disabled: !chosen });
+  const labels = el("div", { class: "scale-chips", role: "group", "aria-label": "Label" },
+    ["directional", "fade", "hedge", "conviction"].map((name) => {
+      const button = el("button", { type: "button", class: "scale-chip" + (name === chosen ? " on" : ""), text: name, "aria-pressed": String(name === chosen) });
+      button.addEventListener("click", () => {
+        chosen = name;
+        labels.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b === button); b.setAttribute("aria-pressed", String(b === button)); });
+        plan.disabled = false;
+      });
+      return button;
+    }));
+  const amount = el("input", { class: "trade-input", type: "number", min: "1", step: "any", inputmode: "decimal",
+    placeholder: "risk-based size", "aria-label": "Explicit amount in dollars (optional)", title: "Leave empty for the risk-based size; a dollar amount here is a deliberate opt-in" });
+  plan.addEventListener("click", () => {
+    if (!chosen) return;
+    const notional = amount.value.trim() ? Number(amount.value) : undefined;
+    if (notional !== undefined && !(notional > 0)) { amount.focus(); return; }
+    overlay.remove();
+    runAction(label, change, 1, Object.assign({}, target, { label: chosen, notional, picked: true }));
+  });
+  box.replaceChildren(el("h3", { text: title }), labels, el("div", { class: "trade-bar" }, [amount]),
+    el("div", { class: "asset-actions" }, [plan, closeButton(overlay).firstChild]));
+}
+
 async function runAction(label, change, fraction, target) {
+  if ((change === "short" || change === "long") && !target.picked) { pickEntry(label, change, target); return; }
   const coin = target.coin, title = `${label}: ${marketName(coin)} (HL ${target.wallet})`;
   feedback("action", "plan", marketName(coin), label);
   const { overlay, box } = actionDialog(title);
   box.replaceChildren(el("h3", { text: title }), el("p", { class: "muted", text: "Planning with live data…" }));
   const post = (body) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-    body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction, label: target.label }, body)) }).then((r) => r.json());
+    body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction, label: target.label, notional: target.notional }, body)) }).then((r) => r.json());
   let plan;
   try { plan = await post({ stage: "plan" }); } catch (e) { plan = { error: String(e) }; }
   if (plan.error || !plan.token) {

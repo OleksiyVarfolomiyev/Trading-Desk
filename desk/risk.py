@@ -28,9 +28,9 @@ STOP_ATR_MULTIPLE = 1.25  # IB stops
 # HL stops sit wider (from 2026-11-11): at 1.25 x ATR normal noise closed volatile names (INIT, the equity
 # perps) at a loss before the move. The same risk budget buys a smaller position.
 HL_STOP_ATR_MULTIPLE = 3.0
-# A conviction trade (no stop, no take-profit, no loss guard) is sized by notional instead: this share of
-# the trading wallet's equity, still inside its margin and the desk's aggregate risk cap.
-CONVICTION_NOTIONAL_PCT = 0.50
+# Every entry is sized from the per-position risk budget and the asset's volatility (its ATR sizing level), whatever its
+# label, and gets no stop order. There is no wallet-share sizing constant: a larger entry is an explicit dollar amount the
+# user picks at the trade (user, 2026-11-19: the old 50%-of-wallet default came from a one-off request and filled the cap).
 REWARD_RISK_RATIO = 1.0
 # Positions that hedge a holding elsewhere count nothing toward the aggregate risk cap while the hedge stands:
 # the 07f2 VVV short offsets the sVVV staked in c248 (a loss on one is a gain on the other), and it carries no

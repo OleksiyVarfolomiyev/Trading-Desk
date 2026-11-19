@@ -375,19 +375,39 @@ class DaemonTradeTests(unittest.TestCase):
         self.exchange.order.assert_not_called()
         self.assertIn("Confirmation did not match", self.output.getvalue())
 
-    def test_an_urgent_entry_places_only_a_take_profit_and_starts_a_guard(self):
+    def test_an_urgent_entry_places_only_the_entry_no_exits_and_no_guard(self):
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
         self.assertEqual(self.daemon.trade(self.request(live=True), session), 0)
-        entry, target = self.exchange.order.call_args_list
+        (entry,) = self.exchange.order.call_args_list   # the desk's rule: no stop, take-profit or loss guard
         (coin, is_buy, size, limit, order_type), kwargs = entry
         self.assertEqual((coin, is_buy, order_type, kwargs), ("AVAX", False, {"limit": {"tif": "Ioc"}},
                                                               {"reduce_only": False}))
         self.assertAlmostEqual(limit, 7.96)
-        self.assertEqual(target.args[:3], ("AVAX", True, 30.0))
-        self.assertEqual(target.args[4], {"limit": {"tif": "Alo"}})
-        self.assertEqual(target.kwargs, {"reduce_only": True})
-        trade = self.daemon.guards.entries[(WALLET, "AVAX")].trade
-        self.assertEqual((trade.entry_price, trade.stop_oid, trade.target_oid), (7.98, 0, 3))
+        self.assertNotIn((WALLET, "AVAX"), self.daemon.guards.entries)
+
+    def test_a_dashboard_entry_needs_a_label_and_is_risk_sized_not_conviction(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(hl_daemon.daemon_link, "RUN_DIR", Path(folder)):
+            with patch.object(self.daemon, "trade", return_value=0) as trade:
+                code = self.daemon.dispatch({"cmd": "resize", "change": "long", "coin": "xmr", "wallet": WALLET[-4:]}, FakeSession())
+                self.assertEqual(code, 2)
+                trade.assert_not_called()
+                self.assertIn("Pick a label", self.output.getvalue())
+                self.assertEqual(self.daemon.dispatch({"cmd": "resize", "change": "long", "coin": "xmr", "wallet": WALLET[-4:],
+                                                       "label": "directional"}, FakeSession()), 0)
+                request = trade.call_args.args[0]
+                self.assertNotIn("conviction", request)
+                self.assertEqual((request["strategy"], request["label"], request["notional"]), ("directional", "directional", None))
+                self.daemon.dispatch({"cmd": "resize", "change": "short", "coin": "ena", "wallet": WALLET[-4:],
+                                      "label": "conviction", "notional": "500"}, FakeSession())
+                self.assertEqual((trade.call_args.args[0]["strategy"], trade.call_args.args[0]["notional"]), ("conviction", 500.0))
+
+    def test_a_planned_entry_shows_its_share_of_the_wallet_and_the_risk_cap_without_expected_pnl(self):
+        self.daemon.trade(self.request(label="directional"), FakeSession())
+        line = next(text for text in self.output.getvalue().splitlines() if text.startswith("AVAX SHORT"))
+        self.assertIn("of the wallet", line)
+        self.assertIn("of the risk cap (risk budget and volatility)", line)
+        self.assertIn("no stop, take-profit or loss guard", line)
+        self.assertNotIn("expected 5d PnL", self.output.getvalue())
 
     def test_the_kill_switch_blocks_live_orders(self):
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
@@ -402,7 +422,7 @@ class DaemonTradeTests(unittest.TestCase):
             self.daemon.trade(self.request(live=True), FakeSession("LIVE TRADING", "SUBMIT ORDERS"))
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
         self.assertEqual(self.daemon.trade(self.request(live=True, ignore_unreachable=True), session), 0)
-        self.assertEqual(self.exchange.order.call_count, 2)
+        self.assertEqual(self.exchange.order.call_count, 1)   # the entry only: no exits
 
     def test_a_one_off_risk_cap_is_restored_afterwards(self):
         cap = ht.MAX_TOTAL_RISK_PCT

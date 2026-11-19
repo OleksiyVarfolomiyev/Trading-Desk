@@ -52,9 +52,10 @@ def adverse_funding_cost_per_unit(*args, **kwargs) -> float:
     return _adverse_funding_cost_per_unit(*args, **kwargs) if COUNT_FUNDING_IN_RISK else 0.0
 
 
-# A thesis (conviction) entry may use the risk estimate's own error margin beyond the 33% cap: 3 points of desk equity
-# (user, 2026-11-17: "we can be flexible on statistical boundaries of caps"). Everything else keeps the cap as is.
+# An entry at an explicit amount (``notional``) may use the risk estimate's own error margin beyond the 33% cap: 3 points of
+# desk equity (user, 2026-11-17: "we can be flexible on statistical boundaries of caps"). Everything else keeps the cap.
 CONVICTION_CAP_FLEX = 0.03
+ENTRY_LABELS = ("directional", "fade", "hedge", "conviction")   # the strategy picked for an entry (desk/journal.py)
 
 KEYCHAIN_SERVICE = "Hyperliquid API wallet"
 BASE_URL = "https://api.hyperliquid.xyz"
@@ -66,7 +67,6 @@ from desk.risk import (  # noqa: E402
     RESERVE_PCT,
     REWARD_RISK_RATIO,
     RISK_PCT_OF_USABLE_MARGIN,
-    CONVICTION_NOTIONAL_PCT,
     is_hedged,
 )
 from desk.risk import HL_STOP_ATR_MULTIPLE as STOP_ATR_MULTIPLE  # noqa: E402
@@ -187,7 +187,8 @@ class PlannedTrade:
     leverage: int
     block_reason: str = ""
     price_stop_distance: float = 0.0
-    conviction: bool = False  # no stop, no take-profit, no loss guard (sized by notional)
+    bare: bool = True         # no stop, take-profit or loss guard: the desk's rule since 2026-11-17 (False: the old exits)
+    large: bool = False       # sized at an explicit amount picked at the trade (opt-in), not from the risk budget
     stress_note: str = ""     # the scenario stress check's warning, or why it cut or refused the entry
     strategy: str = "directional"  # the journal's tag: directional, conviction or hedge (desk/journal.py)
     rule_notes: str = ""      # warnings from the desk's own trade history (desk/trade_rules.py)
@@ -961,14 +962,17 @@ def size_trade(
     available_margin: float,
     maker_fee_rate: float,
     taker_fee_rate: float,
-    conviction_notional: float | None = None,
+    large_notional: float | None = None,
     max_quantity: float = math.inf,
+    bare: bool = True,
 ) -> PlannedTrade:
     """Calculate an entry quantity constrained by risk, margin, and leverage.
 
-    With ``conviction_notional`` the trade has no stop: its size is that notional instead of the
-    per-position risk budget, still within the margin and the aggregate risk headroom (its risk is
-    counted at the ATR stop distance it does not have).
+    The size is the per-position risk budget over the asset's risk per unit (its ATR sizing level, fees and adverse
+    funding), so a volatile asset gets fewer dollars than a calm one. ``bare`` (the default) places no stop,
+    take-profit or loss guard; the sizing level only sizes. ``large_notional`` is the opt-in explicit amount: that notional
+    instead of the per-position budget, still within the margin and the aggregate risk headroom (its risk counted at
+    the same sizing level).
     """
     direction = side_to_direction(side)
     if not np.isfinite(equity) or equity <= 0:
@@ -994,15 +998,15 @@ def size_trade(
     if leverage < 1:
         raise ValueError(f"Invalid leverage metadata for {coin}.")
     available_risk = max(0.0, min(per_position_budget, risk_headroom))
-    if conviction_notional is not None:
+    if large_notional is not None:
         available_risk = max(0.0, risk_headroom)
     raw_quantity = min(
         available_risk / price_risk_per_unit,
         max(0.0, available_margin) * leverage / market.mark_price,
         max_quantity,
     )
-    if conviction_notional is not None:
-        raw_quantity = min(raw_quantity, max(0.0, conviction_notional) / market.mark_price)
+    if large_notional is not None:
+        raw_quantity = min(raw_quantity, max(0.0, large_notional) / market.mark_price)
     quantity_step = 10 ** -market.size_decimals
     quantity = round(math.floor(raw_quantity / quantity_step + 1e-12) * quantity_step, market.size_decimals)
     price_stop_distance = max(
@@ -1046,7 +1050,8 @@ def size_trade(
         leverage=leverage,
         block_reason=reason,
         price_stop_distance=price_stop_distance,
-        conviction=conviction_notional is not None,
+        bare=bare,
+        large=large_notional is not None,
     )
 
 
@@ -1158,20 +1163,25 @@ def plan_trades(
     snapshot: AccountSnapshot,
     include_external: bool = True,
     stops: dict[tuple[str, str], list[float]] | None = None,
-    conviction: bool = False,
-    conviction_pct: float = CONVICTION_NOTIONAL_PCT,
+    notional: float | None = None,
     strategy: str | None = None,
     label: str | None = None,
     reviewed_limits: dict[str, list[float]] | None = None,
+    bare: bool = True,
 ) -> tuple[list[PlannedTrade], float]:
     """Build risk- and margin-limited entry plans and report current portfolio risk.
 
     Current risk includes other desk venues unless ``include_external`` is False. ``stops`` (from
-    ``resting_stops``) prices each open position's risk to its own stop. Standard batches share
-    one position's risk budget with half-Kelly weights. ``conviction`` plans entries
-    without a stop: sized at ``conviction_pct`` of the trading wallet's equity, within its margin and
-    the desk's aggregate risk cap.
+    ``resting_stops``) prices each open position's risk to its own stop. Every entry is sized from one
+    position's risk budget and the asset's volatility; a batch shares that budget with half-Kelly weights.
+    ``notional`` is the opt-in explicit amount (dollars, picked at the trade): each entry is that notional instead of
+    the risk budget, within its margin and the desk's aggregate risk cap. There is no preset large size. The label (or
+    ``strategy``) is the journal's tag; it never changes the size. ``bare`` (default) places no stop, take-profit or
+    loss guard.
     """
+    if notional is not None and not (math.isfinite(notional) and notional > 0):
+        raise ValueError("An explicit entry amount must be a positive number of dollars.")
+    large = notional is not None
     caches: dict[tuple[str, str], tuple[pd.DataFrame, pd.DataFrame]] = {}
     current_risk = snapshot.external_risk if include_external else 0.0
     for position in snapshot.positions:
@@ -1192,7 +1202,7 @@ def plan_trades(
             stop_price=nearest_stop(position, stops),
         )
 
-    total_risk_cap = snapshot.desk_equity * (MAX_TOTAL_RISK_PCT + (CONVICTION_CAP_FLEX if conviction else 0.0))
+    total_risk_cap = snapshot.desk_equity * (MAX_TOTAL_RISK_PCT + (CONVICTION_CAP_FLEX if large else 0.0))
     risk_headroom = total_risk_cap - current_risk
     available_margin = max(
         0.0,
@@ -1200,9 +1210,13 @@ def plan_trades(
     )
     from desk import stress
 
-    # Give the batch one standard position's risk budget, limited by aggregate headroom.
+    # Every entry is a batch (one asset is a batch of one): the batch gets one standard position's risk budget, limited by
+    # the aggregate headroom, split by half-Kelly weights over each asset's risk per unit (its ATR sizing level, fees and
+    # adverse funding), so the dollars follow the asset's volatility. A lone asset takes the whole budget (the Kelly split
+    # is fully invested). Without Kelly inputs (too little common history) the budget is split equally by risk, and the
+    # plan says so. A large entry (opt-in) is sized by notional instead.
     allocations = {}
-    if len(signals) > 1 and not conviction and risk_headroom > 0 and available_margin > 0:
+    if signals and not large and risk_headroom > 0 and available_margin > 0:
         from desk.kelly import half_kelly_risk_shares
         from desk.risk import per_position_budget
 
@@ -1229,10 +1243,16 @@ def plan_trades(
             )
             unit_risk.append((STOP_ATR_MULTIPLE * wilder_atr(candles, 14) + cost) / market.mark_price + fee_rate)
             keys.append(key)
-        shares = half_kelly_risk_shares(pd.concat(history, axis=1).sort_index(), np.array(unit_risk),
-                                        budget / snapshot.desk_equity)
+        try:
+            shares = half_kelly_risk_shares(pd.concat(history, axis=1).sort_index(), np.array(unit_risk),
+                                            budget / snapshot.desk_equity)
+            print(f"Half-Kelly risk budget: ${budget:,.2f} (50% equal-risk, 50% Kelly)"
+                  + (" for one asset: the whole budget, sized by its volatility." if len(keys) == 1 else "."))
+        except ValueError as exc:
+            shares = np.full(len(keys), 1 / len(keys))
+            print(f"Kelly inputs missing ({exc}): the ${budget:,.2f} risk budget is split equally by risk, "
+                  "each asset sized by its volatility.")
         allocations = dict(zip(keys, budget * shares))
-        print(f"Half-Kelly batch risk budget: ${budget:,.2f} (50% equal-risk, 50% Kelly).")
 
     plans: list[PlannedTrade] = []
     # Everything open now, as the stress check sees it: HL positions plus the other venues' and wallets'.
@@ -1273,8 +1293,9 @@ def plan_trades(
             available_margin,
             snapshot.maker_fee_rate,
             snapshot.taker_fee_rate,
-            conviction_notional=conviction_pct * snapshot.target_equity if conviction else None,
+            large_notional=notional,
             max_quantity=max_quantity,
+            bare=bare,
         )
         if reviewed_limits is not None and (max_quantity == 0 or max_risk == 0):
             plan = replace(plan, block_reason="no size was approved for this entry")
@@ -1292,9 +1313,7 @@ def plan_trades(
             exposures.append((asset_class, coin, notional))
         from desk import trade_rules
 
-        tag = strategy if conviction and strategy == "fade" else "conviction" if conviction else (strategy or "directional")   # a fade keeps its own tag
-        if label in ("directional", "conviction", "hedge", "fade"):   # a label picked on the dashboard decides the journal tag
-            tag = label
+        tag = label if label in ENTRY_LABELS else (strategy if strategy in ENTRY_LABELS else "directional")   # the picked label is the tag
         plan = replace(plan, strategy=tag, rule_notes="; ".join(trade_rules.entry_notes(
             coin, signal["side"], plan.quantity * market.mark_price, tag)) if plan.quantity > 0 else "")
         plans.append(plan)
@@ -2157,21 +2176,32 @@ def print_plan(snapshot: AccountSnapshot, plans: list[PlannedTrade], current_ris
         f"(5% of the 80% usable-equity amount)"
     )
     print("Unified accounts use USDC collateral; other account modes use perp equity.")
+    budget = snapshot.desk_equity * (1 - RESERVE_PCT) * RISK_PCT_OF_USABLE_MARGIN
+    used = current_risk
     for plan in plans:
+        notional = plan.quantity * plan.entry_reference
+        cap = snapshot.desk_equity * (MAX_TOTAL_RISK_PCT + (CONVICTION_CAP_FLEX if plan.large else 0.0))
+        used += plan.risk_budget
+        left = cap - used
+        # The size in the terms that matter: dollars, and what it takes of the wallet and of the desk's risk cap.
+        share = (f"size ${notional:,.0f} = {_pct(notional / snapshot.target_equity) if snapshot.target_equity > 0 else 'n/a'} "
+                 f"of the wallet, risk ${plan.risk_budget:,.0f} = {_pct(plan.risk_budget / cap) if cap > 0 else 'n/a'} "
+                 f"of the risk cap ({'explicit amount, opt-in' if plan.large else 'risk budget and volatility'}), ")
+        warning = (f" — WARNING: leaves ${max(0.0, left):,.0f} of cap headroom, less than one normal trade's "
+                   f"${budget:,.0f} risk budget; the desk cannot open another trade until this one shrinks"
+                   if plan.quantity > 0 and left < budget else "")
         print(
             f"{plan.coin} {plan.side}: quantity={plan.quantity:g}, reference=${plan.entry_reference:,.6g}, "
-            + f"notional=${plan.quantity * plan.entry_reference:,.2f}, "
-            + (f"CONVICTION: no stop or take-profit "
-               f"(risk counted at a {STOP_ATR_MULTIPLE:g} x ATR move, ${plan.stop_price:,.6g}), "
-               if plan.conviction else f"sizing level=${plan.stop_price:,.6g}, target=${plan.target_price:,.6g}, ")
-            + f"risk=${plan.risk_budget:,.2f}, funding reserve/unit=${plan.funding_reserve_per_unit:,.6g}, "
-            f"estimated entry+stop fees=${plan.quantity * plan.entry_reference * (plan.maker_fee_rate + plan.taker_fee_rate):,.2f}, "
-            f"expected 5d PnL=${plan.expected_pnl.net_pnl:,.2f} "
-            f"(price ${plan.expected_pnl.price_pnl:,.2f}; funding ${plan.expected_pnl.funding_pnl:,.2f})"
+            + share
+            + (f"no stop, take-profit or loss guard (sizing level ${plan.stop_price:,.6g} = {STOP_ATR_MULTIPLE:g} x ATR), "
+               if plan.bare else f"sizing level=${plan.stop_price:,.6g}, target=${plan.target_price:,.6g}, ")
+            + f"funding reserve/unit=${plan.funding_reserve_per_unit:,.6g}, "
+            f"estimated entry+exit fees=${notional * (plan.maker_fee_rate + plan.taker_fee_rate):,.2f}"
             + (f" — BLOCKED: {plan.block_reason}" if plan.block_reason else "")
+            + warning
             + (f" — STRESS: {plan.stress_note}" if plan.stress_note and not plan.block_reason else "")
             + (f" — NOTE: {plan.rule_notes}" if plan.rule_notes and not plan.block_reason else "")
-            + (f" [{plan.strategy}]" if plan.strategy != "directional" else "")
+            + f" [{plan.strategy}]"
         )
 
 
@@ -3020,9 +3050,9 @@ def execute_plans(
                 journal.record_entry(wallet, plan.coin, plan.side, plan.strategy, thesis=PENDING_THESIS)
             except Exception as exc:
                 print(f"{plan.coin}: the journal entry was not saved ({type(exc).__name__}: {exc}).")
-            if plan.conviction:
-                print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; conviction trade, "
-                      "so no stop, take-profit or loss guard (the daemon's margin guard still watches the account).")
+            if plan.bare:
+                print(f"{plan.coin}: filled {quantity:g} at average ${entry_price:,.6g}; no stop, take-profit or loss "
+                      "guard (the desk's rule; the daemon's margin guard still watches the account).")
                 continue
             target_oid = 0
             try:
@@ -3289,24 +3319,24 @@ def main(argv: list[str] | None = None) -> int:
         f"(stops if the price runs {FAST_CHASE_MAX_DRIFT * 100:.0f}%% of the stop distance away).",
     )
     parser.add_argument(
+        "--strategy",
+        choices=ENTRY_LABELS,
+        default="directional",
+        help="With --signals: the journal's tag for the position (directional, fade, hedge or conviction). The tag "
+        "never changes the size. Results are reported per strategy; a hedge is exempt from the history warnings.",
+    )
+    parser.add_argument(
         "--conviction",
         action="store_true",
-        help="With --signals: a high-conviction entry with no stop, take-profit or loss guard, sized at "
-        "--conviction-pct of the trading wallet's equity (within its margin and the aggregate risk cap).",
+        help="With --signals: tag the entry conviction (same as --strategy conviction). It never changes the size: "
+        "every entry is sized from the risk budget and the asset's volatility unless --notional sets an amount.",
     )
     parser.add_argument(
-        "--strategy",
-        choices=("directional", "hedge"),
-        default="directional",
-        help="With --signals: the journal's tag for the position (--conviction tags it conviction). "
-        "Results are reported per strategy; a hedge is exempt from the history warnings.",
-    )
-    parser.add_argument(
-        "--conviction-pct",
+        "--notional",
         type=float,
-        default=CONVICTION_NOTIONAL_PCT * 100,
-        help=f"With --conviction: position notional as a percent of the trading wallet's equity "
-        f"(default {CONVICTION_NOTIONAL_PCT * 100:g}).",
+        help="With --signals: opt in to an explicit entry amount in dollars per entry instead of the risk-based size "
+        "(one position's risk budget over the asset's volatility, half-Kelly across a batch), still within the "
+        "wallet's margin and the aggregate risk cap. There is no preset large size.",
     )
     parser.add_argument(
         "--slippage",
@@ -3507,8 +3537,8 @@ def main(argv: list[str] | None = None) -> int:
         risk_wallets = read_target_wallets(args.wallet, args.risk_wallets)
         snapshot = urgent_fees(attach_other_venues(collect_snapshot(risk_wallets, dexes, markets), args), args.urgent)
         stops = resting_stops(risk_wallets, sorted({position.dex for position in snapshot.positions}))
-        conviction = dict(conviction=args.conviction, conviction_pct=args.conviction_pct / 100, strategy=args.strategy)
-        plans, current_risk = plan_trades(signals, markets, snapshot, stops=stops, **conviction)
+        sizing = dict(notional=args.notional, strategy="conviction" if args.conviction else args.strategy)
+        plans, current_risk = plan_trades(signals, markets, snapshot, stops=stops, **sizing)
         if args.urgent:
             print(f"Urgent entry: immediate-or-cancel at most {args.slippage:g}% from the mid (taker fee).")
         print_plan(snapshot, plans, current_risk)
@@ -3526,7 +3556,7 @@ def main(argv: list[str] | None = None) -> int:
         fresh_snapshot = urgent_fees(
             attach_other_venues(collect_snapshot(risk_wallets, dexes, fresh_markets), args), args.urgent
         )
-        fresh_plans, fresh_current_risk = plan_trades(signals, fresh_markets, fresh_snapshot, stops=stops, **conviction)
+        fresh_plans, fresh_current_risk = plan_trades(signals, fresh_markets, fresh_snapshot, stops=stops, **sizing)
         print("Refreshed preflight immediately before live submission:")
         print_plan(fresh_snapshot, fresh_plans, fresh_current_risk)
         if not any(plan.quantity > 0 for plan in fresh_plans):

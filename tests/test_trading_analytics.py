@@ -1201,34 +1201,76 @@ class TradeAnalyticsTests(unittest.TestCase):
             limits = {"BTC": [preview[0].quantity / 2, preview[0].risk_budget],
                       "ETH": [preview[1].quantity, preview[1].risk_budget / 2]}
             refreshed, _ = plan_trades(batch, markets, snapshot, reviewed_limits=limits)
-            with self.assertRaisesRegex(ValueError, "90 common"):
-                with patch("hl_trade.fetch_daily_candles", return_value=candles.head(30)):
-                    plan_trades(batch, markets, snapshot)
+            with patch("hl_trade.fetch_daily_candles", return_value=candles.head(30)):   # too little history for Kelly
+                fallback, _ = plan_trades(batch, markets, snapshot)
         self.assertAlmostEqual(preview[0].risk_budget, 30, places=2)
         self.assertAlmostEqual(preview[1].risk_budget, 10, places=2)
         self.assertLessEqual(refreshed[0].quantity, limits["BTC"][0])
         self.assertLessEqual(refreshed[1].risk_budget, limits["ETH"][1])
+        # Without Kelly inputs the one budget (5% of the 80% usable equity: $40) is split equally by risk, never doubled.
+        self.assertAlmostEqual(sum(plan.risk_budget for plan in fallback), 40, delta=1)
 
-    def test_conviction_sizes_by_notional_within_margin_and_headroom(self):
+    def test_an_explicit_amount_sizes_by_notional_within_margin_and_headroom(self):
         candles, funding = make_candles(), make_funding()
         market = Market("BTC", "", 100, 100, 3, 10)
         normal = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
                             available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004)
-        conviction = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
-                                available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004,
-                                conviction_notional=900)
-        self.assertTrue(conviction.conviction)
-        self.assertFalse(normal.conviction)
-        self.assertAlmostEqual(conviction.quantity * market.mark_price, 900, delta=1)  # the notional, not the 5% budget
-        self.assertGreater(conviction.quantity, normal.quantity)
+        amount = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
+                            available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004,
+                            large_notional=900)
+        self.assertTrue(amount.large)
+        self.assertFalse(normal.large)
+        self.assertTrue(normal.bare and amount.bare)   # neither places a stop or take-profit
+        self.assertAlmostEqual(amount.quantity * market.mark_price, 900, delta=1)  # the amount, not the 5% budget
+        self.assertGreater(amount.quantity, normal.quantity)
         squeezed = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
                               available_margin=50, maker_fee_rate=0.0001, taker_fee_rate=0.0004,
-                              conviction_notional=900)
+                              large_notional=900)
         self.assertLessEqual(squeezed.quantity * market.mark_price / squeezed.leverage, 50 + 1e-9)  # margin still binds
         capped = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=0,
                             available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004,
-                            conviction_notional=900)
+                            large_notional=900)
         self.assertEqual(capped.quantity, 0)  # the aggregate risk cap still binds
+
+    def test_an_entry_is_sized_by_its_volatility_and_the_label_never_changes_the_size(self):
+        from hl_trade import AccountSnapshot, plan_trades
+
+        snapshot = AccountSnapshot(1000, 0, 1000, 0, (), 0, 0, ("wallet",))
+        markets = {"BTC": Market("BTC", "", 100, 100, 4, 10)}
+        dates = pd.date_range("2025-01-01", periods=110, tz="UTC")
+        calm = pd.DataFrame({"time": dates, "open": 100, "high": 101, "low": 99, "close": 100.5})
+        wild = pd.DataFrame({"time": dates, "open": 100, "high": 106, "low": 94, "close": 100.5})
+        sized = {}
+        for name, candles in (("calm", calm), ("wild", wild)):
+            for label in ("directional", "conviction"):
+                with patch("hl_trade.fetch_daily_candles", return_value=candles), \
+                        patch("hl_trade.fetch_funding_history", return_value=make_funding()), \
+                        patch("desk.stress.fit_entry", return_value=(1.0, "")):
+                    plans, _ = plan_trades([{"coin": "BTC", "side": "LONG"}], markets, snapshot, label=label)
+                sized[name, label] = plans[0]
+        # A batch of one takes the whole per-position budget ($40), so a three times wider ATR buys about a third.
+        self.assertAlmostEqual(sized["calm", "directional"].risk_budget, 40, delta=1)
+        self.assertLess(sized["wild", "directional"].quantity, sized["calm", "directional"].quantity / 2)
+        self.assertEqual(sized["calm", "conviction"].quantity, sized["calm", "directional"].quantity)
+        self.assertEqual((sized["calm", "conviction"].strategy, sized["calm", "conviction"].large), ("conviction", False))
+
+    def test_the_plan_warns_when_an_entry_leaves_less_than_one_normal_trade_of_cap_headroom(self):
+        import contextlib
+        import dataclasses
+        import io
+
+        from hl_trade import AccountSnapshot, print_plan
+
+        snapshot = AccountSnapshot(1000, 0, 1000, 0, (), 0, 0, ("wallet",))   # cap $360 with the amount flex, budget $40
+        plan = size_trade("BTC", "", "LONG", Market("BTC", "", 100, 100, 3, 10), make_candles(), make_funding(),
+                          equity=1_000, risk_headroom=500, available_margin=10_000, maker_fee_rate=0.0001,
+                          taker_fee_rate=0.0004, large_notional=900)
+        for risk, warned in ((340.0, True), (40.0, False)):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                print_plan(snapshot, [dataclasses.replace(plan, risk_budget=risk)], 0.0)
+            self.assertEqual("WARNING: leaves" in out.getvalue(), warned)
+            self.assertIn("explicit amount, opt-in", out.getvalue())
 
     def test_open_risk_runs_to_the_resting_stop_when_there_is_one(self):
         from hl_trade import Position, nearest_stop, position_risk
@@ -1243,7 +1285,7 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertEqual(nearest_stop(short, stops), 104.0)  # the lower one closes a short first
         self.assertIsNone(nearest_stop(short, {}))
 
-    def test_a_conviction_trade_gets_no_exits_and_no_guard(self):
+    def test_an_entry_gets_no_exits_and_no_guard(self):
         import dataclasses
 
         import hl_trade
@@ -1251,7 +1293,7 @@ class TradeAnalyticsTests(unittest.TestCase):
         candles, funding = make_candles(), make_funding()
         market = Market("BTC", "", 100, 100, 3, 10)
         plan = size_trade("BTC", "", "SHORT", market, candles, funding, equity=1_000, risk_headroom=500,
-                          available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004, conviction_notional=500)
+                          available_margin=10_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004)
         with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
                 patch.object(hl_trade, "_set_leverage"), \
                 patch.object(hl_trade, "_place_entry", return_value=(plan.quantity, 100.0)), \
@@ -1259,7 +1301,7 @@ class TradeAnalyticsTests(unittest.TestCase):
             active, failures = hl_trade.execute_plans(MagicMock(), "0xabc", [plan], {"BTC": market})
         exits.assert_not_called()
         self.assertEqual((active, failures), ([], []))
-        normal = dataclasses.replace(plan, conviction=False)
+        normal = dataclasses.replace(plan, bare=False)   # the old exits remain available to code that asks for them
         with patch.object(hl_trade, "_current_position_quantity", return_value=0.0), \
                 patch.object(hl_trade, "_set_leverage"), \
                 patch.object(hl_trade, "_place_entry", return_value=(plan.quantity, 100.0)), \
