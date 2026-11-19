@@ -661,6 +661,11 @@ th, td { padding: 0 4px !important; line-height: 1.3; }
 .card[data-sized] { height: var(--card-h); display: flex !important; flex-direction: column; overflow: hidden; }
 .card[data-sized] .table-wrap, .card[data-sized] .highlights { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .card[data-sized] .chart, .card[data-sized] #chart-value, .card[data-sized] #chart-twr { height: auto !important; flex: 1 1 auto; min-height: 60px; }
+/* A candle chart sizes itself to its box, so the box must not size itself to the chart (that grew without end):
+   the plot area takes the tile's spare height and the chart fills it. */
+.card[data-sized] .asset-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.card[data-sized] .asset-plot { flex: 1 1 auto; min-height: 120px; overflow: hidden; }
+.card[data-sized] .chart.asset-chart { position: absolute; inset: 0; height: 100% !important; min-height: 0; }
 table.aligned { min-width: 0 !important; }
 table.aligned td, table.aligned th { padding: 0 3px !important; }
 /* Column grip: the right edge of a tile inside the columns. */
