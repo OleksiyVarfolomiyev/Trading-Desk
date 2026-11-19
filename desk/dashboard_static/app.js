@@ -2487,7 +2487,7 @@ function drawModes() {
 // font when drawn) are redrawn, and the table charts when the charts view is on.
 function redrawLook(kind) {
   if (kind !== "view") {
-    document.querySelectorAll(".asset-chart").forEach((chart) => chart._candleSeries?.applyOptions(candleColors()));
+    document.querySelectorAll(".asset-chart").forEach((chart) => { chart._candleSeries?.applyOptions(candleColors()); chart._paintVolume?.(); });
   }
   if (!latest || !latest.data) return;
   const data = latest.data, context = { deskValue: (data.kpis || {}).desk_value };
@@ -3607,7 +3607,7 @@ async function openAsset(symbol, targetCard = null) {
         chart.textContent = "Candles are unavailable for this asset.";
         return;
       }
-      const data = candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c) }))
+      const data = candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c), volume: Number(c.v) }))
         .filter((c) => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite));
       if (!data.length) {
         chart.textContent = "Candles are unavailable for this asset.";
@@ -3620,7 +3620,7 @@ async function openAsset(symbol, targetCard = null) {
         autoSize: true,
         layout: { background: { type: "solid", color: token("--surface") }, textColor: ink, attributionLogo: true },
         grid: { vertLines: { color: border }, horzLines: { color: border } },
-        rightPriceScale: { borderColor: border, scaleMargins: { top: 0.35, bottom: 0.12 } },
+        rightPriceScale: { borderColor: border, scaleMargins: { top: 0.35, bottom: 0.25 } },
         timeScale: { borderColor: border, timeVisible: minutes < 1440, secondsVisible: false, rightOffset: 2, allowBoldLabels: false },
         crosshair: { vertLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") },
           horzLine: { color: token("--muted"), labelBackgroundColor: token("--ink-2") } },
@@ -3632,6 +3632,16 @@ async function openAsset(symbol, targetCard = null) {
       });
       chart._candleSeries = series;
       series.setData(data);
+      // Volume under the candles, as on Hyperliquid: bars in the candle's colour on their own scale along the bottom.
+      const volume = instance.addSeries(LightweightCharts.HistogramSeries, {
+        priceFormat: { type: "volume" }, priceScaleId: "", priceLineVisible: false, lastValueVisible: false,
+      });
+      volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+      const bars = data.filter((c) => Number.isFinite(c.volume));
+      const paint = () => { const good = token("--good-text"), bad = token("--bad-text");
+        volume.setData(bars.map((c) => ({ time: c.time, value: c.volume, color: withAlpha(c.close >= c.open ? good : bad, 0.4) }))); };
+      paint();
+      chart._paintVolume = paint;
       if (isNum(entry)) series.createPriceLine({ price: entry, color: token("--muted"), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
         axisLabelVisible: true, title: "Entry" });
       instance.timeScale().fitContent();
