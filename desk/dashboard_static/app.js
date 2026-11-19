@@ -1175,8 +1175,8 @@ function renderAccountStatus(rows, now) {
   const host = document.getElementById("accounts-status");
   // Only an account that cannot be read gets a chip: a healthy connection says nothing.
   host.replaceChildren(...(rows || []).filter((row) => !row.ok).map((row) => el("span", { class: "chip", title: row.problem || "" }, [
-    el("span", { class: "icon " + (row.ok ? "good" : "bad"), "aria-hidden": "true", text: row.ok ? "✓" : "!" }),
-    el("span", { text: `${row.name}: ${row.ok ? "read" : "unreadable" + (row.last_seen ? ", last read " + ago(row.last_seen, now) : "")}` }),
+    el("span", { class: "icon bad", "aria-hidden": "true", text: "!" }),
+    el("span", { text: `${row.name}: ${row.label || "unreadable"}${row.last_seen ? ", last read " + ago(row.last_seen, now) : ""}` }),
   ])));
 }
 
@@ -1446,7 +1446,7 @@ function renderHighlights(id, rows, hover = {}) {
   // Areas the reader has dismissed over and over (desk/usage_model.py) are folded away, never a critical row.
   const quiet = new Set((((latest && latest.data && latest.data.usage_model) || {}).quiet) || []);
   const open = host.dataset.showQuiet === "1";
-  const answered = (rows || []).filter(([area, text]) => !state.deleted.includes(area) && !isRead(state, area, text))
+  const answered = (rows || []).filter(([area, text]) => !/^unreadable accounts$/i.test(area) && !state.deleted.includes(area) && !isRead(state, area, text))
     .flatMap(([area, text]) => sentences(cleanLine(text)).map((part, i) => [area, part, text]));   // [area, line, the whole text it came from]
   const folded = answered.filter(([area, text]) => quiet.has(area) && severity(area, text) !== "critical");
   const shown = open ? answered : answered.filter((row) => !folded.includes(row));
@@ -1659,35 +1659,6 @@ function renderCharts(charts) {
 }
 
 // ---------------------------------------------------------------- page
-function retryDataButton() {
-  const button = el("button", { type: "button", class: "asset-action", text: "Retry refresh" });
-  button.addEventListener("click", refreshAlertData);
-  return button;
-}
-
-function renderBanners(doc, now) {
-  const host = document.getElementById("banners");
-  const banners = [];
-  const status = doc.status || {};
-  // Unreadable accounts are shown by the account status chips (the error is in each chip's tooltip),
-  // so they get no banner of their own.
-  if (status.error) {
-    banners.push(el("div", { class: "banner warning", role: "alert" }, [
-      el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }),
-      el("div", {}, [el("strong", { text: `Last refresh failed (${clock(status.last_attempt)}). ` }),
-        el("span", { text: `${status.error}. ` + (status.last_ok ? `Showing data from ${ago(status.last_ok, now)}.` : "") })]),
-      retryDataButton(),
-    ]));
-  } else if (status.last_ok && (now - new Date(status.last_ok)) / 1000 > 3 * (status.interval_s || 60) + 120) {
-    banners.push(el("div", { class: "banner warning", role: "alert" }, [
-      el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }),
-      el("div", { text: `Data is ${ago(status.last_ok, now)}; the refresh may be stuck.` }),
-      retryDataButton(),
-    ]));
-  }
-  host.replaceChildren(...banners);
-}
-
 // The wallets card sits under the shorter of the two position tables, so the pair fills the screen evenly.
 function balanceColumns() {
   const grid = document.getElementById("positions-grid");
@@ -2042,15 +2013,23 @@ function renderBenchmarkTables(doc) {
 
 function render(doc) {
   const now = new Date(doc.server_time || Date.now());
-  renderBanners(doc, now);
-  const data = doc.data;
+  const { data, status } = doc;
+  const accounts = new Map((data?.accounts_status || []).map((row) => [row.name, row]));
+  for (const row of status.accounts_status || []) {
+    accounts.set(row.name, { ...accounts.get(row.name), ...row });
+  }
+  if (status.error && !status.accounts_status?.length) {
+    accounts.set("Accounts", { name: "Accounts", ok: false, label: "refresh failed", problem: status.error, last_seen: status.last_ok });
+  } else if (!status.error && status.last_ok && (now - new Date(status.last_ok)) / 1000 > 3 * (status.interval_s || 60) + 120) {
+    accounts.set("Accounts", { name: "Accounts", ok: false, label: "data stale", last_seen: status.last_ok });
+  }
+  renderAccountStatus([...accounts.values()], now);
   if (!data) {
-    if (doc.status && doc.status.error) document.getElementById("loading").hidden = true;
+    document.getElementById("loading").hidden = Boolean(status.error);
     return;
   }
   document.getElementById("loading").hidden = true;
   document.getElementById("content").hidden = false;
-  renderAccountStatus(data.accounts_status, now);
   if (lastRendered === doc.status.last_ok) return;   // same data: keep tables, sort and hover as they are
   lastRendered = doc.status.last_ok;
   renderTiles(data.kpis || {}, data.theses);
@@ -2082,11 +2061,10 @@ async function load() {
     latest = await response.json();
     render(latest);
   } catch (error) {
-    // The page shows no status unless something is wrong: this goes in the top band's warnings.
-    const message = window.DESK_SOURCE ? `Could not read the desk data (${error.message || error}).`
+    const message = window.DESK_SOURCE ? String(error.message || error)
       : "Dashboard server not reachable (is python -m desk.dashboard running?)";
-    document.getElementById("banners").replaceChildren(el("div", { class: "banner warning", role: "alert" }, [
-      el("span", { class: "icon warn", "aria-hidden": "true", text: "!" }), el("div", { text: message }), retryDataButton()]));
+    renderAccountStatus([{ name: "Accounts", ok: false, label: "refresh failed", problem: message }], new Date());
+    document.getElementById("loading").hidden = true;
   }
 }
 
@@ -3742,6 +3720,13 @@ function planLines(text, coin) {   // what matters in the daemon's output: the c
   const mine = lines.filter((line) => line.toLowerCase().includes(name) && !notices.includes(line));
   return { notices, mine: mine.slice(-8) };
 }
+function planFailureLines(plan, coin) {
+  if (plan.error) return [String(plan.error)];
+  const { notices, mine } = planLines(plan.plan, coin);
+  if (notices.length || mine.length) return notices.concat(mine);
+  return String(plan.plan || "").split("\n").map((line) => line.trim()).filter(Boolean).slice(-8);
+}
+
 function openBatchTrade() {
   const title = "Hyperliquid batch · Half Kelly";
   const { overlay, box } = actionDialog(title);
@@ -3847,9 +3832,9 @@ async function runAction(label, change, fraction, target) {
   let plan;
   try { plan = await post({ stage: "plan" }); } catch (e) { plan = { error: String(e) }; }
   if (plan.error || !plan.token) {
-    const { notices, mine } = planLines(plan.plan || plan.error || "", coin);
+    const lines = planFailureLines(plan, coin);
     box.replaceChildren(el("h3", { text: title }), el("p", { class: "neg", text: "Nothing can be sent." }),
-      ...notices.concat(mine).map((line) => el("p", { class: "action-line", text: line })), closeButton(overlay));
+      ...lines.map((line) => el("p", { class: "action-line", text: line })), closeButton(overlay));
     return;
   }
   const { notices, mine } = planLines(plan.plan, coin);
@@ -4174,7 +4159,13 @@ function fillMenuLists() {
     const matches = [...document.querySelectorAll(".feed .card[data-published]")].filter((card) => card.dataset.published.startsWith(prefix));
     const selected = matches.some((card) => !card.classList.contains("card-off"));
     const row = item((score ? "★ " : "") + entry.title, selected, () => {
-      if (!matches.length) { pullTile(entry, null); return; }
+      if (!matches.length) {
+        const menu = document.getElementById("sections-menu"), button = document.getElementById("sections-button");
+        if (menu) menu.hidden = true;
+        if (button) button.setAttribute("aria-expanded", "false");
+        pullTile(entry, null);
+        return;
+      }
       const show = !selected;
       matches.forEach((card) => card.classList.toggle("card-off", !show));
       const state = layoutState(); state.hidden = [...document.querySelectorAll("#content .card-off")].map(cardId); saveLayout(state);
@@ -4194,6 +4185,7 @@ async function pullTile(entry, button, anchor) {   // the section is built (the 
   feedback("tile", "pull", entry.title);
   if (anchor) { const anchors = tileAnchors(); anchors[entry.id.replace(":", "-")] = anchor; saveTileAnchors(anchors); }
   if (button) { button.textContent = "…"; button.disabled = true; }
+  const pending = button ? null : notify(["Building the tile from live notebook data. This can take a minute."], `Adding ${entry.title}`);
   const web = Boolean(window.DESK_SOURCE);
   const start = web ? () => fetch("/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: entry.id }) })
     : () => fetch("/api/tiles/pull", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: entry.id }) });
@@ -4201,14 +4193,34 @@ async function pullTile(entry, button, anchor) {   // the section is built (the 
     body: JSON.stringify({ id: entry.id, stage: "status" }) })).json()).status || ""
     : async () => (await (await fetch("/api/tiles/status")).json())[entry.id] || "";
   try {
-    await start();
+    const response = await start();
+    if (!response.ok) throw new Error(`The tile request failed (${response.status}).`);
     for (let tries = 0; tries < 90; tries++) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       const now = await status();
-      if (now.startsWith("done")) { if (button) button.textContent = "✓"; lastRendered = null; await load(); return; }
-      if (now.startsWith("failed") || now.startsWith("nothing")) { if (button) { button.textContent = "!"; button.title = now; button.disabled = false; } return; }
+      if (now.startsWith("done")) {
+        if (button) button.textContent = "✓";
+        if (pending) pending.remove();
+        lastRendered = null;
+        await load();
+        return now;
+      }
+      if (now.startsWith("failed") || now.startsWith("nothing")) {
+        if (button) { button.textContent = "!"; button.title = now; button.disabled = false; }
+        if (pending) { pending.remove(); notify([now], `${entry.title}: not added`); }
+        return now;
+      }
     }
-  } catch (e) { if (button) { button.textContent = "!"; button.disabled = false; } }
+    const timedOut = "The tile was still building after three minutes.";
+    if (button) { button.textContent = "!"; button.title = timedOut; button.disabled = false; }
+    if (pending) { pending.remove(); notify([timedOut], `${entry.title}: still pending`); }
+    return timedOut;
+  } catch (e) {
+    const message = String(e.message || e);
+    if (button) { button.textContent = "!"; button.title = message; button.disabled = false; }
+    if (pending) { pending.remove(); notify([message], `${entry.title}: not added`); }
+    return message;
+  }
 }
 // A pulled tile sits next to the tile it was added from (remembered per section).
 function tileAnchors() { try { return JSON.parse(localStorage.getItem("desk-anchors")) || {}; } catch (e) { return {}; } }

@@ -157,10 +157,6 @@ h1 { font-size: 18px; font-weight: 600; margin: 0; }
 
 /* Full window width: no centred max-width column, just a narrow gutter. */
 main { margin: 0; padding: 8px 8px 40px; display: flex; flex-direction: column; gap: 10px; }
-/* Warnings sit in the top band, next to the title; with none, the slot takes no room. */
-#banners { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
-#banners:empty { display: none; }
-#banners .banner { padding: 3px 10px; font-size: 12px; align-items: center; gap: 6px; border-radius: 6px; }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -185,13 +181,6 @@ main { margin: 0; padding: 8px 8px 40px; display: flex; flex-direction: column; 
 #content:not([hidden]) { display: flex; flex-direction: column; gap: 8px; }
 @media (max-width: 980px) { .grid.two { grid-template-columns: minmax(0, 1fr); } }
 
-.banner {
-  display: flex; gap: 10px; align-items: flex-start;
-  border-radius: 8px; padding: 10px 14px;
-  border: 1px solid var(--border);
-}
-.banner.warning { background: var(--wash-warning); border-color: var(--warning); }
-.banner strong { font-weight: 600; }
 .icon {
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px; border-radius: 50%;

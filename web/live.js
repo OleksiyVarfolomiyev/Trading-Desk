@@ -608,7 +608,11 @@
         status.push({ name: label, ok: true });
       }
     });
-    if (!trading.length) throw new Error(problems.join("; ") || "no account could be read");
+    if (!trading.length) {
+      const error = new Error(problems.join("; ") || "no account could be read");
+      error.accountsStatus = status;
+      throw error;
+    }
     const walletReads = await readWallets(CFG.wallets);
     const wallets = walletReads.filter((w) => !w.error);
     walletReads.forEach((w) => {
@@ -1426,7 +1430,9 @@
     }, (error) => {
       console.error(error);
       const message = controller.signal.aborted ? `Live data refresh timed out after ${BUILD_TIMEOUT_MS / 1000} seconds` : String(error.message || error);
-      doc = Object.assign({}, doc, { status: Object.assign({}, doc.status, { refreshing: false, error: message }) });
+      doc = Object.assign({}, doc, { status: Object.assign({}, doc.status, {
+        refreshing: false, error: message, accounts_status: error.accountsStatus,
+      }) });
     }).finally(() => {
       clearTimeout(deadline);
       if (buildSignal === controller.signal) buildSignal = null;
