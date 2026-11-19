@@ -3224,9 +3224,12 @@ class Daemon:
             log(f"{trade.plan.coin}: guard resumed for ...{wallet[-4:]} ({trade.plan.side} {trade.quantity:g}).")
 
     def refresher(self) -> None:
-        last_other = last_slow = time.time()
+        last_other = last_slow = last_usage = time.time()
         while not self.stopped.wait(5):
             now = time.time()
+            if now - last_usage >= 300:      # what the daemon asks HL's REST endpoint, by type (the 1200 weight/min limit)
+                last_usage = now
+                log(ht.info_usage_line(*ht.info_usage()))
             try:
                 if self.state.meta_stale:
                     self.state.load_markets()

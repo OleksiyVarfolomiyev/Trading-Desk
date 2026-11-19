@@ -35,6 +35,8 @@ from desk.hl.trade_analytics import (
     fetch_collateral_equity,
     fetch_daily_candles,
     fetch_funding_history,
+    info_usage,
+    info_usage_line,
     post_info,
     side_to_direction,
     wilder_atr,

@@ -1250,3 +1250,22 @@ class FlattenTests(unittest.TestCase):
                 auto.flatten("test")
             self.assertEqual(closed, [("WLD", 1.0), ("ENA", 1.0)])
             self.assertTrue((Path(folder) / "KILL_SWITCH").exists())
+
+
+class InfoUsageTests(unittest.TestCase):
+    def test_usage_line_weighs_requests_per_minute(self):
+        from desk.hl import trade_analytics as ta
+        line = ta.info_usage_line(60, {"candleSnapshot": [3, 1], "clearinghouseState": [10, 0]})
+        self.assertIn("~80 of 1200 weight/min", line)       # 3 x 20 + 10 x 2
+        self.assertIn("candleSnapshot 3.0/min (1 x 429)", line)
+
+    def test_post_info_counts_requests(self):
+        from unittest import mock
+        from desk.hl import trade_analytics as ta
+        ta.info_usage()
+        response = mock.Mock(status_code=200, ok=True)
+        response.json.return_value = {}
+        with mock.patch.object(ta, "_session") as session:
+            session.return_value.post.return_value = response
+            ta.post_info({"type": "allMids"})
+        self.assertEqual(ta.info_usage()[1], {"allMids": [1, 0]})

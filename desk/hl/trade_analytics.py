@@ -69,6 +69,42 @@ def _rate_limit_delay(response: requests.Response, retry_number: int) -> float:
     return float(2 ** (retry_number - 1))
 
 
+# What the desk asks HL's info endpoint, counted per request type: {type: [requests, 429s]} since the last report.
+# HL's limit is 1200 weight a minute per IP; a request weighs 2 for the light types below and 20 for the rest
+# (candle, fill and funding reads weigh a little more).
+LIGHT_INFO_TYPES = {"l2Book", "allMids", "clearinghouseState", "orderStatus", "spotClearinghouseState", "exchangeStatus"}
+_info_counts: dict[str, list[int]] = {}
+_info_lock = threading.Lock()
+_info_since = time.time()
+
+
+def _count_info(kind: str, rate_limited: bool = False) -> None:
+    with _info_lock:
+        row = _info_counts.setdefault(kind, [0, 0])
+        row[1 if rate_limited else 0] += 1
+
+
+def info_usage(reset: bool = True) -> tuple[float, dict[str, list[int]]]:
+    """(seconds covered, {type: [requests, 429s]}) since the last report; resets the counts unless told not to."""
+    global _info_since
+    with _info_lock:
+        counts = {kind: list(row) for kind, row in _info_counts.items()}
+        seconds = time.time() - _info_since
+        if reset:
+            _info_counts.clear()
+            _info_since = time.time()
+    return seconds, counts
+
+
+def info_usage_line(seconds: float, counts: dict[str, list[int]]) -> str:
+    """One log line: weight per minute against HL's 1200, then each type's requests per minute (and its 429s)."""
+    minutes = max(seconds / 60, 1e-9)
+    weight = sum(row[0] * (2 if kind in LIGHT_INFO_TYPES else 20) for kind, row in counts.items()) / minutes
+    parts = [f"{kind} {row[0] / minutes:.1f}/min" + (f" ({row[1]} x 429)" if row[1] else "")
+             for kind, row in sorted(counts.items(), key=lambda item: -item[1][0])]
+    return f"HL info requests: ~{weight:.0f} of 1200 weight/min; " + ", ".join(parts)
+
+
 TRANSPORT_ATTEMPTS = 3   # a dropped connection is retried twice (1s, 2s) before the request counts as failed
 
 
@@ -80,7 +116,9 @@ def post_info(payload: dict[str, Any], timeout: float = 30) -> Any:
     """
     transport_failures = 0
     attempt = 0
+    kind = str(payload.get("type", "?"))
     while attempt <= MAX_RATE_LIMIT_RETRIES:
+        _count_info(kind)
         try:
             response = _session().post(INFO_URL, json=payload, timeout=timeout)
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
@@ -94,6 +132,8 @@ def post_info(payload: dict[str, Any], timeout: float = 30) -> Any:
         except requests.RequestException as exc:
             raise RuntimeError(f"HL info request failed ({type(exc).__name__}).") from exc
         attempt += 1
+        if response.status_code == 429:
+            _count_info(kind, rate_limited=True)
         if response.status_code == 429 and attempt <= MAX_RATE_LIMIT_RETRIES:
             time.sleep(_rate_limit_delay(response, attempt))
             continue
