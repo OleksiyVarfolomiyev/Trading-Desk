@@ -2288,7 +2288,18 @@ function rebaseReturns(node, days) {
   node._orig = node._orig || node.data.map((trace) => ({ x: trace.x.slice(), y: trace.y.slice() }));
   const start = days ? Date.now() - days * 86400000 : null;
   let baseTime = start;
-  const ys = node._orig.map((trace) => {
+  // Over a window every line ends on the last day all of them have (the books are built to yesterday's close, the desk
+  // and indices run to now): one start, one end, so the desk sits between its books.
+  // (Only the desk and the books set it: an index that does not trade at weekends must not cut the others back to Friday.)
+  const ends = node._orig.map((trace, i) => [trace, (node.data[i] || {}).name || ""])
+    .filter(([trace, name]) => trace.x.length && /^(total|desk|crypto|stocks)/i.test(name))
+    .map(([trace]) => new Date(trace.x[trace.x.length - 1]).getTime());
+  const commonEnd = start && ends.length ? Math.min(...ends) : Infinity;
+  const cut = node._orig.map((trace) => {
+    const keep = trace.x.map((x) => new Date(x).getTime() <= commonEnd);
+    return { x: trace.x.filter((_, i) => keep[i]), y: trace.y.filter((_, i) => keep[i]) };
+  });
+  const ys = cut.map((trace) => {
     if (!start) return trace.y;
     // the base is the last point at or before the window's start (daily points: yesterday's close for a day), so a
     // short window shows the move from there to now, not a flat line
@@ -2300,7 +2311,7 @@ function rebaseReturns(node, days) {
     const base = 1 + trace.y[first] / 100;
     return trace.y.map((y) => Math.round(10000 * ((1 + y / 100) / base - 1)) / 100);
   });
-  Plotly.restyle(node, { y: ys });
+  Plotly.restyle(node, { x: cut.map((trace) => trace.x), y: ys });
   const notes = (node.layout.annotations || []).map((note) => Object.assign({}, note));
   const drawn = ys.map((y, i) => [y, i]).filter(([y]) => y.length);
   notes.filter((note) => note.xshift === -4).forEach((note, k) => {
@@ -2331,18 +2342,6 @@ function drawIntraday(node, days) {
   if (btc) lines.push(["BTC", btc, { width: 1.4, dash: "dot", color: colorFor("BTC") }]);
   const sp = rebased(data["S&P500"] || [], (row) => row[1]);
   if (sp) lines.push(["S&P500", sp, { width: 1.4, dash: "dot", color: colorFor("S&P500") }]);
-  // The crypto and stocks books have daily points only (the Mac's hourly book build): drawn from the window's first
-  // daily close, so they show at W; a single day has too few points for a line.
-  const daily = (latest && latest.data && latest.data.charts && latest.data.charts.twr) || [];
-  for (const [kind, color] of [["crypto", "--kind-crypto"], ["stocks", "--kind-stocks"]]) {
-    const series = daily.find((line) => new RegExp("^" + kind, "i").test(line.name));
-    if (!series || !series.levels) continue;
-    const kept = series.x.map((day, i) => [Date.parse(String(day).slice(0, 10) + "T00:00:00Z"), series.levels[i]])
-      .filter(([t, level]) => t >= start - 86400000 && isNum(level) && level > 0);
-    if (kept.length < 2) continue;
-    lines.push([kind, { x: kept.map(([t]) => new Date(t)), y: kept.map(([, level]) => Math.round(10000 * (level / kept[0][1] - 1)) / 100) },
-      { width: 1.8, color: token(color) }]);
-  }
   if (!lines.length) return false;
   const traces = lines.map(([name, line, style]) => colorHover({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
     customdata: line.y.map((v) => readablePct(v / 100)), hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>" }));
@@ -2392,7 +2391,7 @@ function zoomCharts() {   // the value charts show the chosen window (All: the w
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id);
     if (!node || !node.data) return;
-    if (id === "chart-twr" && days && days <= 7) { if (drawIntraday(node, days)) return; }          // a day or a week: hourly
+    if (id === "chart-twr" && days && days <= 1) { if (drawIntraday(node, days)) return; }          // a day: hourly (a week and up: the daily closes every line has)
     else if (id === "chart-value" && days && days <= 7) { if (drawIntradayValue(node, days)) return; }
     else if ((id === "chart-twr" || id === "chart-value") && node._intraday) { node._intraday = false; if (latest && latest.data) renderCharts(latest.data.charts); return; }   // back to the daily curves
     const rebasedFrom = id === "chart-twr" ? rebaseReturns(node, days) : null;
