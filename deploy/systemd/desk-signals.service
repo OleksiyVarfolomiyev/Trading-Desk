@@ -1,0 +1,15 @@
+[Unit]
+Description=Desk order-book signal logger (research, forward test)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=desk
+WorkingDirectory=/home/desk/trading-desk
+EnvironmentFile=/home/desk/trading-desk/deploy/desk.env
+ExecStart=/home/desk/trading-desk/.venv/bin/python -m desk.book_signals log --every 300
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
