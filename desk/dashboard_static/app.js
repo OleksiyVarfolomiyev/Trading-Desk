@@ -2422,7 +2422,8 @@ function assetPicker(label, submit, selectToSubmit = false) {
     tradeAssets().forEach((name) => assets.set(name.toLowerCase(), universeMap[name.toLowerCase()] || name));
     Object.entries(universeMap).filter(([name, market]) => market && name === friendlyName(market).toLowerCase())
       .forEach(([name, market]) => assets.set(name, market));
-    const names = [...assets.keys()].filter((name) => name.includes(query)).sort();
+    const names = [...assets.keys()].filter((name) => name.includes(query))
+      .sort((a, b) => (b.startsWith(query) - a.startsWith(query)) || a.length - b.length || (a < b ? -1 : 1));   // names that start with the text first, shortest first
     suggestions.replaceChildren(...(names.length ? names.map((name) => {
       const market = assets.get(name);
       const button = el("button", { type: "button", text: friendlyName(market), title: market });
@@ -2436,6 +2437,7 @@ function assetPicker(label, submit, selectToSubmit = false) {
       return button;
     }) : [el("div", { class: "trade-suggestion-empty", text: query ? "No matching assets" : "Loading markets…" })]));
     suggestions.hidden = false;
+    return { names, assets, query };
   };
   const wrap = el("div", { class: "trade-asset-wrap" }, [asset, suggestions]);
   asset.addEventListener("focus", () => {
@@ -2444,7 +2446,22 @@ function assetPicker(label, submit, selectToSubmit = false) {
       if (document.activeElement === asset && !suggestions.hidden) refreshSuggestions();
     });
   });
-  asset.addEventListener("input", () => { selected = null; refreshSuggestions(); });
+  asset.addEventListener("input", (event) => {
+    selected = null;
+    const { names, assets, query } = refreshSuggestions();
+    // Autofill: the best match completes the text with the rest selected, so Enter takes it (typing on replaces the rest,
+    // Backspace removes it). Not while deleting.
+    if (!query || /^delete/.test(event.inputType || "")) return;
+    const best = names.find((name) => name.startsWith(query));
+    if (!best) return;
+    selected = assets.get(best);
+    const full = friendlyName(selected);
+    if (full.toLowerCase().startsWith(query) && full.length > query.length) {
+      const typed = asset.value.length;
+      asset.value = asset.value + full.slice(typed);
+      asset.setSelectionRange(typed, asset.value.length);
+    }
+  });
   asset.addEventListener("keydown", (event) => {
     if (event.key === "Enter") { event.preventDefault(); run(); }
     if (event.key === "ArrowDown" && !suggestions.hidden) {
