@@ -303,7 +303,10 @@ REGISTRY: list[Item] = [
          forward_only="forward-only by design", note="best signal's net return per snapshot at 60 minutes"),
     Item("screener", "Screener short candidates", "strategy", "2026-11-20", None, _screener_live,
          forward_only="history: picks vs basket not established", note="outcome: 7-day move against BTC from each daily snapshot"),
-    Item("take-profits", "Held take-profits", "execution", "2026-11-13", None, _count(r"take-profit")),
+    Item("take-profits", "Held take-profits on crypto entries", "execution", "2026-11-20", None, _count(r"take-profit"),
+         note="crypto entries only (stocks are held passively); no stop or loss guard"),
+    Item("cap-flex", "Risk-cap flex, opt-in per trade", "risk", "2026-11-20", None, _count(r"FLEX"),
+         note="3-point flex (33% to 36%) used only when chosen on the confirm step or with --use-flex"),
 ]
 
 

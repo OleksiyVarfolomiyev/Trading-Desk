@@ -375,10 +375,13 @@ class DaemonTradeTests(unittest.TestCase):
         self.exchange.order.assert_not_called()
         self.assertIn("Confirmation did not match", self.output.getvalue())
 
-    def test_an_urgent_entry_places_only_the_entry_no_exits_and_no_guard(self):
+    def test_an_urgent_crypto_entry_places_the_entry_and_a_held_take_profit_no_stop_and_no_guard(self):
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
         self.assertEqual(self.daemon.trade(self.request(live=True), session), 0)
-        (entry,) = self.exchange.order.call_args_list   # the desk's rule: no stop, take-profit or loss guard
+        entry, target = self.exchange.order.call_args_list   # the desk's rule: no stop or loss guard; crypto takes profit
+        (_, target_is_buy, _, _, target_type), target_kwargs = target
+        self.assertEqual((target_is_buy, target_kwargs), (True, {"reduce_only": True}))   # closes the short
+        self.assertNotIn("trigger", target_type)                                           # a limit, never a stop
         (coin, is_buy, size, limit, order_type), kwargs = entry
         self.assertEqual((coin, is_buy, order_type, kwargs), ("AVAX", False, {"limit": {"tif": "Ioc"}},
                                                               {"reduce_only": False}))
@@ -400,13 +403,17 @@ class DaemonTradeTests(unittest.TestCase):
                 self.daemon.dispatch({"cmd": "resize", "change": "short", "coin": "ena", "wallet": WALLET[-4:],
                                       "label": "conviction", "notional": "500"}, FakeSession())
                 self.assertEqual((trade.call_args.args[0]["strategy"], trade.call_args.args[0]["notional"]), ("conviction", 500.0))
+                self.assertFalse(trade.call_args.args[0]["use_flex"])   # the cap flex is never preset
+                self.daemon.dispatch({"cmd": "resize", "change": "long", "coin": "xmr", "wallet": WALLET[-4:],
+                                      "label": "directional", "use_flex": True}, FakeSession())
+                self.assertTrue(trade.call_args.args[0]["use_flex"])    # only when chosen on the confirm step
 
     def test_a_planned_entry_shows_its_share_of_the_wallet_and_the_risk_cap_without_expected_pnl(self):
         self.daemon.trade(self.request(label="directional"), FakeSession())
         line = next(text for text in self.output.getvalue().splitlines() if text.startswith("AVAX SHORT"))
         self.assertIn("of the wallet", line)
         self.assertIn("of the risk cap (risk budget and volatility)", line)
-        self.assertIn("no stop, take-profit or loss guard", line)
+        self.assertIn("no stop or loss guard, take-profit", line)
         self.assertNotIn("expected 5d PnL", self.output.getvalue())
 
     def test_the_kill_switch_blocks_live_orders(self):
@@ -422,7 +429,7 @@ class DaemonTradeTests(unittest.TestCase):
             self.daemon.trade(self.request(live=True), FakeSession("LIVE TRADING", "SUBMIT ORDERS"))
         session = FakeSession("LIVE TRADING", "SUBMIT ORDERS")
         self.assertEqual(self.daemon.trade(self.request(live=True, ignore_unreachable=True), session), 0)
-        self.assertEqual(self.exchange.order.call_count, 1)   # the entry only: no exits
+        self.assertEqual(self.exchange.order.call_count, 2)   # the entry and its held take-profit: no stop
 
     def test_a_one_off_risk_cap_is_restored_afterwards(self):
         cap = ht.MAX_TOTAL_RISK_PCT

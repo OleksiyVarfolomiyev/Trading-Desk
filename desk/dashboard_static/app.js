@@ -4002,19 +4002,40 @@ function openBatchTrade() {
     const confirm = el("button", { type: "button", class: "asset-action lead", text: "Submit live batch" });
     const back = el("button", { type: "button", class: "asset-action", text: "Edit batch" });
     back.addEventListener("click", edit);
+    const flex = flexChoice(plan.plan, confirm);
     confirm.addEventListener("click", async () => {
       overlay.remove();
       const pending = notify(["The trading daemon is processing the reviewed orders."], "Submitting batch");
-      const result = await post({ stage: "confirm", token: plan.token });
+      const result = await post({ stage: "confirm", token: plan.token, use_flex: flex.useFlex() });
       pending.remove();
       notify([result.error || result.result || "The daemon returned no order details."],
         result.code === 0 ? "Batch processed" : "Batch requires review");
       lastRendered = null; load();
     }, { once: true });
-    box.replaceChildren(heading(), lines(plan.plan), el("div", { class: "asset-actions" }, [confirm, back, closeButton(overlay)]));
+    box.replaceChildren(heading(), lines(plan.plan), ...(flex.node ? [flex.node] : []),
+      el("div", { class: "asset-actions" }, [confirm, back, closeButton(overlay)]));
   });
   box.replaceChildren(heading(), el("p", { class: "muted", text: "Loading Hyperliquid markets…" }));
   loadUniverse().then(() => { addRow(); addRow(); edit(); });
+}
+
+// When the plan says an entry would need the 3-point cap flex, the confirm step asks: Use flex or Normal size, neither
+// preselected, and the confirm button waits for the choice. Without a FLEX line there is nothing to choose.
+function flexChoice(planText, confirm) {
+  if (!/\bFLEX:/.test(String(planText || ""))) return { node: null, useFlex: () => false };
+  let chosen = null;
+  confirm.disabled = true;
+  const node = el("div", { class: "scale-chips", role: "group", "aria-label": "Risk cap flex" },
+    [["flex", "Use flex"], ["normal", "Normal size"]].map(([value, text]) => {
+      const button = el("button", { type: "button", class: "scale-chip", text, "aria-pressed": "false" });
+      button.addEventListener("click", () => {
+        chosen = value;
+        node.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b === button); b.setAttribute("aria-pressed", String(b === button)); });
+        confirm.disabled = false;
+      });
+      return button;
+    }));
+  return { node, useFlex: () => chosen === "flex" };
 }
 
 // A new entry first asks for its label (the strategy: none is preselected unless the trade bar's choice came with it) and,
@@ -4067,11 +4088,12 @@ async function runAction(label, change, fraction, target) {
   const confirm = el("button", { type: "button", class: "asset-action lead", text: "✓", title: `${label} ${marketName(coin)}`, "aria-label": `Confirm: ${label} ${marketName(coin)}` });
   const cancel = el("button", { type: "button", class: "asset-action", text: "✗", title: "Cancel", "aria-label": "Cancel" });
   cancel.addEventListener("click", () => { feedback("action", "cancel", marketName(coin), label); overlay.remove(); });
+  const flex = flexChoice(plan.plan, confirm);
   confirm.addEventListener("click", async () => {
     overlay.remove();   // gone at once; if something goes wrong a notice appears
     feedback("action", "confirm", marketName(coin), label);
     let result;
-    try { result = await post({ stage: "confirm", token: plan.token }); } catch (e) { result = { error: String(e) }; }
+    try { result = await post({ stage: "confirm", token: plan.token, use_flex: flex.useFlex() }); } catch (e) { result = { error: String(e) }; }
     if (result.code !== 0) {
       const lines = planLines(result.result || result.error || "", coin);
       notify(lines.notices.concat(lines.mine), `${title}: not completed`);
@@ -4081,6 +4103,7 @@ async function runAction(label, change, fraction, target) {
   box.replaceChildren(el("h3", { text: title }),
     ...notices.map((line) => el("p", { class: "action-line notice", text: line })),
     ...mine.map((line) => el("p", { class: "action-line", text: line })),
+    ...(flex.node ? [flex.node] : []),
     el("div", { class: "asset-actions" }, [confirm, cancel]));
 }
 

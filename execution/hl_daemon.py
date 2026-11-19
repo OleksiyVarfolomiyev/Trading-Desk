@@ -3329,7 +3329,7 @@ class Daemon:
             try:   # sized from the risk budget and the asset's volatility (a batch of one); no stop or take-profit
                 return self.trade({"cmd": "trade", "wallet": wallet, "live": bool(request.get("live")), "signals": str(path),
                                    "fast": True, "notional": notional, "ignore_unreachable": True, "label": label,
-                                   "strategy": label}, session)
+                                   "strategy": label, "use_flex": bool(request.get("use_flex"))}, session)
             finally:
                 self.trade_lock.release()
         if command == "resize":   # the dashboard's actions on an open position: plan (dry run), then live once confirmed there
@@ -3502,7 +3502,8 @@ class Daemon:
             notional = float(request["notional"]) if request.get("notional") not in (None, "") else None
             strategy = "conviction" if request.get("conviction") else (request.get("strategy") or "directional")
             plans, risk = ht.plan_trades(signals, markets, snapshot, stops=stops, notional=notional,
-                                         strategy=strategy, label=request.get("label"), reviewed_limits=limits)
+                                         strategy=strategy, label=request.get("label"), reviewed_limits=limits,
+                                         use_flex=bool(request.get("use_flex")))   # the cap flex only when chosen
             ht.print_plan(snapshot, plans, risk)
             return "signals", plans, markets, snapshot
         actions = ht.read_position_actions(Path(request["actions"]))
@@ -3563,7 +3564,10 @@ class Daemon:
             print(f"(planned in {time.time() - began:.2f}s from live data)")
             if not live:
                 if batch:
-                    limits = {plan.coin: [plan.quantity, plan.risk_budget] for plan in plans}
+                    # The reviewed limit covers the flexed size too, so choosing "Use flex" on confirm can reach it;
+                    # without that choice the normal cap still binds.
+                    limits = {plan.coin: [max(plan.quantity, plan.flex_quantity), max(plan.risk_budget, plan.flex_risk)]
+                              for plan in plans}
                     if not any(plan.quantity > 0 for plan in plans):
                         print("Every proposed batch quantity is zero or blocked.")
                         return 2
@@ -3919,6 +3923,8 @@ def main(argv: list[str] | None = None) -> int:
     trade.add_argument("--notional", type=float,
                        help="opt in to an explicit entry amount in dollars instead of the risk-based size (one position's "
                        "risk budget over the asset's volatility); still within the margin and the aggregate risk cap")
+    trade.add_argument("--use-flex", action="store_true",
+                       help="let entries use the 3-point risk-cap flex (never applied without this flag)")
     trade.add_argument("--slippage", type=float, default=URGENT_SLIPPAGE_PCT,
                        help=f"with --urgent: percent beyond the mid the entry may pay (default {URGENT_SLIPPAGE_PCT:g})")
     trade.add_argument("--max-risk-pct", type=float, help="aggregate risk cap for this run only, in percent")
@@ -3965,6 +3971,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("choose --urgent or --fast, not both.")
         request = {"cmd": "trade", "wallet": args.wallet, "live": args.live, "urgent": args.urgent, "fast": args.fast,
                    "conviction": args.conviction, "notional": args.notional, "strategy": args.strategy,
+                   "use_flex": args.use_flex,
                    "slippage": args.slippage, "max_risk_pct": args.max_risk_pct,
                    "ignore_unreachable": args.ignore_unreachable,
                    "risk_wallets": [item.strip() for item in args.risk_wallets.split(",")] if args.risk_wallets else None,
