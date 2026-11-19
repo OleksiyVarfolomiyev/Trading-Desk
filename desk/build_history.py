@@ -309,6 +309,12 @@ def publish(path: Path = CSV_PATH, hours: float = 24 * 14, push: bool = True, di
     ]:
         tile_feed.publish(content, title, reason="how the desk was built", key=key, formats=formats, **common)
         keys.append(key)
+    try:   # the build-vs-risk/reward tiles, from the saved result (python -m desk.commit_risk_reward run refreshes it)
+        from desk import commit_risk_reward
+
+        keys += commit_risk_reward.publish_cached(hours=hours, push=False, directory=directory)
+    except Exception as exc:
+        print(f"  build vs risk/reward tiles not published ({type(exc).__name__}: {exc})")
     if push:
         tile_feed.push_to_web(directory)
     return keys

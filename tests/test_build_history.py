@@ -100,13 +100,14 @@ class SummaryTests(unittest.TestCase):
         outcomes = {r["Research"]: r["Outcome"] for r in bh.research_outcomes(self.rows + [row("04", "research", "signals", "research/x.py", "A study")])}
         self.assertEqual(outcomes["A study"], "unstated")
 
-    def test_publish_writes_four_tiles_without_pushing(self):
+    def test_publish_writes_the_history_tiles_and_the_risk_reward_pair_without_pushing(self):
         with tempfile.TemporaryDirectory() as folder:
             csv_path = Path(folder) / "h.csv"
             bh.write_csv(self.rows, csv_path)
             keys = bh.publish(csv_path, push=False, directory=Path(folder) / "tiles")
-            self.assertEqual(len(keys), 4)
-            self.assertEqual(len(list((Path(folder) / "tiles").glob("*.json"))), 4)
+            self.assertEqual([k for k in keys if k.startswith("build-history")].__len__(), 4)
+            self.assertEqual(keys[4:], ["build-risk-reward-table", "build-risk-reward-chart"])   # from desk/commit_risk_reward.json
+            self.assertEqual(len(list((Path(folder) / "tiles").glob("*.json"))), 6)
 
 
 if __name__ == "__main__":
