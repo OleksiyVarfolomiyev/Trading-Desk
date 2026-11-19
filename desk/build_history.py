@@ -230,8 +230,10 @@ def research_outcomes(rows: list[dict], limit: int = 10) -> list[dict]:
     """The latest research commits that added something (effect new), with their verdict: not adopted when the subject or
     the label's reason says so, otherwise unstated (the commit does not say whether the idea worked)."""
     items = [row for row in rows if row["purpose"] == "research" and row["effect"] == "new"][-limit:][::-1]
-    return [{"Date": row["date_et"][:10], "Research": row["subject"],
-             "Outcome": "not adopted" if NOT_ADOPTED.search(row["subject"] + " " + row.get("why", "")) else "unstated"}
+    # The verdict is the label in front of the study, so it is read first.
+    return [{"Date": row["date_et"][:10],
+             "Research": ("Not adopted · " if NOT_ADOPTED.search(row["subject"] + " " + row.get("why", "")) else "Unstated · ")
+             + row["subject"]}
             for row in items]
 
 
@@ -250,18 +252,33 @@ def publish(path: Path = CSV_PATH, hours: float = 24 * 14, push: bool = True, di
     rows = read_csv(path)
     if not rows:
         return []
+    import pandas as pd
+
     days = per_day(rows)
-    # A purpose absent that day is no segment: a 0 would be labelled on the bar.
-    figure = go.Figure([go.Bar(name=purpose, x=list(days), y=[days[day].get(purpose) or None for day in days], textposition="none") for purpose in PURPOSES
-                        if any(days[day].get(purpose) for day in days)])
-    figure.update_layout(barmode="stack", yaxis={"tickformat": "d"})
+    # Commits per day by purpose as lines over every calendar day (a day without commits is a point at nothing done).
+    calendar = [d.strftime("%Y-%m-%d") for d in pd.date_range(min(days), max(days), freq="D")]
+    daily = go.Figure([go.Scatter(name=purpose, x=calendar, y=[days.get(day, {}).get(purpose, 0) for day in calendar], mode="lines")
+                       for purpose in PURPOSES if any(days[day].get(purpose) for day in days)])
+    daily.update_layout(yaxis={"tickformat": "d", "rangemode": "tozero"}, hovermode="x unified")
+    # Effort by purpose: share of commits, share of churn and the fix share, one group per purpose.
+    purposes = by_purpose(rows)
+    effort = go.Figure([go.Bar(name=name, x=[row["Purpose"] for row in purposes], y=[row[key] or None for row in purposes])
+                        for key, name in (("Commits %", "Commits"), ("Churn %", "Churn"), ("Fix share", "Fixes"))])
+    effort.update_layout(barmode="group", yaxis={"tickformat": ".0%"})
+    # New, improve, fix as shares of each purpose: every bar is 100%.
+    effects = by_effect(rows)
+    mix = go.Figure()
+    for effect in EFFECTS:
+        name = effect.capitalize()
+        shares = [row[name] / (sum(row[e.capitalize()] for e in EFFECTS) or 1) for row in effects]
+        mix.add_bar(name=name, x=[row["Purpose"] for row in effects], y=[share or None for share in shares])
+    mix.update_layout(barmode="stack", yaxis={"tickformat": ".0%", "range": [0, 1]})
     common = {"hours": hours, "relevance": 0.1, "push": False, "directory": directory}
     keys = []
     for key, content, title, formats in [
-        ("build-history-days", figure, "Build history: commits per day by purpose", None),
-        ("build-history-purposes", _frame(by_purpose(rows)), "Build history: effort by purpose",
-         {"Commits": "num", "Commits %": "pct", "Churn %": "pct", "Fix share": "pct"}),
-        ("build-history-effects", _frame(by_effect(rows)), "Build history: new, improved, fixed", {"New": "num", "Improve": "num", "Fix": "num"}),
+        ("build-history-days", daily, "Build history: commits per day by purpose", None),
+        ("build-history-purposes", effort, "Build history: effort by purpose", None),
+        ("build-history-effects", mix, "Build history: new, improved, fixed", None),
         ("build-history-hotspots", _frame(hotspots(rows)), "Build history: hotspots", {"Commits": "num", "Fixes": "num"}),
         ("build-history-research", _frame(research_outcomes(rows)), "Build history: research outcomes", None),
     ]:

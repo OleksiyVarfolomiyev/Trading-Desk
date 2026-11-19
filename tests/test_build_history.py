@@ -105,9 +105,9 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(top["Last fix"], "2026-11-02")
 
     def test_research_outcomes_read_the_reason_too(self):
-        self.assertEqual(bh.research_outcomes(self.rows)[0]["Outcome"], "not adopted")
-        outcomes = {r["Research"]: r["Outcome"] for r in bh.research_outcomes(self.rows + [row("04", "new", "research", "research/x.py", "A study")])}
-        self.assertEqual(outcomes["A study"], "unstated")
+        self.assertTrue(bh.research_outcomes(self.rows)[0]["Research"].startswith("Not adopted · "))
+        studies = [r["Research"] for r in bh.research_outcomes(self.rows + [row("04", "new", "research", "research/x.py", "A study")])]
+        self.assertIn("Unstated · A study", studies)
 
     def test_publish_writes_the_history_tiles_and_the_risk_reward_pair_without_pushing(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -122,12 +122,16 @@ class SummaryTests(unittest.TestCase):
             self.assertFalse((tiles / "build-history-areas.json").exists())
             self.assertEqual(len(list(tiles.glob("*.json"))), 7)
             import json
-            effects = json.loads((tiles / "build-history-effects.json").read_text())["rows"]
-            risk = next(r for r in effects if r["Purpose"] == "risk")
-            self.assertIsNone(risk["Improve"])   # no risk improvements: blank, not 0
+            effects = json.loads((tiles / "build-history-effects.json").read_text())["data"]
+            self.assertEqual([t["name"] for t in effects], ["New", "Improve", "Fix"])
+            for i in range(len(effects[0]["x"])):   # every purpose's bar is 100%, an absent effect is no segment
+                shares = [t["y"][i] for t in effects]
+                self.assertNotIn(0, shares)
+                self.assertAlmostEqual(sum(v for v in shares if v), 1.0)
+            purposes = json.loads((tiles / "build-history-purposes.json").read_text())["data"]
+            self.assertEqual(purposes[0]["x"][0] in bh.PURPOSES, True)
             days = json.loads((tiles / "build-history-days.json").read_text())["data"]
-            self.assertNotIn(0, [v for trace in days for v in trace["y"]])
-
+            self.assertTrue(all(trace["type"] == "scatter" for trace in days))
 
 if __name__ == "__main__":
     unittest.main()
