@@ -16,7 +16,7 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 
-from desk import books
+from desk import books, listings
 
 BETA_DAYS = 90        # trailing window of benchmark-date returns
 BETA_MIN_OBS = 20     # fewer than this and the market counts as beta 1 (the dollar-weighted treatment)
@@ -62,13 +62,16 @@ def asset_closes_for(book, asset: str, venue: str, lookback: int) -> pd.Series:
 
     def hl(dex):
         frame = fetch_daily_candles(asset, dex, lookback_days=lookback)
-        return pd.Series(frame["close"].astype(float).values, index=pd.to_datetime(frame["time"], utc=True))
+        own = pd.Series(frame["close"].astype(float).values, index=pd.to_datetime(frame["time"], utc=True))
+        return listings.spliced(asset, own, lookback) if len(own) < lookback else own   # a new market borrows its underlying's history
 
     if book.kind == "Crypto":
         return hl("")
     dex = asset.split(":")[0] if ":" in asset else ""
     if dex:
         return hl(dex)
+    if listings.listing_for(asset):   # a bare name that is not a US share (PAXG is a token; Yahoo's "PAXG" is another company)
+        return hl("")
     try:
         return yahoo_stock_closes(asset, lookback)
     except Exception:

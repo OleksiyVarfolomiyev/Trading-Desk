@@ -180,6 +180,10 @@ def holding_returns(
         try:
             if row.venue == "hl":
                 series = hl_closes(row.symbol, row.ref, days)
+                if len(series) < days:   # a market new on HL borrows its underlying's earlier history (desk/listings.py)
+                    from desk.listings import spliced
+
+                    series = spliced(row.symbol, series, days)
             elif row.venue in ("hl-spot", "wallet"):
                 series = hl_closes(row.ref, "", days)  # an empty market raises: counted as not priced
             elif row.venue == "ib":
