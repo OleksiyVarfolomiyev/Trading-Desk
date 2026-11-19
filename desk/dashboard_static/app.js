@@ -45,6 +45,11 @@ function number(value) {
   if (value !== 0 && Math.abs(value) < 0.001) return value.toExponential(3);
   return Number(value.toPrecision(6)).toLocaleString("en-US", { maximumFractionDigits: 6 });
 }
+function compactNumber(value) {   // 1.2K, 3.4M: a count on a chart label
+  const abs = Math.abs(value), sign = value < 0 ? "-" : "";
+  const [div, unit] = abs >= 1e9 ? [1e9, "B"] : abs >= 1e6 ? [1e6, "M"] : abs >= 1e3 ? [1e3, "K"] : [1, ""];
+  return sign + Number((abs / div).toPrecision(3)) + unit;
+}
 function compactUsd(value) {
   if (!isNum(value)) return "n/a";
   const abs = Math.abs(value);
@@ -3204,11 +3209,14 @@ function decoratePublishedBars(traces, layout) {
     const axis = layout[trace.orientation === "h" ? "xaxis" : "yaxis"] || {};
     const format = String(axis.tickformat || "");
     const label = (value) => {
-      if (!isNum(value)) return "";
+      if (!isNum(value) || value === 0) return "";   // absent is absent: a zero bar gets no label
       if (format.includes("%")) return readablePct(value);
       if (axis.ticksuffix === "%") return readablePct(value / 100);
       if (format.includes("$") || axis.tickprefix === "$") return usd(value);
-      return (axis.tickprefix || "") + number(value) + (axis.ticksuffix || "");
+      // A chart label is read, not computed with: three significant digits at most (1.23K, 45.6, 0.12).
+      const abs = Math.abs(value);
+      const short = abs >= 1000 ? compactNumber(value) : Number(value.toPrecision(abs >= 100 ? 3 : 2)).toLocaleString("en-US");
+      return (axis.tickprefix || "") + short + (axis.ticksuffix || "");
     };
     const old = Array.isArray(trace.text) ? trace.text : values.map(() => trace.text || "");
     const text = values.map((value, i) => {
