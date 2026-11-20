@@ -1554,4 +1554,12 @@
   window.DESK_SOURCE = async () => Object.assign({}, doc, { server_time: new Date().toISOString() });
   refresh();
   setInterval(refresh, CFG.refreshSeconds * 1000);
+  // A tab in the background has its timers slowed or paused by the browser: when it comes back with data older than 20 s,
+  // it rebuilds at once (and again when the network returns), instead of showing yesterday's number until the next tick.
+  const catchUp = () => {
+    const age = doc.status.last_ok ? Date.now() - Date.parse(doc.status.last_ok) : Infinity;
+    if (!document.hidden && !running && age > 20000) refresh();
+  };
+  document.addEventListener("visibilitychange", catchUp);
+  window.addEventListener("online", catchUp);
 })();
