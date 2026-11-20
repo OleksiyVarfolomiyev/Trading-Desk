@@ -161,6 +161,18 @@ class LogAggregateTests(unittest.TestCase):
         self.assertEqual(out["by_trigger"], {"asked": 2, "unprompted": 1, "unknown": 0})
         self.assertEqual(out["by_month"], {"2026-11": 2, "2026-12": 1})
 
+    def test_log_uses_shares_and_keeps_the_sample_count(self):
+        rows = [{"at": "2026-11-20", "kind": kind, "trigger": trigger}
+                for kind, trigger in (("trade", "asked"), ("trade", "unknown"), ("process", "unprompted"))]
+        frame = s.log_frame({"rows": rows, "counts": s.counts(rows),
+                             "results": [{"kind": "trade", "moves": {1: 0.0}}],
+                             "followups": [{"kind": "process", "done": True}]})
+        trade = frame.set_index("Kind").loc["trade"]
+        self.assertEqual(trade["n"], 2)
+        self.assertAlmostEqual(trade["Share of log"], 2 / 3)
+        self.assertEqual((trade["Asked"], trade["Unprompted"], trade["Scored on price"]), (0.5, 0.0, 0.5))
+        self.assertEqual(frame.set_index("Kind").loc["process", "Linked commit"], 1.0)
+
     def test_voided_rows_are_excluded(self):
         import tempfile
         with tempfile.TemporaryDirectory() as folder:

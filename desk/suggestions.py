@@ -422,8 +422,7 @@ def tiles_payload(data: dict):
 
 
 def log_frame(data: dict):
-    """The 'Suggestions log' table: per kind how many, how many asked vs unprompted, how many are scoreable on price, and for the rest the
-    share linked to a commit explicitly."""
+    """Show each kind's share of the log and the rates within that kind."""
     import pandas as pd
 
     done = defaultdict(list)
@@ -438,11 +437,26 @@ def log_frame(data: dict):
             continue
         group = [r for r in data["rows"] if r["kind"] == kind]
         d = done.get(kind) or []
-        rows.append({"Kind": kind, "Suggestions": n, "Asked": sum(1 for r in group if r.get("trigger") == "asked"),
-                     "Unprompted": sum(1 for r in group if r.get("trigger") == "unprompted"), "Scored on price": scored.get(kind) or None,
+        rows.append({"Kind": kind, "Share of log": n / data["counts"]["n"], "n": n,
+                     "Asked": sum(r.get("trigger") == "asked" for r in group) / n,
+                     "Unprompted": sum(r.get("trigger") == "unprompted" for r in group) / n,
+                     "Scored on price": scored[kind] / n,
                      "Linked commit": (sum(d) / len(d)) if d else None})
     frame = pd.DataFrame(rows)
     return frame
+
+
+def publish_log(data: dict) -> bool:
+    from desk import tile_feed
+
+    frame = log_frame(data)
+    if frame.empty:
+        return False
+    formats = {column: "pct" for column in frame.columns if column not in ("Kind", "n")}
+    tile_feed.publish(frame, "Suggestions log",
+                      reason="Share of all suggestions. Asked, unprompted and price-scored rates are within each kind. Commit links are a share of eligible follow-ups.",
+                      relevance=0.1, hours=24 * 14, key="claude-suggestions-log", formats={**formats, "n": "int"}, push=False)
+    return True
 
 
 def publish(push: bool = True) -> list[str]:
@@ -456,11 +470,7 @@ def publish(push: bool = True) -> list[str]:
         tile_feed.publish(frame, "My suggestions", reason="Claude's calls scored against the market and your execution", relevance=0.1, hours=24 * 14,
                           key="claude-suggestions", formats=formats, push=False)
         keys.append("claude-suggestions")
-    log = log_frame(data)
-    if len(log):
-        tile_feed.publish(log, "Suggestions log", reason="every recommendation by kind, asked or unprompted, scored or checked against what was done", relevance=0.1,
-                          hours=24 * 14, key="claude-suggestions-log", formats={"Linked commit": "pct", "Suggestions": "int", "Asked": "int", "Unprompted": "int",
-                                                                                   "Scored on price": "int"}, push=False)
+    if publish_log(data):
         keys.append("claude-suggestions-log")
     if figure is not None:
         interim = not any(data["weekly"].values())
