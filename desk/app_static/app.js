@@ -3537,15 +3537,19 @@ function addPeriodChips(node) {
   const key = "published:" + node.id;
   const current = () => publishedPeriod(node);
   const row = node._chips || el("span", { class: "scale-chips published-period-chips" });
-  row.replaceChildren(...periods.filter(([label]) => label !== current()).map(([label]) => {
+  row.replaceChildren(...periods.map(([label]) => {
     // In the managed era ALL is the managed desk, named as the benchmark tables name it.
-    const button = el("button", { type: "button", class: "scale-chip", text: label === "ALL" && era === "managed" ? "Active" : label,
+    const button = el("button", { type: "button", class: "scale-chip" + (label === current() ? " on" : ""),
+      "aria-pressed": String(label === current()), text: label === "ALL" && era === "managed" ? "Active" : label,
       title: label === "ALL" ? (era === "managed" ? "Since active management" : "Since inception") : "" });
     button.addEventListener("click", () => {
       const choices = (() => { try { return JSON.parse(localStorage.getItem("desk-published-periods") || "{}"); } catch (e) { return {}; } })();
       choices[key] = label;
       try { localStorage.setItem("desk-published-periods", JSON.stringify(choices)); } catch (e) {}
-      row.querySelectorAll(".scale-chip").forEach((b) => b.classList.toggle("on", b === button));
+      row.querySelectorAll(".scale-chip").forEach((b) => {
+        b.classList.toggle("on", b === button);
+        b.setAttribute("aria-pressed", String(b === button));
+      });
       feedback("chart", "period", node.id, label);
       applyPublishedPeriod(node, label);
     });
@@ -3686,11 +3690,11 @@ function renderPublished(tiles) {
         t: Math.min(Number(layout.margin.t) || 30, 42), b: Math.min(Number(layout.margin.b) || 32, 42),
       });
       const node = document.getElementById("pub-" + tile.key);
-      const series = isReturnSeries(tile.data || []);
+      const series = layout.meta?.rebase !== false && isReturnSeries(tile.data || []);
       const data = (series ? decoratePublishedTraces(tile.data || [], layout) : decoratePublishedBars(tile.data || [], layout)).map(colorHover);
       if (node) whenVisible(node, () => Plotly.react(node, data, layout, CONFIG).then(() => {
         markNumericNotes();
-        if (isTimeSeriesChart(tile.data || [])) {
+        if (layout.meta?.timeSeries || isTimeSeriesChart(tile.data || [])) {
           spreadEndLabels(node.id);
           node._returnSeries = series;
           node._orig = null;

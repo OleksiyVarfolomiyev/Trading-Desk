@@ -109,13 +109,17 @@ class FitAndComparisonTests(unittest.TestCase):
         self.assertEqual(len(s._without_approximate_duplicates(rows)), 1)
         self.assertEqual(len(s._without_approximate_duplicates(rows[:1])), 1)   # alone it stays
 
-    def test_weekly_lines_are_cumulative_per_fit_and_comparison_has_three_groups(self):
+    def test_daily_lines_are_cumulative_per_fit_and_comparison_has_three_groups(self):
         results = [{"at": "2026-11-16T10:00:00Z", "fit": "strategy", "kind": "trade", "followed": True, "moves": {3: 0.05, "now": 0.05}},
                    {"at": "2026-11-23T10:00:00Z", "fit": "strategy", "kind": "trade", "followed": False, "moves": {3: -0.02, "now": -0.02}},
                    {"at": "2026-11-17T10:00:00Z", "fit": "additional", "kind": "trade", "followed": False, "moves": {3: 0.01, "now": 0.01}}]
-        weeks = s.weekly(results)
-        self.assertEqual([n for _, n, _ in weeks["strategy"]], [1, 2])     # cumulative
-        self.assertEqual(weeks["strategy"][1][2], 0.5)
+        days = s.daily_hit_rate(results)
+        self.assertEqual([n for _, n, _ in days["strategy"]], [1, 2])     # cumulative
+        self.assertEqual(days["strategy"][1], ("2026-11-23", 2, 0.5))
+        _, figure = s.tiles_payload({"results": [], "summary": s.summary([]), "daily": days})
+        self.assertEqual(figure.layout.xaxis.type, "date")
+        self.assertEqual(figure.layout.meta, {"legend": True, "timeSeries": True, "rebase": False})
+        self.assertEqual(list(figure.data[0].x), ["2026-11-16", "2026-11-23"])
         out = s.comparison(results, [{"coin": "Q", "side": "long", "at": "2026-11-18T00:00:00Z", "moves": {3: 0.02, "now": 0.02}}])
         self.assertEqual((out["suggested_followed"]["n"], out["suggested_not_followed"]["n"], out["own_not_suggested"]["n"]), (1, 2, 1))
 

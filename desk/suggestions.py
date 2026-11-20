@@ -11,7 +11,7 @@ A suggestion is a call with a symbol, a side, a kind, a confidence, a ``fit`` an
 * ``score`` reads the log against Hyperliquid candles (did the price move the suggested way over 1, 3 and 7 days from the
   suggestion), the desk's fills (was it done: an opening fill for a trade, a closing one for a reduce, within 3 days) and the
   journal (the strategy LABEL the user chose at execution). ``comparison`` sets suggested-and-followed against
-  suggested-and-not-followed against the user's own entries that were never suggested. ``weekly`` gives the cumulative hit rate by
+  suggested-and-not-followed against the user's own entries that were never suggested. ``daily_hit_rate`` gives the cumulative hit rate by
   week and fit. Below 20 scored suggestions it says "too few" (the desk's significance rule); a hit rate on a handful is noise.
 
     python -m desk.suggestions add --coin xyz:SHAZ --side short --text "..." --confidence medium --fit strategy
@@ -247,20 +247,19 @@ def split_by(results: list[dict], key) -> dict:
     return {name: summary(rows) for name, rows in groups.items()}
 
 
-def weekly(results: list[dict], horizon: int = 3) -> dict:
-    """Cumulative hit rate by week of the suggestion, one series per fit (strategy, additional): [(week, n_cumulative, hit)]."""
+def daily_hit_rate(results: list[dict], horizon: int = 3) -> dict:
+    """Cumulative hit rate by UTC suggestion date, separately for strategy and additional calls."""
     out = {}
     for fit in ("strategy", "additional"):
         rows = sorted((r for r in results if r.get("fit") == fit and r.get("moves", {}).get(horizon) is not None), key=lambda r: r["at"])
-        weeks, seen = [], []
-        by_week = defaultdict(list)
-        for r in rows:
-            d = datetime.strptime(r["at"], "%Y-%m-%dT%H:%M:%SZ")
-            by_week[f"{d.isocalendar().year}-W{d.isocalendar().week:02d}"].append(r["moves"][horizon])
-        for week in sorted(by_week):
-            seen += by_week[week]
-            weeks.append((week, len(seen), sum(1 for m in seen if m > 0) / len(seen)))
-        out[fit] = weeks
+        points, seen = [], []
+        by_day = defaultdict(list)
+        for row in rows:
+            by_day[row["at"][:10]].append(row["moves"][horizon])
+        for day in sorted(by_day):
+            seen.extend(by_day[day])
+            points.append((day, len(seen), sum(move > 0 for move in seen) / len(seen)))
+        out[fit] = points
     return out
 
 
@@ -370,7 +369,7 @@ def build(now_ms: int | None = None) -> dict:
                "evidence": (links.get(suggestion_id(r)) or {}).get("commit", "")} for r in others if eligible(r)]
     return {"rows": rows, "results": results, "own": own, "counts": counts(rows), "followups": follow, "summary": summary(results), "comparison": comparison(results, own),
             "by_fit": split_by(results, lambda r: r.get("fit", "unknown")), "by_label": split_by([r for r in results if r.get("followed") and r["kind"] == "trade"], lambda r: r.get("label") or "unknown"),
-            "weekly": weekly(results), "weekly_now": weekly(results, "now")}
+            "daily": daily_hit_rate(results), "daily_now": daily_hit_rate(results, "now")}
 
 
 def _pct(value) -> str:
@@ -407,17 +406,18 @@ def tiles_payload(data: dict):
                           "3d": h["hit"] if days == 3 else None, "7d": h["hit"] if days == 7 else None})
     frame = pd.DataFrame(table)
     figure = None
-    weekly_data = data["weekly"] if any(data["weekly"].values()) else data.get("weekly_now", {})   # until 3-day outcomes exist: the interim 'so far'
-    if any(weekly_data.values()):
+    daily_data = data["daily"] if any(data["daily"].values()) else data.get("daily_now", {})   # until 3-day outcomes exist: the interim 'so far'
+    if any(daily_data.values()):
         import plotly.graph_objects as go
 
         figure = go.Figure()
         for fit, color in (("strategy", "#4c78a8"), ("additional", "#d95926")):
-            points = weekly_data.get(fit) or []
+            points = daily_data.get(fit) or []
             if points:
-                figure.add_scatter(name=fit, x=[w for w, _, _ in points], y=[h for _, _, h in points], mode="lines+markers", line={"color": color},
-                                   text=[f"n {n}" + ("" if n >= MIN_SCORED else ", too few") for _, n, _ in points], hovertemplate="%{x}: %{y:.0%} (%{text})<extra>" + fit + "</extra>")
-        figure.update_layout(yaxis={"tickformat": ".0%", "range": [0, 1]}, showlegend=True, meta={"legend": True}, legend={"orientation": "h", "x": 0, "y": 1.1})
+                figure.add_scatter(name=fit, x=[day for day, _, _ in points], y=[h for _, _, h in points], mode="lines+markers", line={"color": color},
+                                   text=[f"n {n}" + ("" if n >= MIN_SCORED else ", too few") for _, n, _ in points], hovertemplate="%{x|%b %d, %Y}: %{y:.0%} (%{text})<extra>" + fit + "</extra>")
+        figure.update_layout(xaxis={"type": "date"}, yaxis={"tickformat": ".0%", "range": [0, 1]},
+                             showlegend=True, meta={"legend": True, "timeSeries": True, "rebase": False}, legend={"orientation": "h", "x": 0, "y": 1.1})
     return frame, figure
 
 
@@ -473,8 +473,8 @@ def publish(push: bool = True) -> list[str]:
     if publish_log(data):
         keys.append("claude-suggestions-log")
     if figure is not None:
-        interim = not any(data["weekly"].values())
-        tile_feed.publish(figure, "My suggestions over time" + (" (so far)" if interim else ""), reason="cumulative hit rate by week, strategy-fit vs additional", relevance=0.1, hours=24 * 14,
+        interim = not any(data["daily"].values())
+        tile_feed.publish(figure, "My suggestions over time" + (" (so far)" if interim else ""), reason="daily cumulative hit rate, strategy-fit vs additional", relevance=0.1, hours=24 * 14,
                           key="claude-suggestions-weekly", push=False)
         keys.append("claude-suggestions-weekly")
     if push and keys:
