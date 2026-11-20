@@ -2340,6 +2340,7 @@ function icon(kind) {   // 16px line icons, drawn in the button's text colour
       "M3.4 3.4l1.1 1.1", "M11.5 11.5l1.1 1.1", "M3.4 12.6l1.1-1.1", "M11.5 4.5l1.1-1.1"],
     moon: ["M13 9.6A5.5 5.5 0 0 1 6.4 3a5.5 5.5 0 1 0 6.6 6.6z"],
     report: ["M4 1.8h5.5L12.5 5v9.2H4z", "M9.5 1.8V5h3", "M6 8h4.5", "M6 10.5h4.5"],
+    keynumbers: ["M2 4.5h3.2v7H2z", "M6.4 4.5h3.2v7H6.4z", "M10.8 4.5H14v7h-3.2z"],
     pulse: ["M1.5 8.5h3l1.8-5 3.2 9 1.8-4h3.2"],
     inception: ["M2 12.5h12", "M2 12.5V4.5", "M2 8l4-2.5 3 1.5 5-3.5"],   // the whole history, from the start
     managed: ["M2 12.5h12", "M8 12.5V3.5", "M8 3.5h4.5l-1.2 1.8 1.2 1.8H8", "M8 9.5l2.5-1.5 3.5-1"],   // from the flag: active management
@@ -2752,6 +2753,14 @@ function pulseBar(strip) {
   document.addEventListener("click", (event) => { if (active && !bar.contains(event.target)) close(false); });
   return bar;
 }
+// The key numbers bar (PnL, desk value, risk...) can be hidden: a per-browser choice, shown by default.
+function keyNumbersShown() { try { return localStorage.getItem("desk-keynumbers") !== "off"; } catch (e) { return true; } }
+function setKeyNumbers(on) {
+  document.documentElement.dataset.keynumbers = on ? "on" : "off";
+  try { localStorage.setItem("desk-keynumbers", on ? "on" : "off"); } catch (e) { /* kept for this page view only */ }
+  feedback("look", "key numbers", on ? "on" : "off");
+}
+document.documentElement.dataset.keynumbers = keyNumbersShown() ? "on" : "off";
 function drawModes() {
   const host = document.getElementById("modes");
   if (!host) return;
@@ -2784,6 +2793,10 @@ function drawModes() {
     units.append(button);
   });
   const report = el("button", { type: "button", class: "icon-button report-button", title: "Report: a printable page of the desk", "aria-label": "Report" }, [icon("report")]);
+  const keysOn = keyNumbersShown();
+  const keys = el("button", { type: "button", class: "icon-button keys-button", title: keysOn ? "Hide the key numbers bar" : "Show the key numbers bar",
+    "aria-label": "Key numbers bar", "aria-pressed": keysOn ? "true" : "false" }, [icon("keynumbers")]);
+  keys.addEventListener("click", () => { setKeyNumbers(!keyNumbersShown()); drawModes(); });
   const tickerOn = tickerState().on;
   const strip = el("button", { type: "button", class: "icon-button strip-button", title: tickerOn ? "Hide the price strip" : "Show live prices on top",
     "aria-label": "Live price strip", "aria-pressed": tickerOn ? "true" : "false" }, [icon("pulse")]);
@@ -2796,7 +2809,7 @@ function drawModes() {
       title: era === "managed" ? "Analytics since active management. Click for since inception: the passive months too" : `Analytics since inception. Click for since active management${sinceText ? " (" + sinceText + ")" : ""}`,
       "aria-label": era === "managed" ? "Show analytics since inception" : "Show analytics since active management" }, [icon(era === "managed" ? "inception" : "managed")])]);
   eraSwitch.firstChild.addEventListener("click", () => setEra(era === "managed" ? "inception" : "managed"));
-  host.replaceChildren(views, units, eraSwitch, toggle, styles, strip, report);
+  host.replaceChildren(views, units, eraSwitch, toggle, styles, keys, strip, report);
   host.querySelectorAll(".switch").forEach((group) => group.classList.add("choices"));
 }
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
