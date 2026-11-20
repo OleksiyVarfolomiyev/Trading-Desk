@@ -1683,7 +1683,7 @@ function baseLayout(extra) {
   return Object.assign({
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     font: { family: token("--font") || "system-ui, -apple-system, Segoe UI, sans-serif", size: 12, color: ink },
-    margin: { l: 40, r: 32, t: 6, b: 22 },
+    margin: { l: 40, r: 112, t: 6, b: 22 },   // the right margin holds the end labels, clear of the lines
     hovermode: "x unified",
     hoverlabel: { bgcolor: token("--surface"), bordercolor: axis, font: { color: token("--ink") } },
     // The chart tools: no band behind them, icons in the page's muted ink, the active one in its full ink.
@@ -1712,7 +1712,7 @@ function endLabelBox() {
 
 function endLabels(series, format) {
   return series.filter((s) => s.y.length).map((s) => ({
-    xref: "paper", x: 1, y: s.y[s.y.length - 1], xanchor: "right", xshift: -4, showarrow: false,
+    xref: "paper", x: 1, y: s.y[s.y.length - 1], xanchor: "left", xshift: 7, showarrow: false,
     text: format(s.y[s.y.length - 1]), font: { color: token("--ink-2"), size: 11 }, ...endLabelBox(),
   }));
 }
@@ -1727,7 +1727,7 @@ function spreadEndLabels(id) {
   const [low, high] = axis.range.map(Number);
   const scale = axis._length / (high - low || 1);
   const annotations = (gd.layout.annotations || []).map((a) => Object.assign({}, a));
-  const ends = annotations.filter((a) => a.xshift === -4 && a.xanchor === "right" && typeof a.y === "number")
+  const ends = annotations.filter((a) => a.xshift === 7 && a.xanchor === "left" && typeof a.y === "number")
     .map((a) => ({ a, at: (a.y - low) * scale })).sort((p, q) => q.at - p.at);
   let changed = false;
   ends.forEach((label, i) => {
@@ -1778,7 +1778,7 @@ function renderCharts(charts) {
   const valueEnds = value.filter((trace) => trace.y && trace.y.length).map((trace) => {
     const own = trace.y[trace.y.length - 1];
     const y = trace.stackgroup ? (stackTop += own) : own;
-    return { xref: "paper", x: 1, y, xanchor: "right", xshift: -4, showarrow: false, text: money(own),
+    return { xref: "paper", x: 1, y, xanchor: "left", xshift: 7, showarrow: false, text: money(own),
              font: { color: trace.line.color, size: 11 }, ...endLabelBox() };
   });
   valueLayout.annotations = (valueLayout.annotations || []).concat(valueEnds);
@@ -2498,7 +2498,7 @@ function rebaseReturns(node, days) {
   Plotly.restyle(node, { x: cut.map((trace) => trace.x), y: ys });
   const notes = (node.layout.annotations || []).map((note) => Object.assign({}, note));
   const drawn = ys.map((y, i) => [y, i]).filter(([y]) => y.length);
-  notes.filter((note) => note.xshift === -4).forEach((note, k) => {
+  notes.filter((note) => note.xshift === 7).forEach((note, k) => {
     const [y, i] = drawn[k] || [];
     if (!y) return;
     note.y = y[y.length - 1];
@@ -2529,7 +2529,7 @@ function drawIntraday(node, days) {
   if (!lines.length) return false;
   const traces = lines.map(([name, line, style]) => colorHover({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
     customdata: line.y.map((v) => readablePct(v / 100)), hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>" }));
-  const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ xref: "paper", x: 1, y: line.y[line.y.length - 1], xanchor: "right", xshift: -4,
+  const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ xref: "paper", x: 1, y: line.y[line.y.length - 1], xanchor: "left", xshift: 7,
     showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color }, ...endLabelBox() })), xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null }),
     yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }) });
   node._orig = null;
@@ -2556,7 +2556,7 @@ function drawIntradayValue(node, days) {
   let stack = 0;
   traces.forEach((trace) => {
     const own = trace.y[trace.y.length - 1]; stack += own;
-    annotations.push({ xref: "paper", x: 1, y: stack, xanchor: "right", xshift: -4, showarrow: false, text: usd(own),
+    annotations.push({ xref: "paper", x: 1, y: stack, xanchor: "left", xshift: 7, showarrow: false, text: usd(own),
       font: { color: trace.line.color, size: 11 }, ...endLabelBox() });
   });
   const layout = Object.assign({}, node.layout, { annotations,
@@ -3360,11 +3360,11 @@ function decoratePublishedTraces(traces, layout) {
   copy.forEach((trace) => { if (trace.type === "scatter" && BENCHMARK_NAME.test(String(trace.name || ""))) trace.line = Object.assign({}, trace.line, { dash: "dot" }); });
   layout.showlegend = false;
   delete layout.legend;
-  layout.margin = Object.assign({}, layout.margin, { r: 28, t: 30 });
+  layout.margin = Object.assign({}, layout.margin, { r: 112, t: 30 });
   if (layout.yaxis2) layout.yaxis2 = Object.assign({}, layout.yaxis2, { showticklabels: false, title: { text: "" } });   // the daily bars: the end labels own the right edge
   const lastAt = (trace) => { for (let k = trace.y.length - 1; k >= 0; k--) if (Number.isFinite(trace.y[k])) return k; return -1; };
   layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => trace.type === "scatter" && lastAt(trace) >= 0)
-    .map(([trace, i]) => ({ x: 1, y: trace.y[lastAt(trace)], xref: "paper", yref: "y", showarrow: false, xanchor: "right", xshift: -4,
+    .map(([trace, i]) => ({ x: 1, y: trace.y[lastAt(trace)], xref: "paper", yref: "y", showarrow: false, xanchor: "left", xshift: 7,
       text: `${String(trace.name || "").replace(/ \(on equity\)/, "").replace(/^Same \$ in /, "")} ${readablePct(trace.y[lastAt(trace)] / (fractions ? 1 : 100))}`,
       font: { size: 11, color: (trace.line && trace.line.color) || colors[i % colors.length] }, ...endLabelBox() }));
   return copy;
