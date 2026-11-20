@@ -527,6 +527,7 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 .scale-chips { display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s; order: 5; margin-left: auto; }
 .tile .scale-chips { order: 0; margin-inline-start: 0; }
 .tile:hover .scale-chips, .card:hover .scale-chips, .scale-chips:focus-within, .tile.is-hover .scale-chips, .card.is-hover .scale-chips { opacity: 1; }
+.action-box .scale-chips { opacity: 1; flex-wrap: wrap; }
 .scale-chip { background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 11px; padding: 1px 5px; border-radius: 4px; cursor: pointer; position: relative; }
 .scale-chips.table-periods { display: flex; flex-wrap: wrap; order: 0; margin: 0 0 4px; }
 .scale-chip.on { color: var(--ink); background: var(--border); }

@@ -37,6 +37,10 @@ class EntryLabelFlowTests(unittest.TestCase):
         self.assertTrue(re.search(r"entry && !label", first), first)  # checked before the token is consumed
         self.assertLess(confirm.index("entry && !label"), confirm.index("pendingActions.delete"))
 
+    def test_dialog_choices_are_visible_without_hover_or_focus(self):
+        css = (ROOT / "desk" / "app_static" / "app.css").read_text()
+        self.assertRegex(css, r"\.action-box \.scale-chips\s*\{[^}]*\bopacity:\s*1\s*;")
+
 
 
 class RelayStopTests(unittest.TestCase):

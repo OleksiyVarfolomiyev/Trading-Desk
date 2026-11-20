@@ -76,6 +76,10 @@ const FORMATS = {
   rpct: { text: (v) => pct(v, 1), num: true, tone: "neg" },
   pct: { text: (v) => pct(v, 1), num: true },
   spct: { text: (v) => pct(v, 2, true), num: true, signed: true },
+  pluspct: { text: (value) => {
+    const text = pct(value);
+    return value > 0 && text && text !== "0%" ? "+" + text : text;
+  }, num: true, signed: true },
   // Leverage as a multiple of equity: 1.88×; signed for net (coloured, a short book negative).
   lev: { text: (v) => (isNum(v) ? v.toFixed(2) + "×" : ""), num: true },
   slev: { text: (v) => (isNum(v) ? v.toFixed(2) + "×" : ""), num: true, signed: true },
@@ -2009,7 +2013,7 @@ function historicalBenchmarkTable(lines, comparison, days, now) {
   const percent = (value, count) => count ? value / count : null;
   return {
     columns: [{ key: "Comparison", fmt: "text" }, { key: "Beat", fmt: "pct" }, { key: "Lagged", fmt: "pct" },
-      { key: "Beat on down days", fmt: "pct" }, { key: "Book vs bench", fmt: "spct" },
+      { key: "Beat on down days", fmt: "pct" }, { key: "Book vs bench", fmt: "pluspct" },
       { key: "$10k desk/book", fmt: "wholeusd" }, { key: "$10k index", fmt: "wholeusd" }],
     rows: specs.flatMap(({ name: bookName, book, benchmark: benchmarkName, bench, sessions }) => {
       const matched = comparable ? sessions.filter(([from, to]) => from >= start && to <= end) : [];
@@ -4602,7 +4606,9 @@ async function runAction(label, change, fraction, target) {
   confirm.addEventListener("click", async () => {
     if (confirm.classList.contains("is-waiting")) {   // never a silent click: say and show what is missing
       const noLabel = isEntry && !chosenLabel;
-      if (noLabel) labels.classList.add("needs-pick"); else flex?.node?.classList.add("needs-pick");
+      const choice = noLabel ? labels : flex.node;
+      choice?.classList.add("needs-pick");
+      choice?.querySelector("button")?.focus();
       hint.textContent = noLabel ? "Pick a strategy label" : "Choose normal or flex";
       return;
     }
