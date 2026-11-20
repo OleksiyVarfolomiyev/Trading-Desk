@@ -1,5 +1,5 @@
 {
-  "managed_since": "2026-10-16",
-  "drawdown_tolerance": null,
-  "_note": "managed_since: the repo start, when the desk's risk measures begin (user-confirmed 2026-11-19); before it the book was passive (IB long only, crypto untraded) and is reported apart. drawdown_tolerance: the drawdown from the managed desk's high (HL + IB) the investor accepts, e.g. 0.2 for 20%. Empty: drawdown only. Alert only: nothing trades on it (desk/drawdown.py)."
+ "managed_since": "2026-10-16",
+ "drawdown_tolerance": 0.1,
+ "_note": "managed_since: the repo start, when the desk's risk measures begin (user-confirmed 2026-11-19); before it the book was passive (IB long only, crypto untraded) and is reported apart. drawdown_tolerance: the drawdown from the managed desk's high (HL + IB) the investor accepts, e.g. 0.2 for 20%. Empty: drawdown only. Alert only: nothing trades on it (desk/drawdown.py). Tolerance 10% set 2026-11-19 by the user: the desk's max drawdown over the year was 10%, and notifications fire against that number."
 }
