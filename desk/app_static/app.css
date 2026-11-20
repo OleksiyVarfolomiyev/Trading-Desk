@@ -443,15 +443,19 @@ html.private td.digits { cursor: pointer; }
 .asset-line .chart-act { pointer-events: auto; }
 .asset-line .chart-act:hover { background-color: var(--border); }
 .asset-plot .asset-chart:not(:has(canvas)) { display: grid; place-items: center; }
-.asset-price { font-weight: 600; color: var(--good-text); font-variant-numeric: tabular-nums; }
 .chart.asset-chart { height: 220px; }
-.card.asset-card h2 .card-name { opacity: 1; }
+.card.asset-card h2 .card-name { opacity: 1; flex-shrink: 0; max-width: 45%; }
+.card.asset-card h2 { justify-content: flex-start; }
+.asset-market-stats { display: flex; flex-wrap: wrap; gap: 2px 10px; min-width: 0; margin-inline-start: 4px;
+  color: var(--ink-2); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.asset-market-stats[hidden] { display: none; }
+.asset-market-field { display: inline-flex; gap: 3px; white-space: nowrap; }
+.asset-market-label { color: var(--muted); }
 .asset-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 4px; margin-bottom: 4px; }
 .asset-body .asset-scales { opacity: 1; margin: 0; flex-wrap: wrap; order: 0; }
 .asset-control { margin-inline-start: auto; flex: 0 0 auto; }
-.asset-change { font-weight: 600; font-variant-numeric: tabular-nums; }
 .asset-trade-actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-inline-start: auto; }
-.asset-position:empty, .asset-change:empty, .asset-price:empty { display: none; }
+.asset-position:empty { display: none; }
 .asset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .asset-action { background: transparent; border: 1px solid var(--border); color: var(--ink-2); border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 12px; cursor: pointer; text-decoration: none; }
 .asset-action:hover { color: var(--ink); background: var(--border); }

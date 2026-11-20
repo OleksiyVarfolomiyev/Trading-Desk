@@ -42,6 +42,9 @@ const spot = [{ tokens: [{ name: "USDC" }, { name: "HYPE" }, { name: "PURR" }], 
   [{ markPx: "30", prevDayPx: "27", dayNtlVlm: "7000000" }, { markPx: "0.2", prevDayPx: "0.25", dayNtlVlm: "100000" }]];
 const rows = buildMarketRows([main, xyz], spot);
 const names = (list) => list.map((r) => r.name);
+const priceText = String, readablePct = (v) => String(v * 100) + "%";
+const signClass = (v) => v < 0 ? "neg" : "pos";
+const usd = (v) => "$" + v, compactUsd = usd;
 const out = {
   names: names(rows), kinds: rows.map((r) => r.kind), types: rows.map((r) => r.type),
   btc: rows.find((r) => r.name === "BTC"), tsla: rows.find((r) => r.name === "TSLA"),
@@ -51,6 +54,8 @@ const out = {
   cryptoTradfi: names(filterMarkets(rows, "", ["crypto", "tradfi"], [])), tradfiFavs: names(filterMarkets(rows, "", ["tradfi", "favs"], ["xyz:TSLA", "BTC"])),
   spotTradfi: names(filterMarkets(rows, "", ["spot", "tradfi"], [])), none: names(filterMarkets(rows, "", [], [])).length, allTab: names(filterMarkets(rows, "", ["all"], [])).length,
   byVolume: names(sortMarkets(rows, "volume", "desc")).slice(0, 2), byChange: names(sortMarkets(rows, "funding", "asc")),
+  perpHeader: marketHeaderFields(rows.find((r) => r.market === "xyz:TSLA")),
+  spotHeader: marketHeaderFields(rows.find((r) => r.market === "@107")),
   funding: [fundingText(0.0001), fundingText(0), fundingText(0.00013), fundingText(-0.02), fundingText(null)],
 };
 console.log(JSON.stringify(out));
@@ -78,6 +83,9 @@ console.log(JSON.stringify(out));
         self.assertEqual((out["none"], out["allTab"]), (5, 5))                               # no selection, or All: every market
         self.assertEqual(out["byVolume"], ["BTC", "TSLA"])
         self.assertEqual(out["byChange"][-2:], ["HYPE/USDC", "PURR/USDC"])                   # no funding sorts last
+        self.assertEqual([f[0] for f in out["perpHeader"]], ["Price", "24h", "8h funding", "24h vol", "OI"])
+        self.assertEqual(out["perpHeader"][2][:3], ["8h funding", "-0.016%", "neg"])
+        self.assertEqual([f[0] for f in out["spotHeader"]], ["Price", "24h", "24h vol"])
         self.assertEqual(out["funding"], ["0.01%", "", "0.013%", "-2%", ""])               # absent is absent
 
 

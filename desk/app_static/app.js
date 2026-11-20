@@ -2992,7 +2992,7 @@ const cardTitle = (card) => {   // the heading without its icon, grip and button
   const h = card.querySelector("h2");
   if (!h) return "";
   const copy = h.cloneNode(true);
-  copy.querySelectorAll(".card-grip, .card-tools, .icon").forEach((node) => node.remove());
+  copy.querySelectorAll(".card-grip, .card-tools, .icon, .asset-market-stats").forEach((node) => node.remove());
   return copy.textContent.trim();
 };
 
@@ -3953,6 +3953,7 @@ async function openAsset(symbol, targetCard = null) {
     if (existing) {
       existing.classList.remove("card-off", "card-min");
       existing.refreshPosition();
+      existing.refreshMarket?.();
       existing.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
@@ -3967,13 +3968,18 @@ async function openAsset(symbol, targetCard = null) {
     requestAnimationFrame(() => card.scrollIntoView({ behavior: "smooth", block: "center" }));
   } else {
     card.disposeAssetChart?.();
+    card.refreshMarket = null;
     card.dataset.asset = key;
     card.querySelector(".card-name").textContent = name;
   }
   const body = card.querySelector(".asset-body");
   const external = rows.some((row) => /^IB/.test(String(row.Account || ""))) ? stockLink(name) : hlLink(market);
   const chart = el("div", { class: "chart asset-chart", text: "Loading candles…" });
-  const price = el("span", { class: "asset-price" });
+  const marketStats = el("span", { class: "asset-market-stats", role: "group", "aria-label": "Market data", hidden: true });
+  const header = card.querySelector("h2");
+  header.querySelector(".asset-market-stats")?.remove();
+  header.querySelector(".card-name").after(marketStats);
+  fitCardTitle(header);
   const scales = el("div", { class: "scale-chips asset-scales", role: "group", "aria-label": "Candle interval" });
   const picker = assetPicker("Asset to chart", (selection) => {
     picker.wrap.hidden = true;
@@ -4013,7 +4019,6 @@ async function openAsset(symbol, targetCard = null) {
       setTimeout(() => { button.textContent = label; button.disabled = false; }, 2500);
     });
   };
-  const move = el("span", { class: "asset-change", title: "24h price change" });
   const position = el("span", { class: "asset-position" });
   const tradeActions = el("div", { class: "asset-trade-actions", role: "group", "aria-label": `Position actions for ${name}` });
   let hlName;
@@ -4051,7 +4056,7 @@ async function openAsset(symbol, targetCard = null) {
     el("div", { class: "asset-toolbar" }, [scales, assetControl]),
     el("div", { class: "asset-plot" }, [
       chart,
-      el("div", { class: "asset-line" }, [price, move, position, tradeActions]),
+      el("div", { class: "asset-line" }, [position, tradeActions]),
     ]),
     el("div", { class: "asset-links" }, [
       el("a", { class: "row-act chart-act symbol-link", href: external, target: "_blank", rel: "noopener noreferrer",
@@ -4065,17 +4070,19 @@ async function openAsset(symbol, targetCard = null) {
     chart.textContent = "No Hyperliquid market found for this asset.";
     return;
   }
-  tickerContexts([hlName]).then((contexts) => {
-    const context = contexts[hlName];
-    if (context) {
-      const change = context.previous ? context.price / context.previous - 1 : NaN;
-      if (isNum(context.price)) price.textContent = priceText(context.price);
-      if (isNum(change)) {
-        move.textContent = pct(change, 1, true);
-        move.className = `asset-change ${signClass(change)}`;
-      }
-    }
-  });
+  card.refreshMarket = async () => {
+    const rows = await loadMarkets().catch(() => []);
+    if (!marketStats.isConnected) return;
+    const row = rows.find((entry) => entry.type === "perp" && entry.market.toLowerCase() === hlName.toLowerCase());
+    if (!row) return;
+    const fields = marketHeaderFields(row);
+    marketStats.replaceChildren(...fields.map(([label, value, tone, title]) => el("span", { class: "asset-market-field", title }, [
+      el("span", { class: "asset-market-label", text: label }),
+      el("span", { class: tone, text: value }),
+    ])));
+    marketStats.hidden = !fields.length;
+  };
+  card.refreshMarket();
 
   async function loadCandles(interval, minutes) {
     card.assetInterval = interval;
@@ -5445,7 +5452,7 @@ document.addEventListener("click", (event) => {
 // ---------------------------------------------------------------- markets: Hyperliquid's market selector as a tile
 // The list that opens when choosing a market on Hyperliquid: every perp (main DEX and the HIP-3 stocks, commodities and
 // indices) and spot pair with price, 24h change, funding, volume and open interest; category tabs, search, sort; a click opens
-// the asset's chart tile. One shared fetch (cached 15 s) feeds it, and only while the tile is on screen.
+// the asset's chart tile. The table and chart headers share the same 15-second fetch cache.
 // MARKETS_HELPERS_START
 const MARKET_TABS = [["all", "All"], ["perps", "Perps"], ["spot", "Spot"], ["crypto", "Crypto"], ["tradfi", "Tradfi"], ["favs", "★"]];
 const bareMarket = (name) => String(name || "").replace(/^[a-z0-9]+:/i, "");
@@ -5501,6 +5508,16 @@ function fundingText(rate) {   // 8-hour funding as HL shows it: 0.0013%, absent
   if (!Number.isFinite(rate) || rate === 0) return "";
   const percent = rate * 100, size = Math.abs(percent);
   return percent.toFixed(size >= 1 ? 2 : 4).replace(/0+$/, "").replace(/\.$/, "") + "%";
+}
+function marketHeaderFields(row) {
+  return [
+    ["Price", row.price > 0 ? priceText(row.price) : ""],
+    ["24h", Number.isFinite(row.change) ? readablePct(row.change) : "", signClass(row.change)],
+    ["8h funding", fundingText(row.funding), signClass(row.funding),
+      Number.isFinite(row.apr) ? `${readablePct(row.apr)} annualized` : undefined],
+    ["24h vol", row.volume > 0 ? compactUsd(row.volume) : "", "", row.volume > 0 ? usd(row.volume) : undefined],
+    ["OI", row.oi > 0 ? compactUsd(row.oi) : "", "", row.oi > 0 ? `Open interest: ${usd(row.oi)}` : undefined],
+  ].filter(([, value]) => value);
 }
 // MARKETS_HELPERS_END
 const MARKETS_TTL_MS = 15000, MARKETS_ROWS_PER_PAGE = 120;
