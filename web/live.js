@@ -676,9 +676,11 @@
 
     // -- open risk per HL account (executor-consistent)
     const riskNotes = [];
+    const positionRisk = new Map();   // (account label | coin) -> that position's open risk in dollars, for the by-strategy split
     const book = trading.map((account) => {
       let risk = 0;
       for (const p of account.positions) {
+        const before = risk;
         // A hedge counts nothing toward the cap (HEDGED_POSITIONS in desk/risk.py): the 07f2 VVV short offsets the staked sVVV.
         if (String(account.id).slice(-4).toLowerCase() === "07f2" && p.coin === "VVV") continue;
         const side = p.quantity > 0 ? "LONG" : "SHORT";
@@ -696,6 +698,7 @@
           risk += Math.abs(value(p)) * 0.10;
           riskNotes.push(`${p.coin}: no price history, assumed a 10% move`);
         }
+        positionRisk.set(`${account.label}|${p.coin}`, risk - before);
       }
       return { venue: "hl", label: account.label, equity: account.collateral, risk, positions: account.positions.length };
     });
@@ -761,12 +764,31 @@
     const tableRows = positionRows.filter((r) => r["Asset class"] !== "crypto spot");
     const tableGross = sum(tableRows.map((r) => Math.abs(r.Value)));
     tableRows.forEach((r) => { r.Weight = tableGross ? Math.abs(r.Value) / tableGross : NaN; });
+    // Each position's strategy (the journal's label, from the research feed's theses; a neutral ladder's coin is market
+    // making; never guessed otherwise) and its open risk as a share of the desk's risk cap (HL: the executor's per-position
+    // figure computed above; IB: the Mac's total, split by value).
+    const bareName = (symbol) => String(symbol || "").split(":").pop().toUpperCase();
+    const ladderCoins = new Set(((daemonAlerts && daemonAlerts.ladders) || []).filter((l) => /neutral/i.test(String(l.status || ""))).map((l) => bareName(l.coin)));
+    const thesisList = (research && research.theses) || [];
+    const ibRows = tableRows.filter((r) => r.Account && /^IB/.test(String(r.Account)));
+    const ibGross = sum(ibRows.map((r) => Math.abs(r.Value)));
+    const ibRisk = ibData && ibData.risk ? num(ibData.risk.risk) : NaN;
+    const riskCapNow = riskEquity * MAX_TOTAL_RISK_PCT;
+    tableRows.forEach((r) => {
+      const side = r.Side;
+      const hit = thesisList.find((t) => bareName(t.coin) === bareName(r.Symbol) && String(t.side || "").toUpperCase() === side && t.strategy);
+      r.Strategy = hit ? hit.strategy : ladderCoins.has(bareName(r.Symbol)) ? "market making" : "untagged";
+      let risk = positionRisk.get(`${r.Account}|${r.Symbol}`);
+      if (risk === undefined && /^IB/.test(String(r.Account)) && fin(ibRisk) && ibGross > 0) risk = ibRisk * Math.abs(r.Value) / ibGross;
+      r.Risk = fin(risk) && riskCapNow > 0 ? risk / riskCapNow : NaN;
+    });
     const positionTotal = (rows) => {
       const priced = rows.filter((r) => fin(r["uPnL (%)"]));
       const pricedCost = sum(priced.map((r) => Math.abs(r.Value - r["uPnL"])));
       return { "Asset class": "Total", "Value": sum(rows.map((r) => r.Value)),
         "uPnL": sum(rows.map((r) => r["uPnL"])), "Weight": NaN,  // a 100% total is not shown
         "Exposure / equity": sum(rows.map((r) => r["Exposure / equity"])),
+        "Risk": sum(rows.map((r) => (fin(r.Risk) ? r.Risk : 0))) || NaN,
         "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN,
         "24h change (%)": dayChangeTotal(rows), "Funding (APR)": fundingTotal(rows) };
     };
@@ -1176,14 +1198,14 @@
       movers_stocks: table(moverRows("Stocks"), ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
         { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
       positions: table(tableRows.filter(isCrypto), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
-        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity"],
+        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity", "Strategy", "Risk"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
-        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct" }),
+        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct", "Risk": "rpct" }),
       { total: positionTotal(tableRows.filter(isCrypto)), key: { "Weight": "max" } }),
       positions_stocks: table(tableRows.filter((r) => !isCrypto(r)), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
-        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity"],
+        "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity", "Strategy", "Risk"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
-        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct" }),
+        { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct", "Risk": "rpct" }),
       { total: positionTotal(tableRows.filter((r) => !isCrypto(r))), key: { "Weight": "max" } }),
       market_making: (() => {  // the ladders, as the trading daemon last sent them (desk/market_making.py)
         const rows = (daemonAlerts && daemonAlerts.market_making) || [];
@@ -1335,6 +1357,21 @@
     compare("uPnL", "strategies", columnSum(tables.strategies, "uPnL"), "accounts", columnSum(tables.accounts, "uPnL / equity"));
     compare("desk shares", "accounts", rowSum([tables.accounts], "% of desk"), "expected", 1);
     compare("position weights", "crypto and stocks", rowSum([tables.positions, tables.positions_stocks], "Weight"), "expected", 1);
+    // The positions split by strategy: every row has a group and the groups' subtotals add up to the table's total.
+    ["positions", "positions_stocks"].forEach((name) => {
+      const t = tables[name];
+      if (!t || !(t.rows || []).length || !has(t, "Strategy")) return;
+      const missing = t.rows.filter((r) => !r.Strategy).length;
+      if (missing) found.push(["Tables disagree", `${name}: ${missing} positions have no strategy group`]);
+      [["Value", "value", 0.5], ["uPnL", "uPnL", 0.5], ["Risk", "open risk", 1e-6]].forEach(([key, label, tolerance]) => {
+        const expected = t.total && t.total[key];
+        if (!fin(expected)) return;
+        const groups = {};
+        t.rows.forEach((r) => { const g = r.Strategy || "untagged"; groups[g] = (groups[g] || 0) + (fin(r[key]) ? r[key] : 0); });
+        const summed = sum(Object.values(groups));
+        if (Math.abs(summed - expected) > tolerance) found.push(["Tables disagree", `${name} strategy groups: ${label} ${summed.toPrecision(4)}, table total ${expected.toPrecision(4)}`]);
+      });
+    });
     return found;
   }
 

@@ -801,3 +801,10 @@ select.trade-input { width: auto; appearance: none; -webkit-appearance: none; ba
 .trade-go { opacity: 1; }
 .regime-cell span + span { margin-left: 6px; }
 .card.era-hidden { display: none !important; }   /* a tile of the other analytics era (since inception / since active management) */
+/* Open positions by strategy: a subtotal row (or bar line) opens each group. */
+tr.group-row td { font-weight: 600; background: var(--surface-2, color-mix(in srgb, var(--border) 35%, transparent)); border-top: 1px solid var(--border); }
+td.group-name { white-space: nowrap; }
+.group-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.bgroup { display: flex; align-items: center; gap: 6px; padding: 4px 8px 1px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.bgroup-fig { margin-left: auto; font-variant-numeric: tabular-nums; }
+.group-toggle { margin-left: 4px; }

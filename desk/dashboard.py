@@ -614,6 +614,27 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         tables["mm_candidates"] = table(mm, screener.MM_FORMATS, key={"Efficiency 30d": "min"}) if len(mm) else table(mm, {})
     except Exception as exc:
         desk.notes.append(f"Research tables unavailable ({type(exc).__name__}: {exc}).")
+    try:  # the positions by strategy: the journal's label per position, and each one's open risk over the desk's cap
+        from desk import position_groups
+
+        from desk import alerts as _daemon_alerts
+
+        ladders = [item.get("coin") for item in (_daemon_alerts.read() or {}).get("ladders", [])
+                   if "neutral" in str(item.get("status", "")).lower()]   # a neutral ladder's coin: market making, not a held position
+        _, _, risk_cap = overview.risk_totals()
+        try:
+            risks = position_groups.position_risks(overview)
+        except Exception as exc:   # a missing risk figure is shown, not blanked silently
+            degraded.report("Position risk", exc)
+            risks = None
+        try:
+            theses = position_groups.current_theses(research)
+        except Exception as exc:   # no live feed: positions read untagged, and the chip says why
+            degraded.report("Position strategies feed", exc)
+            theses = []
+        position_groups.annotate(tables, theses, ladders, risks, risk_cap)
+    except Exception as exc:
+        degraded.report("Position strategies", exc)
     try:  # each token's 24-hour move (DefiLlama), as the positions tables show it
         from desk.day_change import position_changes
 

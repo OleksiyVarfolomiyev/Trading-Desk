@@ -243,10 +243,42 @@ function moveTotal(rows, scale) {   // the book's move over the window: value no
 }
 function positionColumns(last, id) {   // All is the uPnL column itself, so the change column goes
   const letter = positionLetter(id);
-  const columns = [["Symbol"], ...(letter ? [["24h change (%)", letter]] : []), ["uPnL (%)", "uPnL"], ["Funding (APR)"], [last]];
+  const columns = [["Symbol"], ...(letter ? [["24h change (%)", letter]] : []), ["uPnL (%)", "uPnL"], ["Funding (APR)"], [last], ["Risk", "Risk", "rpct"]];
   return pnlUnit === "usd" ? columns.map((column) => (column[0] === "uPnL (%)" ? ["uPnL", "uPnL"] : column)) : columns;
 }
-const POSITION_ALIGN = (last) => ({ "Symbol": 20, "D": 20, "W": 20, "M": 20, "uPnL": 20, "Funding (APR)": 20, [last]: 20 });
+// ---- the positions by strategy: the journal's label per position (from the research feed's theses; never guessed),
+// so like is compared with like. The toggle on the tile (remembered in the browser) swaps "by strategy" and "all".
+const STRATEGY_ORDER = ["directional", "fade", "conviction", "hedge", "momentum", "market making", "untagged", "wallet tokens"];
+const STRATEGY_TINT = { directional: "--series-1", fade: "--series-2", conviction: "--series-3", hedge: "--series-4", momentum: "--series-5",
+  "market making": "--series-5", untagged: "--muted", "wallet tokens": "--muted" };
+function positionGroupMode() { try { return localStorage.getItem("desk-position-groups") === "all" ? "all" : "strategy"; } catch (e) { return "strategy"; } }
+function setPositionGroupMode(mode) {
+  try { localStorage.setItem("desk-position-groups", mode); } catch (e) {}
+  feedback("look", "position groups", mode);
+  if (latest && latest.data) { redrawPositions(); drawPositionScales(); }
+}
+function rowStrategy(row) {
+  if (row._wallet) return "wallet tokens";
+  if (row.Strategy) return row.Strategy;
+  const theses = (latest && latest.data && latest.data.theses) || [];
+  const side = isNum(row.Value) && row.Value < 0 ? "SHORT" : "LONG";
+  const hit = theses.find((t) => bareSymbol(t.coin) === bareSymbol(row.Symbol) && String(t.side || "").toUpperCase() === side && t.strategy);
+  return hit ? hit.strategy : "untagged";
+}
+const strategyRank = (name) => { const i = STRATEGY_ORDER.indexOf(name); return i < 0 ? STRATEGY_ORDER.length : i; };
+function groupSubtotal(rows, scale) {   // one group's figures on the same cost basis, window and base as the table's total row
+  const sum = (key) => rows.reduce((total, row) => total + (isNum(row[key]) ? row[key] : 0), 0);
+  const priced = rows.filter((row) => isNum(row["uPnL (%)"]) && isNum(row.Value) && isNum(row.uPnL));
+  const cost = priced.reduce((total, row) => total + Math.abs(row.Value - row.uPnL), 0);
+  const known = rows.filter((row) => isNum(row["Funding (APR)"]) && isNum(row.Value));
+  const fundBase = known.reduce((total, row) => total + Math.abs(row.Value), 0);
+  const risk = rows.some((row) => isNum(row.Risk)) ? sum("Risk") : NaN;
+  return { Value: sum("Value"), uPnL: sum("uPnL"), Weight: rows.some((row) => isNum(row.Weight)) ? sum("Weight") : NaN, Risk: risk,
+    "uPnL (%)": cost ? priced.reduce((total, row) => total + row.uPnL, 0) / cost : NaN,
+    "24h change (%)": scale === "All" ? NaN : moveTotal(rows, scale),
+    "Funding (APR)": fundBase ? known.reduce((total, row) => total + Math.abs(row.Value) * row["Funding (APR)"], 0) / fundBase : NaN };
+}
+const POSITION_ALIGN = (last) => ({ "Symbol": 18, "D": 16, "W": 16, "M": 16, "uPnL": 16, "Funding (APR)": 16, [last]: 16, "Risk": 16 });
 const positionView = (id) => ({
   // The change figure is the position's own move (a short whose price fell gained): the highlights' winners and losers, the
   // chart's bars and this column are green and red together, and the total row (the book's gain) is in the same terms.
@@ -266,7 +298,9 @@ const positionView = (id) => ({
   // % first; dollars on hover (the row's pop-up); the account is the desk's business
   hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", isNum(r.uPnL) ? `${usd(r.uPnL)} uPnL` : ""].filter(Boolean).join(" · "),
   columnsNow: () => positionColumns("Weight", id),
-  columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["Weight"]],
+  columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["Weight"], ["Risk", "Risk", "rpct"]],
+  group: (r) => rowStrategy(r),   // rows grouped under their strategy's subtotal (toggle on the tile)
+  groupTotal: (rows) => groupSubtotal(rows, positionScale(id)),
   // The crypto and the stocks tables sit one above the other: the same columns at the same widths, so Value, uPnL
   // and the change line up (no column is collapsed or hidden in either).
   align: POSITION_ALIGN("Weight"),
@@ -304,7 +338,7 @@ const VIEWS = {
     derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol, "24h change (%)": windowMove(r, positionScale("wallets")) }),
     hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", r.Chain, r.Note].filter(Boolean).join(" · "),
     columnsNow: () => positionColumns("% of desk", "wallets"),
-    columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["% of desk"]],
+    columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["% of desk"], ["Risk", "Risk", "rpct"]],
     align: POSITION_ALIGN("% of desk"),
   },
   // The "vs BTC" figure over one period at a time (the card's chips: 1D, 1W, 1M), named with its period; the rest as before.
@@ -356,7 +390,27 @@ function applyView(id, spec, context) {
   // Derived fields start with _; an aligned table keeps every column, present in its data or not.
   const columns = columnsFor(view).filter(([from]) => view.align || from in source || from.startsWith("_"))
     .map(([from, name, fmt]) => ({ key: name || from, fmt: fmt || (source[from] || {}).fmt, emphasis: (source[from] || {}).emphasis }));
-  const rows = spec.rows.filter((row) => !view.keep || view.keep(row)).map(shape);
+  const kept = spec.rows.filter((row) => !view.keep || view.keep(row));
+  let rows = kept.map(shape);
+  if (view.group && positionGroupMode() === "strategy" && !sortState[id] && kept.length) {   // sorting a column ungroups: one flat ranking
+    const groups = new Map();
+    kept.forEach((row, i) => {
+      const name = view.group(row);
+      rows[i].__group = name;
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push([row, rows[i]]);
+    });
+    rows = [...groups.entries()].sort((a, b) => strategyRank(a[0]) - strategyRank(b[0]) || a[0].localeCompare(b[0])).flatMap(([name, members]) => {
+      const sub = view.groupTotal(members.map(([row]) => row));
+      const head = {};
+      columnsFor(view).forEach(([from, label]) => { head[label || from] = from === "Symbol" ? name : sub[from]; });
+      head.__groupRow = true; head.__group = name; head.__raw = {};
+      head.__hover = [`${members.length} ${members.length === 1 ? "position" : "positions"}`, isNum(sub.Value) ? usd(sub.Value) : "", isNum(sub.uPnL) ? `${usd(sub.uPnL)} uPnL` : "",
+        isNum(sub.Risk) ? `${pct(sub.Risk, 1)} of the risk cap` : ""].filter(Boolean).join(" · ");
+      members.sort((a, b) => (b[1].__size || 0) - (a[1].__size || 0));   // largest position first inside the group
+      return [head, ...members.map(([, shaped]) => shaped)];
+    });
+  }
   let total = spec.total ? shape(view.windowTotal ? Object.assign({}, spec.total, view.windowTotal(spec)) : spec.total) : null;
   if (total && columns.length && !total[columns[0].key]) total[columns[0].key] = "Total";
   return Object.assign({}, spec, { columns, rows, total });
@@ -434,7 +488,8 @@ function renderBarList(id, spec, plan, host) {
   const rows = spec.rows.slice();
   const formatOf = (key) => (spec.columns.find((column) => column.key === key) || {}).fmt;
   const text = (key, value) => (FORMATS[formatOf(key)] || FORMATS.text).text(value);
-  let list = rows.filter((row) => isNum(row[plan.value]));
+  const heads = new Map(rows.filter((row) => row.__groupRow).map((row) => [row.__group, row]));   // positions by strategy: a subtotal line over each group
+  let list = rows.filter((row) => !row.__groupRow && isNum(row[plan.value]));
   if (id in CANDIDATE_TABLES) {
     const s = candidateState(), week = 7 * 86400000;
     list = list.filter((row) => !(s.refused[row.Coin] && Date.now() - s.refused[row.Coin] < week));
@@ -442,6 +497,7 @@ function renderBarList(id, spec, plan, host) {
   } else {
     const bySize = list.some((row) => isNum(row.__size));
     list.sort((a, b) => (bySize ? (b.__size || 0) - (a.__size || 0) : Math.abs(b[plan.value]) - Math.abs(a[plan.value])));
+    if (heads.size) list.sort((a, b) => strategyRank(a.__group) - strategyRank(b.__group));   // stable: largest first inside each group
   }
   const sizes = list.map((row) => Math.abs(row[plan.value])).sort((a, b) => b - a);
   const cap = sizes.length > 2 ? sizes[1] * BAR_CAP : Infinity;   // one dominant bar is drawn at most 3x the second
@@ -464,11 +520,24 @@ function renderBarList(id, spec, plan, host) {
   };
   const mixed = plan.zeroCentered
     || (list.some((row) => row[plan.value] < 0) && list.some((row) => row[plan.value] > 0));
-  const body = el("div", { class: "barlist" + (plan.zeroCentered ? " zero-centered" : "") + (id.startsWith("pub-") ? " wide-labels" : "") }, list.map((row) => {
+  const shownGroup = new Set();
+  const groupLine = (row) => {   // the subtotal line that opens a strategy's bars: colour dot, name, its figure and share of the risk cap
+    if (!heads.size || shownGroup.has(row.__group)) return null;
+    shownGroup.add(row.__group);
+    const head = heads.get(row.__group) || {};
+    return el("div", { class: "bgroup", title: head.__hover || "" }, [
+      el("span", { class: "group-dot", style: `background:var(${STRATEGY_TINT[row.__group] || "--muted"})` }),
+      el("span", { class: "bgroup-name", text: row.__group }),
+      el("span", { class: "bgroup-fig " + (isNum(head[plan.value]) ? signClass(head[plan.value]) : ""), text: isNum(head[plan.value]) ? text(plan.value, head[plan.value]) : "" }),
+    ]);
+  };
+  const body = el("div", { class: "barlist" + (plan.zeroCentered ? " zero-centered" : "") + (id.startsWith("pub-") ? " wide-labels" : "") }, list.flatMap((row) => {
     const value = row[plan.value], share = Math.min(Math.abs(value), cap) / biggest, kind = kindClass(id, row);
     const label = rowLabel(row), extra = plan.text ? row[plan.text] : null;
     const clipped = Math.abs(value) > cap, width = Math.max(2, share * (mixed ? 50 : 100));
-    const fill = el("span", { class: "bfill kind-bg-" + kind, style: mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%` });
+    const place = mixed ? (value < 0 ? `right:50%;width:${width}%` : `left:50%;width:${width}%`) : `left:0;width:${width}%`;
+    const tint = heads.size ? `;background:color-mix(in srgb, var(${STRATEGY_TINT[row.__group] || "--muted"}) 80%, transparent)` : "";   // by strategy: the bar takes its group's colour
+    const fill = el("span", { class: "bfill" + (heads.size ? "" : " kind-bg-" + kind), style: place + tint });
     const endStyle = mixed
       ? (value < 0 ? `right:max(0px,min(${50 + width}%,calc(100% - 88px)))` : `left:max(0px,min(${50 + width}%,calc(100% - 88px)))`)
       : `left:max(0px,min(calc(${width}% + 4px),calc(100% - 88px)))`;
@@ -532,7 +601,7 @@ function renderBarList(id, spec, plan, host) {
       dislike: () => { feedback("position", "dislike", label, id); line.style.opacity = ""; line.style.transform = ""; },   // a position stays; the verdict is logged
       like: () => feedback("position", "like", label, id),
     });
-    return line;
+    return [groupLine(row), line].filter(Boolean);
   }));
   host.replaceChildren(body);
   return true;
@@ -856,15 +925,16 @@ function renderTable(id, spec) {
   }
   const state = sortState[id];
   let rows = spec.rows.slice();
-  if (!state && rows.some((row) => isNum(row.__size))) rows.sort((a, b) => (b.__size || 0) - (a.__size || 0));   // largest position first
+  if (!state && !rows.some((row) => row.__groupRow) && rows.some((row) => isNum(row.__size))) rows.sort((a, b) => (b.__size || 0) - (a.__size || 0));   // largest position first (grouped rows are ordered inside their group)
   if (id in CANDIDATE_TABLES) {
     const s = candidateState(), week = 7 * 86400000;
     rows = rows.filter((row) => !(s.refused[row.Coin] && Date.now() - s.refused[row.Coin] < week));
     rows.sort((a, b) => Number(s.starred.includes(b.Coin)) - Number(s.starred.includes(a.Coin)));
   }
   const query = (filterState[id] || "").trim().toLowerCase();
-  if (query) rows = rows.filter((row) => Object.entries(row).some(([key, value]) => !key.startsWith("__") && String(value ?? "").toLowerCase().includes(query)));
+  if (query) rows = rows.filter((row) => !row.__groupRow && Object.entries(row).some(([key, value]) => !key.startsWith("__") && String(value ?? "").toLowerCase().includes(query)));
   if (state) {
+    rows = rows.filter((row) => !row.__groupRow);   // a sorted column is one flat ranking
     rows.sort((a, b) => {
       const x = a[state.key], y = b[state.key];
       if (isNum(x) && isNum(y)) return state.dir * (x - y);
@@ -877,7 +947,7 @@ function renderTable(id, spec) {
   const positionTable = id === "positions" || id === "positions_stocks";
   const tables = latest?.data?.tables;
   const weightRows = positionTable
-    ? [...spec.rows, ...(tables?.positions?.rows || []), ...(tables?.positions_stocks?.rows || [])]
+    ? [...spec.rows, ...(tables?.positions?.rows || []), ...(tables?.positions_stocks?.rows || [])].filter((row) => !row.__groupRow)
     : spec.rows;
   const maxWeight = weightColumn ? weightRows.reduce((max, row) => {
     const weight = row[weightColumn.key];
@@ -906,7 +976,7 @@ function renderTable(id, spec) {
     let best = null, bestScore = null;
     rows.forEach((row, index) => {
       const value = row[column.key];
-      if (!isNum(value)) return;
+      if (!isNum(value) || row.__groupRow) return;
       const score = column.emphasis === "abs" ? Math.abs(value) : column.emphasis === "max" ? value : -value;
       if (bestScore === null || score > bestScore) { best = index; bestScore = score; }
     });
@@ -923,6 +993,10 @@ function renderTable(id, spec) {
     const leg = /^leg$/i.test(column.key) ? text.trim().toLowerCase() : "";
     const legColor = /^(long|short|net)$/.test(leg) ? "name-" + leg : "";
     const classes = [format.num ? "num" : "", tone, key, legColor].filter(Boolean).join(" ");
+    if (row.__groupRow) {   // a strategy's subtotal row: its name in the strategy's colour, figures as plain numbers
+      if (column === spec.columns[0]) return el("td", { class: "group-name" }, [el("span", { class: "group-dot", style: `background:var(${STRATEGY_TINT[row.__group] || "--muted"})` }), el("span", { text: text })]);
+      return el("td", { class: classes + (/\d/.test(text) ? " digits" : ""), text: ZERO_TEXT.test(text) ? "" : text });
+    }
     // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
     const withDigits = !isAssetColumn(column.key) && /\d/.test(text) ? " digits" : "";
     if (column === weightColumn && isNum(value) && index !== undefined) {
@@ -958,7 +1032,7 @@ function renderTable(id, spec) {
     return el("td", { class: classes + withDigits, title: row.__cellTitles?.[column.key],
       text: spec.keepColumns ? text || "—" : ZERO_TEXT.test(text) ? "" : text });
   };
-  const body = el("tbody", {}, rows.map((row, index) => el("tr", row.__hover ? { title: row.__hover } : {},
+  const body = el("tbody", {}, rows.map((row, index) => el("tr", Object.assign(row.__hover ? { title: row.__hover } : {}, row.__groupRow ? { class: "group-row" } : {}),
     spec.columns.map((column) => cell(row, column, index)).concat(id in CANDIDATE_TABLES && row.Coin ? [candidateActions(id, row)] : []))));
   if (id in CANDIDATE_TABLES) head.append(el("th", { class: "row-actions" }));
   const parts = [el("thead", {}, head), body];
@@ -2261,6 +2335,13 @@ function drawPositionScales() {   // D, W, M on each position tile's title, show
     if (!title) return;
     const old = title.querySelector(".scale-chips"), chips = scaleChips("positions", SCALES.map(([name]) => name).filter((name) => !positionWindows(id).includes(name)), positionScale(id));
     if (old) old.replaceWith(chips); else { const tools = title.querySelector(".card-tools"); if (tools) tools.before(chips); else title.append(chips); }
+    // By strategy or all positions: one small icon next to the scales (the icon shows where a click goes).
+    const grouped = positionGroupMode() === "strategy";
+    const swap = el("button", { type: "button", class: "scale-chip group-toggle", "data-grouped": String(grouped),
+      title: grouped ? "All positions" : "By strategy", "aria-label": grouped ? "Show all positions together" : "Group positions by strategy", text: grouped ? "≡" : "▤" });
+    swap.addEventListener("click", (event) => { event.stopPropagation(); setPositionGroupMode(grouped ? "all" : "strategy"); });
+    title.querySelector(".group-toggle")?.remove();
+    chips.after(swap);
   });
 }
 function drawChartScales() {

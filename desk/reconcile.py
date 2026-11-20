@@ -57,6 +57,32 @@ def checks(tables: dict[str, dict]) -> list[tuple[str, str]]:
     compare("desk shares", "accounts", _row_sum([tables.get("accounts")], "% of desk"), "expected", 1.0)
     compare("position weights", "crypto and stocks", _row_sum([tables.get("positions"), tables.get("positions_stocks")], "Weight"),
             "expected", 1.0)
+    found += strategy_groups(tables)
+    return found
+
+
+def strategy_groups(tables: dict[str, dict]) -> list[tuple[str, str]]:
+    """The positions tables split by strategy: every row has a group, and the groups' subtotals add up to the table's own
+    total (value and uPnL, in dollars; open risk as a share of the cap). Tables without a Strategy column are skipped."""
+    from desk import position_groups
+
+    found = []
+    for name in position_groups.TABLES:
+        spec = tables.get(name) or {}
+        rows, total = spec.get("rows") or [], spec.get("total") or {}
+        if not rows or not any(column.get("key") == "Strategy" for column in spec.get("columns", [])):
+            continue
+        missing = [row.get("Symbol") for row in rows if not row.get("Strategy")]
+        if missing:
+            found.append(("Tables disagree", f"{name}: {len(missing)} positions have no strategy group"))
+        groups = position_groups.group_totals(rows)
+        for key, label, tolerance in (("Value", "value", 0.5), ("uPnL", "uPnL", 0.5), ("Risk", "open risk", 1e-6)):
+            expected = total.get(key)
+            if not isinstance(expected, (int, float)) or not math.isfinite(expected):
+                continue
+            summed = sum(group[key] for group in groups.values())
+            if abs(summed - expected) > tolerance:
+                found.append(("Tables disagree", f"{name} strategy groups: {label} {summed:,.4g}, table total {expected:,.4g}"))
     return found
 
 
