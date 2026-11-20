@@ -858,4 +858,5 @@ html[data-keynumbers="off"] #tiles { display: none !important; }   /* !important
 .mk-badge, .mk-dex { margin-left: 5px; font-size: 10.5px; color: var(--muted); }
 .mk-badge { border: 1px solid var(--border); border-radius: 4px; padding: 0 3px; }
 /* is-hover: set by app.js from the pointer's position, so hover controls also work when the browser has not yet handed this window the mouse (the cursor just came back from another app). */
-
+/* A tile just added from the Sections menu is outlined for a moment. */
+.card.just-added { outline: 2px solid var(--series-1); outline-offset: -2px; transition: outline-color .4s; }

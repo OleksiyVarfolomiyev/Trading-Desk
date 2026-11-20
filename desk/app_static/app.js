@@ -4508,6 +4508,13 @@ function showRequestedCard(card) {
   const slot = card.parentElement && card.parentElement.classList.contains("slot") ? card.parentElement : card;
   const columns = [...document.querySelectorAll("#columns > .col")];
   if (columns.length && !columns.some((column) => column.contains(slot))) columns[shortestColumn(columns.map((column) => column.scrollHeight))].append(slot);
+  // Where it comes back: next to its sibling tile where it has one (the stocks positions under the crypto positions), else at
+  // the top of the shortest column, never left at the foot of a column under a long chart where nobody would find it.
+  const mine = card.querySelector("[id]") ? card.querySelector("[id]").id : "";
+  const neighbour = HOME_NEIGHBOUR[mine] && document.getElementById(HOME_NEIGHBOUR[mine]);
+  const neighbourSlot = neighbour && neighbour.closest(".card") && (neighbour.closest(".slot") || neighbour.closest(".card"));
+  if (neighbourSlot && neighbourSlot !== slot && neighbourSlot.parentElement) neighbourSlot.after(slot);
+  else if (columns.length) { const column = columns[shortestColumn(columns.map((c) => c.scrollHeight))]; if (column.firstElementChild !== slot) column.prepend(slot); }
   const host = card.querySelector(".table-wrap[id^='t-']");
   const id = host ? host.id.slice(2) : "";
   if (id && latest && latest.data && TABLES.includes(id)) {
@@ -4517,7 +4524,14 @@ function showRequestedCard(card) {
   }
   card.classList.add("filled");
   if (typeof queueFitCardTitles === "function") queueFitCardTitles();
+  if (typeof saveOrder === "function") { try { saveOrder(); } catch (error) { /* the arrangement is kept for this page view only */ } }
+  requestAnimationFrame(() => {   // bring it into view and mark it for a moment, so an added tile is seen
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("just-added");
+    setTimeout(() => card.classList.remove("just-added"), 1600);
+  });
 }
+const HOME_NEIGHBOUR = { "t-positions_stocks": "t-positions" };   // a tile that sits next to another when it is put back
 function setHidden(id, hidden) {
   const card = document.getElementById(id) && document.getElementById(id).closest(".card");
   if (!card) return;
