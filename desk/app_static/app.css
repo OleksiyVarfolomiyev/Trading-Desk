@@ -860,3 +860,11 @@ html[data-keynumbers="off"] #tiles { display: none !important; }   /* !important
 /* is-hover: set by app.js from the pointer's position, so hover controls also work when the browser has not yet handed this window the mouse (the cursor just came back from another app). */
 /* A tile just added from the Sections menu is outlined for a moment. */
 .card.just-added { outline: 2px solid var(--series-1); outline-offset: -2px; transition: outline-color .4s; }
+/* The plan screen: one summary line, notice chips and size buttons (the planner's own text is the summary's hover). */
+.plan-summary { margin: 4px 0 6px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.plan-chips, .plan-sizes { opacity: 1 !important; margin: 0 0 6px; flex-wrap: wrap; }
+.plan-chip { cursor: help; }
+.plan-chip.warn { color: var(--warning); }
+.plan-chip.block { color: var(--bad-text); }
+.plan-sizes .scale-chip.emphasis { color: var(--series-1); border-color: var(--series-1); }
+

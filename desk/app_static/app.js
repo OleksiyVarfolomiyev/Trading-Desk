@@ -4387,6 +4387,48 @@ function blockedScreen(plan, coin, title, overlay, box, retry) {
     el("div", { class: "asset-actions" }, [...buttons, cancel]));
 }
 
+// COMPACT_PLAN_HELPERS_START
+// The plan screen reads the planner's text once: one summary line (percent first), notice chips, and everything else on hover.
+const PLAN_NUMBER = (text, unit) => { const n = Number(String(text).replace(/,/g, "")); return unit === "K" ? n * 1e3 : unit === "M" ? n * 1e6 : n; };
+function planSummary(planText, coin) {   // "COIN SIDE: quantity=.., size $1,704 = 44% of the wallet, risk $413 = 12% of the risk cap ..."
+  const name = String(coin || "").replace(/^[a-z0-9]+:/i, "").toLowerCase();
+  const lines = String(planText || "").split("\n").map((line) => line.trim()).filter(Boolean);
+  const line = lines.find((item) => item.toLowerCase().includes(name) && /size \$/.test(item)) || lines.find((item) => item.toLowerCase().includes(name)) || "";
+  const m = line.match(/size \$([\d,.]+)\s*([KM])?\s*=\s*(\d+(?:\.\d+)?)% of the wallet,\s*risk \$([\d,.]+)\s*([KM])?\s*=\s*(\d+(?:\.\d+)?)% of the risk cap/);
+  const cap = (String(planText || "").match(/Aggregate stop-risk cap: \$([\d,.]+)/) || [])[1];
+  if (!m) return { line, parsed: false, cap: cap ? PLAN_NUMBER(cap) : NaN };
+  return { line, parsed: true, sizeUsd: PLAN_NUMBER(m[1], m[2]), walletPct: Number(m[3]), riskUsd: PLAN_NUMBER(m[4], m[5]), capPct: Number(m[6]), cap: cap ? PLAN_NUMBER(cap) : NaN };
+}
+function planChips(planText, coin) {   // [{text, title, kind}]: 2-4 words each, the full sentence on hover; unknown notices are a "!" chip
+  const name = String(coin || "").replace(/^[a-z0-9]+:/i, "").toLowerCase();
+  const lines = String(planText || "").split("\n").map((line) => line.trim()).filter(Boolean);
+  const cap = (String(planText || "").match(/Aggregate stop-risk cap: \$([\d,.]+)/) || [])[1];
+  const sentences = [];
+  for (const line of lines) {
+    if (line.toLowerCase().includes(name) && /size \$|quantity=/.test(line)) {   // the coin's own line carries "— WARNING: …" and "— NOTE: …" tails
+      line.split(" — ").slice(1).forEach((part) => { if (/^(WARNING|NOTE|BLOCKED)/i.test(part.trim())) sentences.push(part.trim().replace(/\s*\[[a-z]+\]\s*$/i, "")); });
+    } else if (/BLOCKED|kill switch|refused|could not|stale|No open/i.test(line) && !/FLEX:/.test(line)) sentences.push(line);
+  }
+  const seen = new Set();
+  return sentences.map((sentence) => {
+    const head = sentence.match(/leaves \$([\d,.]+) of cap headroom/i);
+    let chip;
+    if (head) {
+      const share = cap ? PLAN_NUMBER(head[1]) / PLAN_NUMBER(cap) * 100 : NaN;
+      chip = { text: Number.isFinite(share) ? `Leaves ${share >= 1 ? Math.round(share) : share.toFixed(1)}% of cap` : "Low cap headroom", kind: "warn" };
+    } else if (/BLOCKED|meets or exceeds/i.test(sentence)) chip = { text: "Cap full", kind: "block" };
+    else if (/kill switch/i.test(sentence)) chip = { text: "Kill switch on", kind: "block" };
+    else if (/stale/i.test(sentence)) chip = { text: "Stale data", kind: "warn" };
+    else if (/large size/i.test(sentence)) chip = { text: "Large size", kind: "note" };
+    else if (/weak side/i.test(sentence)) chip = { text: "Weak side", kind: "note" };
+    else if (/weak market/i.test(sentence)) chip = { text: "Weak market", kind: "note" };
+    else if (/funding/i.test(sentence)) chip = { text: "Funding", kind: "note" };
+    else chip = { text: "!", kind: "warn" };
+    return Object.assign(chip, { title: sentence.replace(/^(WARNING|NOTE):\s*/i, "") });
+  }).filter((chip) => { const key = chip.text + chip.title; if (seen.has(key)) return false; seen.add(key); return true; });
+}
+// COMPACT_PLAN_HELPERS_END
+
 async function runAction(label, change, fraction, target) {
   const coin = target.coin, title = `${label}: ${marketName(coin)} (HL ${target.wallet})`;
   const isEntry = change === "short" || change === "long";
@@ -4407,7 +4449,8 @@ async function runAction(label, change, fraction, target) {
     blockedScreen(plan, coin, title, overlay, box, retry);
     return;
   }
-  const { notices, mine } = planLines(plan.plan, coin);
+  const { mine } = planLines(plan.plan, coin);
+  const summary = planSummary(plan.plan, coin), chips = planChips(plan.plan, coin);
   const confirm = el("button", { type: "button", class: "asset-action lead", text: "✓", title: `${label} ${marketName(coin)}`, "aria-label": `Confirm: ${label} ${marketName(coin)}` });
   const cancel = el("button", { type: "button", class: "asset-action", text: "✗", title: "Cancel", "aria-label": "Cancel" });
   cancel.addEventListener("click", () => { feedback("action", "cancel", marketName(coin), label); overlay.remove(); });
@@ -4443,9 +4486,26 @@ async function runAction(label, change, fraction, target) {
     } catch (error) { notify([String(error && error.message || error)], `${title}: failed`); }   // never a silent click
   });
   refresh();
-  box.replaceChildren(el("h3", { text: title }),
-    ...notices.map((line) => el("p", { class: "action-line notice", text: line })),
-    ...mine.map((line) => el("p", { class: "action-line", text: line })),
+  // One line, percent first; the planner's own lines (accounts, caps, take-profit, funding, fees) are its hover.
+  const summaryText = summary.parsed
+    ? `${label} ${marketName(coin)} · ${summary.walletPct}% of wallet · risk ${summary.capPct}% of cap${target.sizeMark ? " · size " + target.sizeMark : ""}`
+    : (mine[0] || summary.line || title);
+  const summaryLine = el("p", { class: "plan-summary", title: String(plan.plan || "").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").slice(0, 1400), text: summaryText });
+  const chipRow = chips.length ? el("div", { class: "scale-chips plan-chips", role: "group", "aria-label": "Notices" },
+    chips.map((chip) => el("span", { class: "scale-chip plan-chip " + chip.kind, text: (chip.kind === "block" ? "⛔ " : chip.kind === "warn" ? "⚠ " : "") + chip.text, title: chip.title }))) : null;
+  // Size options, never preselected: the plan as shown is the standard size and can be confirmed as is; ½ and ¼ re-plan it smaller.
+  const base = target.baseNotional || (summary.parsed ? summary.sizeUsd : NaN);
+  const sizes = isEntry && isNum(base) && base >= 24 ? el("div", { class: "scale-chips plan-sizes", role: "group", "aria-label": "Smaller size" },
+    [["½", 0.5], ["¼", 0.25]].map(([text, factor]) => {
+      const smaller = el("button", { type: "button", class: "scale-chip" + (text === "½" && chips.some((chip) => /^Leaves|Low cap/.test(chip.text)) ? " emphasis" : ""), text,
+        title: `Plan at ${text} of the standard size`, "aria-label": `Plan at ${text} size` });
+      smaller.addEventListener("click", () => runAction(label, change, fraction, Object.assign({}, target,
+        { notional: Math.round(base * factor * 100) / 100, baseNotional: base, sizeMark: text, label: chosenLabel || undefined })));
+      return smaller;
+    })) : null;
+  box.replaceChildren(el("h3", { text: title }), summaryLine,
+    ...(chipRow ? [chipRow] : []),
+    ...(sizes ? [sizes] : []),
     ...(flex.node ? [flex.node] : []),
     ...(labels ? [labels] : []),
     el("div", { class: "asset-actions" }, [confirm, cancel]));
