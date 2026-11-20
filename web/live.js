@@ -635,7 +635,7 @@
     ibs.forEach((account) => {
       const age = Date.now() - account.asOf;
       if (!(age < IB_STALE_MS)) {
-        const problem = `last sent ${fin(account.asOf) ? dayKey(account.asOf) : "at an unknown time"}; start the local dashboard to refresh it`;
+        const problem = `last sent ${fin(account.asOf) ? dayKey(account.asOf) : "at an unknown time"}; start the local desk to refresh it`;
         status.push({ name: account.label, ok: false, problem });
         notes.push(`${account.label}: ${problem}.`);
       } else status.push({ name: account.label, ok: true });
@@ -1240,7 +1240,7 @@
     };
 
     if (ibs.length) {
-      notes.push(`${ibs[0].label} is read through TWS on the desk's Mac, which sends it to the relay every 10 minutes while the local dashboard runs; sent ${eastern(ibData.as_of)}.`);
+      notes.push(`${ibs[0].label} is read through TWS on the desk's Mac, which sends it to the relay every 10 minutes while the local desk runs; sent ${eastern(ibData.as_of)}.`);
       notes.push(`${ibs[0].label} stocks are in the current-holdings risk table, priced from Yahoo Finance's daily closes that the desk's Mac sends.`);
     } else {
       notes.push("IB is not included yet: the desk's Mac has not sent it (python -m desk.web_sync --push-ib).");

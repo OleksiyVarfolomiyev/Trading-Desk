@@ -312,7 +312,7 @@ async function dashboardAction(request, response) {
     : { cmd: "resize", wallet, coin, change, fraction, label, ...(notional !== null ? { notional } : {}) };
   const key = JSON.stringify(request_);
   const outputLimit = batch ? 12000 : 4000;
-  if (actionRunning) return send(409, { error: "another dashboard action is running" });
+  if (actionRunning) return send(409, { error: "another desk action is running" });
   actionRunning = true;
   try {
     if (stage === "plan") {
@@ -369,7 +369,7 @@ async function handle(request, response) {
     const wallet = String(body.wallet || ""), coin = String(body.coin || "");
     const send = (status, payload) => { response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); response.end(JSON.stringify(payload)); };
     if (!/^[0-9a-fA-F]{4}$/.test(wallet) || !/^[A-Za-z0-9:]{1,24}$/.test(coin) || !["stop", "neutral"].includes(body.mode)) return send(400, { error: "bad request" });
-    if (actionRunning) return send(409, { error: "another dashboard action is running" });
+    if (actionRunning) return send(409, { error: "another desk action is running" });
     actionRunning = true;
     try {
       const message = { cmd: "ladder", wallet, coin, ...(body.mode === "stop" ? { stop: true } : { neutral: true }) };
@@ -440,7 +440,7 @@ async function setPassword() {
     prompt._writeToOutput = (text) => { if (text.includes(question)) process.stdout.write(text); };  // no echo
     prompt.question(question, (answer) => { prompt.close(); process.stdout.write("\n"); resolve(answer); });
   });
-  const first = await ask("New dashboard password: ");
+  const first = await ask("New desk password: ");
   const again = await ask("Again: ");
   if (!first || first !== again) {
     console.error("The passwords were empty or did not match; nothing changed.");

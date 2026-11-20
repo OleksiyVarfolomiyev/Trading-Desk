@@ -1,6 +1,6 @@
-# Desk dashboard on the web
+# Desk on the web
 
-An always-on copy of the desk dashboard, behind a password, on the desk server
+An always-on copy of the desk, behind a password, on the desk server
 (https://5-223-72-14.sslip.io, user `desk`). It shows the HL wallets, their tokens on Base and
 Ethereum, and IB as the Mac last sent it. Setting up the server and running it is in
 [deploy/README.md](../deploy/README.md).

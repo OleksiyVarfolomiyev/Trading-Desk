@@ -2163,7 +2163,7 @@ async function load() {
     render(latest);
   } catch (error) {
     const message = window.DESK_SOURCE ? String(error.message || error)
-      : "Dashboard server not reachable (is python -m desk.dashboard running?)";
+      : "Desk server not reachable (is python -m desk.dashboard running?)";
     renderAccountStatus([{ name: "Accounts", ok: false, label: "refresh failed", problem: message }], new Date());
     document.getElementById("loading").hidden = true;
   }
@@ -4798,7 +4798,7 @@ ${tables}
 }
 function openReport() {
   if (!latest || !latest.data) return;
-  if (document.documentElement.classList.contains("private") && !confirm("The numbers are hidden on the dashboard. Include them in the report?")) return;
+  if (document.documentElement.classList.contains("private") && !confirm("The numbers are hidden on the desk. Include them in the report?")) return;
   feedback("report", "open", "dashboard");
   const page = window.open("", "_blank");
   if (!page) return;

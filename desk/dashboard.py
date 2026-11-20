@@ -828,7 +828,7 @@ class Dashboard:
                     web_sync.push_wallets(self.desk.data_dir)
                     web_sync.push_regime()
             except Exception as exc:  # the web dashboard keeps the last IB it received
-                print(f"Sending IB to the web dashboard failed: {exc}")
+                print(f"Sending IB to the web desk failed: {exc}")
 
         threading.Thread(target=send, name="web-sync", daemon=True).start()
 
@@ -945,7 +945,7 @@ def make_handler(dashboard: Dashboard, port: int):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Live desk dashboard on http://127.0.0.1 (read-only).")
+    parser = argparse.ArgumentParser(description="Live desk on http://127.0.0.1 (read-only).")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_SECONDS,
                         help=f"seconds between account refreshes (minimum {MIN_INTERVAL_SECONDS})")
@@ -962,17 +962,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         dashboard = Dashboard(args.interval, args.data_dir, args.wallet_data_dir, args.regime_start)
     except ValueError as exc:  # no accounts.json, or an invalid one
-        print(f"Cannot start the dashboard: {exc}", file=sys.stderr)
+        print(f"Cannot start the desk: {exc}", file=sys.stderr)
         return 2
     try:
         server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(dashboard, args.port))
     except OSError as exc:
-        print(f"Cannot listen on 127.0.0.1:{args.port} ({exc.strerror or exc}); is the dashboard already running? "
+        print(f"Cannot listen on 127.0.0.1:{args.port} ({exc.strerror or exc}); is the desk already running? "
               "Use --port to pick another port.", file=sys.stderr)
         return 2
     threading.Thread(target=dashboard.run_forever, name="desk-refresh", daemon=True).start()
     url = f"http://127.0.0.1:{args.port}"
-    print(f"Desk dashboard on {url} (refresh every {dashboard.interval}s; Ctrl+C stops). Read-only.", flush=True)
+    print(f"Desk on {url} (refresh every {dashboard.interval}s; Ctrl+C stops). Read-only.", flush=True)
     if args.open:
         webbrowser.open(url)
     try:

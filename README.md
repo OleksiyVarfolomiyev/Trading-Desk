@@ -6,10 +6,10 @@ A multi-venue trading desk: analytics, research, and guarded execution across **
 | --- | --- | --- |
 | Desk overview: accounts, desk metrics, exposure, positions, unrealized PnL, wallet holdings outside HL, desk-wide open risk | All | [`desk_overview.ipynb`](desk_overview.ipynb), `desk/overview.py` |
 | Desk accounts: every account combined into one desk return net of deposits; performance by account, risk metrics vs BTC and SPY, charts | All | [`desk_accounts.ipynb`](desk_accounts.ipynb), `desk/desk_accounts.py` |
-| Live dashboard: the desk accounts view as a self-refreshing local web page | All | `python -m desk.dashboard`, `desk/dashboard.py` |
+| Desk (local): the desk accounts view as a self-refreshing local web page | All | `python -m desk.dashboard`, `desk/dashboard.py` |
 | Guarded execution: dry run by default, typed confirmations, desk-wide risk cap, shared kill switch | HL, IB | `execution/hl_trade.py`, `execution/ib_trade.py` |
 | Trading daemon: live HL data and signing clients, orders about a second after confirmation, guards that act within a second | HL | `execution/hl_daemon.py` |
-| Web dashboard: a public, always-on copy of the dashboard for the HL wallets and their tokens, read live in the browser through a relay that hides the addresses | HL, wallets | `web/` (see `web/README.md`) |
+| Web desk: a public, always-on copy of the desk for the HL wallets and their tokens, read live in the browser through a relay that hides the addresses | HL, wallets | `web/` (see `web/README.md`) |
 | Account analytics: PnL, funding, risk metrics, attribution, charts | HL | `hl_account*.ipynb`, `desk/hl/` |
 | Account analytics: balances, today's PnL, positions with ATR levels, current-book risk vs SPY, fills, attribution | IB | `ib_account.ipynb`, `desk/ib/` |
 | Trade analytics and backtest | HL | `hl_trade_analytics.ipynb`, `hl_backtest.ipynb` |
