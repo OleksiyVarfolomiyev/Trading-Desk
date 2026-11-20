@@ -34,7 +34,15 @@ class PlanScreenTests(unittest.TestCase):
         body = re.search(r"async function runAction\(.*?\n}\n", APP, re.S).group(0)
         for needle in ("planSummary(plan.plan, coin)", "planChips(plan.plan, coin)", "plan-summary", "plan-chips", "plan-sizes", "baseNotional", "chosenLabel"):
             self.assertIn(needle, body)
-        self.assertNotIn('class: "action-line notice"', body.split("box.replaceChildren(el(\"h3\", { text: title }), summaryLine")[1])   # no wall of lines
+        self.assertNotIn('class: "action-line notice"', body.split("box.replaceChildren(summaryLine")[1])   # no wall of lines
+
+    def test_single_order_plan_docks_and_uses_direction_glyphs(self):
+        body = re.search(r"async function runAction\(.*?\n}\n", APP, re.S).group(0)
+        self.assertIn("docked: true", body)
+        self.assertIn('long: "▲", short: "▼"', body)
+        self.assertIn("of account", body)
+        self.assertNotIn('"h3"', body)
+        self.assertNotIn('text: "Cancel"', body)
 
     @unittest.skipUnless(NODE, "node is not installed here (the desk server has it)")
     def test_the_pasted_anime_plan_reads_as_one_line_and_chips(self):

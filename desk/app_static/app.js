@@ -4280,11 +4280,23 @@ function notify(lines, title) {
   return note;
 }
 
-function actionDialog(title) {
+function actionDialog(title, { docked = false, onDismiss = null } = {}) {
   document.querySelectorAll(".action-dialog").forEach((node) => node.remove());
   const box = el("div", { class: "action-box", role: "dialog", "aria-modal": "true", "aria-label": title });
-  const overlay = el("div", { class: "action-dialog" }, [box]);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  const overlay = el("div", { class: "action-dialog" + (docked ? " order-dialog" : "") }, [box]);
+  const dismiss = () => { overlay.remove(); onDismiss?.(); };
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) dismiss(); });
+  if (docked) {
+    const top = document.querySelector(".desk-header")?.getBoundingClientRect().bottom || 0;
+    overlay.style.setProperty("--order-top", Math.max(0, Math.ceil(top)) + "px");
+    box.tabIndex = -1;
+    overlay.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.stopPropagation(); dismiss(); }
+    });
+    document.body.append(overlay);
+    box.focus({ preventScroll: true });
+    return { overlay, box };
+  }
   document.addEventListener("keydown", function escape(event) { if (event.key === "Escape") { overlay.remove(); document.removeEventListener("keydown", escape); } });
   document.body.append(overlay);
   return { overlay, box };
@@ -4430,7 +4442,7 @@ function roomCandidates(wallet, limit = 3) {   // the biggest risk consumers on 
     .filter((row) => row.Symbol && !row._wallet && isNum(row.Risk) && row.Risk > 0.005 && String(row.Account || "").endsWith(wallet))
     .sort((a, b) => b.Risk - a.Risk).slice(0, limit);
 }
-function blockedScreen(plan, coin, title, overlay, box, retry) {
+function blockedScreen(plan, coin, overlay, box, retry) {
   const lines = planFailureLines(plan, coin), info = blockedInfo(plan.plan);
   const pct0 = (value) => (isNum(value) ? `${Math.round(value)}%` : "");
   let headline = lines[0] || "Nothing can be sent.";
@@ -4454,10 +4466,8 @@ function blockedScreen(plan, coin, title, overlay, box, retry) {
   } else if (info.reason === "stale" || plan.error) {
     option("Retry", "Plan again with fresh data.", () => { overlay.remove(); retry({}); });
   }
-  const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
-  cancel.addEventListener("click", () => overlay.remove());
-  box.replaceChildren(el("h3", { text: title }), el("p", { class: "neg", text: headline, title: lines.join("\n") }),
-    el("div", { class: "asset-actions" }, [...buttons, cancel]));
+  box.replaceChildren(el("p", { class: "plan-summary neg", text: headline, title: lines.join("\n") }),
+    ...(buttons.length ? [el("div", { class: "asset-actions" }, buttons)] : []));
 }
 
 // COMPACT_PLAN_HELPERS_START
@@ -4563,8 +4573,9 @@ async function runAction(label, change, fraction, target) {
   const coin = target.coin, title = `${label}: ${marketName(coin)} (HL ${target.wallet})`;
   const isEntry = change === "short" || change === "long";
   feedback("action", "plan", marketName(coin), label);
-  const { overlay, box } = actionDialog(title);
-  box.replaceChildren(el("h3", { text: title }), el("p", { class: "muted", text: "Planning with live data…" }));
+  const tone = change === "long" ? "pos" : change === "short" ? "neg" : "";
+  const { overlay, box } = actionDialog(title, { docked: true, onDismiss: () => feedback("action", "cancel", marketName(coin), label) });
+  box.replaceChildren(el("p", { class: "muted", text: "Planning with live data…" }));
   // An entry's strategy label is chosen on the plan screen below (never preselected, unless the trade bar already picked one);
   // it sets the journal tag and never the size, so the plan does not need it.
   const ENTRY_LABELS = ["directional", "fade", "hedge", "conviction"];
@@ -4573,17 +4584,18 @@ async function runAction(label, change, fraction, target) {
     body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction, label: isEntry ? chosenLabel || undefined : undefined, notional: target.notional }, body)) }).then(readReply);
   let plan;
   try { plan = await post({ stage: "plan", label: undefined, ...(target.planFlex ? { use_flex: true } : {}) }); } catch (e) { plan = { error: String(e) }; }
+  if (!overlay.isConnected) return;
   if (plan.error || !plan.token) {
     const retry = (extra) => runAction(label, change, fraction, Object.assign({}, target, extra));
     retry.wallet = target.wallet;
-    blockedScreen(plan, coin, title, overlay, box, retry);
+    blockedScreen(plan, coin, overlay, box, retry);
     return;
   }
   const { mine } = planLines(plan.plan, coin);
   const summary = planSummary(plan.plan, coin), chips = planChips(plan.plan, coin);
-  const confirm = el("button", { type: "button", class: "asset-action lead", text: "✓", title: `${label} ${marketName(coin)}`, "aria-label": `Confirm: ${label} ${marketName(coin)}` });
-  const cancel = el("button", { type: "button", class: "asset-action", text: "✗", title: "Cancel", "aria-label": "Cancel" });
-  cancel.addEventListener("click", () => { feedback("action", "cancel", marketName(coin), label); overlay.remove(); });
+  const glyph = { long: "▲", short: "▼", add: "▲", reduce: "▼", close: "■" }[change];
+  const confirm = el("button", { type: "button", class: `asset-action lead plan-confirm ${tone}`, text: glyph,
+    title: `${label} ${marketName(coin)}`, "aria-label": `Confirm: ${label} ${marketName(coin)}` });
   let flex;
   const refresh = () => {   // confirm waits for the label (entries) and for the flex choice (when the plan offers one)
     const ready = (!isEntry || Boolean(chosenLabel)) && (!flex || flex.ready());
@@ -4630,9 +4642,10 @@ async function runAction(label, change, fraction, target) {
   refresh();
   // One line, percent first; the planner's own lines (accounts, caps, take-profit, funding, fees) are its hover.
   const summaryText = summary.parsed
-    ? `${label} ${marketName(coin)} · ${summary.walletPct}% of wallet · risk ${summary.capPct}% of cap${target.sizeMark ? " · size " + target.sizeMark : ""}`
-    : (mine[0] || summary.line || title);
-  const summaryLine = el("p", { class: "plan-summary", title: String(plan.plan || "").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").slice(0, 1400), text: summaryText });
+    ? ` · ${summary.walletPct}% of account · risk ${summary.capPct}% of cap${target.sizeMark ? " · size " + target.sizeMark : ""}`
+    : (mine[0] || summary.line ? ` · ${mine[0] || summary.line}` : "");
+  const summaryLine = el("p", { class: "plan-summary", title: String(plan.plan || "").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").slice(0, 1400) },
+    [el("span", { class: tone, text: marketName(coin) }), summaryText]);
   const chipRow = chips.length ? el("div", { class: "scale-chips plan-chips", role: "group", "aria-label": "Notices" },
     chips.map((chip) => el("span", { class: "scale-chip plan-chip " + chip.kind, text: (chip.kind === "block" ? "⛔ " : chip.kind === "warn" ? "⚠ " : "") + chip.text, title: chip.title }))) : null;
   // Size options, never preselected: the plan as shown is the standard size and can be confirmed as is; ½ and ¼ re-plan it smaller.
@@ -4645,12 +4658,12 @@ async function runAction(label, change, fraction, target) {
         { notional: Math.round(base * factor * 100) / 100, baseNotional: base, sizeMark: text, label: chosenLabel || undefined })));
       return smaller;
     })) : null;
-  box.replaceChildren(el("h3", { text: title }), summaryLine,
+  box.replaceChildren(summaryLine,
     ...(chipRow ? [chipRow] : []),
     ...(sizes ? [sizes] : []),
     ...(flex.node ? [flex.node] : []),
     ...(labels ? [labels] : []), hint,
-    el("div", { class: "asset-actions" }, [confirm, cancel]));
+    el("div", { class: "asset-actions" }, [confirm]));
 }
 
 // Exposure to an asset class from the return chart: reduce or add a third of every held HL position in the class. Each

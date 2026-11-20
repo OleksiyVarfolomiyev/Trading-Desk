@@ -468,6 +468,11 @@ html.private td.digits { cursor: pointer; }
 .action-dialog { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.45); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
 .action-box { background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; width: min(560px, 92vw);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45); max-height: 70vh; overflow: auto; }
+.order-dialog { background: transparent; justify-content: flex-end; padding: calc(var(--order-top, 0px) + 6px) 8px 8px; }
+.order-dialog .action-box { box-sizing: border-box; width: min(380px, 100%); max-height: 100%; }
+.order-dialog .action-box:focus { outline: none; }
+.plan-confirm.pos { color: var(--good-text); border-color: var(--good-text); }
+.plan-confirm.neg { color: var(--bad-text); border-color: var(--bad-text); }
 .action-box h3 { margin: 0 0 8px; font-size: 15px; }
 .action-line { margin: 3px 0; font-size: 12px; color: var(--ink-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
 .action-line.notice { color: var(--ink); border-left: 3px solid var(--warning); padding-left: 8px; }
