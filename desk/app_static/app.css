@@ -872,4 +872,9 @@ html[data-keynumbers="off"] #tiles { display: none !important; }   /* !important
 .scale-chips.needs-pick, .label-chips.needs-pick, .action-line.needs-pick { outline: 1px solid var(--warning); outline-offset: 2px; border-radius: 6px; }
 .needs-hint { color: var(--warning); min-height: 0; margin: 2px 0 0; }
 .needs-hint:empty { display: none; }
+/* Highlights: one line per row; the full sentence is the row's hover; the rest of a card folds into one "+N" chip. */
+.highlights li .hl-text-row { min-width: 0; }
+.highlights li .text { flex: 1 1 auto; min-width: 0; white-space: nowrap !important; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal !important; }
+.highlights .more-toggle { text-decoration: none; opacity: .7; padding: 0 2px; }
+.highlights .more-toggle:hover { opacity: 1; }
 

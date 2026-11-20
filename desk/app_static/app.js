@@ -1608,6 +1608,33 @@ async function refreshAlertData() {
   await load();
 }
 
+// ---- highlight rows: one line each, merged, capped. Pure (tests/test_highlight_rows.py runs this block under node).
+// HIGHLIGHT_SHAPING_START
+const HL_CAP = 5;   // rows a card shows before the rest folds into one "+N" chip
+const hlShape = (text) => String(text).toLowerCase().replace(/-?\d[\d.,]*/g, "#").replace(/\s+/g, " ").trim();   // a line without its numbers
+const hlMagnitude = (text) => { const found = String(text).match(/-?\d+(?:\.\d+)?%/g); return found ? Math.max(...found.map((x) => Math.abs(parseFloat(x)))) : 0; };
+// A row that only repeats a number the key numbers bar already shows is not a highlight.
+const hlRestates = (area, text) => /^risk$/i.test(String(area)) && /^open risk [\d.]+%\.?$/i.test(String(text).trim());
+// items: [area, text, level, whole] in arrival order; level is "critical", "watch" or "". Same area and same line (numbers aside)
+// is one row with the latest figure; criticals first, then watches, then the rest by size of move.
+function shapeHighlights(items, expanded, cap = HL_CAP) {
+  const merged = new Map();
+  for (const item of items) {
+    if (hlRestates(item[0], item[1])) continue;
+    const key = String(item[0]).toLowerCase().replace(/-?\d[\d.,]*/g, "#") + "|" + hlShape(item[1]);
+    merged.delete(key);   // the latest one wins, and keeps its place among the newest
+    merged.set(key, item);
+  }
+  const rank = { critical: 0, watch: 1, "": 2 };
+  const ordered = [...merged.values()].map((item, index) => ({ item, index })).sort((a, b) =>
+    rank[a.item[2]] - rank[b.item[2]] || (a.item[2] === "" ? hlMagnitude(b.item[1]) - hlMagnitude(a.item[1]) : 0) || a.index - b.index).map((x) => x.item);
+  // A list of rules (no historical test, no forward test) is its count; the names are the hover.
+  const short = (item) => (/^no (historical|forward) test$/i.test(item[0]) && /;/.test(item[1])
+    ? [item[0], `${String(item[1]).split(";").length} rules`, item[2], item[3]] : item);
+  const rows = ordered.map(short);
+  return { shown: expanded ? rows : rows.slice(0, cap), hidden: expanded ? 0 : Math.max(0, rows.length - cap), total: rows.length };
+}
+// HIGHLIGHT_SHAPING_END
 function renderHighlights(id, rows, hover = {}) {
   const host = document.getElementById(id);
   const state = highlightState();
@@ -1622,8 +1649,7 @@ function renderHighlights(id, rows, hover = {}) {
     const match = id.match(/^hl-(crypto|stocks|desk)-(attention|well)$/);
     const otherRows = match && latest && latest.data && latest.data.highlights
       ? highlightsForKind(latest.data.highlights[match[2] === "attention" ? "well" : "attention"], match[1]) : [];
-    host.replaceChildren(...(match && match[2] === "attention" && !otherRows.length
-      ? [el("li", {}, el("span", { class: "empty", text: "Nothing to report" }))] : []));
+    host.replaceChildren();   // an empty card says nothing
     return;
   }
   const rank = { critical: 0, watch: 1, "": 2 };
@@ -1632,11 +1658,18 @@ function renderHighlights(id, rows, hover = {}) {
     const line = highlightPunctuation(text);
     return /\.\s+\S/.test(line) ? line : line.replace(/\.\s*$/, "");
   };
-  const ordered = shown.map(([area, text, whole]) => [area, tidy(text), severity(area, whole), whole])
-    .sort((a, b) => rank[a[2]] - rank[b[2]]);  // stable: same-level rows keep their order
+  const expandedCard = (() => { try { return sessionStorage.getItem("desk-hl-open:" + id) === "1"; } catch (e) { return false; } })();
+  const shaped = shapeHighlights(shown.map(([area, text, whole]) => [area, tidy(text), severity(area, whole), whole]), expandedCard);
+  const ordered = shaped.shown;
   const foot = folded.length ? [el("li", {}, [el("button", { type: "button", class: "quiet-toggle", title: "Areas you have dismissed several times: " + [...new Set(folded.map((r) => r[0]))].join(", "),
     text: open ? "hide quiet" : `${folded.length} quiet`, onclick: null })])] : [];
   if (foot.length) foot[0].firstChild.addEventListener("click", () => { host.dataset.showQuiet = open ? "0" : "1"; redrawHighlights(); });
+  if (shaped.hidden || (expandedCard && shaped.total > HL_CAP)) {   // the rest of the card folds into one quiet chip, remembered for the session
+    const more = el("li", {}, [el("button", { type: "button", class: "quiet-toggle more-toggle", title: expandedCard ? "Show the top rows only" : `${shaped.hidden} more rows`,
+      text: expandedCard ? "less" : `+${shaped.hidden}` })]);
+    more.firstChild.addEventListener("click", () => { try { sessionStorage.setItem("desk-hl-open:" + id, expandedCard ? "0" : "1"); } catch (e) { /* this view only */ } redrawHighlights(); });
+    foot.push(more);
+  }
   numberContext = { positive: id.endsWith("-well") };
   host.replaceChildren(...ordered.map(([area, text, level, whole]) => {
     const act = (label, symbol, change) => {
@@ -1654,7 +1687,8 @@ function renderHighlights(id, rows, hover = {}) {
     const positions = symbolActions(whole);
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
     const tooltip = hover[area] || (area === "uPnL" ? "Unrealized PnL since entry as a share of open positions’ entry notional" : "");
-    const item = el("li", { class: level, title: tooltip ? highlightPunctuation(tooltip) : null }, [
+    const fullText = highlightPunctuation(String(whole));   // the whole sentence, dollars and evidence: on hover only
+    const item = el("li", { class: level, title: [fullText, tooltip ? highlightPunctuation(tooltip) : ""].filter((part, i, all) => part && all.indexOf(part) === i).join("\n") || null }, [
       el("div", { class: "hl-text-row" }, [
         el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),
         response?.button,
