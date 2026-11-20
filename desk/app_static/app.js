@@ -4290,7 +4290,7 @@ function openBatchTrade() {
       try {
         const response = await fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" },
           credentials: "same-origin", body: JSON.stringify({ ...body, ...extra }) });
-        return await response.json();
+        return await readReply(response);
       } catch (error) { return { error: String(error) }; }
     };
     status.textContent = "Planning with live data…";
@@ -4430,6 +4430,12 @@ function planChips(planText, coin) {   // [{text, title, kind}]: 2-4 words each,
 }
 // COMPACT_PLAN_HELPERS_END
 
+// The relay answers a confirmed order after the daemon is done (up to a minute). If the connection is cut meanwhile (the relay
+// restarted by a deploy) the body is empty: that is "no reply", not a failed order, and the order may well have gone through.
+async function readReply(response) {
+  const text = await response.text();
+  try { return JSON.parse(text); } catch (error) { return { error: "No reply from the server (the order may have gone through)", noReply: true }; }
+}
 async function runAction(label, change, fraction, target) {
   const coin = target.coin, title = `${label}: ${marketName(coin)} (HL ${target.wallet})`;
   const isEntry = change === "short" || change === "long";
@@ -4441,7 +4447,7 @@ async function runAction(label, change, fraction, target) {
   const ENTRY_LABELS = ["directional", "fade", "hedge", "conviction"];
   let chosenLabel = ENTRY_LABELS.includes(target.label) ? target.label : "";
   const post = (body) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-    body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction, label: isEntry ? chosenLabel || undefined : undefined, notional: target.notional }, body)) }).then((r) => r.json());
+    body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction, label: isEntry ? chosenLabel || undefined : undefined, notional: target.notional }, body)) }).then(readReply);
   let plan;
   try { plan = await post({ stage: "plan", label: undefined, ...(target.planFlex ? { use_flex: true } : {}) }); } catch (e) { plan = { error: String(e) }; }
   if (plan.error || !plan.token) {
@@ -4488,7 +4494,10 @@ async function runAction(label, change, fraction, target) {
       feedback("action", "confirm", marketName(coin), label);
       let result;
       try { result = await post({ stage: "confirm", token: plan.token, use_flex: flex.useFlex() }); } catch (e) { result = { error: String(e) }; }
-      if (result.code !== 0) {
+      if (result.noReply) {   // not a failure: look at the positions, which are the truth
+        notify(["No confirmation came back. The order may have gone through; the positions are being refreshed."], `${title}: sent, check positions`);
+        setTimeout(() => { lastRendered = null; load(); }, 4000);
+      } else if (result.code !== 0) {
         const lines = planLines(result.result || result.error || "", coin);
         notify(lines.notices.concat(lines.mine, result.error && !lines.mine.length ? [String(result.error)] : []), `${title}: not completed`);
       }

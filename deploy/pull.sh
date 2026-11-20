@@ -17,7 +17,12 @@ if ! git diff --quiet "$before" HEAD -- requirements-trading.txt requirements-da
   .venv/bin/pip install -q -r requirements-trading.txt -r requirements-dashboard.txt keyrings.alt
 fi
 bash web/build_site.sh >/dev/null
-sudo /usr/bin/systemctl restart desk-relay
+# The page is served from web/site on each request, so a page or Python-only change needs no relay restart; restarting it would
+# cut a confirmed order's reply mid-flight (the daemon finishes the order, the page gets an empty answer). Restart only when the
+# relay's own code or the deploy files changed.
+if ! git diff --quiet "$before" HEAD -- web/server.mjs web/worker.js web/package.json deploy; then
+  sudo /usr/bin/systemctl restart desk-relay
+fi
 if ! git diff --quiet "$before" HEAD -- execution desk; then
   echo "trading code changed: the daemon still runs the earlier version until it is restarted"
 fi
