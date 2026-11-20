@@ -1826,8 +1826,9 @@ function renderCharts(charts) {
     showlegend: false,   // the colours and the end labels name the lines
     annotations: labels.concat(markManaged ? [{ x: managed, xref: "x", y: 1, yref: "paper", yanchor: "top", xanchor: "left", showarrow: false,
       text: "managed", font: { size: 10, color: token("--muted") }, hovertext: `The managed desk begins ${managed} (the repo start). Before it: IB held long only, crypto untraded.` }] : []),
-    shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }]
-      .concat(markManaged ? [{ type: "line", xref: "x", yref: "paper", x0: managed, x1: managed, y0: 0, y1: 1, line: { color: token("--muted"), width: 1, dash: "dot" } }] : []),
+    // layer "below": the zero line and the managed marker sit behind the curves, never across them
+    shapes: [{ type: "line", layer: "below", xref: "paper", x0: 0, x1: 1, y0: 0, y1: 0, line: { color: token("--axis"), width: 1 } }]
+      .concat(markManaged ? [{ type: "line", layer: "below", xref: "x", yref: "paper", x0: managed, x1: managed, y0: 0, y1: 1, line: { color: token("--muted"), width: 1, dash: "dot" } }] : []),
   });
   twrLayout.yaxis = Object.assign({}, twrLayout.yaxis, { ticksuffix: "%" });
   Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => { spreadEndLabels("chart-twr"); markNumericNotes(); zoomCharts(); drawChartScales(); });
