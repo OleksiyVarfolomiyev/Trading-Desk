@@ -132,5 +132,37 @@ class FitAndComparisonTests(unittest.TestCase):
         self.assertAlmostEqual(out["z"], 1.0)
 
 
+class LogAggregateTests(unittest.TestCase):
+    def test_counts_by_kind_trigger_month_and_scoreable(self):
+        rows = [{"at": "2026-11-05T10:00:00Z", "kind": "trade", "coin": "X", "side": "short", "fit": "strategy", "trigger": "asked", "text": "a"},
+                {"at": "2026-11-06T10:00:00Z", "kind": "design", "coin": None, "side": None, "fit": "process", "trigger": "unprompted", "text": "b"},
+                {"at": "2026-12-01T10:00:00Z", "kind": "avoid", "coin": "Y", "side": "long", "fit": "additional", "trigger": "asked", "text": "c"}]
+        out = s.counts(rows)
+        self.assertEqual(out["n"], 3)
+        self.assertEqual(out["scoreable"], 2)
+        self.assertEqual(out["by_kind"]["trade"], 1)
+        self.assertEqual(out["by_trigger"], {"asked": 2, "unprompted": 1, "unknown": 0})
+        self.assertEqual(out["by_month"], {"2026-11": 2, "2026-12": 1})
+
+    def test_followup_needs_two_shared_content_words_and_a_voided_row_is_left_out(self):
+        row = {"text": "Build the stale chip for the data age hover", "view": "how I would: a chip when a source is stale"}
+        commits = [{"hash": "abc1234", "subject": "improve(risk): stale chip and data age hover on the key numbers"}, {"hash": "def5678", "subject": "fix: unrelated thing"}]
+        self.assertTrue(s.followup(row, commits)["done"])
+        self.assertFalse(s.followup(row, commits[1:])["done"])
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "log.jsonl"
+            s.add("X", None, "The most you could short is 6,761 HEMI, about $31", kind="info", at="2026-11-05T10:00:00Z", path=path)
+            s.add("Y", None, "kept", kind="info", at="2026-11-05T11:00:00Z", path=path)
+            self.assertEqual([r["text"] for r in s.load(path)], ["kept"])
+            self.assertEqual(len(s.load(path, include_voided=True)), 2)
+
+    def test_the_verdict_reads_a_horizon_only_with_twenty_outcomes(self):
+        few = [{"moves": {1: 0.01, 3: 0.01, 7: None, "now": 0.01}, "followed": True} for _ in range(19)]
+        many = [{"moves": {1: 0.01, 3: 0.01, 7: None, "now": 0.01}, "followed": True} for _ in range(20)]
+        self.assertIn("too few", s.summary(few)["verdict"])
+        self.assertNotIn("too few", s.summary(many)["verdict"])
+
+
 if __name__ == "__main__":
     unittest.main()

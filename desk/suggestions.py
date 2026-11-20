@@ -37,7 +37,7 @@ LOG = ROOT / "data" / "suggestions.jsonl"
 REVIEW = ROOT / "research" / "suggestions_review.md"
 HORIZONS_DAYS = (1, 3, 7)
 MIN_SCORED = 20
-KINDS = ("trade", "size", "reduce", "hold", "avoid", "info")
+KINDS = ("trade", "size", "reduce", "hold", "avoid", "rule", "process", "test", "design", "info")
 SCORED_KINDS = ("trade", "avoid", "reduce")
 FITS = ("strategy", "additional", "process", "unknown")
 CONFIDENCES = ("low", "medium", "high")
@@ -47,8 +47,12 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+TRIGGERS = ("asked", "unprompted", "unknown")
+
+
 def add(coin: str | None, side: str | None, text: str, kind: str = "trade", confidence: str = "medium", at: str | None = None,
-        fit: str = "unknown", ref: str | None = None, path: Path = LOG) -> dict:
+        fit: str = "unknown", ref: str | None = None, path: Path = LOG, source: str | None = None, trigger: str | None = None,
+        view: str | None = None) -> dict:
     """Append one suggestion (never an edit). ``side`` is long or short: for a trade the side to open, for a reduce the side of the
     position being cut; None for the kinds that are not scored."""
     if kind not in KINDS:
@@ -59,19 +63,32 @@ def add(coin: str | None, side: str | None, text: str, kind: str = "trade", conf
            "fit": fit, "text": text}
     if ref:
         row["ref"] = ref
+    if source:
+        row["source"] = source   # transcript:<file>:<line> | memory:<file> | research:<file> | git:<hash>
+    if trigger:
+        row["trigger"] = trigger if trigger in TRIGGERS else "unknown"   # the user asked for a view, or I gave it unprompted
+    if view:
+        row["view"] = view       # one line: how I would do it, or why not
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as handle:
         handle.write(json.dumps(row) + "\n")
     return row
 
 
-def load(path: Path = LOG) -> list[dict]:
+# Rows logged in error stay in the file (it is append only) but are left out of every count and score; each carries its reason.
+VOIDED = {("2026-11-05", "The most you could short is 6,761 HEMI"): "a statement of what fits, not a recommendation"}
+
+
+def load(path: Path = LOG, include_voided: bool = False) -> list[dict]:
     if not path.exists():
         return []
     rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     for row in rows:
         row.setdefault("fit", "unknown")   # rows logged before the field existed
-    return rows
+        for (day, prefix), reason in VOIDED.items():
+            if row["at"][:10] == day and row["text"].startswith(prefix):
+                row["voided"] = reason
+    return rows if include_voided else [r for r in rows if not r.get("voided")]
 
 
 def _ms(iso: str) -> int:
@@ -200,7 +217,9 @@ def summary(results: list[dict]) -> dict:
     out = {"n": len(results), "followed": sum(1 for r in results if r.get("followed")), "horizons": {}}
     for days in HORIZONS_DAYS + ("now",):
         out["horizons"][days] = hit_stats([r["moves"][days] for r in results if r.get("moves", {}).get(days) is not None])
-    out["verdict"] = "too few suggestions scored to say anything" if len(results) < MIN_SCORED else "enough to read, with the usual caution"
+    # the desk's rule is 20 scored per reading: a horizon with fewer outcomes than that is not read, however many calls there are in all
+    longest = max((out["horizons"][d]["n"] for d in HORIZONS_DAYS), default=0)
+    out["verdict"] = "too few suggestions scored to say anything" if longest < MIN_SCORED else "enough to read, with the usual caution"
     return out
 
 
@@ -264,7 +283,51 @@ def comparison(results: list[dict], own: list[dict]) -> dict:
     trades = [r for r in results if r["kind"] in ("trade",)]
     return {"suggested_followed": summary([r for r in trades if r.get("followed")]),
             "suggested_not_followed": summary([r for r in trades if not r.get("followed")]),
-            "own_not_suggested": summary(own)}
+            "own_not_suggested": summary(own),
+            # every directional call (trade, avoid, reduce), for a larger n; an avoid counts as followed when nothing was opened
+            "all_followed": summary([r for r in results if r.get("followed")]),
+            "all_not_followed": summary([r for r in results if not r.get("followed")])}
+
+
+def counts(rows: list[dict]) -> dict:
+    """How many suggestions, by kind, by trigger and by month, and how many are scoreable on price."""
+    scoreable = [r for r in rows if r["kind"] in SCORED_KINDS and r.get("coin") and r.get("side") in ("long", "short") and r.get("fit") != "process"]
+    return {"n": len(rows), "scoreable": len(scoreable),
+            "by_kind": dict(sorted(defaultdict(int, {k: sum(1 for r in rows if r["kind"] == k) for k in KINDS}).items(), key=lambda kv: -kv[1])),
+            "by_trigger": {t: sum(1 for r in rows if r.get("trigger", "unknown") == t) for t in TRIGGERS},
+            "by_month": {m: sum(1 for r in rows if r["at"][:7] == m) for m in sorted({r["at"][:7] for r in rows})},
+            "by_fit": {f: sum(1 for r in rows if r.get("fit") == f) for f in FITS}}
+
+
+STOP = {"about", "after", "again", "before", "being", "build", "could", "every", "first", "going", "have", "instead", "never", "other", "should", "since",
+        "still", "their", "there", "these", "thing", "think", "those", "though", "under", "until", "using", "which", "while", "would", "your", "with", "that",
+        "this", "from", "when", "then", "than", "them", "into", "more", "only", "just", "make", "next", "keep", "like", "some", "want", "need", "also", "what"}
+
+
+def _keywords(text: str) -> set[str]:
+    import re
+
+    return {w for w in re.findall(r"[a-z][a-z0-9_]{4,}", text.lower()) if w not in STOP}
+
+
+def commits_after(at: str, days: int = 3) -> list[dict]:
+    """The desk's commits (hash, time, subject) in the ``days`` after a timestamp, for the follow-up check."""
+    start = datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    out = subprocess.run(["git", "-C", str(ROOT), "log", f"--since={start.isoformat()}", f"--until={(start.timestamp() + days * 86400)}", "--format=%h%x09%aI%x09%s"],
+                         capture_output=True, text=True).stdout
+    return [{"hash": h, "subject": subj} for h, _, subj in (line.split("\t", 2) for line in out.splitlines() if line.count("\t") >= 2)]
+
+
+def followup(row: dict, commits: list[dict]) -> dict:
+    """The checkable follow-up for a suggestion that is not a price call: a commit in the next 3 days that shares at least two content
+    words with it (the thing was built or changed), else 'no matching commit'. It shows that something was done, not that it was right."""
+    words = _keywords(row["text"] + " " + (row.get("view") or ""))
+    best = None
+    for commit in commits:
+        shared = len(words & _keywords(commit["subject"]))
+        if shared >= 2 and (best is None or shared > best[0]):
+            best = (shared, commit)
+    return {"done": bool(best), "evidence": f"{best[1]['hash']} {best[1]['subject'][:70]}" if best else "no matching commit"}
 
 
 def _fills() -> list[dict]:
@@ -299,7 +362,16 @@ def build(now_ms: int | None = None) -> dict:
     fills = _fills()
     results = score(rows, fills, now_ms, entries=_journal_entries())
     own = own_entries(fills, rows, now_ms)
-    return {"rows": rows, "results": results, "own": own, "summary": summary(results), "comparison": comparison(results, own),
+    scored_keys = {(r["at"], r["text"]) for r in results}
+    others = [r for r in rows if (r["at"], r["text"]) not in scored_keys and r["kind"] != "info"]
+    follow = []
+    cache: dict[str, list[dict]] = {}
+    for r in others:
+        day = r["at"][:10]
+        if day not in cache:
+            cache[day] = commits_after(r["at"][:10] + "T00:00:00Z", 4)   # commits from that day through the next 3 days
+        follow.append({**r, **followup(r, [c for c in cache[day]])})
+    return {"rows": rows, "results": results, "own": own, "counts": counts(rows), "followups": follow, "summary": summary(results), "comparison": comparison(results, own),
             "by_fit": split_by(results, lambda r: r.get("fit", "unknown")), "by_label": split_by([r for r in results if r.get("followed") and r["kind"] == "trade"], lambda r: r.get("label") or "unknown"),
             "weekly": weekly(results), "weekly_now": weekly(results, "now")}
 
@@ -349,6 +421,30 @@ def tiles_payload(data: dict):
     return frame, figure
 
 
+def log_frame(data: dict):
+    """The 'Suggestions log' table: per kind how many, how many asked vs unprompted, how many are scoreable on price, and for the rest the
+    share with a matching commit in the next three days (it shows it was done, not that it was right)."""
+    import pandas as pd
+
+    done = defaultdict(list)
+    for r in data["followups"]:
+        done[r["kind"]].append(r["done"])
+    scored = defaultdict(int)
+    for r in data["results"]:
+        scored[r["kind"]] += 1
+    rows = []
+    for kind, n in data["counts"]["by_kind"].items():
+        if not n:
+            continue
+        group = [r for r in data["rows"] if r["kind"] == kind]
+        d = done.get(kind) or []
+        rows.append({"Kind": kind, "Suggestions": n, "Asked": sum(1 for r in group if r.get("trigger") == "asked"),
+                     "Unprompted": sum(1 for r in group if r.get("trigger") == "unprompted"), "Scored on price": scored.get(kind) or None,
+                     "Done (commit)": (sum(d) / len(d)) if d else None})
+    frame = pd.DataFrame(rows)
+    return frame
+
+
 def publish(push: bool = True) -> list[str]:
     from desk import tile_feed
 
@@ -360,6 +456,12 @@ def publish(push: bool = True) -> list[str]:
         tile_feed.publish(frame, "My suggestions", reason="Claude's calls scored against the market and your execution", relevance=0.1, hours=24 * 14,
                           key="claude-suggestions", formats=formats, push=False)
         keys.append("claude-suggestions")
+    log = log_frame(data)
+    if len(log):
+        tile_feed.publish(log, "Suggestions log", reason="every recommendation by kind, asked or unprompted, scored or checked against what was done", relevance=0.1,
+                          hours=24 * 14, key="claude-suggestions-log", formats={"Done (commit)": "pct", "Suggestions": "int", "Asked": "int", "Unprompted": "int",
+                                                                                   "Scored on price": "int"}, push=False)
+        keys.append("claude-suggestions-log")
     if figure is not None:
         interim = not any(data["weekly"].values())
         tile_feed.publish(figure, "My suggestions over time" + (" (so far)" if interim else ""), reason="cumulative hit rate by week, strategy-fit vs additional", relevance=0.1, hours=24 * 14,
@@ -385,46 +487,77 @@ CLASSIFICATION_NOTES = """- **fit = strategy** when the call applies a rule or t
 - **price moves** are measured from the hour of the suggestion in the suggested direction at 1, 3 and 7 days; 'so far' is the move to the latest price and is interim."""
 
 
+COVERAGE = """The transcripts cover **2026-11-02 19:52 UTC to 2026-11-20 20:20 UTC** (six session files in three Claude project folders: 2 Crypto-Portfolio-Analytics sessions,
+the old Dropbox trading-desk session, and 3 sessions in the current folder). The repo started on **2026-10-16**, so **2026-10-16 to 2026-11-02 is not covered by any transcript**:
+whatever I advised in those two weeks is not in this log. Other sources used for the record, only where a recommendation of mine is clear: the memory files (dated by their
+modified time; 5 rows), research notes dated by git (4 rows) and git history (only to check whether a suggestion was followed by a matching commit, never to invent one).
+data/feedback.jsonl holds your clicks, not my advice, so it is not a source."""
+
+
 def report_text(data: dict) -> str:
-    s = data["summary"]
-    lines = ["# Suggestions review", "", f"Generated from desk/suggestions.py (log: data/suggestions.jsonl, append only). Scored suggestions: **{s['n']}** (followed: {s['followed']}). "
-             f"Verdict: **{s['verdict']}**.", ""]
-    lines += ["## Hit rate (price moved the suggested way)", "", "| Horizon | n | Hit rate | Mean move |", "|---|---|---|---|"]
+    s, c = data["summary"], data["counts"]
+    lines = ["# Suggestions review", "", f"Generated from desk/suggestions.py (log: data/suggestions.jsonl, append only). **{c['n']} suggestions logged**, **{c['scoreable']} scoreable on price**, "
+             f"{s['n']} scored so far (followed: {s['followed']}). Verdict: **{s['verdict']}**.", "", "## What is covered", "", COVERAGE, "",
+             "A suggestion here is any advice I gave in an exchange (a view on what to do: how to size, open/close/hold/avoid, which tool or rule, what to test next, whether a design or "
+             "number is right, why something should not be done), asked for or unprompted. Extracted from the assistant messages by sentence (first-person views, 'I'd', 'I recommend', "
+             "'my read', 'not worth', 'better to', 'don't ...'), then classified by rule and reviewed on the price calls; recall is not perfect.", ""]
+    lines += ["## Counts", "", "| Kind | n | Asked | Unprompted |", "|---|---|---|---|"]
+    for kind, n in c["by_kind"].items():
+        if n:
+            g = [r for r in data["rows"] if r["kind"] == kind]
+            lines.append(f"| {kind} | {n} | {sum(1 for r in g if r.get('trigger') == 'asked')} | {sum(1 for r in g if r.get('trigger') == 'unprompted')} |")
+    lines += ["", f"By trigger: asked {c['by_trigger']['asked']}, unprompted {c['by_trigger']['unprompted']}, unknown {c['by_trigger']['unknown']} (rows logged before the field). "
+              f"By fit: " + ", ".join(f"{k} {v}" for k, v in c["by_fit"].items() if v) + ". By month: " + ", ".join(f"{k} {v}" for k, v in c["by_month"].items()) + ".", ""]
+    lines += ["## Hit rate (price moved the suggested way)", "", "| Horizon | n | Hit rate | Mean move | z vs 50% |", "|---|---|---|---|---|"]
     for d in ("now",) + HORIZONS_DAYS:
         h = s["horizons"][d]
-        lines.append(f"| {'so far (interim)' if d == 'now' else str(d) + 'd'} | {h['n']} | {_rate(h['hit'])} | {_pct(h['mean']) or 'n/a'} |")
-    lines += ["", "## Suggested vs the user's own entries (so far / 3d)", "", "| Group | n (so far) | Hit rate so far | Mean so far | n (3d) | Hit 3d |", "|---|---|---|---|---|---|"]
-    for name, label in (("suggested_followed", "Suggested and followed"), ("suggested_not_followed", "Suggested, not followed"), ("own_not_suggested", "Own entries, never suggested")):
-        now, h3 = data["comparison"][name]["horizons"]["now"], data["comparison"][name]["horizons"][3]
-        lines.append(f"| {label} | {now['n']} | {_rate(now['hit'])} | {_pct(now['mean']) or 'n/a'} | {h3['n']} | {_rate(h3['hit'])} |")
-    lines += ["", "## By fit (strategy vs additional)", "", "| Fit | n scored | Hit rate so far (n) | Hit rate 3d (n) |", "|---|---|---|---|"]
+        z = "" if h.get("z") is None else f"{h['z']:.1f}"
+        lines.append(f"| {'so far (interim)' if d == 'now' else str(d) + 'd'} | {h['n']} | {_rate(h['hit'])} | {_pct(h['mean']) or 'n/a'} | {z} |")
+    lines += ["", "## Suggested vs the user's own entries", "", "| Group | n | Hit 1d (n) | Hit 3d (n) | Hit 7d (n) | Hit so far (n) | Mean so far |", "|---|---|---|---|---|---|---|"]
+    for name, label in (("suggested_followed", "Suggested trades, followed"), ("suggested_not_followed", "Suggested trades, not followed"), ("all_followed", "All directional calls, followed"),
+                        ("all_not_followed", "All directional calls, not followed"), ("own_not_suggested", "Your own entries, never suggested")):
+        g = data["comparison"][name]
+        cell = lambda d: f"{_rate(g['horizons'][d]['hit'])} ({g['horizons'][d]['n']})"
+        lines.append(f"| {label} | {g['n']} | {cell(1)} | {cell(3)} | {cell(7)} | {cell('now')} | {_pct(g['horizons']['now']['mean']) or 'n/a'} |")
+    lines += ["", "All of these sit in one regime (a falling crypto market with the desk net short), so the calls and the entries are not independent: a high hit rate for shorts here "
+              "says the regime, not skill. Directional calls measured: trade, avoid, reduce. An avoid is followed when nothing was opened.", ""]
+    lines += ["## By fit (strategy vs additional)", "", "| Fit | n scored | Hit 3d (n) | Hit so far (n) |", "|---|---|---|---|"]
     for fit, out in data["by_fit"].items():
-        now, h3 = out["horizons"]["now"], out["horizons"][3]
-        lines.append(f"| {fit} | {out['n']} | {_rate(now['hit'])} ({now['n']}) | {_rate(h3['hit'])} ({h3['n']}) |")
-    lines += ["", "## Followed suggestions by the label the user chose", "", "| Label | n | Hit rate so far (n) |", "|---|---|---|"]
+        h3, now = out["horizons"][3], out["horizons"]["now"]
+        lines.append(f"| {fit} | {out['n']} | {_rate(h3['hit'])} ({h3['n']}) | {_rate(now['hit'])} ({now['n']}) |")
+    lines += ["", "## Followed trades by the label the user chose", "", "| Label | n | Hit 3d (n) | Hit so far (n) |", "|---|---|---|---|"]
     for label, out in data["by_label"].items():
-        now = out["horizons"]["now"]
-        lines.append(f"| {label} | {out['n']} | {_rate(now['hit'])} ({now['n']}) |")
+        h3, now = out["horizons"][3], out["horizons"]["now"]
+        lines.append(f"| {label} | {out['n']} | {_rate(h3['hit'])} ({h3['n']}) | {_rate(now['hit'])} ({now['n']}) |")
     if not data["by_label"]:
-        lines.append("| (none followed with a label yet) | 0 | n/a |")
-    lines += ["", "## Every suggestion logged", "", "| At (UTC) | Kind | Fit | Conf | Coin | Side | Ref | Quote |", "|---|---|---|---|---|---|---|---|"]
-    for r in sorted(data["rows"], key=lambda r: r["at"]):
-        lines.append(f"| {r['at']} | {r['kind']} | {r.get('fit', '')} | {r['confidence']} | {r.get('coin') or ''} | {r.get('side') or ''} | {r.get('ref', '')} | {r['text'][:200].replace('|', '/')} |")
-    lines += ["", "## How the ambiguous ones were classified", "", CLASSIFICATION_NOTES, ""]
-    sc = data["by_fit"]
-    n_strategy, n_additional = sc.get("strategy", {}).get("n", 0), sc.get("additional", {}).get("n", 0)
+        lines.append("| (none) | 0 | n/a | n/a |")
+    lines += ["", "## The rest: was it done?", "", "For suggestions that are not price calls the checkable follow-up is a commit in the next three days that shares content words with the advice "
+              "(it was built or changed). It shows it was acted on, not that it was right; whether the outcome was what I said is checkable only for the price calls above.", "",
+              "| Kind | n | With a matching commit |", "|---|---|---|"]
+    by = defaultdict(list)
+    for r in data["followups"]:
+        by[r["kind"]].append(r["done"])
+    for kind, d in sorted(by.items(), key=lambda kv: -len(kv[1])):
+        lines.append(f"| {kind} | {len(d)} | {sum(d)} ({sum(d) / len(d):.0%}) |")
+    lines += ["", "## The scored calls", "", "| At | Kind | Side | Coin | Fit | Conf | Followed | Label | so far | 1d | 3d | 7d |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in sorted(data["results"], key=lambda r: r["at"]):
+        m = r["moves"]
+        f = lambda v: "" if v is None else f"{v * 100:+.1f}%"
+        lines.append(f"| {r['at'][:16]} | {r['kind']} | {r['side']} | {r['coin']} | {r.get('fit', '')} | {r['confidence']} | {'yes' if r.get('followed') else 'no'} | {r.get('label') or ''} | "
+                     f"{f(m.get('now'))} | {f(m.get(1))} | {f(m.get(3))} | {f(m.get(7))} |")
+    voided = [r for r in load(include_voided=True) if r.get("voided")]
+    if voided:
+        lines += ["", "## Voided (logged in error, left out of every count)", ""] + [f"- {r['at'][:10]}: {r['text'][:100]} ({r['voided']})" for r in voided]
+    lines += ["", "## Classification", "", CLASSIFICATION_NOTES, ""]
+    n_s, n_a = data["by_fit"].get("strategy", {}).get("n", 0), data["by_fit"].get("additional", {}).get("n", 0)
     lines += ["## The honest read", "",
-              f"- **Too few to say anything.** {s['n']} suggestions are scoreable (trade, avoid, reduce), none has a 1, 3 or 7 day outcome yet (the oldest is under two days old), "
-              f"and the desk's rule is 20 scored before a hit rate means anything. The 'so far' column is interim.",
-              f"- **Strategy-fit vs additional:** {n_strategy} strategy-fit and {n_additional} additional calls are scoreable. Whether my additional takes add anything beyond your "
-              f"strategy cannot be said; the weekly lines in the tile fill in as the horizons arrive.",
-              "- **What the record already shows:** most of what I recommended in these sessions was process advice (not scored). The calls on positions were few: two reduces "
-              "(XMR, ENA), one trade (SHAZ), one avoid (BVIV), four capacity holds.",
-              "- **The SHAZ call** was right in direction so far (SHAZ fell after the call) but you opened it about 16 hours later and after most of that fall; the call named the size "
-              "('smallest') and not the timing.",
-              "- **Where I was wrong or unclear:** I denied making the SHAZ suggestion a day later; the log now carries its exact quote and time. The 'offered' XMR/ENA trims were not "
-              "recommendations and are logged at low confidence for that reason.",
-              "- **Not measurable:** hold and size calls (waiting for cap room is not a price call), process advice, and anything I said in prose without a symbol and side.", ""]
+              f"- **Coverage:** {c['n']} suggestions in the 18 days the transcripts cover; nothing for 2026-10-16 to 2026-11-02, and the extraction is by sentence, so some advice buried in "
+              "long lists or tables is missed.",
+              f"- **Price calls:** {s['n']} are scored; the 1-day, 3-day and 7-day hit rates are in the table with their n. Below 20 scored the desk's rule says too few to claim anything; "
+              "the longer horizons have fewer calls than the 1-day.",
+              f"- **Strategy-fit vs additional:** {n_s} strategy-fit and {n_a} additional calls are scored. Compare their hit rates only with their n beside them.",
+              "- **Followed vs not followed vs your own entries:** see the table; the groups share one market regime, so differences between them are not evidence of skill.",
+              "- **Most of what I advise is not a price call** (design, process, rules, tests): for those the record is whether it was done, not whether it was right.", ""]
     return "\n".join(lines) + "\n"
 
 
@@ -438,6 +571,9 @@ def main(argv: list[str] | None = None) -> int:
     adder.add_argument("--confidence", default="medium", choices=CONFIDENCES)
     adder.add_argument("--fit", default="unknown", choices=FITS)
     adder.add_argument("--ref")
+    adder.add_argument("--source")
+    adder.add_argument("--trigger", choices=list(TRIGGERS))
+    adder.add_argument("--view")
     adder.add_argument("--text", required=True)
     adder.add_argument("--at", help="UTC time of the suggestion, YYYY-MM-DDTHH:MM:SSZ (default: now)")
     sub.add_parser("score")
@@ -445,7 +581,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("report")
     args = parser.parse_args(argv)
     if args.command == "add":
-        print(json.dumps(add(args.coin, args.side, args.text, args.kind, args.confidence, args.at, args.fit, args.ref)))
+        print(json.dumps(add(args.coin, args.side, args.text, args.kind, args.confidence, args.at, args.fit, args.ref, source=args.source, trigger=args.trigger, view=args.view)))
         return 0
     if args.command == "publish":
         print("published", publish())

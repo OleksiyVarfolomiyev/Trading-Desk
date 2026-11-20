@@ -1,75 +1,115 @@
 # Suggestions review
 
-Generated from desk/suggestions.py (log: data/suggestions.jsonl, append only). Scored suggestions: **4** (followed: 4). Verdict: **too few suggestions scored to say anything**.
+Generated from desk/suggestions.py (log: data/suggestions.jsonl, append only). **344 suggestions logged**, **23 scoreable on price**, 21 scored so far (followed: 18). Verdict: **too few suggestions scored to say anything**.
+
+## What is covered
+
+The transcripts cover **2026-11-02 19:52 UTC to 2026-11-20 20:20 UTC** (six session files in three Claude project folders: 2 Crypto-Portfolio-Analytics sessions,
+the old Dropbox trading-desk session, and 3 sessions in the current folder). The repo started on **2026-10-16**, so **2026-10-16 to 2026-11-02 is not covered by any transcript**:
+whatever I advised in those two weeks is not in this log. Other sources used for the record, only where a recommendation of mine is clear: the memory files (dated by their
+modified time; 5 rows), research notes dated by git (4 rows) and git history (only to check whether a suggestion was followed by a matching commit, never to invent one).
+data/feedback.jsonl holds your clicks, not my advice, so it is not a source.
+
+A suggestion here is any advice I gave in an exchange (a view on what to do: how to size, open/close/hold/avoid, which tool or rule, what to test next, whether a design or number is right, why something should not be done), asked for or unprompted. Extracted from the assistant messages by sentence (first-person views, 'I'd', 'I recommend', 'my read', 'not worth', 'better to', 'don't ...'), then classified by rule and reviewed on the price calls; recall is not perfect.
+
+## Counts
+
+| Kind | n | Asked | Unprompted |
+|---|---|---|---|
+| info | 146 | 57 | 70 |
+| design | 43 | 20 | 23 |
+| process | 41 | 14 | 27 |
+| hold | 29 | 14 | 9 |
+| test | 24 | 13 | 11 |
+| size | 19 | 6 | 12 |
+| rule | 19 | 7 | 12 |
+| trade | 12 | 10 | 0 |
+| avoid | 6 | 4 | 0 |
+| reduce | 5 | 3 | 0 |
+
+By trigger: asked 148, unprompted 164, unknown 32 (rows logged before the field). By fit: strategy 65, additional 176, process 100, unknown 3. By month: 2026-11 344.
 
 ## Hit rate (price moved the suggested way)
 
-| Horizon | n | Hit rate | Mean move |
-|---|---|---|---|
-| so far (interim) | 4 | 75% | 8.5% |
-| 1d | 0 | n/a | n/a |
-| 3d | 0 | n/a | n/a |
-| 7d | 0 | n/a | n/a |
+| Horizon | n | Hit rate | Mean move | z vs 50% |
+|---|---|---|---|---|
+| so far (interim) | 21 | 62% | 3.9% | 1.1 |
+| 1d | 17 | 47% | n/a | -0.2 |
+| 3d | 16 | 69% | 1.3% | 1.5 |
+| 7d | 5 | 40% | -1.1% | -0.4 |
 
-## Suggested vs the user's own entries (so far / 3d)
+## Suggested vs the user's own entries
 
-| Group | n (so far) | Hit rate so far | Mean so far | n (3d) | Hit 3d |
-|---|---|---|---|---|---|
-| Suggested and followed | 1 | 100% | 15.1% | 0 | n/a |
-| Suggested, not followed | 0 | n/a | n/a | 0 | n/a |
-| Own entries, never suggested | 34 | 76% | 7.8% | 27 | 81% |
+| Group | n | Hit 1d (n) | Hit 3d (n) | Hit 7d (n) | Hit so far (n) | Mean so far |
+|---|---|---|---|---|---|---|
+| Suggested trades, followed | 9 | 50% (8) | 75% (8) | 100% (1) | 100% (9) | 14.1% |
+| Suggested trades, not followed | 2 | 0% (2) | 0% (2) | 0% (2) | 0% (2) | -12.9% |
+| All directional calls, followed | 18 | 50% (14) | 77% (13) | 67% (3) | 72% (18) | 6.3% |
+| All directional calls, not followed | 3 | 33% (3) | 33% (3) | 0% (2) | 0% (3) | -10.3% |
+| Your own entries, never suggested | 30 | 56% (27) | 80% (25) | 72% (18) | 67% (30) | 7% |
+
+All of these sit in one regime (a falling crypto market with the desk net short), so the calls and the entries are not independent: a high hit rate for shorts here says the regime, not skill. Directional calls measured: trade, avoid, reduce. An avoid is followed when nothing was opened.
 
 ## By fit (strategy vs additional)
 
-| Fit | n scored | Hit rate so far (n) | Hit rate 3d (n) |
+| Fit | n scored | Hit 3d (n) | Hit so far (n) |
 |---|---|---|---|
-| strategy | 3 | 100% (3) | n/a (0) |
-| additional | 1 | 0% (1) | n/a (0) |
+| strategy | 15 | 64% (11) | 67% (15) |
+| additional | 6 | 80% (5) | 50% (6) |
 
-## Followed suggestions by the label the user chose
+## Followed trades by the label the user chose
 
-| Label | n | Hit rate so far (n) |
+| Label | n | Hit 3d (n) | Hit so far (n) |
+|---|---|---|---|
+| directional | 7 | 67% (6) | 100% (7) |
+| unknown | 2 | 100% (2) | 100% (2) |
+
+## The rest: was it done?
+
+For suggestions that are not price calls the checkable follow-up is a commit in the next three days that shares content words with the advice (it was built or changed). It shows it was acted on, not that it was right; whether the outcome was what I said is checkable only for the price calls above.
+
+| Kind | n | With a matching commit |
 |---|---|---|
-| directional | 1 | 100% (1) |
+| design | 43 | 16 (37%) |
+| process | 41 | 11 (27%) |
+| hold | 29 | 5 (17%) |
+| test | 24 | 8 (33%) |
+| size | 19 | 2 (11%) |
+| rule | 19 | 5 (26%) |
+| trade | 1 | 0 (0%) |
+| avoid | 1 | 0 (0%) |
 
-## Every suggestion logged
+## The scored calls
 
-| At (UTC) | Kind | Fit | Conf | Coin | Side | Ref | Quote |
-|---|---|---|---|---|---|---|---|
-| 2026-11-17T23:28:24Z | info | additional | medium |  |  | 371483c0:2802 | Next, build a meme-spike detector as a dashboard alert, then a short rule that stays off until switched on. |
-| 2026-11-19T03:37:41Z | info | process | high |  |  | c72af75d:267 | Audit the broad except blocks into account-status chips: 'I'd recommend yes'. |
-| 2026-11-19T04:12:08Z | info | process | high |  |  | c72af75d:566 | Run the Market-only vs Market-plus-sectors comparison before choosing a crypto risk model: 'I'd recommend yes'. |
-| 2026-11-19T17:05:11Z | info | process | high |  |  | c72af75d:1128 | Add a 'Picks (beta-adjusted)' hover for crypto only; keep the dollar version as default. |
-| 2026-11-19T18:32:08Z | info | process | high |  |  | c72af75d:1214 | Make 'one behaviour change per week' a standing check: 'I'd recommend yes'. |
-| 2026-11-19T19:40:34Z | info | process | high |  |  | c72af75d:1288 | Split the feat label and relabel the history by purpose: 'I'd recommend yes'. |
-| 2026-11-19T22:09:51Z | info | process | high |  |  | c72af75d:1708 | Draw desk, books and indices from the same daily closes on desk vs benchmarks: 'I'd recommend it'. |
-| 2026-11-19T22:41:44Z | reduce | strategy | low | ENA | long | c72af75d:2037 | Offered as an option, not recommended: trim ENA $1.81K to the restored $917 (frees ~$377 of cap). |
-| 2026-11-19T22:41:44Z | reduce | strategy | low | XMR | long | c72af75d:2037 | Offered as an option, not recommended: trim XMR $1.98K to the restored $1.78K (frees ~$39 of cap). |
-| 2026-11-19T23:31:42Z | info | process | high |  |  | c72af75d:2337 | Cut the attribution Y/All and the return chart All view to start at the managed start: 'I'd recommend yes'. |
-| 2026-11-20T00:44:34Z | hold | additional | medium | ETH |  | c72af75d:2530 | ETH neutral ladder: let it run to ~200 fills; if no edge, stop ETH and try a wider-spread coin. |
-| 2026-11-20T00:52:53Z | info | process | high |  |  | c72af75d:2581 | Record a one-line thesis per stock position at entry: 'I'd recommend yes'. |
-| 2026-11-20T00:53:54Z | info | process | high |  |  | c72af75d:2592 | Switch the adaptive MM tuner off for both ladders until their 200-fill reviews: 'I'd recommend yes'. |
-| 2026-11-20T01:44:53Z | hold | strategy | medium | xyz:QNT | short | c72af75d:2658 | Four shorts blocked by the cap: 'I'd hold them' until the cap opens (capacity call, not a price call). |
-| 2026-11-20T01:44:53Z | hold | strategy | medium | xyz:SHAZ | short | c72af75d:2658 | Four shorts blocked by the cap: 'I'd hold them' until the cap opens (capacity call, not a price call). |
-| 2026-11-20T01:44:53Z | hold | strategy | medium | para:SOFI | short | c72af75d:2658 | Four shorts blocked by the cap: 'I'd hold them' until the cap opens (capacity call, not a price call). |
-| 2026-11-20T01:44:53Z | hold | strategy | medium | io:IONQ | short | c72af75d:2658 | Four shorts blocked by the cap: 'I'd hold them' until the cap opens (capacity call, not a price call). |
-| 2026-11-20T01:49:04Z | trade | strategy | medium | xyz:SHAZ | short | c72af75d:2693 | When there's room, SHAZ deserves the smallest size, because its beta and volatility are the highest. (exact time of the SHAZ call) |
-| 2026-11-20T02:10:16Z | info | process | medium |  |  | c72af75d:2754 | Do not rename the code (desk.dashboard to desk.app): 'I'd leave it' (the user said rename). |
-| 2026-11-20T03:15:34Z | info | process | medium |  |  | c72af75d:3292 | A confirm-step warning when an entry goes against the book's net direction near the cap: 'I'd add it'. |
-| 2026-11-20T03:28:46Z | hold | additional | medium | NEAR |  | c72af75d:3374 | NEAR ladder underwater by design (no loss-side reduce): 'I'd leave it running'. |
-| 2026-11-20T03:53:33Z | info | process | high |  |  | c72af75d:3509 | Build the data-age hover and stale chip: 'I'd recommend yes'. |
-| 2026-11-20T13:51:16Z | info | additional | high |  |  | c72af75d:4124 | Test the Fear & Greed index as a signal (BTC and alt basket after days at 15 or below): 'I'd recommend yes'. |
-| 2026-11-20T14:00:00Z | trade | unknown | medium | xyz:SHAZ | short |  | SHAZ deserves the smallest size when there is room (highest beta and volatility of the four stopped shorts). Time approximate. |
-| 2026-11-20T15:07:00Z | info | process | medium |  |  | c72af75d:4515 | Add a label step to Batch first; leave ladders alone. |
-| 2026-11-20T15:17:12Z | info | process | medium |  |  | c72af75d:4617 | Queue the split adjustment for a calm day unless the tile misleads (the user said ship it). |
-| 2026-11-20T15:43:52Z | avoid | additional | low | mkts:BVIV | long | c72af75d:4759 | BVIV long: 'probably not worth it as a hedge'; at most a small carry trade (exact time). |
-| 2026-11-20T15:47:55Z | size | strategy | medium | xyz:CVX | short | c72af75d:4776 | CVX short: half size if you want to keep room for another trade today; the full plan if CVX is the one trade. |
-| 2026-11-20T16:30:00Z | avoid | unknown | medium | mkts:BVIV | long |  | BVIV long: probably not worth it as a hedge (adds to the short-crypto bet); at most a small carry trade. Time approximate. |
-| 2026-11-20T16:31:42Z | info | process | medium |  |  | c72af75d:5053 | Highlights: follow the tile (young positions show since entry) rather than naming the window. |
-| 2026-11-20T16:44:38Z | info | process | high |  |  | c72af75d:5176 | Show the stocks beta per dollar held first: 'I'd recommend yes'. |
-| 2026-11-20T17:30:00Z | info | unknown | medium |  |  |  | CVX short sized .65K at 68% of wallet by the rule; suggested the half size if room for another trade matters. Time approximate. |
+| At | Kind | Side | Coin | Fit | Conf | Followed | Label | so far | 1d | 3d | 7d |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-11-08T04:36 | trade | short | BTC | additional | medium | yes |  | +14.5% | +1.8% | +2.5% | +14.9% |
+| 2026-11-08T04:36 | avoid | long | BTC | strategy | medium | yes |  | +14.5% | +1.8% | +2.5% | +14.9% |
+| 2026-11-10T14:36 | reduce | short | AVAX | additional | medium | yes |  | -14.1% | +4.7% | +2.0% | -13.5% |
+| 2026-11-12T21:37 | trade | long | HYPE | additional | medium | no |  | -15.1% | -0.4% | -5.1% | -6.8% |
+| 2026-11-13T03:37 | trade | short | VVV | strategy | medium | no |  | -10.8% | -3.7% | -11.9% | -14.9% |
+| 2026-11-14T01:29 | reduce | short | ICP | strategy | medium | yes |  | -17.1% | -11.9% | +2.2% |  |
+| 2026-11-14T01:44 | avoid | long | BERA | additional | high | yes |  | +38.4% | +26.0% | +30.8% |  |
+| 2026-11-14T01:44 | reduce | short | BERA | strategy | low | yes |  | -38.4% | -26.0% | -30.8% |  |
+| 2026-11-15T01:21 | avoid | short | GRAM | strategy | medium | no |  | -4.9% | +3.4% | +5.4% |  |
+| 2026-11-15T01:54 | trade | short | ETH | additional | low | yes |  | +11.1% | -0.5% | +0.7% |  |
+| 2026-11-16T15:39 | trade | short | PUMP | strategy | medium | yes | directional | +16.2% | +5.7% | +7.4% |  |
+| 2026-11-16T15:39 | trade | short | ZRO | strategy | medium | yes | directional | +19.9% | +4.2% | +6.0% |  |
+| 2026-11-16T15:39 | trade | short | ARB | strategy | medium | yes | directional | +15.9% | +2.3% | +7.9% |  |
+| 2026-11-16T15:39 | trade | short | UNI | strategy | medium | yes | directional | +15.3% | -2.3% | +4.1% |  |
+| 2026-11-16T15:49 | trade | short | TRUMP | strategy | medium | yes | directional | +11.1% | -1.4% | -1.6% |  |
+| 2026-11-16T15:49 | trade | short | MELANIA | strategy | medium | yes | directional | +6.0% | -0.6% | -1.4% |  |
+| 2026-11-17T21:01 | avoid | short | BNB | strategy | low | yes |  | -9.1% | -2.4% |  |  |
+| 2026-11-19T22:41 | reduce | long | ENA | strategy | low | yes |  | +7.8% |  |  |  |
+| 2026-11-19T22:41 | reduce | long | XMR | strategy | low | yes |  | +9.1% |  |  |  |
+| 2026-11-20T01:49 | trade | short | xyz:SHAZ | strategy | medium | yes | directional | +17.2% |  |  |  |
+| 2026-11-20T15:43 | avoid | long | mkts:BVIV | additional | low | yes |  | -5.2% |  |  |  |
 
-## How the ambiguous ones were classified
+## Voided (logged in error, left out of every count)
+
+- 2026-11-05: The most you could short is 6,761 HEMI, about **$31**, with $3.37 of risk. (a statement of what fits, not a recommendation)
+
+## Classification
 
 - **fit = strategy** when the call applies a rule or thesis you set (the caps, the sizing rule, ladders take-profit-only, thesis review first, the short-crypto
   default). The four-shorts hold, the XMR/ENA reduces, the SHAZ call and the CVX size are strategy-fit. The SHAZ call is the ambiguous one: *which* of the four to open
@@ -87,10 +127,9 @@ Generated from desk/suggestions.py (log: data/suggestions.jsonl, append only). S
 
 ## The honest read
 
-- **Too few to say anything.** 4 suggestions are scoreable (trade, avoid, reduce), none has a 1, 3 or 7 day outcome yet (the oldest is under two days old), and the desk's rule is 20 scored before a hit rate means anything. The 'so far' column is interim.
-- **Strategy-fit vs additional:** 3 strategy-fit and 1 additional calls are scoreable. Whether my additional takes add anything beyond your strategy cannot be said; the weekly lines in the tile fill in as the horizons arrive.
-- **What the record already shows:** most of what I recommended in these sessions was process advice (not scored). The calls on positions were few: two reduces (XMR, ENA), one trade (SHAZ), one avoid (BVIV), four capacity holds.
-- **The SHAZ call** was right in direction so far (SHAZ fell after the call) but you opened it about 16 hours later and after most of that fall; the call named the size ('smallest') and not the timing.
-- **Where I was wrong or unclear:** I denied making the SHAZ suggestion a day later; the log now carries its exact quote and time. The 'offered' XMR/ENA trims were not recommendations and are logged at low confidence for that reason.
-- **Not measurable:** hold and size calls (waiting for cap room is not a price call), process advice, and anything I said in prose without a symbol and side.
+- **Coverage:** 344 suggestions in the 18 days the transcripts cover; nothing for 2026-10-16 to 2026-11-02, and the extraction is by sentence, so some advice buried in long lists or tables is missed.
+- **Price calls:** 21 are scored; the 1-day, 3-day and 7-day hit rates are in the table with their n. Below 20 scored the desk's rule says too few to claim anything; the longer horizons have fewer calls than the 1-day.
+- **Strategy-fit vs additional:** 15 strategy-fit and 6 additional calls are scored. Compare their hit rates only with their n beside them.
+- **Followed vs not followed vs your own entries:** see the table; the groups share one market regime, so differences between them are not evidence of skill.
+- **Most of what I advise is not a price call** (design, process, rules, tests): for those the record is whether it was done, not whether it was right.
 
