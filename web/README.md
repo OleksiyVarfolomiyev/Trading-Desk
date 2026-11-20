@@ -12,7 +12,7 @@ Caddy's HTTPS. The server pulls `main` every two minutes and restarts the relay,
 live without copying anything.
 
 - **The page:** `web/build_site.sh` assembles it into `web/site` on every pull. It takes
-  `index.html` and `live.js` from `web/`, and `app.js` and `app.css` from `desk/dashboard_static`,
+  `index.html` and `live.js` from `web/`, and `app.js` and `app.css` from `desk/app_static`,
   so the web copy always looks like the local dashboard. `live.js` builds the same data the local
   dashboard server serves, and the dashboard's renderer draws it. It refreshes every minute.
 - **Market data** (prices, 24-hour moves, daily candles, funding) comes straight from HL. Token

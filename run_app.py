@@ -1,8 +1,8 @@
 """Start the live desk dashboard from any folder:
 
-    /Users/admin/anaconda3/envs/py314/bin/python /Users/admin/trading-desk/run_dashboard.py --open
+    /Users/admin/anaconda3/envs/py314/bin/python /Users/admin/trading-desk/run_app.py --open
 
-Same options as ``python -m desk.dashboard`` (run from the repository root).
+Same options as ``python -m desk.app`` (run from the repository root).
 """
 
 import sys
@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from desk.dashboard import main  # noqa: E402
+from desk.app import main  # noqa: E402
 
 if __name__ == "__main__":
     from desk.privacy import mask_output

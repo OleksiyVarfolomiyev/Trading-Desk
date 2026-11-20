@@ -2,7 +2,7 @@
 money must agree, and shares of a whole must add up to it. A break means a table left something out (as the
 strategy table once left out IB's positions) or double counts it.
 
-``checks(tables)`` takes the page's tables (``{"columns", "rows", "total"}`` as desk/dashboard.py builds them)
+``checks(tables)`` takes the page's tables (``{"columns", "rows", "total"}`` as desk/app.py builds them)
 and returns attention rows, ("Tables disagree", what and by how much), empty when everything ties out. web/live.js
 runs the same checks in the browser (``reconcile``).
 

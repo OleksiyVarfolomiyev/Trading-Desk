@@ -61,7 +61,7 @@ The stock book is small, so a full Russell model is overkill and the data is mis
 ## Plugging in
 
 - Python: `desk/factor_risk.py` (model, pure functions) and `research/factor_risk_study.py` (build and validation, writes `research/data/factor_risk_*.csv`). Daily refresh by the existing data job, not by the trading daemon.
-- Dashboard: one tile, attention-first: ex-ante vol and the top factor/position contributions, with an alert when a factor's share of variance jumps or a book's predicted vol breaches its realised range. Mirror in `desk/dashboard_static/app.js` and `web/live.js` per the "improvements across the desk" rule; simple on the first screen, details on hover.
+- Dashboard: one tile, attention-first: ex-ante vol and the top factor/position contributions, with an alert when a factor's share of variance jumps or a book's predicted vol breaches its realised range. Mirror in `desk/app_static/app.js` and `web/live.js` per the "improvements across the desk" rule; simple on the first screen, details on hover.
 - Daemon: read-only use first (fit-entry check: "this trade adds X% to the market factor"), extending `desk/stress.py fit_entry`. No auto-trading or sizing from the model until it passes the forecast test for a full out-of-sample quarter.
 - Notebooks: a minimal-code cell in `portfolio_analytics.ipynb` showing the factor decomposition.
 

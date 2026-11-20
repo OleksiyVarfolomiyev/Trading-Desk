@@ -1,4 +1,4 @@
-# Live dashboard and desk analytics (python run_dashboard.py). Python 3.10 or newer.
+# Live dashboard and desk analytics (python run_app.py). Python 3.10 or newer.
 numpy
 pandas
 plotly

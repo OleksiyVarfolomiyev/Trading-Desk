@@ -7,7 +7,7 @@ from http.server import ThreadingHTTPServer
 import numpy as np
 import pandas as pd
 
-from desk.dashboard import account_shares, json_safe, make_handler, table, with_position_returns
+from desk.app import account_shares, json_safe, make_handler, table, with_position_returns
 
 
 class PayloadTests(unittest.TestCase):
@@ -159,7 +159,7 @@ class WalletHistoryTests(unittest.TestCase):
         from types import SimpleNamespace
 
         from desk.accounts import Account
-        from desk.dashboard import _value_with_wallets, _wallet_value_series
+        from desk.app import _value_with_wallets, _wallet_value_series
 
         wallet = "0x" + "1" * 40
         with tempfile.TemporaryDirectory() as folder:
@@ -182,7 +182,7 @@ class WalletHistoryTests(unittest.TestCase):
         from types import SimpleNamespace
 
         from desk.accounts import Account
-        from desk.dashboard import _wallet_value_series
+        from desk.app import _wallet_value_series
 
         wallet = "0x" + "2" * 40  # a new wallet: recorded snapshots, but no one-off rebuild yet
         with tempfile.TemporaryDirectory() as folder:

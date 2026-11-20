@@ -22,12 +22,12 @@ class WebSiteTests(unittest.TestCase):
     def test_the_site_is_the_page_the_data_builder_and_the_dashboard_renderer(self):
         with tempfile.TemporaryDirectory() as folder:
             copy = Path(folder) / "repo"
-            for part in ("web", "desk/dashboard_static"):
+            for part in ("web", "desk/app_static"):
                 shutil.copytree(ROOT / part, copy / part, ignore=shutil.ignore_patterns("site", "__pycache__"))
             subprocess.run(["bash", str(copy / "web" / "build_site.sh")], check=True, capture_output=True)
             site = copy / "web" / "site"
             self.assertEqual(sorted(path.name for path in site.iterdir()), ["app.css", "app.js", "catalog.json", "index.html", "live.js"])
-            self.assertEqual((site / "app.js").read_text(), (ROOT / "desk/dashboard_static/app.js").read_text())
+            self.assertEqual((site / "app.js").read_text(), (ROOT / "desk/app_static/app.js").read_text())
             page = (site / "index.html").read_text()
             self.assertIn("plotly-4.1.1.min.js", page)
             self.assertIn('src="live.js"', page)

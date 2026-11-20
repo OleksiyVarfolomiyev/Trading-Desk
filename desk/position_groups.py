@@ -6,7 +6,7 @@ strategy, per open trade). A coin with a neutral market-making ladder and no tag
 cap, on the positions tables' rows; ``group_totals`` is the per-strategy subtotal the page shows and that
 ``desk.reconcile.strategy_groups`` ties out against the table's own total.
 
-The front end (desk/dashboard_static/app.js, ``rowStrategy``) reads the same label from ``theses`` when a row does not
+The front end (desk/app_static/app.js, ``rowStrategy``) reads the same label from ``theses`` when a row does not
 carry one, so the local dashboard and the web build group identically.
 """
 

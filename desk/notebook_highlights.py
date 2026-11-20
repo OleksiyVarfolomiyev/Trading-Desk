@@ -126,7 +126,7 @@ WARN = "#e8a10c"
 
 
 def severity(title: str, text: str) -> str:
-    """How loud a highlight is, as on the dashboards (desk/dashboard_static/app.js): "critical" (act now),
+    """How loud a highlight is, as on the dashboards (desk/app_static/app.js): "critical" (act now),
     "watch", or ""."""
     regime = title.strip().lower() == "regime"
     if CRITICAL_TITLES.search(title) or (regime and re.search(r"\bhigh\b", text)):

@@ -1,7 +1,7 @@
 /* Live data for the web copy of the desk dashboard.
 
    Builds, in the visitor's browser, the same document the local dashboard server returns from
-   /api/state (desk/dashboard.py), so the dashboard's own app.js renders it unchanged:
+   /api/state (desk/app.py), so the dashboard's own app.js renders it unchanged:
    - market data (prices, 24-hour moves, daily candles, funding) straight from HL;
    - each wallet's account data through the desk relay (web/worker.js), which holds the wallet
      addresses and never returns them;
@@ -569,7 +569,7 @@
     return { pnl: total, return: capital > 0 ? total / capital : NaN, flows };
   }
 
-  // ------------------------------------------------------------------ tables (as desk/dashboard.py)
+  // ------------------------------------------------------------------ tables (as desk/app.py)
   function table(rows, columns, formats, options = {}) {
     if (!rows.length) return { columns: [], rows: [], total: null };
     const keys = options.key || {};

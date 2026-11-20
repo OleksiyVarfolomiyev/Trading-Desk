@@ -64,7 +64,7 @@ if __name__ == "__main__":
 
 class DayReturnTests(unittest.TestCase):
     def test_24h_return_is_each_accounts_change_over_its_value_a_day_ago(self):
-        from desk.dashboard import with_day_returns
+        from desk.app import with_day_returns
         from desk.day_change import DayChange
 
         frame = pd.DataFrame({"Account": ["HL 07f2", "07f2 wallet", "Desk (HL + IB)", "Total"],

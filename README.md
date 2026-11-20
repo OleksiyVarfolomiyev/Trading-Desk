@@ -6,7 +6,7 @@ A multi-venue trading desk: analytics, research, and guarded execution across **
 | --- | --- | --- |
 | Desk overview: accounts, desk metrics, exposure, positions, unrealized PnL, wallet holdings outside HL, desk-wide open risk | All | [`desk_overview.ipynb`](desk_overview.ipynb), `desk/overview.py` |
 | Desk accounts: every account combined into one desk return net of deposits; performance by account, risk metrics vs BTC and SPY, charts | All | [`desk_accounts.ipynb`](desk_accounts.ipynb), `desk/desk_accounts.py` |
-| Desk (local): the desk accounts view as a self-refreshing local web page | All | `python -m desk.dashboard`, `desk/dashboard.py` |
+| Desk (local): the desk accounts view as a self-refreshing local web page | All | `python -m desk.app`, `desk/app.py` |
 | Guarded execution: dry run by default, typed confirmations, desk-wide risk cap, shared kill switch | HL, IB | `execution/hl_trade.py`, `execution/ib_trade.py` |
 | Trading daemon: live HL data and signing clients, orders about a second after confirmation, guards that act within a second | HL | `execution/hl_daemon.py` |
 | Web desk: a public, always-on copy of the desk for the HL wallets and their tokens, read live in the browser through a relay that hides the addresses | HL, wallets | `web/` (see `web/README.md`) |
@@ -107,12 +107,12 @@ IB's API has no account-value history, so beta and alpha to SPY, Sharpe, volatil
 `desk_accounts.ipynb` as a web page that keeps itself current. With the py314 environment (it needs plotly), from any folder:
 
 ```bash
-/Users/admin/anaconda3/envs/py314/bin/python /Users/admin/trading-desk/run_dashboard.py --open
+/Users/admin/anaconda3/envs/py314/bin/python /Users/admin/trading-desk/run_app.py --open
 ```
 
-From the repository root, `python -m desk.dashboard --open` does the same.
+From the repository root, `python -m desk.app --open` does the same.
 
-On another machine: clone the repository, install `python -m pip install -r requirements-dashboard.txt` (Python 3.10 or newer), copy `accounts.example.json` to `accounts.json` with the accounts to show, and run `python run_dashboard.py --open` from the clone. Without anything else configured it shows every HL wallet (balances, positions, value history downloaded from HL on the first refresh, which takes about a minute) and the wallets' main tokens on other chains. What needs local setup:
+On another machine: clone the repository, install `python -m pip install -r requirements-dashboard.txt` (Python 3.10 or newer), copy `accounts.example.json` to `accounts.json` with the accounts to show, and run `python run_app.py --open` from the clone. Without anything else configured it shows every HL wallet (balances, positions, value history downloaded from HL on the first refresh, which takes about a minute) and the wallets' main tokens on other chains. What needs local setup:
 
 | Missing | Effect |
 |---|---|
@@ -127,7 +127,7 @@ The desk value's 24-hour change is net of deposits, withdrawals and transfers (`
 
 Open positions show uPnL (%) (unrealized PnL over the cost basis; blank for wallet tokens, which have no entry price) and the 24h change (%) of each position's price from the same sources (HL perps: HL's mark against its price 24 hours ago). In every dashboard table the tinted key columns come right after the columns that name the row.
 
-The server listens on 127.0.0.1 only and has no login, because the page shows balances. It is read-only and never places orders. `kill -USR1 <pid>` writes every thread's stack to its output if a refresh seems stuck. Code: `desk/dashboard.py`, page in `desk/dashboard_static/`.
+The server listens on 127.0.0.1 only and has no login, because the page shows balances. It is read-only and never places orders. `kill -USR1 <pid>` writes every thread's stack to its output if a refresh seems stuck. Code: `desk/app.py`, page in `desk/app_static/`.
 
 ## Notebook highlights
 

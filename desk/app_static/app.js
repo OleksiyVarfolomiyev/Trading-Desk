@@ -173,7 +173,7 @@ async function flushFeedback() {
 
 // ---------------------------------------------------------------- tables
 // ---------------------------------------------------------------- what the reader sees
-// The builders (desk/dashboard.py, web/live.js) send complete tables; each view picks the columns a reader acts on,
+// The builders (desk/app.py, web/live.js) send complete tables; each view picks the columns a reader acts on,
 // names them for the reader and formats them: [source column, shown name, format]. ``derive`` adds computed
 // fields to a row first, ``keep`` drops rows, ``hover`` gives a row its tooltip.
 const RISK_CAP = 0.33;  // desk/risk.py MAX_TOTAL_RISK_PCT
@@ -2206,7 +2206,7 @@ async function load() {
     render(latest);
   } catch (error) {
     const message = window.DESK_SOURCE ? String(error.message || error)
-      : "Desk server not reachable (is python -m desk.dashboard running?)";
+      : "Desk server not reachable (is python -m desk.app running?)";
     renderAccountStatus([{ name: "Accounts", ok: false, label: "refresh failed", problem: message }], new Date());
     document.getElementById("loading").hidden = true;
   }

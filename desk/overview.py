@@ -52,7 +52,7 @@ IB_HISTORY_COLUMNS = ["ts", "equity_usd", "cash_usd", "margin_used_usd", "unreal
 
 
 # Wallet tokens outside HL are shown from this share of the desk up; smaller ones are dust for decisions (they still
-# count in desk value). The dashboards use the same cut (desk/dashboard.py, web/live.js).
+# count in desk value). The dashboards use the same cut (desk/app.py, web/live.js).
 WALLET_MIN_SHARE = 0.05
 
 

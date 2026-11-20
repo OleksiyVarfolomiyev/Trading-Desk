@@ -18,7 +18,7 @@ def row(day, effect, purpose, files="desk/a.py", subject="s", added=1, removed=0
 class ClassifyTests(unittest.TestCase):
     def test_a_settled_label_wins(self):
         labels = {"x0": {"effect": "fix", "purpose": "risk", "confidence": "high", "why": "betas from the wrong dex"}}
-        self.assertEqual(bh.classify("x0", "Colour tweak", ["desk/dashboard_static/app.css"], labels),
+        self.assertEqual(bh.classify("x0", "Colour tweak", ["desk/app_static/app.css"], labels),
                          ("fix", "risk", "high", "betas from the wrong dex"))
 
     def test_a_labelled_subject_keeps_its_label(self):
@@ -29,10 +29,10 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(bh.classify("x2", "Margin guard on account-wide liquidation risk", ["execution/hl_daemon.py"], {})[1], "risk")
         self.assertEqual(bh.classify("x3", "Short candidates flag crowded funding", ["desk/screener.py"], {})[1], "strategy")
         self.assertEqual(bh.classify("x4", "Pump and dump replay net of costs", ["research/pump.py"], {})[1], "research")
-        self.assertEqual(bh.classify("x5", "Batch execution with plan and confirm", ["desk/dashboard_static/app.js"], {})[1], "execution")
+        self.assertEqual(bh.classify("x5", "Batch execution with plan and confirm", ["desk/app_static/app.js"], {})[1], "execution")
 
     def test_presentation_changes_are_overhead(self):
-        self.assertEqual(bh.classify("x6", "Softer candle colours", ["desk/dashboard_static/app.css"], {})[1], "overhead")
+        self.assertEqual(bh.classify("x6", "Softer candle colours", ["desk/app_static/app.css"], {})[1], "overhead")
         self.assertEqual(bh.classify("x7", "Update notes", ["README.md"], {})[1], "overhead")
 
     def test_effect_from_the_subject(self):

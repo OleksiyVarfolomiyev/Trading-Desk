@@ -98,7 +98,7 @@ SAME_THING = {
     "Unrealized PnL %": "uPnL",
     "Return 7d": "Return 7D",
 }
-SURFACES = ["web/live.js", "desk/dashboard_static/app.js", "web/index.html", "desk/dashboard_static/index.html"]
+SURFACES = ["web/live.js", "desk/app_static/app.js", "web/index.html", "desk/app_static/index.html"]
 
 
 class LabelTests(unittest.TestCase):

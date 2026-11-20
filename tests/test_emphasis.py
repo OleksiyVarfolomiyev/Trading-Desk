@@ -48,7 +48,7 @@ class EmphasisTests(unittest.TestCase):
         self.assertRegex(html, r"0\.32")   # key tint
 
     def test_dashboard_tables_carry_the_key_columns(self):
-        from desk.dashboard import table
+        from desk.app import table
 
         spec = table(pd.DataFrame({"Account": ["A"], "Equity": [1.0]}), {"Equity": "usd"}, key={"Equity": "max"})
         self.assertEqual(spec["columns"][1]["emphasis"], "max")

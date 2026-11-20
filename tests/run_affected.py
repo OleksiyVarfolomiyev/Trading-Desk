@@ -9,7 +9,7 @@ itself. For a test module the map does not cover yet, the dependencies are read 
 
 Files that are not Python map by rule:
 
-* ``web/`` and ``desk/dashboard_static/`` (the page, its script and styles) -> ``test_web_build``;
+* ``web/`` and ``desk/app_static/`` (the page, its script and styles) -> ``test_web_build``;
 * documentation, notebooks, deploy scripts and data -> no tests;
 * dependency lists (``requirements*.txt``), ``tests/`` helpers and anything unrecognised -> every test.
 
@@ -45,7 +45,7 @@ SEARCH = [ROOT, ROOT / "execution", ROOT / "research", ROOT / "web"]
 # Non-Python files the tests read, by path prefix -> test modules.
 FILE_RULES = {
     "web/": {"test_web_build"},
-    "desk/dashboard_static/": {"test_web_build"},
+    "desk/app_static/": {"test_web_build"},
 }
 # Changes no test can see.
 NO_TESTS = ("deploy/", "research/data/", "data/", "docs/", ".claude/", ".github/")

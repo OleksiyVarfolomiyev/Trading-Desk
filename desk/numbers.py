@@ -1,5 +1,5 @@
 """Dollar amounts as the desk shows them: rounded for reading, the same in notebooks and on the dashboards
-(desk/dashboard_static/app.js ``usd`` follows the same rule).
+(desk/app_static/app.js ``usd`` follows the same rule).
 
     $0.42   under $10: cents
     $548    under $1,000: whole dollars
@@ -41,7 +41,7 @@ STALE_DAYS = 60   # a date older than this reads as its month (May'25); a recent
 
 def since(when, now=None) -> str:
     """A start date for reading: "May'25" once it is more than STALE_DAYS old, else "Nov 3"; "" when unknown.
-    The dashboards (desk/dashboard_static/app.js and web/live.js ``sinceLabel``) follow the same rule."""
+    The dashboards (desk/app_static/app.js and web/live.js ``sinceLabel``) follow the same rule."""
     import pandas as pd
 
     try:

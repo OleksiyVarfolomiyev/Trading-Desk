@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from desk.dashboard import save_feedback
+from desk.app import save_feedback
 from research import feedback_summary
 
 
