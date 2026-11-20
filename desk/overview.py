@@ -938,7 +938,7 @@ class DeskOverview:
         open_set = {(snapshot.account[-4:].lower(), p.symbol) for snapshot in trading for p in snapshot.positions}
         due = journal.overdue(journal.load(), open_set)
         if due:
-            names = ", ".join(f"{item['coin']} ({item['days']:.0f}d, ...{item['wallet']})" for item in due)
+            names = ", ".join(f"{item['coin']} ({item['days']:.0f}d)" for item in due)   # no wallet: execution finds where it sits
             attention.append(("Review: held > 7 days", f"{names}: close, or re-tag conviction or hedge."))
         # Each HL wallet keeps 20% of its equity free (the executor's reserve); past that it refuses new
         # trades. (Near an account-wide liquidation the trading daemon's margin guard reduces positions.)

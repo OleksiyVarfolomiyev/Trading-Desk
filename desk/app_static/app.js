@@ -1464,7 +1464,15 @@ function highlightsForKind(rows, kind) {
   });
 }
 const VENUES = /\b(xyz|flx|vntl|hyna|km|abcd|cash|para|mkts|io):/gi;
-const cleanLine = (text) => String(text).replace(VENUES, "").replace(/\bSP500\b/g, "S&P500")   // the venue is the desk's business
+// The wallet or account a position sits on is the backend's business (execution finds it): no account label, address or last four
+// in a highlight row or its hover ("HL 07f2:", "IB 8440:", "...c248", a full 0x address).
+const noAccounts = (text) => String(text)
+  .replace(/\(([^()]*?),\s*(?:\.\.\.|…)[0-9a-f]{4}\)/gi, "($1)")
+  .replace(/\b(?:HL|IB)\s+[0-9a-f]{4}\b:?\s*/gi, "")
+  .replace(/0x[0-9a-f]{6,}\w*\s*/gi, "")
+  .replace(/(?:\.\.\.|…)[0-9a-f]{4}\b:?\s*/gi, "")
+  .replace(/\s{2,}/g, " ").trim();
+const cleanLine = (text) => noAccounts(text).replace(VENUES, "").replace(/\bSP500\b/g, "S&P500")   // the venue is the desk's business
   .replace(/\s*\([^)]*\)/g, "")                                                          // no parentheses: that is explanation
   .replace(/(\d+(?:\.\d+)?%)\s+down\b/g, "-$1").replace(/(\d+(?:\.\d+)?%)\s+up\b/g, "$1")   // "1.9% down" is a red 1.9%
 const sentences = (text) => String(text).split(/(?<=[.;?])\s+(?=[A-Z])/).map((part) => part.trim()).filter(Boolean);   // each thought its own line
@@ -1642,7 +1650,7 @@ function renderHighlights(id, rows, hover = {}) {
   const quiet = new Set((((latest && latest.data && latest.data.usage_model) || {}).quiet) || []);
   const open = host.dataset.showQuiet === "1";
   const answered = (rows || []).filter(([area, text]) => !/^unreadable accounts$/i.test(area) && !state.deleted.includes(area) && !isRead(state, area, text))
-    .flatMap(([area, text]) => sentences(cleanLine(text)).map((part, i) => [area, part, text]));   // [area, line, the whole text it came from]
+    .flatMap(([area, text]) => sentences(cleanLine(text)).map((part, i) => [area, part, noAccounts(text)]));   // [area, line, the whole text it came from]
   const folded = answered.filter(([area, text]) => quiet.has(area) && severity(area, text) !== "critical");
   const shown = open ? answered : answered.filter((row) => !folded.includes(row));
   if (!shown.length && !folded.length) {   // one card holds both lists: say it once, on the first list, when both are empty
