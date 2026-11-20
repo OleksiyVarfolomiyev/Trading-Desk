@@ -2716,11 +2716,12 @@ function tradeAssets() {
     for (const row of ((tables[id] || {}).rows || [])) { const n = row.Symbol || row.Coin; if (n) names.add(String(n)); }
   return [...names].sort();
 }
-function assetPicker(label, submit, selectToSubmit = false) {
+function assetPicker(label, submit, selectToSubmit = false, initialMarket) {
   const asset = el("input", { class: "trade-input", type: "text", placeholder: "Asset", autocomplete: "off",
     spellcheck: "false", "aria-label": label });
   const suggestions = el("div", { class: "trade-suggestions", "aria-label": "Matching assets", hidden: true });
-  let selected;
+  let selected = initialMarket;
+  if (selected) asset.value = friendlyName(selected);
   const run = () => {
     const raw = asset.value.trim();
     if (!raw) { asset.focus(); return; }
@@ -2788,7 +2789,7 @@ function assetPicker(label, submit, selectToSubmit = false) {
   return { asset, wrap, run };
 }
 
-function tradeBar(close) {
+function tradeBar(close, market) {
   tradeSide = null;   // every open starts with neither side chosen
   const sides = [["long", "▲", "Long"], ["short", "▼", "Short"]].map(([value, glyph, name]) => {
     const b = el("button", { type: "button", class: "trade-side " + value, text: glyph, title: name, "aria-label": name, "aria-pressed": String(value === tradeSide) });
@@ -2808,7 +2809,7 @@ function tradeBar(close) {
     feedback("trade", "plan", coin, tradeSide + (strat.value ? " " + strat.value : ""));
     if (window.DESK_SOURCE) runAction(tradeSide === "short" ? "Short" : "Long", tradeSide, 1, { coin, wallet: "07f2", label: strat.value || undefined });
     else if (navigator.clipboard) navigator.clipboard.writeText(`${tradeSide} ${coin}${strat.value ? " as " + strat.value : ""}`);
-  });
+  }, false, market);
   const go = el("button", { type: "button", class: "trade-go", text: "▶", title: "Plan the entry", "aria-label": "Plan the entry" });
   go.addEventListener("click", picker.run);
   const controls = [picker.wrap, ...sides, strat, go];
@@ -2837,23 +2838,31 @@ function pulseBar(strip) {
   show.addEventListener("click", chartPicker.run);
   const chart = el("div", { class: "trade-bar", role: "group", "aria-label": "Chart" }, [chartPicker.wrap, show]);
 
-  for (const [label, content, face] of [
-    ["Trade", tradeBar(close), "▶"],
-    ["Chart", chart, icon("chart")],
-  ]) {
+  const open = (button, content) => {
+    close(false);
+    active = button;
+    menus.replaceChildren(content);
+    menus.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+  };
+  const addMenu = (label, face, content) => {
     const button = el("button", { type: "button", class: "icon-button pulse-action", title: label, "aria-label": label,
       "aria-expanded": "false" }, [face]);
     button.addEventListener("click", () => {
       if (active === button) { close(); return; }
-      close(false);
-      active = button;
-      menus.replaceChildren(content);
-      menus.hidden = false;
-      button.setAttribute("aria-expanded", "true");
-      content.querySelector("input")?.focus();
+      const panel = content();
+      open(button, panel);
+      panel.querySelector("input")?.focus();
     });
     controls.append(button);
-  }
+    return button;
+  };
+  const trade = addMenu("Trade", "▶", () => tradeBar(close));
+  addMenu("Chart", icon("chart"), () => chart);
+  bar.openTrade = (market) => {
+    open(trade, tradeBar(close, market));
+    trade.focus();
+  };
   bar.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && active) { event.stopPropagation(); close(); }
   });
@@ -4013,24 +4022,10 @@ async function openAsset(symbol, targetCard = null) {
     position.textContent = advice?.line || "";
     if (!advice) {
       const open = el("button", { type: "button", class: "row-act chart-act lead", text: "▶", title: `Open ${name}`, "aria-label": `Open ${name}` });
-      open.addEventListener("click", () => {
+      open.addEventListener("click", (event) => {
+        event.stopPropagation();
         if (assetAdvice(assetRows(symbol))) { card.refreshPosition(); return; }
-        const title = `Open ${name}`;
-        const { overlay, box } = actionDialog(title);
-        const sides = ["Long", "Short"].map((label) => {
-          const side = label.toLowerCase();
-          const button = el("button", { type: "button", class: "asset-action", text: label });
-          button.addEventListener("click", () => {
-            if (window.DESK_SOURCE && hlName) {
-              overlay.remove();
-              runAction(label, side, 1, { coin: hlName, wallet: "07f2" });
-            } else {
-              copy(`${side} ${hlName || market}`, button);
-            }
-          });
-          return button;
-        });
-        box.replaceChildren(el("h3", { text: title }), el("div", { class: "asset-actions" }, sides), closeButton(overlay));
+        document.querySelector(".pulse-bar")?.openTrade(hlName || market);
       });
       tradeActions.replaceChildren(open);
       return;
