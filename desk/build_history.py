@@ -259,7 +259,8 @@ def publish(path: Path = CSV_PATH, hours: float = 24 * 14, push: bool = True, di
     calendar = [d.strftime("%Y-%m-%d") for d in pd.date_range(min(days), max(days), freq="D")]
     daily = go.Figure([go.Scatter(name=purpose, x=calendar, y=[days.get(day, {}).get(purpose, 0) for day in calendar], mode="lines")
                        for purpose in PURPOSES if any(days[day].get(purpose) for day in days)])
-    daily.update_layout(yaxis={"tickformat": "d", "rangemode": "tozero"}, hovermode="x unified")
+    daily.update_layout(yaxis={"tickformat": "d", "rangemode": "tozero"}, hovermode="x unified", showlegend=True, meta={"legend": True},
+                        legend={"orientation": "h", "x": 0, "y": 1.02, "yanchor": "bottom"})   # counts, not returns: a legend, no end labels
     # Effort by purpose: share of commits, share of churn and the fix share, one group per purpose.
     purposes = by_purpose(rows)
     effort = go.Figure([go.Bar(name=name, x=[row["Purpose"] for row in purposes], y=[row[key] or None for row in purposes])

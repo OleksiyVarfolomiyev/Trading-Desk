@@ -1673,8 +1673,8 @@ function withAlpha(hex, alpha) {
 }
 
 const DATE_TICK_FORMATS = [
-  { dtickrange: [null, 86400000], value: "%H:%M" },
-  { dtickrange: [86400000, "M1"], value: "%b %d" },
+  { dtickrange: [null, 43200000], value: "%H:%M" },   // ticks of half a day or less read as times; a daily tick is a date, never "00:00"
+  { dtickrange: [43200000, "M1"], value: "%b %d" },
   { dtickrange: ["M1", "M12"], value: "%b'%y" },
   { dtickrange: ["M12", null], value: "%Y" },
 ];
@@ -3358,12 +3358,14 @@ function decoratePublishedTraces(traces, layout) {
     });
   }
   copy.forEach((trace) => { if (trace.type === "scatter" && BENCHMARK_NAME.test(String(trace.name || ""))) trace.line = Object.assign({}, trace.line, { dash: "dot" }); });
-  layout.showlegend = false;
-  delete layout.legend;
-  layout.margin = Object.assign({}, layout.margin, { r: 112, t: 30 });
+  // A figure that asks for its legend (layout.meta.legend: lines whose end values are counts, not returns) keeps it, with no end labels.
+  const legend = Boolean(layout.meta && layout.meta.legend);
+  layout.showlegend = legend;
+  if (!legend) delete layout.legend;
+  layout.margin = Object.assign({}, layout.margin, { r: legend ? 28 : 112, t: 30 });
   if (layout.yaxis2) layout.yaxis2 = Object.assign({}, layout.yaxis2, { showticklabels: false, title: { text: "" } });   // the daily bars: the end labels own the right edge
   const lastAt = (trace) => { for (let k = trace.y.length - 1; k >= 0; k--) if (Number.isFinite(trace.y[k])) return k; return -1; };
-  layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => trace.type === "scatter" && lastAt(trace) >= 0)
+  layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => !legend && trace.type === "scatter" && lastAt(trace) >= 0)
     .map(([trace, i]) => ({ x: 1, y: trace.y[lastAt(trace)], xref: "paper", yref: "y", showarrow: false, xanchor: "left", xshift: 7,
       text: `${String(trace.name || "").replace(/ \(on equity\)/, "").replace(/^Same \$ in /, "")} ${readablePct(trace.y[lastAt(trace)] / (fractions ? 1 : 100))}`,
       font: { size: 11, color: (trace.line && trace.line.color) || colors[i % colors.length] }, ...endLabelBox() }));
