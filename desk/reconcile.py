@@ -105,9 +105,9 @@ def market_making_excluded(tables: dict[str, dict]) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------------------------------------------- windows
 # Figures compared in one table or chart share their start, end and base (desk policy). ``windows`` flags what the page
 # cannot line up by itself: a book line ending more than a day before the desk (a stale book build: the chart would cut
-# every line back to it), comparison lines that never overlap, and attribution windows that differ between the books.
+# every line back to it), comparison lines that never overlap, and the columns of "What drove excess return" that start or end on different days.
 # Stocks vs SPY run on SPY sessions, so at a weekend their window can end (or start) on Friday's close while crypto's
-# runs on: a gap made only of Saturdays and Sundays is allowed (the attribution table's hover says so).
+# runs on: a gap made only of Saturdays and Sundays is allowed (the excess-return tile's hover says so).
 WINDOW_LAG_DAYS = 1   # the books are built to yesterday's close; the desk runs to today
 
 
@@ -155,15 +155,16 @@ def windows(charts: dict | None, comparison: dict | None) -> list[tuple[str, str
         start, end = max(first for first, _ in lines.values()), min(last for _, last in lines.values())
         if start > end:
             found.append(("Windows differ", "return chart: the desk and book lines share no days"))
-    attribution = (comparison or {}).get("attribution") or {}
-    crypto, stocks = attribution.get("crypto") or {}, attribution.get("stocks") or {}
-    for window in [w for w in crypto if w in stocks]:
-        a, b = crypto[window] or {}, stocks[window] or {}
-        pairs = [(_day(a.get(edge)), _day(b.get(edge))) for edge in ("start", "end")]
-        if any(x is None or y is None for x, y in pairs):
+    # "What drove excess return": the four columns of a window (crypto vs BTC, stocks vs SPY, desk vs BTC, desk vs SPY) are
+    # computed over the same matched sessions, so their start and end dates must agree (a weekend gap is allowed).
+    names = {"crypto": "crypto vs BTC", "stocks": "stocks vs SPY", "desk_btc": "desk vs BTC", "desk_spy": "desk vs SPY"}
+    for window, groups in ((comparison or {}).get("regimes") or {}).items():
+        columns = ((groups or {}).get("all") or {}).get("comparisons") or {}
+        spans = {key: (_day((columns[key] or {}).get("start")), _day((columns[key] or {}).get("end"))) for key in names if key in columns}
+        spans = {key: span for key, span in spans.items() if None not in span}
+        first = next(iter(spans.values()), None)
+        if first is None or all(all(x == y or _weekend_gap(x, y) for x, y in zip(span, first)) for span in spans.values()):
             continue
-        if all(x == y or _weekend_gap(x, y) for x, y in pairs):
-            continue
-        found.append(("Windows differ", f"excess return {window}: crypto {pairs[0][0]:%b %-d '%y} to {pairs[1][0]:%b %-d}, "
-                                        f"stocks {pairs[0][1]:%b %-d '%y} to {pairs[1][1]:%b %-d}"))
+        found.append(("Windows differ", f"excess return {window}: " + ", ".join(
+            f"{names[key]} {span[0]:%b %-d '%y} to {span[1]:%b %-d}" for key, span in spans.items())))
     return found

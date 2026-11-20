@@ -233,9 +233,9 @@ def books_payload() -> dict:
     """Each book's return on trading equity over 1, 7, 30 and 90 days (desk/books.py, the notebooks' numbers), for the
     dashboards' performance table: the books, not the accounts."""
     from desk.benchmark_regimes import benchmark_regimes
-    from desk.books import Book, chart_returns, decision_attribution, invested_class_returns
+    from desk.books import Book, chart_returns, invested_class_returns
 
-    rows, series, attribution, class_series, equity, books = [], {}, {}, {}, {}, {}
+    rows, series, class_series, equity, books = [], {}, {}, {}, {}
     returns_of = {}
     for kind, options in (("Crypto", {}), ("Stocks", {"since": "2025-01-13"})):
         book = Book(kind, **options).fetch_data()
@@ -252,31 +252,27 @@ def books_payload() -> dict:
         invested = (1 + invested_class_returns(book)).clip(lower=0).cumprod()
         class_series[kind.lower()] = [[day.strftime("%Y-%m-%d"), _clean(float(value))]
                                       for day, value in invested.items()]
-    # The attribution table shows the books side by side for each window, so both start on the same day: the later of
-    # their first days (a book with a longer history is not compared over days the other did not trade).
-    start = common_start(returns_of)
-    for name, returns in returns_of.items():
-        attribution[name] = decision_attribution(books[name], returns[returns.index >= start] if start is not None else returns)
-    if "crypto" in returns_of:   # picks with beta-weighted exposure, for the Picks row's hover (the stocks inputs are not reliable yet)
+    regimes, dates_by_regime = benchmark_regimes(books)   # each window: all sessions together ("all") and the four market directions
+    if "crypto" in books:   # the crypto Picks again with each market's beta to BTC taken out (the stocks inputs are not reliable yet)
         try:
-            from desk.beta_attribution import beta_picks
+            from desk.beta_attribution import beta_marks_for, beta_table
 
-            crypto_returns = returns_of["crypto"]
-            for window, picks in beta_picks(books["crypto"], crypto_returns[crypto_returns.index >= start] if start is not None else crypto_returns).items():
-                if window in attribution["crypto"]:
-                    attribution["crypto"][window]["picks_beta"] = _clean(picks)
+            betas, _missing = beta_table(books["crypto"])
+            beta_regimes, _ = benchmark_regimes(books, mark_functions={"crypto": beta_marks_for(betas)})
+            for window, groups in beta_regimes.items():
+                picks = ((groups.get("all") or {}).get("comparisons", {}).get("crypto") or {}).get("parts", {}).get("Picks")
+                if picks is not None and window in regimes and "all" in regimes[window]:
+                    regimes[window]["all"]["picks_beta"] = _clean(float(picks))
         except Exception as error:
             print(f"Beta-adjusted picks unavailable ({type(error).__name__}).", file=sys.stderr)
-    regimes, dates_by_regime = benchmark_regimes(books)
     fills = {}
-    replay = {}
     try:
         from desk.risk_replay import stop_replay
 
         fills = _book_fills()
         conditional = {f"{window}:{regime}": {"days": dates} for window, groups in dates_by_regime.items()
                        for regime, dates in groups.items()}
-        replay = stop_replay(fills, equity, {name: {**periods, **conditional} for name, periods in attribution.items()})
+        replay = stop_replay(fills, equity, {name: dict(conditional) for name in ("crypto", "stocks")})
         for window, groups in regimes.items():
             for regime, result in groups.items():
                 key = f"{window}:{regime}"
@@ -296,8 +292,7 @@ def books_payload() -> dict:
 
     return {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "managed_since": managed_since().strftime("%Y-%m-%d"),
             "rows": rows, "series": series, "desk_series": desk_series,
-            "class_series": class_series, "attribution": attribution, "risk_replay": replay,
-            "regimes": regimes, "stats": trade_stats(fills), "incomplete": incomplete}
+            "class_series": class_series, "regimes": regimes, "stats": trade_stats(fills), "incomplete": incomplete}
 
 
 INCOMPLETE_KEEP_SECONDS = 6 * 3600   # a build missing an account or an input is not published over a good one for this long

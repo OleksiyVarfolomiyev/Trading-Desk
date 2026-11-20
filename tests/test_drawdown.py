@@ -5,12 +5,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from desk import drawdown as dd  # noqa: E402
+from desk import web_sync  # noqa: E402
 
 
 def series(values, start="2026-01-01"):
@@ -170,6 +172,37 @@ class ReportTests(unittest.TestCase):
         self.assertIn("managed desk", text)
         self.assertIn("| desk |", text)
         self.assertIn("tolerance", text.lower())
+
+
+    def test_report_carries_all_four_excess_return_columns_when_the_window_matches(self):
+        parts = {"Picks": 0.0123, "Sizing": -0.004, "Timing": 0.0, "Market exposure": 0.05, "Fees & funding": -0.0002, "Unattributed": 0.0}
+        column = lambda excess: {"parts": parts, "portfolio": 1.0 + excess, "index": 1.0, "start": "2026-10-16", "end": "2026-12-31"}
+        regimes = {"Q": {"all": {"sessions": 50, "start": "2026-10-16", "end": "2026-12-31", "comparisons": {
+            "crypto": column(0.0583), "stocks": column(-0.02), "desk_btc": column(0.03), "desk_spy": column(0.04)}}}}
+        with tempfile.TemporaryDirectory() as folder:
+            books = self.books(folder)
+            payload = json.loads(books.read_text())
+            payload["regimes"] = regimes
+            books.write_text(json.dumps(payload))
+            with mock.patch.object(web_sync, "BOOKS_FILE", books):   # the drivers are read from the stored books file
+                text = dd.write_report("Q", pd.Timestamp("2027-01-05"), books, Path(folder) / "reports").read_text()
+        self.assertIn("## What drove excess return (Q window, 2026-10-16 to 2026-12-31)", text)
+        self.assertIn("| Driver | Crypto vs BTC | Stocks vs SPY | Desk vs BTC | Desk vs SPY |", text)
+        self.assertIn("| Picks | 1.2 pp | 1.2 pp | 1.2 pp | 1.2 pp |", text)
+        self.assertIn("| Timing |  |  |  |  |", text)   # a zero is blank, not 0.0
+        self.assertIn("| Excess return | 5.8 pp | -2.0 pp | 3.0 pp | 4.0 pp |", text)
+
+    def test_report_leaves_out_drivers_from_a_window_that_does_not_match_the_period(self):
+        regimes = {"Q": {"all": {"start": "2026-07-01", "end": "2026-09-30", "comparisons": {}}}}
+        with tempfile.TemporaryDirectory() as folder:
+            books = self.books(folder)
+            payload = json.loads(books.read_text())
+            payload["regimes"] = regimes
+            books.write_text(json.dumps(payload))
+            with mock.patch.object(web_sync, "BOOKS_FILE", books):
+                text = dd.write_report("Q", pd.Timestamp("2027-01-05"), books, Path(folder) / "reports").read_text()
+        self.assertIn("does not match this period", text)
+        self.assertNotIn("| Driver |", text)
 
 
 class EraTests(unittest.TestCase):

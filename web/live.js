@@ -1299,7 +1299,7 @@
     tables.positions.excluded = excludedOf(mmRows.filter(isCrypto));   // what the tiles took out, for the tie-out
     tables.positions_stocks.excluded = excludedOf(mmRows.filter((r) => !isCrypto(r)));
     // Tables that should tie out and don't, and compared figures whose windows differ (desk/reconcile.py windows): first.
-    reconcile(tables).concat(reconcileWindows(twr, (bookPerf && bookPerf.attribution) || {})).reverse().forEach((row) => attention.unshift(row));
+    reconcile(tables).concat(reconcileWindows(twr, (bookPerf && bookPerf.regimes) || {})).reverse().forEach((row) => attention.unshift(row));
     // Rows a published tile carries (the forward monitor's "Live drift" and "No historical / forward test").
     ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now())
       .forEach((tile) => (tile.attention || []).forEach((row) => attention.push(row)));
@@ -1326,8 +1326,8 @@
       tables,
       catalog: catalogEntries,
       intraday,
-      book_comparison: { attribution: bookPerf?.attribution || {}, class_series: bookPerf?.class_series || {},
-        desk_series: [...dailyLast(index, "v")], risk_replay: bookPerf?.risk_replay || {}, regimes: bookPerf?.regimes || {} },
+      book_comparison: { class_series: bookPerf?.class_series || {},
+        desk_series: [...dailyLast(index, "v")], regimes: bookPerf?.regimes || {} },
       moves: (() => {   // each held position's price move over 7 and 30 days (the uPnL tile's periods)
         const out = {}, now = Date.now();
         const at = (rows, days) => { let c = null; rows.forEach((r) => { if (r.t <= now - days * DAY_MS) c = r.c; }); return c; };
@@ -1409,9 +1409,9 @@
   }
 
   // Figures compared in one table or chart share their start, end and base, as desk/reconcile.py windows: a book line
-  // ending more than a day before the desk, lines with no common day, and attribution windows that differ between the
-  // books (a gap of Saturdays and Sundays only is allowed: stocks run on SPY sessions).
-  function reconcileWindows(lines, attribution) {
+  // ending more than a day before the desk, lines with no common day, and the excess-return columns that start or end on
+  // different days (a gap of Saturdays and Sundays only is allowed: stocks and desk vs SPY run on SPY sessions).
+  function reconcileWindows(lines, regimes) {
     const day = (text) => { const t = Date.parse(String(text || "").slice(0, 10) + "T00:00:00Z"); return Number.isFinite(t) ? t : null; };
     const show = (t, year) => new Date(t).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", ...(year ? { year: "2-digit" } : {}) });
     const weekendGap = (a, b) => {
@@ -1434,12 +1434,16 @@
       const values = Object.values(spans);
       if (Math.max(...values.map(([first]) => first)) > Math.min(...values.map(([, last]) => last))) found.push(["Windows differ", "return chart: the desk and book lines share no days"]);
     }
-    const crypto = attribution.crypto || {}, stocks = attribution.stocks || {};
-    Object.keys(crypto).filter((window) => window in stocks).forEach((window) => {
-      const pairs = ["start", "end"].map((edge) => [day((crypto[window] || {})[edge]), day((stocks[window] || {})[edge])]);
-      if (pairs.some(([a, b]) => a === null || b === null)) return;
-      if (pairs.every(([a, b]) => a === b || weekendGap(a, b))) return;
-      found.push(["Windows differ", `excess return ${window}: crypto ${show(pairs[0][0], true)} to ${show(pairs[1][0])}, stocks ${show(pairs[0][1], true)} to ${show(pairs[1][1])}`]);
+    // "What drove excess return": the four columns of a window cover the same matched sessions, so they start and end on the same days.
+    const names = { crypto: "crypto vs BTC", stocks: "stocks vs SPY", desk_btc: "desk vs BTC", desk_spy: "desk vs SPY" };
+    Object.entries(regimes).forEach(([window, groups]) => {
+      const columns = ((groups || {}).all || {}).comparisons || {};
+      const spans = Object.keys(names).filter((key) => key in columns).map((key) => [key, day((columns[key] || {}).start), day((columns[key] || {}).end)])
+        .filter(([, a, b]) => a !== null && b !== null);
+      if (!spans.length) return;
+      const [, firstStart, firstEnd] = spans[0];
+      if (spans.every(([, a, b]) => (a === firstStart || weekendGap(a, firstStart)) && (b === firstEnd || weekendGap(b, firstEnd)))) return;
+      found.push(["Windows differ", `excess return ${window}: ` + spans.map(([key, a, b]) => `${names[key]} ${show(a, true)} to ${show(b)}`).join(", ")]);
     });
     return found;
   }

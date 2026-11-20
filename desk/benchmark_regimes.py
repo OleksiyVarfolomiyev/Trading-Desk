@@ -9,6 +9,7 @@ from desk.books import decision_marks, invested_class_capital, invested_class_re
 
 WINDOWS = {"W": 7, "M": 30, "Q": 90, "Y": 365, "All": None}
 REGIMES = ("both_up", "btc_up", "spy_up", "both_down")
+ALL = "all"   # every matched session of the window together, whatever the market did: the whole-period attribution
 
 
 def _levels(series):
@@ -38,8 +39,10 @@ def _parts(weights, benchmark, calendar):
     }, index=calendar)
 
 
-def benchmark_regimes(books):
-    """Compare the four market directions on the same SPY close-to-close dates.
+def benchmark_regimes(books, mark_functions=None):
+    """Compare the four market directions on the same SPY close-to-close dates, and all of them together (``ALL``).
+
+    ``mark_functions`` replaces ``decision_marks`` for a book by name (the beta-weighted Picks of the crypto book).
 
     BTC is sampled on the corresponding UTC dates. Both books and the desk share
     the matched sample. Book contributions use prior gross exposure. Desk
@@ -77,7 +80,7 @@ def benchmark_regimes(books):
     labels = [("crypto", "crypto", "btc"), ("stocks", "stocks", "spy"),
               ("desk_btc", "desk", "btc"), ("desk_spy", "desk", "spy")]
     levels = {"desk": desk, **invested}
-    marks = {name: decision_marks(book).reindex(calendar).fillna(0.0) for name, book in books.items()}
+    marks = {name: (mark_functions or {}).get(name, decision_marks)(book).reindex(calendar).fillna(0.0) for name, book in books.items()}
     equity = stocks.equity.shift(1).reindex(calendar)
     desk_weights = {name: frame.div(equity.where(equity > 0), axis=0).fillna(0.0)
                     for name, frame in marks.items()}
@@ -101,8 +104,8 @@ def benchmark_regimes(books):
         for start, stop, regime in matched:
             groups[regime].append((start, stop))
         result[window], dates_by_regime[window] = {}, {}
-        for regime in REGIMES:
-            sessions = groups[regime]
+        for regime in (ALL, *REGIMES):
+            sessions = [(start, stop) for start, stop, _ in matched] if regime == ALL else groups[regime]
             if not sessions:
                 continue
             dates = pd.DatetimeIndex([day for start, stop in sessions for day in pd.date_range(start, stop)[1:]])
@@ -123,5 +126,9 @@ def benchmark_regimes(books):
                     "portfolio": float((1 + r).prod()), "index": float((1 + b).prod()),
                     "parts": _linked_parts(parts, r, b),
                 }
+                if regime == ALL:   # the dates the four columns share (the windows check compares them)
+                    comparisons[key]["start"], comparisons[key]["end"] = sessions[0][0].strftime("%Y-%m-%d"), sessions[-1][1].strftime("%Y-%m-%d")
             result[window][regime] = {"sessions": len(sessions), "comparisons": comparisons}
+            if regime == ALL:
+                result[window][regime]["start"], result[window][regime]["end"] = sessions[0][0].strftime("%Y-%m-%d"), sessions[-1][1].strftime("%Y-%m-%d")
     return result, dates_by_regime

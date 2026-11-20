@@ -1530,22 +1530,6 @@ function alertResponseOptions(area, text, monitor) {
       if (card.classList.contains("card-min")) setMinimized(id, false);
       card.scrollIntoView({ behavior: "smooth", block: "center" });
     };
-    const regime = /^Benchmark watch · ([a-z_]+) · /.exec(area)?.[1];
-    if (regime) {
-      panel.replaceChildren(el("div", { class: "highlight-option-row" }, [
-        option("↗", "Review benchmark drivers", () => {
-          close();
-          scaleChoices["benchmark-regime-drivers"] = regime;
-          scaleChoices["benchmark-regimes"] = "Q";
-          saveScaleChoices();
-          if (latest?.data) renderBenchmarkTables(latest);
-          setScreen("research");
-          reviewBenchmarkDrivers();
-        }),
-        option("✓", "Monitor for changes", monitor),
-      ]));
-      return;
-    }
     const trims = el("div", { class: "highlight-trims", hidden: true, role: "group", "aria-label": "Stock and TradFi long trims" });
     const trimToggle = option("⅓", "Review long trims", () => {
       trims.hidden = !trims.hidden;
@@ -1845,7 +1829,6 @@ const REGIME_WINDOWS = { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], [
 const BENCHMARK_WINDOWS = {
   "benchmark-intraday": { periods: [["D", 1], ["W", 7]], initial: "W" },
   "benchmark-history": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
-  "benchmark-attribution": { periods: [["W", 7], ["M", 30], ["Q", 90], ["Y", 365], ["All", null]], initial: "Q" },
   "benchmark-regimes": REGIME_WINDOWS,
   "benchmark-regime-drivers": REGIME_WINDOWS,
 };
@@ -1987,45 +1970,18 @@ function replayTooltip(replay) {
   return `${counts} Order history for ${replay.wallets_read}/${replay.wallets} wallets.${coverage} ${RM_REPLAY_METHOD}`;
 }
 
-function benchmarkAttributionTable(data, period) {
-  const crypto = data.attribution?.crypto?.[period], stocks = data.attribution?.stocks?.[period];
-  const cryptoReplay = data.risk_replay?.crypto?.[period], stocksReplay = data.risk_replay?.stocks?.[period];
-  return {
-    columns: [{ key: "Factor", fmt: "text" }, { key: "Crypto vs BTC", fmt: "spp" }, { key: "Stocks vs SPY", fmt: "spp" }],
-    rows: [
-      ...ATTRIBUTION_FACTORS.map(([label, description]) => ({ Factor: label, "Crypto vs BTC": crypto?.parts?.[label],
-        "Stocks vs SPY": stocks?.parts?.[label], __hover: description,
-        // Crypto picks again with each market's beta to BTC taken out (trailing 90 days): how much of them was beta.
-        ...(label === "Picks" && isNum(crypto?.picks_beta)
-          ? { __cellTitles: { "Crypto vs BTC": `${FORMATS.spp.text(crypto.picks_beta)} beta-adjusted (names' moves net of their beta to BTC)` } } : {}) })),
-      { Factor: "RM replay", "Crypto vs BTC": cryptoReplay?.share, "Stocks vs SPY": stocksReplay?.share,
-        __hover: RM_REPLAY_METHOD, __cellTitles: { "Crypto vs BTC": replayTooltip(cryptoReplay), "Stocks vs SPY": replayTooltip(stocksReplay) } },
-    ],
-    total: { Factor: "Excess return", "Crypto vs BTC": crypto?.excess, "Stocks vs SPY": stocks?.excess,
-      __hover: "Compounded difference versus the index in percentage points on desk trading equity. Excludes the RM replay. "
-        + "Both books start on the same day; stocks vs SPY run on SPY sessions, so at a weekend they end on Friday's close." },
-    note: crypto || stocks ? "" : "Attribution data is unavailable for this period",
-  };
-}
-
 const MARKET_REGIMES = [
   ["both_up", "BTC ↑ · SPY ↑", "Both up"],
   ["btc_up", "BTC ↑ · SPY ↓", "BTC up, SPY down"],
   ["spy_up", "BTC ↓ · SPY ↑", "BTC down, SPY up"],
   ["both_down", "BTC ↓ · SPY ↓", "Both down"],
 ];
+// "What drove excess return": ALL (every matched session of the window together, the whole period) first, then the four
+// market directions as subsets of those sessions.
+const DRIVER_CHOICES = [["all", "ALL", "All matched sessions of the window together"], ...MARKET_REGIMES];
 const REGIME_COMPARISONS = [
   ["crypto", "Crypto vs BTC"], ["stocks", "Stocks vs SPY"], ["desk_btc", "Desk vs BTC"], ["desk_spy", "Desk vs SPY"],
 ];
-
-function reviewBenchmarkDrivers() {
-  const id = "t-benchmark-regime-drivers";
-  const card = document.getElementById(id)?.closest(".card");
-  if (!card) return;
-  if (card.classList.contains("card-off")) setHidden(id, false);
-  if (card.classList.contains("card-min")) setMinimized(id, false);
-  card.scrollIntoView({ behavior: "smooth", block: "center" });
-}
 
 function regimeBeatTable(data) {
   return {
@@ -2056,11 +2012,11 @@ function renderRegimeDrivers(data, period) {
   const id = "benchmark-regime-drivers";
   const host = document.getElementById("t-" + id);
   if (!host) return;
-  const selection = scaleChoices[id] || "both_down";
+  const selection = DRIVER_CHOICES.some(([key]) => key === scaleChoices[id]) ? scaleChoices[id] : "all";
   let toolbar = host.previousElementSibling;
   if (!toolbar?.classList.contains("market-directions")) {
     toolbar = el("div", { class: "scale-chips table-periods market-directions", role: "group", "aria-label": "Market direction" });
-    for (const [key, text, title] of MARKET_REGIMES) {
+    for (const [key, text, title] of DRIVER_CHOICES) {
       const button = el("button", { type: "button", class: "scale-chip", "data-window": key, text, title, "aria-label": title });
       button.addEventListener("click", () => {
         scaleChoices[id] = key;
@@ -2094,6 +2050,9 @@ function renderRegimeDrivers(data, period) {
       ...ATTRIBUTION_FACTORS.map(([label, description]) => ({
         Factor: label, ...values((result) => result.parts[label]),
         __hover: description + ". Single books use prior gross exposure. Desk uses prior trading equity.",
+        // Crypto picks again with each market's beta to BTC taken out (trailing 90 days): how much of them was beta (ALL only).
+        ...(label === "Picks" && selection === "all" && isNum(regime?.picks_beta)
+          ? { __cellTitles: { "Crypto vs BTC": `${FORMATS.spp.text(regime.picks_beta)} beta-adjusted (names' moves net of their beta to BTC)` } } : {}),
       })),
       { Factor: "RM replay", "Crypto vs BTC": cryptoRisk?.share, "Stocks vs SPY": stocksRisk?.share,
         "Desk vs BTC": deskRisk, "Desk vs SPY": deskRisk, __hover: RM_REPLAY_METHOD,
@@ -2101,7 +2060,8 @@ function renderRegimeDrivers(data, period) {
           "Desk vs BTC": deskTooltip, "Desk vs SPY": deskTooltip } },
     ],
     total: { Factor: "Excess return", ...values((result) => result.portfolio - result.index),
-      __hover: "Compounded book or desk return minus the index return across the selected sessions. Excludes the RM replay." },
+      __hover: "Compounded book or desk return minus the index return across the selected sessions. Excludes the RM replay."
+        + (regime?.start ? ` ${regime.start} to ${regime.end}: all four columns cover the same sessions. Stocks vs SPY and Desk vs SPY run on SPY sessions, so a weekend ends on Friday's close; BTC uses the same UTC dates.` : "") },
     note: regime?.sessions ? `${regime.sessions} matched sessions · ${period}`
       : "No matched sessions for this market direction and window",
   });
@@ -2155,8 +2115,8 @@ function renderBenchmarkTables(doc) {
       ? intradayBenchmarkTable(doc.data.intraday || {}, selected[1], now)
       : id === "benchmark-history"
         ? historicalBenchmarkTable(doc.data.charts?.twr || [], doc.data.book_comparison || {}, selected[1], now)
-        : benchmarkAttributionTable(doc.data.book_comparison || {}, selected[0]);
-    renderTable(id, { ...table, keepColumns: true, tableOnly: true });
+        : null;
+    if (table) renderTable(id, { ...table, keepColumns: true, tableOnly: true });
   }
 }
 
@@ -2190,7 +2150,7 @@ function renderTablesAndBenchmarks(doc, data) {
   for (const id of TABLES.filter((name) => !FIRST_TABLES.includes(name))) renderTable(id, applyView(id, withWallets(id, data.tables || {}), context));
   renderBenchmarkTables(doc);
   balanceColumns();
-  markFilled(...TABLES.map((id) => "t-" + id), "t-benchmark-intraday", "t-benchmark-history", "t-benchmark-attribution",
+  markFilled(...TABLES.map((id) => "t-" + id), "t-benchmark-intraday", "t-benchmark-history",
     "t-benchmark-regimes", "t-benchmark-regime-drivers");
 }
 function renderChartsAndTiles(doc, data) {
@@ -2881,7 +2841,7 @@ drawModes();
 // places. A card is hidden with its eye button and brought back from the Sections menu. Order and hidden cards are
 // remembered in the browser (touch screens have no drag: use the menu there).
 const LAYOUT_KEY = "desk-layout";
-const LAYOUT_VERSION = 7;   // 3: now first, history and the account view last; an arrangement saved on an older page is dropped
+const LAYOUT_VERSION = 8;   // 3: now first, history and the account view last; an arrangement saved on an older page is dropped
 function layoutState() {
   let state = {};
   try { state = JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (e) { return {}; }
@@ -2898,6 +2858,16 @@ function layoutState() {
         const at = Math.min(columns[into].length, columns[from].indexOf("t-positions"));
         columns[into].splice(at, 0, "t-positions_stocks");
       });
+    }
+    if ((state.version || 0) < 8) {   // 8: "What drove excess return" is one tile (the old attribution tile and the market-direction one merged, ALL first)
+      const old = "t-benchmark-attribution", kept = "t-benchmark-regime-drivers";
+      ["hidden", "minimized"].forEach((key) => { if (state[key]) state[key] = state[key].filter((id) => id !== old); });
+      Object.values(state.cols || {}).forEach((columns) => {
+        if (!columns.some((ids) => ids.includes(old))) return;
+        columns.forEach((ids) => { const k = ids.indexOf(kept); if (k >= 0) ids.splice(k, 1); });   // the merged tile takes the old attribution slot
+        columns.forEach((ids) => { const k = ids.indexOf(old); if (k >= 0) ids.splice(k, 1, kept); });
+      });
+      if (state.gaps) delete state.gaps[old];
     }
     if ((state.version || 0) < 5) { delete state.cols; delete state.widths; delete state.history; }   // 5: news left, numbers in the middle, charts right
     state.version = LAYOUT_VERSION;
@@ -5050,7 +5020,7 @@ document.addEventListener("click", (event) => {
 const SCREENS = ["now", "research"];
 // Research keeps the research items in: the candidates (short and market-making), the strategy result, the long charts, and whatever is pulled from the notebooks.
 const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "hl-desk-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr", "t-benchmark-intraday"],
-  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr", "t-benchmark-history", "t-benchmark-attribution", "t-benchmark-regimes", "t-benchmark-regime-drivers", "t-markets"] };
+  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr", "t-benchmark-history", "t-benchmark-regime-drivers", "t-benchmark-regimes", "t-markets"] };
 function screensFor(card) {
   const id = cardId(card);
   if (card.dataset.published) return "research";

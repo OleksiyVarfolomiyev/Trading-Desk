@@ -63,21 +63,29 @@ class WindowTests(unittest.TestCase):
         texts = [text for _, text in reconcile.windows({"twr": twr}, {})]
         self.assertIn("return chart: the desk and book lines share no days", texts)
 
-    def test_attribution_windows_that_differ_are_flagged(self):
-        comparison = {"attribution": {"crypto": {"All": {"start": "2025-11-20", "end": "2026-11-18"}},
-                                      "stocks": {"All": {"start": "2025-01-14", "end": "2026-11-18"}}}}
-        self.assertEqual(reconcile.windows({}, comparison),
-                         [("Windows differ", "excess return All: crypto Nov 20 '25 to Nov 18, stocks Jan 14 '25 to Nov 18")])
+    @staticmethod
+    def columns(**spans):
+        return {"regimes": {"All": {"all": {"comparisons": {key: {"start": a, "end": b} for key, (a, b) in spans.items()}}}}}
+
+    def test_excess_return_columns_that_differ_are_flagged(self):
+        comparison = self.columns(crypto=("2025-11-20", "2026-11-18"), stocks=("2025-01-14", "2026-11-18"),
+                                  desk_btc=("2025-11-20", "2026-11-18"), desk_spy=("2025-11-20", "2026-11-18"))
+        found = reconcile.windows({}, comparison)
+        self.assertEqual(len(found), 1)
+        self.assertIn("excess return All: crypto vs BTC Nov 20 '25 to Nov 18, stocks vs SPY Jan 14 '25 to Nov 18", found[0][1])
+
+    def test_matching_excess_return_columns_pass(self):
+        same = ("2026-10-16", "2026-11-18")
+        self.assertEqual(reconcile.windows({}, self.columns(crypto=same, stocks=same, desk_btc=same, desk_spy=same)), [])
 
     def test_a_weekend_gap_from_spy_sessions_is_allowed(self):
-        # Sunday: crypto ends Saturday's close, stocks Friday's (2026-11-20 is a Friday).
-        comparison = {"attribution": {"crypto": {"W": {"start": "2026-11-14", "end": "2026-11-21"}},
-                                      "stocks": {"W": {"start": "2026-11-13", "end": "2026-11-20"}}}}
+        # Sunday: the BTC columns end Saturday's close, the SPY columns Friday's (2026-11-20 is a Friday).
+        comparison = self.columns(crypto=("2026-11-14", "2026-11-21"), stocks=("2026-11-13", "2026-11-20"),
+                                  desk_btc=("2026-11-14", "2026-11-21"), desk_spy=("2026-11-13", "2026-11-20"))
         self.assertEqual(reconcile.windows({}, comparison), [])
 
     def test_a_weekday_gap_is_not_a_weekend_gap(self):
-        comparison = {"attribution": {"crypto": {"W": {"start": "2026-11-11", "end": "2026-11-18"}},
-                                      "stocks": {"W": {"start": "2026-11-11", "end": "2026-11-17"}}}}
+        comparison = self.columns(crypto=("2026-11-11", "2026-11-18"), stocks=("2026-11-11", "2026-11-17"))
         self.assertEqual(len(reconcile.windows({}, comparison)), 1)
 
     def test_books_start_side_by_side_comparisons_together(self):

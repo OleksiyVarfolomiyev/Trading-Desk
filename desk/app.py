@@ -201,14 +201,14 @@ def trade_stats_now() -> dict | None:
 
 
 def book_comparison_now() -> dict:
-    """The invested asset-class curves and attribution from the cached book report."""
+    """The invested asset-class curves and the benchmark comparison by market direction from the cached book report."""
     import json as _json
 
     from desk.web_sync import BOOKS_FILE
 
     try:
         payload = _json.loads(BOOKS_FILE.read_text())
-        return {key: payload.get(key, {}) for key in ("attribution", "class_series", "risk_replay", "regimes")}
+        return {key: payload.get(key, {}) for key in ("class_series", "regimes")}
     except (OSError, ValueError):
         return {}
 

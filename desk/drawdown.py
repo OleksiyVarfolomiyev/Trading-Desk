@@ -507,24 +507,25 @@ def write_report(kind: str = "Q", today: pd.Timestamp | None = None, path: Path 
             worst = min(months, key=lambda item: item[1]["Max DD"])
             lines.append(f"Worst month: {worst[0].start_time:%B %Y}, drawdown {_pct(worst[1]['Max DD'])}.")
     try:
-        attribution = json.loads(BOOKS_FILE.read_text()).get("attribution", {})
+        regimes = json.loads(BOOKS_FILE.read_text()).get("regimes", {})
         window = "Q" if kind == "Q" else "Y"
-        parts = {name: attribution.get(name, {}).get(window) for name in ("crypto", "stocks")}
-        dates = next((p for p in parts.values() if p), None)
-        aligned = dates is not None and abs((pd.Timestamp(dates["start"]) - start).days) <= 7 \
-            and abs((pd.Timestamp(dates["end"]) - end).days) <= 7
-        if dates is not None and not aligned:   # matching windows: no drivers from a different window than the period
-            lines += ["", f"What drove excess return: the books' stored {window} window ({dates['start']} to {dates['end']}) "
+        entry = (regimes.get(window) or {}).get("all")   # all matched sessions of the stored window (the excess-return tile's ALL)
+        columns = [("crypto", "Crypto vs BTC"), ("stocks", "Stocks vs SPY"), ("desk_btc", "Desk vs BTC"), ("desk_spy", "Desk vs SPY")]
+        aligned = entry is not None and abs((pd.Timestamp(entry["start"]) - start).days) <= 7 \
+            and abs((pd.Timestamp(entry["end"]) - end).days) <= 7
+        if entry is not None and not aligned:   # matching windows: no drivers from a different window than the period
+            lines += ["", f"What drove excess return: the books' stored {window} window ({entry['start']} to {entry['end']}) "
                       "does not match this period, so it is left out; the report written at period end carries it."]
         if aligned:
-            lines += ["", f"## What drove excess return ({window} window, {dates['start']} to {dates['end']})", "",
-                      "| Driver | Crypto vs BTC | Stocks vs SPY |", "|---|---|---|"]
-            for driver in next(p for p in parts.values() if p)["parts"]:
-                cells = [f"{100 * parts[n]['parts'][driver]:.1f} pp" if parts[n] and abs(parts[n]["parts"].get(driver) or 0) >= 0.0005
-                         else "" for n in ("crypto", "stocks")]   # absent or rounding to 0.0: blank
-                lines.append(f"| {driver} | {cells[0]} | {cells[1]} |")
-            excess = [f"{100 * parts[n]['excess']:.1f} pp" if parts[n] else "" for n in ("crypto", "stocks")]
-            lines.append(f"| Excess return | {excess[0]} | {excess[1]} |")
+            comparisons = entry["comparisons"]
+            lines += ["", f"## What drove excess return ({window} window, {entry['start']} to {entry['end']})", "",
+                      "| Driver | " + " | ".join(label for _, label in columns) + " |", "|---" * (len(columns) + 1) + "|"]
+            for driver in next(iter(comparisons.values()))["parts"]:
+                cells = [f"{100 * comparisons[key]['parts'][driver]:.1f} pp" if key in comparisons
+                         and abs(comparisons[key]["parts"].get(driver) or 0) >= 0.0005 else "" for key, _ in columns]   # absent or rounding to 0.0: blank
+                lines.append(f"| {driver} | " + " | ".join(cells) + " |")
+            excess = [f"{100 * (comparisons[key]['portfolio'] - comparisons[key]['index']):.1f} pp" if key in comparisons else "" for key, _ in columns]
+            lines.append("| Excess return | " + " | ".join(excess) + " |")
     except (OSError, ValueError, StopIteration):
         pass
     return _save(period, lines, out_dir)
