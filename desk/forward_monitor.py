@@ -311,7 +311,9 @@ REGISTRY: list[Item] = [
          _rules_row("trim up: trim longs: alts next 24h (net)"), off="off: trimming longs lost in both halves"),
     Item("regime-guard", "Regime guard", "risk", "2026-11-11", None, _count(r"regime guard")),
     Item("margin-guard", "Margin guard", "risk", "2026-11-11", None, _count(r"margin guard")),
-    Item("ladders", "Market-making ladders (c248)", "execution", "2026-11-13", _mm_expectation, _mm_live, unit="per $ traded"),
+    Item("ladders", "Market-making ladders (c248)", "execution", "2026-11-13", _mm_expectation, _mm_live, unit="per $ traded",
+         note="neutral tests: ETH (since 2026-11-16) and NEAR (since 2026-11-20), $11 a level, 5 levels; review at 200 fills each "
+              "(verdict_fills 200 in ladder.json): net edge per $1K must reach t>=2, else the test ends (research/mm_tests.md)"),
     Item("crypto-entries", "Crypto entries without stops", "strategy", "2026-11-17",
          _history(lambda s: s.closed_crypto, "2026-11-17", "crypto trade return", "07f2"),
          _closed_returns(lambda s: s.closed_crypto, "2026-11-17", False, "07f2"),
