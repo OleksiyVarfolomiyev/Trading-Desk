@@ -833,4 +833,28 @@ html[data-keynumbers="off"] #tiles { display: none !important; }   /* !important
 /* A card name that does not fit between the chips and the tools is clipped, never run under them (app.js fitCardTitle). */
 .card h2 { box-sizing: border-box; }
 .card h2 .card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Markets: Hyperliquid's market selector as a tile. */
+.mk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+.mk-search { flex: 1 1 140px; min-width: 100px; max-width: 220px; }
+.mk-tabs { display: inline-flex; flex-wrap: wrap; gap: 2px; }
+.mk-tab[aria-pressed="true"] { color: var(--series-1); }
+.mk-scroll { max-height: 420px; overflow: auto; }
+.mk-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mk-table thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); font-weight: 500; color: var(--muted); cursor: pointer; white-space: nowrap; user-select: none; }
+.mk-table thead th[aria-sort="ascending"]::after { content: " ▲"; font-size: 9px; }
+.mk-table thead th[aria-sort="descending"]::after { content: " ▼"; font-size: 9px; }
+.mk-table td, .mk-table th { padding: 2px 6px; text-align: left; }
+.mk-table td.num, .mk-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.mk-row { cursor: pointer; }
+.mk-row:hover, .mk-row.mk-active { background: var(--border); }
+.mk-star { width: 22px; padding: 0 2px !important; }
+.mk-star-button { background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--muted); opacity: .35; font-size: 12px; }
+.mk-row:hover .mk-star-button, .mk-star-button[aria-pressed="true"] { opacity: 1; }
+.mk-star-button[aria-pressed="true"] { color: var(--warning); }
+.mk-symbol { white-space: nowrap; }
+.mk-name { font-weight: 600; }
+.mk-name.kind-crypto { color: var(--kind-crypto); }
+.mk-name.kind-stocks { color: var(--kind-stocks); }
+.mk-badge, .mk-dex { margin-left: 5px; font-size: 10.5px; color: var(--muted); }
+.mk-badge { border: 1px solid var(--border); border-radius: 4px; padding: 0 3px; }
 

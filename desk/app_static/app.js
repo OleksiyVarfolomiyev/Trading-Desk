@@ -5040,7 +5040,7 @@ document.addEventListener("click", (event) => {
 const SCREENS = ["now", "research"];
 // Research keeps the research items in: the candidates (short and market-making), the strategy result, the long charts, and whatever is pulled from the notebooks.
 const SCREEN_OF = { now: ["hl-crypto-attention", "hl-stocks-attention", "hl-desk-attention", "t-positions", "t-positions_stocks", "t-exposure", "chart-twr", "t-benchmark-intraday"],
-  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr", "t-benchmark-history", "t-benchmark-attribution", "t-benchmark-regimes", "t-benchmark-regime-drivers"] };
+  research: ["t-candidates", "t-mm_candidates", "t-market_making", "t-strategies", "chart-value", "chart-twr", "t-benchmark-history", "t-benchmark-attribution", "t-benchmark-regimes", "t-benchmark-regime-drivers", "t-markets"] };
 function screensFor(card) {
   const id = cardId(card);
   if (card.dataset.published) return "research";
@@ -5128,7 +5128,180 @@ document.addEventListener("click", (event) => {
   setPrivate(document.documentElement.classList.contains("private"));
 })();
 
+// ---------------------------------------------------------------- markets: Hyperliquid's market selector as a tile
+// The list that opens when choosing a market on Hyperliquid: every perp (main DEX and the HIP-3 stocks, commodities and
+// indices) and spot pair with price, 24h change, funding, volume and open interest; category tabs, search, sort; a click opens
+// the asset's chart tile. One shared fetch (cached 15 s) feeds it, and only while the tile is on screen.
+// MARKETS_HELPERS_START
+const MARKET_TABS = [["all", "All"], ["perps", "Perps"], ["spot", "Spot"], ["crypto", "Crypto"], ["tradfi", "Tradfi"], ["favs", "★"]];
+const bareMarket = (name) => String(name || "").replace(/^[a-z0-9]+:/i, "");
+// perpDexes: [{dex, meta, ctxs}] (dex "" is the main one); spot: [meta, ctxs] or null. One row per live market.
+function buildMarketRows(perpDexes, spot) {
+  const rows = [], num = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v));
+  for (const { dex, meta, ctxs } of perpDexes || []) {
+    (meta.universe || []).forEach((asset, i) => {
+      const ctx = (ctxs || [])[i] || {};
+      if (asset.isDelisted) return;
+      const price = num(ctx.markPx), previous = num(ctx.prevDayPx), funding = num(ctx.funding);
+      if (!(price > 0)) return;
+      rows.push({ market: asset.name, name: bareMarket(asset.name), dex: dex || "", type: "perp", kind: dex ? "tradfi" : "crypto",
+        leverage: asset.maxLeverage || null, price, previous, change: previous > 0 ? price / previous - 1 : null,
+        funding: Number.isFinite(funding) ? funding * 8 : null, apr: Number.isFinite(funding) ? funding * 24 * 365 : null,   // the API rate is per hour; HL shows the 8-hour figure
+        volume: num(ctx.dayNtlVlm), oi: num(ctx.openInterest) * price });
+    });
+  }
+  if (spot) {
+    const [meta, ctxs] = spot, tokens = meta.tokens || [];
+    (meta.universe || []).forEach((pair, i) => {
+      const ctx = (ctxs || [])[i] || {}, price = num(ctx.markPx), previous = num(ctx.prevDayPx);
+      if (!(price > 0)) return;
+      const base = tokens[pair.tokens[0]], quote = tokens[pair.tokens[1]];
+      const name = pair.name.startsWith("@") && base ? base.name + "/" + (quote ? quote.name : "USDC") : pair.name;
+      rows.push({ market: pair.name, name, dex: "", type: "spot", kind: "crypto", leverage: null, price, previous,
+        change: previous > 0 ? price / previous - 1 : null, funding: null, apr: null, volume: num(ctx.dayNtlVlm), oi: null });
+    });
+  }
+  return rows;
+}
+function filterMarkets(rows, query, tab, favourites) {
+  const q = String(query || "").trim().toLowerCase();
+  const inTab = (row) => tab === "perps" ? row.type === "perp" : tab === "spot" ? row.type === "spot" : tab === "crypto" ? row.kind === "crypto"
+    : tab === "tradfi" ? row.kind === "tradfi" : tab === "favs" ? (favourites || []).includes(row.market) : true;
+  const list = rows.filter((row) => inTab(row) && (!q || row.name.toLowerCase().includes(q) || row.market.toLowerCase().includes(q)));
+  // Names that start with the text come first, shortest first (the asset picker's rule), then by volume.
+  return q ? list.sort((a, b) => (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || a.name.length - b.name.length || (b.volume || 0) - (a.volume || 0)) : list;
+}
+function sortMarkets(rows, key, dir) {   // a missing figure sorts last whichever way
+  const sign = dir === "asc" ? 1 : -1, text = key === "name";
+  return rows.slice().sort((a, b) => {
+    const x = a[key], y = b[key], missingX = x === null || x === undefined || Number.isNaN(x), missingY = y === null || y === undefined || Number.isNaN(y);
+    if (missingX || missingY) return missingX === missingY ? 0 : missingX ? 1 : -1;
+    return sign * (text ? String(x).localeCompare(String(y)) : x - y);
+  });
+}
+function fundingText(rate) {   // 8-hour funding as HL shows it: 0.0013%, absent when none
+  if (!Number.isFinite(rate) || rate === 0) return "";
+  const percent = rate * 100, size = Math.abs(percent);
+  return percent.toFixed(size >= 1 ? 2 : 4).replace(/0+$/, "").replace(/\.$/, "") + "%";
+}
+// MARKETS_HELPERS_END
+const MARKETS_TTL_MS = 15000, MARKETS_ROWS_PER_PAGE = 120;
+const marketsData = { at: 0, rows: [], request: null, dexes: null, error: false };
+const marketsPost = (body) => fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+  .then((response) => { if (!response.ok) throw new Error("Hyperliquid " + response.status); return response.json(); });
+function loadMarkets(force = false) {   // one fetch for the whole page: the perps of every DEX and the spot pairs
+  if (!force && marketsData.rows.length && Date.now() - marketsData.at < MARKETS_TTL_MS) return Promise.resolve(marketsData.rows);
+  if (marketsData.request) return marketsData.request;
+  marketsData.request = (async () => {
+    if (!marketsData.dexes) {
+      try { marketsData.dexes = (await marketsPost({ type: "perpDexs" })).filter(Boolean).map((entry) => entry.name); }
+      catch (error) { marketsData.dexes = ["xyz"]; }
+    }
+    const jobs = [""].concat(marketsData.dexes).map((dex) => marketsPost(Object.assign({ type: "metaAndAssetCtxs" }, dex ? { dex } : {}))
+      .then(([meta, ctxs]) => ({ dex, meta, ctxs })).catch(() => null));
+    const [dexes, spot] = await Promise.all([Promise.all(jobs), marketsPost({ type: "spotMetaAndAssetCtxs" }).catch(() => null)]);
+    const rows = buildMarketRows(dexes.filter(Boolean), spot);
+    marketsData.error = !rows.length;
+    if (rows.length) { marketsData.rows = rows; marketsData.at = Date.now(); }
+    return marketsData.rows;
+  })().finally(() => { marketsData.request = null; });
+  return marketsData.request;
+}
+function setupMarkets() {
+  const host = document.getElementById("t-markets");
+  if (!host) return;
+  const view = { query: "", tab: "all", key: "volume", dir: "desc", shown: MARKETS_ROWS_PER_PAGE, active: 0, list: [] };
+  const search = el("input", { class: "trade-input mk-search", type: "text", placeholder: "Search", autocomplete: "off", spellcheck: "false", "aria-label": "Search markets" });
+  const tabs = el("div", { class: "mk-tabs", role: "group", "aria-label": "Market category" }, MARKET_TABS.map(([value, label]) => {
+    const button = el("button", { type: "button", class: "scale-chip mk-tab", "data-tab": value, text: label, "aria-pressed": String(value === view.tab),
+      title: { all: "All markets", perps: "Perpetuals", spot: "Spot pairs", crypto: "Crypto: main-DEX perps and spot", tradfi: "Stocks, commodities and indices (HIP-3 DEXs)", favs: "Your price strip assets" }[value] });
+    button.addEventListener("click", () => { view.tab = value; view.shown = MARKETS_ROWS_PER_PAGE; view.active = 0; draw(); });
+    return button;
+  }));
+  const COLUMNS = [["name", "Symbol", false], ["price", "Last price", true], ["change", "24h change", true], ["funding", "8h funding", true], ["volume", "Volume", true], ["oi", "Open interest", true]];
+  const head = el("tr", {}, [el("th", { class: "mk-star" })].concat(COLUMNS.map(([key, label, number]) => {
+    const th = el("th", { class: number ? "num" : "", "data-key": key, text: label, role: "columnheader", "aria-sort": "none", tabindex: "0" });
+    const toggle = () => { view.dir = view.key === key && view.dir === "desc" ? "asc" : "desc"; view.key = key; view.shown = MARKETS_ROWS_PER_PAGE; view.active = 0; draw(); };
+    th.addEventListener("click", toggle);
+    th.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
+    return th;
+  })));
+  const body = el("tbody");
+  const scroller = el("div", { class: "mk-scroll" }, [el("table", { class: "mk-table" }, [el("thead", {}, head), body])]);
+  const note = el("p", { class: "table-note mk-note", hidden: true });
+  host.replaceChildren(el("div", { class: "mk-bar" }, [search, tabs]), scroller, note);
+  const open = (row) => {
+    if (!row) return;
+    feedback("markets", "open", row.name, row.type);
+    if (row.type === "perp") openAsset(row.market);
+    else window.open("https://app.hyperliquid.xyz/trade/" + encodeURIComponent(row.market), "_blank", "noopener");   // spot pairs have no chart tile
+  };
+  const toggleFavourite = (row) => {
+    const state = tickerState();
+    state.assets = state.assets.includes(row.market) ? state.assets.filter((asset) => asset !== row.market) : state.assets.concat(row.market);
+    saveTicker(state);
+    feedback("markets", "favourite", row.name, state.assets.includes(row.market) ? "on" : "off");
+    if (typeof refreshTicker === "function") refreshTicker();
+    draw();
+  };
+  function draw() {
+    const favourites = tickerState().assets;
+    tabs.querySelectorAll(".mk-tab").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.tab === view.tab)));
+    head.querySelectorAll("th[data-key]").forEach((th) => th.setAttribute("aria-sort", th.dataset.key === view.key ? (view.dir === "asc" ? "ascending" : "descending") : "none"));
+    const filtered = filterMarkets(marketsData.rows, view.query, view.tab, favourites);
+    view.list = view.query.trim() ? filtered : sortMarkets(filtered, view.key, view.dir);   // while searching, the best name match leads
+    view.active = Math.min(view.active, Math.max(0, view.list.length - 1));
+    const visible = view.list.slice(0, view.shown);
+    body.replaceChildren(...visible.map((row, index) => {
+      const star = el("button", { type: "button", class: "mk-star-button", "aria-pressed": String(favourites.includes(row.market)), "aria-label": `Favourite ${row.name}`,
+        title: favourites.includes(row.market) ? "Remove from the price strip" : "Add to the price strip", text: "★" });
+      star.addEventListener("click", (event) => { event.stopPropagation(); toggleFavourite(row); });
+      const symbol = el("td", { class: "mk-symbol" }, [
+        el("span", { class: "mk-name kind-" + (row.kind === "tradfi" ? "stocks" : "crypto"), text: row.name }),
+        row.leverage ? el("span", { class: "mk-badge", title: "Maximum leverage", text: row.leverage + "x" }) : null,
+        row.dex ? el("span", { class: "mk-dex", title: "HIP-3 market on the " + row.dex + " DEX", text: row.dex }) : null,
+        row.type === "spot" ? el("span", { class: "mk-dex", title: "Spot pair", text: "spot" }) : null]);
+      const cell = (text, className, title) => el("td", { class: "num " + (className || ""), title: title || null, text: text || "" });
+      const tr = el("tr", { class: "mk-row" + (index === view.active ? " mk-active" : ""), "data-index": String(index) }, [
+        el("td", { class: "mk-star" }, [star]), symbol,
+        cell(priceText(row.price)),
+        cell(Number.isFinite(row.change) ? readablePct(row.change) : "", signClass(row.change)),
+        cell(fundingText(row.funding), signClass(row.funding), Number.isFinite(row.apr) && row.apr ? `${readablePct(row.apr)} a year` : ""),
+        cell(row.volume > 0 ? usd(row.volume) : ""), cell(row.oi > 0 ? usd(row.oi) : "")]);
+      tr.addEventListener("click", () => open(row));
+      return tr;
+    }));
+    note.textContent = marketsData.error ? "Markets could not be loaded" : "";
+    note.hidden = !marketsData.error;
+  }
+  search.addEventListener("input", () => { view.query = search.value; view.shown = MARKETS_ROWS_PER_PAGE; view.active = 0; draw(); scroller.scrollTop = 0; });
+  search.addEventListener("keydown", (event) => {   // as in HL: arrows move, Enter opens, Escape clears
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      view.active = Math.max(0, Math.min(view.list.length - 1, view.active + (event.key === "ArrowDown" ? 1 : -1)));
+      if (view.active >= view.shown - 5) view.shown += MARKETS_ROWS_PER_PAGE;
+      draw();
+      body.querySelector(".mk-active")?.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter") { event.preventDefault(); open(view.list[view.active]); }
+    else if (event.key === "Escape") { search.value = ""; view.query = ""; draw(); }
+  });
+  scroller.addEventListener("scroll", () => {   // more rows as the list is scrolled
+    if (scroller.scrollTop + scroller.clientHeight > scroller.scrollHeight - 80 && view.shown < view.list.length) { view.shown += MARKETS_ROWS_PER_PAGE; draw(); }
+  });
+  const refresh = (force) => loadMarkets(force).then(draw, () => { marketsData.error = !marketsData.rows.length; draw(); });
+  draw();
+  // Loaded when the tile first comes on screen, refreshed every 20 s while it is (and the tab is shown).
+  let visible = false, timer = null;
+  const tick = () => { if (visible && !document.hidden) refresh(false); };
+  const card = host.closest(".card") || host;
+  new IntersectionObserver((entries) => {
+    visible = entries.some((entry) => entry.isIntersecting);
+    if (visible) { refresh(false); if (!timer) timer = setInterval(tick, 20000); }
+    else if (timer) { clearInterval(timer); timer = null; }
+  }, { rootMargin: "100px" }).observe(card);
+}
+
 // Nothing in the arrangement may stop the data from loading: each setup step is isolated, then the poll starts.
-for (const step of [watchUse, setupSections, wireScreens]) { try { step(); } catch (error) { console.error("dashboard setup:", error); } }
+for (const step of [watchUse, setupSections, wireScreens, setupMarkets]) { try { step(); } catch (error) { console.error("dashboard setup:", error); } }
 restoreLastDoc();
 poll();
