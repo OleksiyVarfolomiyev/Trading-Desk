@@ -763,6 +763,18 @@ td.name-net { color: var(--series-1); }
 html:not([data-screen="research"]) .alert-strip { display: none; }
 .alert-strip[hidden] { display: none !important; }
 
+.alert-strip { align-items: flex-start; }
+.alert-strip > li { box-sizing: border-box; width: fit-content; max-width: 100%; margin-inline-start: 0; }
+.alert-strip .hl-text-row .text { flex: 0 1 auto; }
+.alert-strip li .hl-actions { max-height: none; overflow: visible; }
+.alert-strip .hl-primary-actions { margin-inline-start: 0; }
+.alert-strip .highlight-option-row { justify-content: flex-start; }
+.highlights .alert-response { opacity: 0; transition: opacity .12s; }
+.highlights li:hover .alert-response, .highlights li:focus-within .alert-response, .highlights li.is-hover .alert-response { opacity: 1; }
+@media (hover: none) {
+  .highlights .alert-response, .alert-strip li .hl-actions { opacity: 1; }
+}
+
 /* Highlights: the grouping is enough, no background behind the crypto and stocks parts. */
 .highlights .kind-run, .highlights .kind-run.kind-crypto, .highlights .kind-run.kind-stocks { background: none; padding: 0; }
 
@@ -885,6 +897,7 @@ html[data-keynumbers="off"] #tiles { display: none !important; }   /* !important
 /* Highlights: one line per row; the full sentence is the row's hover; the rest of a card folds into one "+N" chip. */
 .highlights li .hl-text-row { min-width: 0; }
 .highlights li .text { flex: 1 1 auto; min-width: 0; white-space: nowrap !important; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal !important; }
+.alert-strip li .text { white-space: normal !important; overflow-wrap: anywhere !important; }
 .highlights .more-toggle { text-decoration: none; opacity: .7; padding: 0 2px; }
 .highlights .more-toggle:hover { opacity: 1; }
 

@@ -1714,19 +1714,21 @@ function renderHighlights(id, rows, hover = {}) {
     // No titles on the lines: the line says what it is; the area name is on hover (and the critical ones carry their band)
     const tooltip = hover[area] || (area === "uPnL" ? "Unrealized PnL since entry as a share of open positions’ entry notional" : "");
     const fullText = highlightPunctuation(String(whole));   // the whole sentence, dollars and evidence: on hover only
+    const actions = el("span", { class: "hl-actions" }, [
+      act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),
+      act("Not important: stop showing this", "👎", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
+      el("span", { class: "hl-primary-actions" }, [
+        act("Read: hide until it changes", "✓", markRead),
+        positions?.button,
+      ]),
+    ]);
     const item = el("li", { class: level, title: [fullText, tooltip ? highlightPunctuation(tooltip) : ""].filter((part, i, all) => part && all.indexOf(part) === i).join("\n") || null }, [
       el("div", { class: "hl-text-row" }, [
         el("span", { class: "text" }, lineNodes(text, area !== "uPnL" && !/^uPnL\b/.test(text))),
         response?.button,
+        id === "hl-alert" ? actions : null,
       ]),
-      el("span", { class: "hl-actions" }, [
-        act("Useful", "👍", () => { feedback("highlight", "useful", area, text); }),
-        act("Not important: stop showing this", "👎", (s) => { if (!s.deleted.includes(area)) s.deleted.push(area); feedback("highlight", "not important", area, text); }),
-        el("span", { class: "hl-primary-actions" }, [
-          act("Read: hide until it changes", "✓", markRead),
-          positions?.button,
-        ]),
-      ]),
+      id === "hl-alert" ? null : actions,
       response?.panel, positions?.panel,
     ]);
     gestures(item, {
