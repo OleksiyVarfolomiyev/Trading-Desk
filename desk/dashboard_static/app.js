@@ -2174,7 +2174,7 @@ const SCRIPT_URL = document.currentScript ? document.currentScript.src : "app.js
 let scriptStamp = null;
 async function reloadIfNewBuild() {
   try {
-    const head = await fetch(SCRIPT_URL, { method: "HEAD", cache: "no-cache" });
+    const head = await fetch(SCRIPT_URL, { cache: "no-cache" });   // conditional: the server answers 304 while the build is unchanged
     const stamp = [head.headers.get("etag"), head.headers.get("last-modified"), head.headers.get("content-length")].join("|");
     if (scriptStamp && stamp !== scriptStamp && stamp !== "||") location.reload();
     scriptStamp = stamp;

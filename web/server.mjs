@@ -401,7 +401,11 @@ async function handle(request, response) {
   if (request.method === "GET") {
     const file = await staticFile(url.pathname);
     if (file) {
-      response.writeHead(200, { "Content-Type": file.type, "Cache-Control": "no-cache" });
+      // A version stamp, so an open page can tell a new build from the one it runs (app.js reloadIfNewBuild); an unchanged
+      // file answers 304 with no body.
+      const etag = '"' + crypto.createHash("sha1").update(file.body).digest("hex").slice(0, 16) + '"';
+      if (request.headers["if-none-match"] === etag) { response.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" }); response.end(); return; }
+      response.writeHead(200, { "Content-Type": file.type, "Cache-Control": "no-cache", ETag: etag, "Content-Length": file.body.length });
       response.end(file.body);
       return;
     }
