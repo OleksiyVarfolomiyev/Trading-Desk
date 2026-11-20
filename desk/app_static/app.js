@@ -2268,6 +2268,28 @@ async function load() {
   }
 }
 
+// A card's name is centred between the scale chips (left) and the tools (right). In a narrow tile there is no room for all
+// three, so the name is clipped to the space between them (ellipsis) instead of running under the controls.
+function fitCardTitle(h2) {
+  const box = h2.getBoundingClientRect();
+  if (!box.width) return;
+  let left = 0, right = box.width;
+  const chips = h2.querySelector(".scale-chips"), tools = h2.querySelector(".card-tools"), filter = h2.querySelector(".card-filter-box");
+  if (chips) { const r = chips.getBoundingClientRect(); if (r.width) left = Math.max(left, r.right - box.left); }
+  for (const node of [tools, filter]) { if (!node) continue; const r = node.getBoundingClientRect(); if (r.width) right = Math.min(right, r.left - box.left); }
+  const padLeft = left ? left + 6 : 0, padRight = right < box.width ? box.width - right + 6 : 0;
+  h2.style.paddingLeft = padLeft ? padLeft + "px" : "";
+  h2.style.paddingRight = padRight ? padRight + "px" : "";
+}
+function fitCardTitles() { document.querySelectorAll("#content .card h2").forEach(fitCardTitle); }
+let fitTitlesQueued = false;
+function queueFitCardTitles() {
+  if (fitTitlesQueued) return;
+  fitTitlesQueued = true;
+  requestAnimationFrame(() => { fitTitlesQueued = false; fitCardTitles(); });
+}
+if (typeof ResizeObserver !== "undefined") new ResizeObserver(queueFitCardTitles).observe(document.body);
+
 // A tab left open across a deploy picks up the new build without the reader noticing: the page keeps running until the tab is
 // hidden or has been idle, then fetches the new files in the background, and the reload repaints at once from the data the
 // tab last showed (kept in sessionStorage, with the scroll position), so there is no blank page or "loading".
@@ -2315,6 +2337,7 @@ async function applyNewBuildWhenQuiet() {
 function poll() {          // the one polling loop
   reloadIfNewBuild().then(() => load()).then(() => {
     if (Date.now() - lastDocSaved > 30000) { lastDocSaved = Date.now(); saveLastDoc(); }
+    queueFitCardTitles();
   }).finally(() => setTimeout(poll, POLL_MS));
 }
 
@@ -2434,6 +2457,7 @@ function drawPositionScales() {   // D, W, M on each position tile's title, show
     title.querySelector(".group-toggle")?.remove();
     chips.after(swap);
   });
+  queueFitCardTitles();
 }
 function drawChartScales() {
   ["performance", "candidates"].forEach((element) => {

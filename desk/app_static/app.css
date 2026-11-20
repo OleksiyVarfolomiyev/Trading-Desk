@@ -830,4 +830,7 @@ html[data-keynumbers="off"] #tiles { display: none !important; }   /* !important
 .group-toggle { opacity: 0; transition: opacity .12s; }
 .card:hover .group-toggle, .card:focus-within .group-toggle, .group-toggle:focus-visible { opacity: 1; }
 @media (hover: none) { .group-toggle { opacity: 1; } }
+/* A card name that does not fit between the chips and the tools is clipped, never run under them (app.js fitCardTitle). */
+.card h2 { box-sizing: border-box; }
+.card h2 .card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
