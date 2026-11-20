@@ -4301,6 +4301,53 @@ function flexChoice(planText, onChange) {
   return { node, useFlex: () => chosen === "flex", ready: () => chosen !== null };
 }
 
+// A blocked entry is one line and a few buttons, not a wall of planner text: what is full, and what could make room.
+function blockedInfo(planText) {
+  const text = String(planText || "");
+  const money = (re) => { const m = text.match(re); return m ? Number(m[1].replace(/,/g, "")) : NaN; };
+  const percent = (re) => { const m = text.match(re); return m ? Number(m[1]) : NaN; };
+  const current = money(/Estimated current[^$\n]*\$([\d,.]+)/i), cap = money(/Aggregate stop-risk cap:\s*\$([\d,.]+)/i), budget = money(/Per-position risk budget:\s*\$([\d,.]+)/i);
+  const currentPct = percent(/Estimated current[^\n]*\((\d+(?:\.\d+)?)% of desk equity\)/i), capPct = percent(/Aggregate stop-risk cap:[^\n]*\((\d+(?:\.\d+)?)% of desk equity\)/i);
+  const reason = /kill switch/i.test(text) ? "kill" : /equity cap|risk cap|meets or exceeds/i.test(text) ? "cap" : /stale|not fresh|no data/i.test(text) ? "stale" : "other";
+  const flexCap = isNum(cap) && isNum(capPct) && capPct > 0 ? cap * (capPct + 3) / capPct : NaN;   // the flex is 3 points of desk equity
+  return { reason, current, cap, budget, currentPct, capPct, flexRoom: isNum(flexCap) && isNum(current) ? flexCap - current : NaN };
+}
+function roomCandidates(wallet, limit = 3) {   // the biggest risk consumers on this wallet, from the loaded positions tables
+  const tables = (latest && latest.data && latest.data.tables) || {};
+  return ["positions", "positions_stocks"].flatMap((id) => ((tables[id] || {}).rows || []))
+    .filter((row) => row.Symbol && !row._wallet && isNum(row.Risk) && row.Risk > 0.005 && String(row.Account || "").endsWith(wallet))
+    .sort((a, b) => b.Risk - a.Risk).slice(0, limit);
+}
+function blockedScreen(plan, coin, title, overlay, box, retry) {
+  const lines = planFailureLines(plan, coin), info = blockedInfo(plan.plan);
+  const pct0 = (value) => (isNum(value) ? `${Math.round(value)}%` : "");
+  let headline = lines[0] || "Nothing can be sent.";
+  if (info.reason === "cap" && isNum(info.currentPct) && isNum(info.capPct)) headline = `Risk cap full: ${pct0(info.currentPct)} of ${pct0(info.capPct)}`;
+  else if (info.reason === "kill") headline = "Kill switch is on";
+  else if (plan.error) headline = "Could not plan";
+  const buttons = [];
+  const option = (text, hover, action) => { const b = el("button", { type: "button", class: "asset-action", text, title: hover || "" }); b.addEventListener("click", action); buttons.push(b); };
+  if (info.reason === "cap") {
+    if (isNum(info.flexRoom) && isNum(info.budget) && info.flexRoom >= 0.25 * info.budget) {
+      const share = Math.min(1, info.flexRoom / info.budget);
+      option("Plan with flex", `The 3-point flex leaves room for ${Math.round(100 * share)}% of a standard position.`, () => { overlay.remove(); retry({ planFlex: true }); });
+    }
+    const room = roomCandidates(String(retry.wallet || ""));
+    for (const row of room) {
+      const freed = row.Risk / 3;
+      option(`Trim ⅓ ${marketName(row.Symbol)} · ${Math.round(100 * freed)}% of cap`, `Frees about ${(100 * freed).toFixed(1)}% of the risk cap, then plan again.`, () => {
+        overlay.remove(); runAction("Trim ⅓", "reduce", 1 / 3, { coin: row.Symbol, wallet: String(row.Account).slice(-4) });
+      });
+    }
+  } else if (info.reason === "stale" || plan.error) {
+    option("Retry", "Plan again with fresh data.", () => { overlay.remove(); retry({}); });
+  }
+  const cancel = el("button", { type: "button", class: "asset-action", text: "Cancel" });
+  cancel.addEventListener("click", () => overlay.remove());
+  box.replaceChildren(el("h3", { text: title }), el("p", { class: "neg", text: headline, title: lines.join("\n") }),
+    el("div", { class: "asset-actions" }, [...buttons, cancel]));
+}
+
 async function runAction(label, change, fraction, target) {
   const coin = target.coin, title = `${label}: ${marketName(coin)} (HL ${target.wallet})`;
   const isEntry = change === "short" || change === "long";
@@ -4314,11 +4361,11 @@ async function runAction(label, change, fraction, target) {
   const post = (body) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
     body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction, label: isEntry ? chosenLabel || undefined : undefined, notional: target.notional }, body)) }).then((r) => r.json());
   let plan;
-  try { plan = await post({ stage: "plan", label: undefined }); } catch (e) { plan = { error: String(e) }; }
+  try { plan = await post({ stage: "plan", label: undefined, ...(target.planFlex ? { use_flex: true } : {}) }); } catch (e) { plan = { error: String(e) }; }
   if (plan.error || !plan.token) {
-    const lines = planFailureLines(plan, coin);
-    box.replaceChildren(el("h3", { text: title }), el("p", { class: "neg", text: "Nothing can be sent." }),
-      ...lines.map((line) => el("p", { class: "action-line", text: line })), closeButton(overlay));
+    const retry = (extra) => runAction(label, change, fraction, Object.assign({}, target, extra));
+    retry.wallet = target.wallet;
+    blockedScreen(plan, coin, title, overlay, box, retry);
     return;
   }
   const { notices, mine } = planLines(plan.plan, coin);
@@ -4331,7 +4378,8 @@ async function runAction(label, change, fraction, target) {
     confirm.disabled = !ready;
     confirm.title = ready ? `${label} ${marketName(coin)}` : isEntry && !chosenLabel ? "Pick a strategy label first" : "Choose normal or flex first";
   };
-  flex = flexChoice(plan.plan, refresh);
+  flex = target.planFlex ? { node: el("p", { class: "action-line notice", text: "Planned at the flex cap (+3 points)" }), useFlex: () => true, ready: () => true }
+    : flexChoice(plan.plan, refresh);
   const labels = isEntry ? el("div", { class: "scale-chips label-chips", role: "group", "aria-label": "Strategy label" },
     ENTRY_LABELS.map((name) => {
       const button = el("button", { type: "button", class: "scale-chip" + (name === chosenLabel ? " on" : ""), text: name, "aria-pressed": String(name === chosenLabel) });

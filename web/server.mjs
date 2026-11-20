@@ -317,7 +317,7 @@ async function dashboardAction(request, response) {
   actionRunning = true;
   try {
     if (stage === "plan") {
-      const { code, text, data } = await daemonCall({ ...request_, live: false });
+      const { code, text, data } = await daemonCall({ ...request_, live: false, ...(body.use_flex === true ? { use_flex: true } : {}) });   // a flexed plan, when the blocked screen asked for it
       const id = code === 0 && (!batch || data?.limits) ? crypto.randomBytes(12).toString("hex") : null;
       const now = Date.now();
       for (const [expiredId, pending] of pendingActions) {
