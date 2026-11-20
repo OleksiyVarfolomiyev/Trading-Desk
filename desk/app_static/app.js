@@ -2541,6 +2541,15 @@ function rebaseReturns(node, days) {
 
 // The return chart over a day or a week at hourly resolution (daily points make a straight line): the HL wallets' PnL over their
 // value at the window's start, BTC and the S&P 500 perp, each from the window's first hour. A month or more keeps the daily curves.
+// WINDOWED_LAYOUT_START
+// A day or week view runs over exactly its window: an explicit x range, and shapes anchored to the x axis outside it (the
+// "managed" start line) are dropped, because Plotly's autorange stretches the axis to include them (D showed since Oct 16).
+function windowedLayout(layout, from, to) {
+  const inside = (x) => { const t = new Date(x).getTime(); return Number.isFinite(t) && t >= from && t <= to; };
+  const shapes = (layout.shapes || []).filter((shape) => shape.xref !== "x" || (inside(shape.x0) && inside(shape.x1)));
+  return { shapes, xaxis: Object.assign({}, layout.xaxis, { autorange: false, range: [new Date(from).toISOString(), new Date(to).toISOString()] }) };
+}
+// WINDOWED_LAYOUT_END
 function drawIntraday(node, days) {
   const data = (latest && latest.data && latest.data.intraday) || {};
   const start = Date.now() - days * 86400000;
@@ -2561,7 +2570,7 @@ function drawIntraday(node, days) {
   const traces = lines.map(([name, line, style]) => colorHover({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
     customdata: line.y.map((v) => readablePct(v / 100)), hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>" }));
   const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ xref: "paper", x: 1, y: line.y[line.y.length - 1], xanchor: "left", xshift: 7,
-    showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color }, ...endLabelBox() })), xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null }),
+    showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color }, ...endLabelBox() })), ...windowedLayout(node.layout, start, Date.now()),
     yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }) });
   node._orig = null;
   node._intraday = true;
@@ -2590,8 +2599,9 @@ function drawIntradayValue(node, days) {
     annotations.push({ xref: "paper", x: 1, y: stack, xanchor: "left", xshift: 7, showarrow: false, text: usd(own),
       font: { color: trace.line.color, size: 11 }, ...endLabelBox() });
   });
-  const layout = Object.assign({}, node.layout, { annotations,
-    xaxis: Object.assign({}, node.layout.xaxis, { autorange: true, range: null, rangebreaks: [] }),
+  const windowed = windowedLayout(node.layout, start, Date.now());
+  const layout = Object.assign({}, node.layout, { annotations, shapes: windowed.shapes,
+    xaxis: Object.assign({}, windowed.xaxis, { rangebreaks: [] }),
     yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }),
     margin: Object.assign({}, node.layout.margin, { r: 32 }) });
   node._orig = null; node._intraday = true;
