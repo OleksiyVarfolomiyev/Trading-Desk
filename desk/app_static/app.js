@@ -4220,8 +4220,8 @@ function openBatchTrade() {
       el("option", { value: "", text: "Choose market", disabled: true, selected: !selected }),
       ...marketChoices().map(([value, text]) => el("option", { value, text, selected: value === selected })),
     ]);
-    const side = el("select", { class: "trade-input batch-side", "aria-label": "Side" }, [
-      el("option", { value: "LONG", text: "Long" }), el("option", { value: "SHORT", text: "Short" }),
+    const side = el("select", { class: "trade-input batch-side", required: true, "aria-label": "Side" }, [   // no side preselected
+      el("option", { value: "", text: "Side", disabled: true, selected: true }), el("option", { value: "LONG", text: "Long" }), el("option", { value: "SHORT", text: "Short" }),
     ]);
     const remove = el("button", { type: "button", class: "batch-remove", text: "×", title: "Remove market", "aria-label": "Remove market" });
     const row = el("div", { class: "batch-row" }, [market, side, remove]);
@@ -4238,8 +4238,8 @@ function openBatchTrade() {
       const coin = row.querySelector(".batch-market").value;
       return { coin, side: row.querySelector(".batch-side").value, dex: coin.includes(":") ? coin.split(":", 1)[0] : "" };
     });
-    if (signals.length < 2 || new Set(signals.map((signal) => signal.coin)).size !== signals.length) {
-      status.textContent = signals.length < 2 ? "Choose at least two markets." : "Choose each market once.";
+    if (signals.length < 2 || new Set(signals.map((signal) => signal.coin)).size !== signals.length || signals.some((signal) => !signal.side)) {
+      status.textContent = signals.length < 2 ? "Choose at least two markets." : signals.some((signal) => !signal.side) ? "Choose a side for each market." : "Choose each market once.";
       return;
     }
     const body = { change: "batch", wallet: wallet.value, signals };
@@ -4300,7 +4300,7 @@ function flexChoice(planText, confirm) {
 }
 
 // A new entry first asks for its label (the strategy: none is preselected unless the trade bar's choice came with it) and,
-// only if wanted, an explicit dollar amount; left empty, the size is the risk budget over the asset's volatility.
+// the size is always the risk budget over the asset volatility; there is nothing to type.
 function pickEntry(label, change, target) {
   const title = `${label}: ${marketName(target.coin)} (HL ${target.wallet})`;
   const { overlay, box } = actionDialog(title);
@@ -4316,25 +4316,14 @@ function pickEntry(label, change, target) {
       });
       return button;
     }));
-  // The size is the standard one (risk and volatility based, as agreed): nothing to type. A dollar amount of your own is a
-  // deliberate opt-in behind the small $ button, hidden until asked for.
-  const amount = el("input", { class: "trade-input", type: "number", min: "1", step: "any", inputmode: "decimal", hidden: true,
-    placeholder: "$", "aria-label": "Your own dollar size" });
-  const custom = el("button", { type: "button", class: "scale-chip", text: "$", title: "Set your own dollar size instead of the standard one", "aria-label": "Set your own dollar size", "aria-pressed": "false" });
-  custom.addEventListener("click", () => {
-    amount.hidden = !amount.hidden;
-    custom.setAttribute("aria-pressed", String(!amount.hidden));
-    custom.classList.toggle("on", !amount.hidden);
-    if (amount.hidden) amount.value = ""; else amount.focus();
-  });
+  // The size is always the standard one (risk and volatility based, as agreed): nothing to type or choose here. A dollar
+  // size of your own exists only on the command line (--notional).
   plan.addEventListener("click", () => {
     if (!chosen) return;
-    const notional = !amount.hidden && amount.value.trim() ? Number(amount.value) : undefined;
-    if (notional !== undefined && !(notional > 0)) { amount.focus(); return; }
     overlay.remove();
-    runAction(label, change, 1, Object.assign({}, target, { label: chosen, notional, picked: true }));
+    runAction(label, change, 1, Object.assign({}, target, { label: chosen, picked: true }));
   });
-  box.replaceChildren(el("h3", { text: title }), labels, el("div", { class: "trade-bar" }, [custom, amount]),
+  box.replaceChildren(el("h3", { text: title }), labels,
     el("div", { class: "asset-actions" }, [plan, closeButton(overlay).firstChild]));
 }
 
