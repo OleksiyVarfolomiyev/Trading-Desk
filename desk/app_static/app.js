@@ -2416,6 +2416,7 @@ function setEra(value) {
   redrawHighlights();
   renderBenchmarkTables(latest);
   renderCharts(latest.data.charts);
+  reapplyPublishedPeriods();
 }
 function saveScaleChoices() {
   try { localStorage.setItem("desk-scales", JSON.stringify(scaleChoices)); } catch (e) {}
@@ -3431,22 +3432,41 @@ function decoratePublishedTraces(traces, layout) {
   return copy;
 }
 // D/W/M/ALL controls sit with the chart title; return series rebase, other time charts zoom to the selected window.
+// PUBLISHED_PERIOD_START
+// A published chart's period chip as a window in days: D, W and M are cut to the chosen era, and ALL is the era itself (0 =
+// the whole history, in the since-inception view). ``eraLimit`` is the era's length in days (null: since inception).
+function publishedPeriodDays(period, eraLimit) {
+  const days = ({ D: 1, W: 7, M: 30, ALL: 0 })[period] ?? 0;
+  return eraLimit ? (days ? Math.min(days, eraLimit) : eraLimit) : days;
+}
+// PUBLISHED_PERIOD_END
+const publishedDays = (period) => publishedPeriodDays(period, era === "managed" ? eraDays() : null);
+function publishedPeriod(node) {
+  try { return JSON.parse(localStorage.getItem("desk-published-periods") || "{}")["published:" + node.id] || "ALL"; } catch (e) { return "ALL"; }
+}
+function applyPublishedPeriod(node, period = publishedPeriod(node)) {
+  const days = publishedDays(period);
+  if (node._returnSeries) rebasePublished(node, days); else zoomPublished(node, days);
+}
+function reapplyPublishedPeriods() {   // the era changed: every published time chart takes its chip's window again
+  document.querySelectorAll('[id^="pub-"]').forEach((node) => { if (node._chips && node.data) { addPeriodChips(node); applyPublishedPeriod(node); } });
+}
 function addPeriodChips(node) {
   const periods = [["D", 1], ["W", 7], ["M", 30], ["ALL", 0]];
   const key = "published:" + node.id;
-  const current = () => {
-    try { return JSON.parse(localStorage.getItem("desk-published-periods") || "{}")[key] || "ALL"; } catch (e) { return "ALL"; }
-  };
+  const current = () => publishedPeriod(node);
   const row = node._chips || el("span", { class: "scale-chips published-period-chips" });
-  row.replaceChildren(...periods.filter(([label]) => label !== current()).map(([label, days]) => {
-    const button = el("button", { type: "button", class: "scale-chip", text: label });
+  row.replaceChildren(...periods.filter(([label]) => label !== current()).map(([label]) => {
+    // In the managed era ALL is the managed desk, named as the benchmark tables name it.
+    const button = el("button", { type: "button", class: "scale-chip", text: label === "ALL" && era === "managed" ? "Active" : label,
+      title: label === "ALL" ? (era === "managed" ? "Since active management" : "Since inception") : "" });
     button.addEventListener("click", () => {
       const choices = (() => { try { return JSON.parse(localStorage.getItem("desk-published-periods") || "{}"); } catch (e) { return {}; } })();
       choices[key] = label;
       try { localStorage.setItem("desk-published-periods", JSON.stringify(choices)); } catch (e) {}
       row.querySelectorAll(".scale-chip").forEach((b) => b.classList.toggle("on", b === button));
       feedback("chart", "period", node.id, label);
-      if (node._returnSeries) rebasePublished(node, days); else zoomPublished(node, days);
+      applyPublishedPeriod(node, label);
     });
     return button;
   }));
@@ -3594,10 +3614,7 @@ function renderPublished(tiles) {
           node._returnSeries = series;
           node._orig = null;
           addPeriodChips(node);
-          let period = "ALL";
-          try { period = JSON.parse(localStorage.getItem("desk-published-periods") || "{}")["published:" + node.id] || "ALL"; } catch (e) {}
-          const days = ({ D: 1, W: 7, M: 30, ALL: 0 })[period] ?? 0;
-          if (days) { if (series) rebasePublished(node, days); else zoomPublished(node, days); }
+          if (publishedDays(publishedPeriod(node))) applyPublishedPeriod(node);   // not the whole history: the chip's window (ALL = the era)
         }
       }));
     } else if (tile.kind === "table") {
