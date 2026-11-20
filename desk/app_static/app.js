@@ -2212,20 +2212,54 @@ async function load() {
   }
 }
 
-// A tab left open across a deploy reloads itself when the script on the server changes.
+// A tab left open across a deploy picks up the new build without the reader noticing: the page keeps running until the tab is
+// hidden or has been idle, then fetches the new files in the background, and the reload repaints at once from the data the
+// tab last showed (kept in sessionStorage, with the scroll position), so there is no blank page or "loading".
 const SCRIPT_URL = document.currentScript ? document.currentScript.src : "app.js";
-let scriptStamp = null;
+const IDLE_BEFORE_RELOAD_MS = 45000, LAST_DOC_KEY = "desk-last-doc";
+let scriptStamp = null, newBuildSeen = false, applyingBuild = false, lastActivity = Date.now(), lastDocSaved = 0;
+for (const type of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart", "scroll"]) {
+  addEventListener(type, () => { lastActivity = Date.now(); }, { passive: true, capture: true });
+}
+function saveLastDoc() {
+  try {
+    if (latest && latest.data) sessionStorage.setItem(LAST_DOC_KEY, JSON.stringify({ at: Date.now(), scroll: window.scrollY, doc: latest }));
+  } catch (error) { try { sessionStorage.removeItem(LAST_DOC_KEY); } catch (ignored) { /* storage full or blocked: reload from scratch */ } }
+}
+function restoreLastDoc() {   // before the first fetch: the page shows what this tab last showed
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(LAST_DOC_KEY));
+    if (!saved || !saved.doc || !saved.doc.data || Date.now() - saved.at > 15 * 60000) return;
+    latest = saved.doc;
+    render(latest);
+    if (saved.scroll) requestAnimationFrame(() => window.scrollTo(0, saved.scroll));
+  } catch (error) { /* nothing saved, or not readable */ }
+}
 async function reloadIfNewBuild() {
   try {
     const head = await fetch(SCRIPT_URL, { cache: "no-cache" });   // conditional: the server answers 304 while the build is unchanged
     const stamp = [head.headers.get("etag"), head.headers.get("last-modified"), head.headers.get("content-length")].join("|");
-    if (scriptStamp && stamp !== scriptStamp && stamp !== "||") location.reload();
-    scriptStamp = stamp;
+    if (!scriptStamp) scriptStamp = stamp;   // the stamp of the build this page runs
+    else if (stamp !== scriptStamp && stamp !== "||") newBuildSeen = true;
   } catch (error) { /* offline: try again next time */ }
+  if (newBuildSeen) applyNewBuildWhenQuiet();
+}
+async function applyNewBuildWhenQuiet() {
+  if (applyingBuild) return;
+  const typing = document.activeElement && /^(input|textarea|select)$/i.test(document.activeElement.tagName);
+  const busy = document.querySelector(".action-dialog") || typing;
+  if (busy || !(document.hidden || Date.now() - lastActivity > IDLE_BEFORE_RELOAD_MS)) return;
+  applyingBuild = true;
+  const files = [location.href, ...[...document.querySelectorAll("script[src], link[rel=stylesheet]")].map((node) => node.src || node.href)];
+  await Promise.all(files.map((url) => fetch(url, { cache: "reload" }).catch(() => null)));   // the new build into the cache first
+  saveLastDoc();
+  location.reload();
 }
 
 function poll() {          // the one polling loop
-  reloadIfNewBuild().then(() => load()).finally(() => setTimeout(poll, POLL_MS));
+  reloadIfNewBuild().then(() => load()).then(() => {
+    if (Date.now() - lastDocSaved > 30000) { lastDocSaved = Date.now(); saveLastDoc(); }
+  }).finally(() => setTimeout(poll, POLL_MS));
 }
 
 // Redraw charts in the other theme's colors when the system theme changes.
@@ -4965,4 +4999,5 @@ document.addEventListener("click", (event) => {
 
 // Nothing in the arrangement may stop the data from loading: each setup step is isolated, then the poll starts.
 for (const step of [watchUse, setupSections, wireScreens]) { try { step(); } catch (error) { console.error("dashboard setup:", error); } }
+restoreLastDoc();
 poll();
