@@ -993,6 +993,9 @@ def size_trade(
     direction = side_to_direction(side)
     if not np.isfinite(equity) or equity <= 0:
         raise ValueError("Account equity must be positive and finite.")
+    from desk import splits   # a tradfi perp whose stock just split: its candles on the new scale (desk/splits.py), so the ATR is real
+
+    candles = splits.apply(candles, coin.split(":")[-1], dex, mark=market.mark_price)
     atr = wilder_atr(candles, 14)
     stop_distance = atr * STOP_ATR_MULTIPLE
     if direction > 0:   # a long can lose at most the whole price: a volatile asset (3 ATR above its price) is sized on that, not refused

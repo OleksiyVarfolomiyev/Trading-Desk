@@ -138,6 +138,7 @@ def position_moves(overview) -> dict:
 
     out = {}
     try:
+        from desk import splits
         from desk.hl.trade_analytics import fetch_daily_candles
         from desk.live_risk import yahoo_stock_closes
 
@@ -152,7 +153,9 @@ def position_moves(overview) -> dict:
                         closes = yahoo_stock_closes(symbol, 45)
                         series = _pd.Series(closes.values, index=_pd.to_datetime(closes.index, utc=True))
                     else:
-                        frame = fetch_daily_candles(key, "xyz" if ":" in symbol else "", lookback_days=45)
+                        dex = "xyz" if ":" in symbol else ""
+                        frame = fetch_daily_candles(key, dex, lookback_days=45)
+                        frame = splits.apply(frame, key, dex, mark=float(position.mark_price))   # a stock that just split: one scale
                         series = _pd.Series(frame["close"].astype(float).values, index=_pd.to_datetime(frame["time"], utc=True))
                 except Exception:
                     continue
@@ -165,6 +168,22 @@ def position_moves(overview) -> dict:
                     out[key] = moves
     except Exception as exc:
         degraded.report("7d and 30d moves", exc)
+    return out
+
+
+def position_splits(overview) -> dict:
+    """The recent stock splits of the held tradfi perps, by bare symbol ("SNDK": "1:10"), for the positions tile's quiet marker."""
+    from desk import splits
+
+    out = {}
+    for snapshot in overview.snapshots:
+        for position in snapshot.positions:
+            symbol = str(position.symbol)
+            if ":" not in symbol:
+                continue
+            found = splits.active(symbol.split(":")[-1], symbol.split(":")[0])
+            if found:
+                out[symbol.split(":")[-1]] = found.text
     return out
 
 
@@ -721,6 +740,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         "book_comparison": book_comparison,
         "intraday": intraday_series(desk),   # the day and week at hourly resolution (the return chart's D and W)
         "moves": position_moves(overview),   # the held positions' price moves over 7 and 30 days
+        "splits": position_splits(overview),   # the held tradfi perps whose stock recently split ("SNDK": "1:10")
         "usage_model": usage_model_now(),   # what the reader has said is noise (desk/usage_model.py)
         "tiles": published_tiles(),
         "catalog": catalog_entries(),   # the notebook sections that can be pulled onto the dashboard (desk/tile_catalog.py)   # charts and tables published from the notebooks (desk/tile_feed.py)

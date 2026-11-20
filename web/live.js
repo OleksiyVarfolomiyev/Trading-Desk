@@ -206,6 +206,38 @@
     });
   }
 
+  // SPLITS_HELPERS_START
+  // A tradfi perp whose stock split has its price re-based at once while its candles and its 24h reference price are not
+  // (desk/splits.py): put the history on today's scale. 1/N for a forward split, N for a reverse one; small N must be exact
+  // (a -45% crash is not a 2-for-1 split), large N may be 20% off (the stock also moves on the day).
+  const SPLIT_RATIOS = [2, 3, 4, 5, 10, 20, 50];
+  function splitSnap(ratio) {
+    if (!(ratio > 0)) return null;
+    let best = null, error = Infinity;
+    for (const n of SPLIT_RATIOS) for (const f of [1 / n, n]) {
+      const miss = Math.abs(ratio / f - 1);
+      if (miss <= (n < 5 ? 0.03 : 0.2) && miss < error) { best = f; error = miss; }
+    }
+    return best;
+  }
+  const splitText = (f) => (f < 1 ? `1:${Math.round(1 / f)}` : `${Math.round(f)}:1`);
+  // rows: oldest first, {t, h, l, c}; mark: the current price. Splits inside the series and a split today (the mark against the
+  // last completed close) put every earlier row on the new scale. Returns the rows and the latest split's factor.
+  function splitAdjust(rows, mark) {
+    if (!rows || !rows.length) return { rows, factor: null };
+    const factors = new Array(rows.length).fill(1);
+    let latest = null;
+    for (let i = 1; i < rows.length; i++) {
+      const f = splitSnap(rows[i].c / rows[i - 1].c);
+      if (f) { for (let j = 0; j < i; j++) factors[j] *= f; latest = f; }
+    }
+    const live = mark > 0 ? splitSnap(mark / rows[rows.length - 1].c) : null;
+    if (live) { for (let j = 0; j < rows.length; j++) factors[j] *= live; latest = live; }
+    if (!latest) return { rows, factor: null };
+    return { rows: rows.map((r, i) => ({ ...r, h: r.h * factors[i], l: r.l * factors[i], c: r.c * factors[i] })), factor: latest };
+  }
+  // SPLITS_HELPERS_END
+
   function dailyCandles(coin, days) {
     return remember(`desk:candles:${coin}:${days}`, HOUR_MS, async () => {
       const end = Date.now();
@@ -653,6 +685,12 @@
     // Market data for every DEX with a position, plus BTC and the S&P 500 perp for benchmarks.
     const dexes = [...new Set(trading.flatMap((a) => a.dexes).concat(["", "xyz"]))];
     const contexts = await marketContexts(dexes);
+    const splitNotes = {};   // held tradfi perps whose stock recently split: "SNDK": "1:10" (the tile's quiet marker)
+    Object.values(contexts).forEach((context) => {   // HL's 24h reference price is not split-adjusted: put it on today's scale
+      if (!context.dex || !(context.prevDay > 0)) return;
+      const factor = splitSnap(context.mark / context.prevDay);
+      if (factor) { context.prevDay *= factor; splitNotes[String(context.coin).replace(/^[a-z0-9]+:/i, "")] = splitText(factor); }
+    });
     const hlPositions = trading.flatMap((a) => a.positions);
     const others = trading.flatMap((a) => a.spot.map((s) => s.coin))
       .concat(wallets.flatMap((a) => a.positions.map((p) => riskCoin(p.symbol))));
@@ -666,6 +704,12 @@
         .then((reply) => [a.id, reply.points || []], () => [a.id, []]))),
     ]);
     const candleOf = Object.fromEntries(candles), fundingOf = Object.fromEntries(funding), portfolioOf = Object.fromEntries(portfolios);
+    Object.keys(candleOf).forEach((coin) => {   // candles of a tradfi perp that split: one scale, so ATR, moves and returns are real
+      const context = contexts[coin];
+      if (!context || !context.dex) return;
+      const adjusted = splitAdjust(candleOf[coin], context.mark);
+      if (adjusted.factor) { candleOf[coin] = adjusted.rows; splitNotes[String(coin).replace(/^[a-z0-9]+:/i, "")] = splitText(adjusted.factor); }
+    });
     const savedOf = Object.fromEntries(savedPoints);
     const historyOf = Object.fromEntries(trading.map((a) => [a.id,
       portfolioOf[a.id] ? withSaved(mergedHistory(portfolioOf[a.id]), portfolioOf[a.id], savedOf[a.id]) : []]));
@@ -1342,6 +1386,7 @@
         ibs.forEach((a) => a.positions.forEach((p) => add(p.symbol, (closes[p.symbol] || []).map(([day, c]) => ({ t: Date.parse(day + "T00:00:00Z"), c })), p.mark_price)));
         return out;
       })(),
+      splits: splitNotes,
       horizon_days: research && research.horizon_days,
       theses: (research && research.theses) || [],
       usage_model: usageModel,

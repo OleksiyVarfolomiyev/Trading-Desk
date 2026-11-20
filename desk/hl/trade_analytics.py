@@ -234,12 +234,26 @@ def fetch_daily_candles(
     lookback_days: int = 365,
     end_time: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """Fetch completed daily OHLC candles for a market.
+    """Fetch completed daily OHLC candles for a market, on today's price scale.
 
     The returned frame has UTC ``time`` values and ``open``, ``high``, ``low``,
     and ``close`` columns. The still-forming current daily candle is excluded.
-    Candles already saved locally are not downloaded again.
+    Candles already saved locally are not downloaded again. A tradfi perp whose stock split (desk/splits.py) has its
+    earlier candles put on the new scale; the cache keeps the raw candles.
     """
+    from desk import splits
+
+    frame = _fetch_daily_candles_raw(coin, dex, lookback_days, end_time)
+    market_coin, market_dex = normalize_market_symbol(coin, dex)
+    return splits.apply(frame, market_coin, market_dex)
+
+
+def _fetch_daily_candles_raw(
+    coin: str,
+    dex: str = "",
+    lookback_days: int = 365,
+    end_time: pd.Timestamp | None = None,
+) -> pd.DataFrame:
     if not coin or lookback_days <= 0:
         raise ValueError("coin must be non-empty and lookback_days must be positive.")
     end = pd.Timestamp.now(tz="UTC") if end_time is None else pd.Timestamp(end_time)

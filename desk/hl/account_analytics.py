@@ -1458,8 +1458,24 @@ def fetch_market_contexts(dexes):
         for asset, context in zip(universe, asset_contexts):
             coin = asset.get('name')
             if coin:
-                contexts[dex_name, coin] = context
+                contexts[dex_name, coin] = _split_adjusted_context(dex, coin, context)
     return contexts
+
+
+def _split_adjusted_context(dex, coin, context):
+    'A tradfi perp whose stock split has HL\'s 24h reference price on the old scale (desk/splits.py): put it on the new one.'
+    if not dex:
+        return context
+    try:
+        from desk import splits
+
+        mark, previous = float(context.get('markPx') or 0), float(context.get('prevDayPx') or 0)
+        fixed = splits.adjusted_previous(coin, dex, mark, previous)
+    except (TypeError, ValueError):
+        return context
+    if fixed == previous:
+        return context
+    return {**context, 'prevDayPx': str(fixed), 'splitFrom': str(previous)}
 
 
 def current_position_fees(coin, current_size, fills, fills_complete, return_usd=False):

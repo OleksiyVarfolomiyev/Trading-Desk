@@ -308,7 +308,8 @@ const positionView = (id) => ({
   link: (r) => (/^IB/.test(String(r.Account || "")) ? stockLink(r.Symbol) : hlLink(r.Symbol)),
   // No Side column: Value is signed and coloured (shorts negative, red), which already says the side.
   // % first; dollars on hover (the row's pop-up); the account is the desk's business
-  hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", isNum(r.uPnL) ? `${usd(r.uPnL)} uPnL` : ""].filter(Boolean).join(" · "),
+  hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", isNum(r.uPnL) ? `${usd(r.uPnL)} uPnL` : "",
+    r.Symbol && ((latest && latest.data && latest.data.splits) || {})[marketName(r.Symbol)] ? `split ${latest.data.splits[marketName(r.Symbol)]}` : ""].filter(Boolean).join(" · "),
   columnsNow: () => positionColumns("Weight", id),
   columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["Weight"], ["Risk", "Risk", "rpct"]],
   group: (r) => rowStrategy(r),   // rows grouped under their strategy's subtotal (toggle on the tile)
@@ -3637,6 +3638,29 @@ const CANDLE_INTERVALS = [["1m", 1], ["5m", 5], ["15m", 15], ["1h", 60], ["4h", 
 // How many candles a chart opens with: about the current regime (the last 30 days) on the daily and 4-hour views, a day or a
 // week on the short ones, so a chart never opens on months of history.
 const CANDLE_COUNT = { "1m": 360, "5m": 288, "15m": 192, "1h": 168, "4h": 180, "1d": 35, "1w": 26 };
+// A tradfi perp whose stock split has its price re-based at once while the candles before are not (desk/splits.py): the chart
+// puts every candle before a split on the new scale, so there is no cliff. 1/N forward, N reverse; small N exact (a -45% crash
+// is not a 2-for-1 split), large N may be 20% off. Mirrored in web/live.js and desk/splits.py.
+function splitSnapChart(ratio) {
+  if (!(ratio > 0)) return null;
+  let best = null, error = Infinity;
+  for (const n of [2, 3, 4, 5, 10, 20, 50]) for (const f of [1 / n, n]) {
+    const miss = Math.abs(ratio / f - 1);
+    if (miss <= (n < 5 ? 0.03 : 0.2) && miss < error) { best = f; error = miss; }
+  }
+  return best;
+}
+function adjustCandleSplits(rows) {   // rows: oldest first, {time, open, high, low, close, volume}; returns {rows, factor}
+  const factors = new Array(rows.length).fill(1);
+  let latest = null;
+  for (let i = 1; i < rows.length; i++) {
+    const f = splitSnapChart(rows[i].close / rows[i - 1].close);
+    if (f) { for (let j = 0; j < i; j++) factors[j] *= f; latest = f; }
+  }
+  if (!latest) return { rows, factor: null };
+  return { factor: latest, rows: rows.map((r, i) => ({ ...r, open: r.open * factors[i], high: r.high * factors[i], low: r.low * factors[i],
+    close: r.close * factors[i], volume: r.volume / factors[i] })) };
+}
 // A symbol in a highlight (or the strip) opens the asset as a tile at the top of the page: price and candles (HL markets),
 // your position in it, links to its page, and the sensible actions for where it stands. The action buttons do not trade:
 // they copy the order as a sentence, to paste to Claude, which runs it with the usual confirmation (or the pop-up).
@@ -4006,8 +4030,15 @@ async function openAsset(symbol, targetCard = null) {
         chart.textContent = "Candles are unavailable for this asset.";
         return;
       }
-      const data = candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c), volume: Number(c.v) }))
+      let data = candles.map((c) => ({ time: Math.floor(Number(c.t) / 1000), open: Number(c.o), high: Number(c.h), low: Number(c.l), close: Number(c.c), volume: Number(c.v) }))
         .filter((c) => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite));
+      if (String(hlName).includes(":")) {   // a tradfi perp: a stock split is not a cliff
+        const adjusted = adjustCandleSplits(data);
+        if (adjusted.factor) {
+          data = adjusted.rows;
+          price.title = `Split ${adjusted.factor < 1 ? "1:" + Math.round(1 / adjusted.factor) : Math.round(adjusted.factor) + ":1"}: earlier candles are on today's price scale`;
+        }
+      }
       if (!data.length) {
         chart.textContent = "Candles are unavailable for this asset.";
         return;
