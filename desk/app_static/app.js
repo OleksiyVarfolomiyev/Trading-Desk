@@ -4458,9 +4458,12 @@ async function runAction(label, change, fraction, target) {
   let flex;
   const refresh = () => {   // confirm waits for the label (entries) and for the flex choice (when the plan offers one)
     const ready = (!isEntry || Boolean(chosenLabel)) && (!flex || flex.ready());
-    confirm.disabled = !ready;
+    confirm.classList.toggle("is-waiting", !ready);   // not disabled: a click on a waiting button marks what is missing (below)
+    confirm.setAttribute("aria-disabled", String(!ready));
     confirm.title = ready ? `${label} ${marketName(coin)}` : isEntry && !chosenLabel ? "Pick a strategy label first" : "Choose normal or flex first";
+    if (ready) { labels?.classList.remove("needs-pick"); flex?.node?.classList.remove("needs-pick"); hint.textContent = ""; }
   };
+  const hint = el("p", { class: "action-line needs-hint", role: "status" });
   flex = target.planFlex ? { node: el("p", { class: "action-line notice", text: "Planned at the flex cap (+3 points)" }), useFlex: () => true, ready: () => true }
     : flexChoice(plan.plan, refresh);
   const labels = isEntry ? el("div", { class: "scale-chips label-chips", role: "group", "aria-label": "Strategy label" },
@@ -4474,6 +4477,12 @@ async function runAction(label, change, fraction, target) {
       return button;
     })) : null;
   confirm.addEventListener("click", async () => {
+    if (confirm.classList.contains("is-waiting")) {   // never a silent click: say and show what is missing
+      const noLabel = isEntry && !chosenLabel;
+      if (noLabel) labels.classList.add("needs-pick"); else flex?.node?.classList.add("needs-pick");
+      hint.textContent = noLabel ? "Pick a strategy label" : "Choose normal or flex";
+      return;
+    }
     try {
       overlay.remove();   // gone at once; if something goes wrong a notice appears
       feedback("action", "confirm", marketName(coin), label);
@@ -4508,7 +4517,7 @@ async function runAction(label, change, fraction, target) {
     ...(chipRow ? [chipRow] : []),
     ...(sizes ? [sizes] : []),
     ...(flex.node ? [flex.node] : []),
-    ...(labels ? [labels] : []),
+    ...(labels ? [labels] : []), hint,
     el("div", { class: "asset-actions" }, [confirm, cancel]));
 }
 

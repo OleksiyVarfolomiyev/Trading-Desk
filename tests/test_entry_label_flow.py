@@ -25,7 +25,8 @@ class EntryLabelFlowTests(unittest.TestCase):
         run = run[:run.index("\nasync function ") if "\nasync function " in run[10:] else None]
         self.assertIn('"aria-label": "Strategy label"', run)
         self.assertIn("(!isEntry || Boolean(chosenLabel))", run)   # confirm is disabled until a label is chosen
-        self.assertIn("confirm.disabled = !ready", run)
+        self.assertIn('confirm.classList.toggle("is-waiting", !ready)', run)   # waiting, not disabled: a click marks what is missing
+        self.assertIn('confirm.classList.contains("is-waiting")', run)
         self.assertIn("never a silent click", run)                # a failing click shows a notice
 
     def test_the_relay_plans_without_a_label_and_refuses_a_confirm_without_one(self):

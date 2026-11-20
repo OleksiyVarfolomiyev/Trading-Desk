@@ -867,4 +867,9 @@ html[data-keynumbers="off"] #tiles { display: none !important; }   /* !important
 .plan-chip.warn { color: var(--warning); }
 .plan-chip.block { color: var(--bad-text); }
 .plan-sizes .scale-chip.emphasis { color: var(--series-1); border-color: var(--series-1); }
+/* The plan's confirm waits for a label (and a flex choice): it looks waiting, and a click marks what is missing. */
+.asset-action.is-waiting { opacity: .45; }
+.scale-chips.needs-pick, .label-chips.needs-pick, .action-line.needs-pick { outline: 1px solid var(--warning); outline-offset: 2px; border-radius: 6px; }
+.needs-hint { color: var(--warning); min-height: 0; margin: 2px 0 0; }
+.needs-hint:empty { display: none; }
 
