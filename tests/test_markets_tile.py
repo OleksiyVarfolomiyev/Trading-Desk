@@ -47,6 +47,9 @@ const out = {
   btc: rows.find((r) => r.name === "BTC"), tsla: rows.find((r) => r.name === "TSLA"),
   tradfi: names(filterMarkets(rows, "", "tradfi", [])), spotTab: names(filterMarkets(rows, "", "spot", [])), perps: names(filterMarkets(rows, "", "perps", [])).length,
   crypto: names(filterMarkets(rows, "", "crypto", [])), favs: names(filterMarkets(rows, "", "favs", ["xyz:TSLA"])), search: names(filterMarkets(rows, "bt", "all", [])),
+  cryptoPerps: names(filterMarkets(rows, "", ["crypto", "perps"], [])), perpsSpot: names(filterMarkets(rows, "", ["perps", "spot"], [])),
+  cryptoTradfi: names(filterMarkets(rows, "", ["crypto", "tradfi"], [])), tradfiFavs: names(filterMarkets(rows, "", ["tradfi", "favs"], ["xyz:TSLA", "BTC"])),
+  spotTradfi: names(filterMarkets(rows, "", ["spot", "tradfi"], [])), none: names(filterMarkets(rows, "", [], [])).length, allTab: names(filterMarkets(rows, "", ["all"], [])).length,
   byVolume: names(sortMarkets(rows, "volume", "desc")).slice(0, 2), byChange: names(sortMarkets(rows, "funding", "asc")),
   funding: [fundingText(0.0001), fundingText(0), fundingText(0.00013), fundingText(-0.02), fundingText(null)],
 };
@@ -67,6 +70,12 @@ console.log(JSON.stringify(out));
         self.assertEqual(out["crypto"], ["BTC", "ABTC", "HYPE/USDC", "PURR/USDC"])
         self.assertEqual(out["favs"], ["TSLA"])
         self.assertEqual(out["search"], ["BTC", "ABTC"])                                    # starts with the text first
+        self.assertEqual(out["cryptoPerps"], ["BTC", "ABTC"])                                # several categories at once narrow down across groups
+        self.assertEqual(out["perpsSpot"], ["BTC", "ABTC", "TSLA", "HYPE/USDC", "PURR/USDC"])  # and add up within one group
+        self.assertEqual(out["cryptoTradfi"], ["BTC", "ABTC", "TSLA", "HYPE/USDC", "PURR/USDC"])
+        self.assertEqual(out["tradfiFavs"], ["TSLA"])
+        self.assertEqual(out["spotTradfi"], [])                                              # spot pairs are all crypto
+        self.assertEqual((out["none"], out["allTab"]), (5, 5))                               # no selection, or All: every market
         self.assertEqual(out["byVolume"], ["BTC", "TSLA"])
         self.assertEqual(out["byChange"][-2:], ["HYPE/USDC", "PURR/USDC"])                   # no funding sorts last
         self.assertEqual(out["funding"], ["0.01%", "", "0.013%", "-2%", ""])               # absent is absent

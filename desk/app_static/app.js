@@ -5165,8 +5165,12 @@ function buildMarketRows(perpDexes, spot) {
 }
 function filterMarkets(rows, query, tab, favourites) {
   const q = String(query || "").trim().toLowerCase();
-  const inTab = (row) => tab === "perps" ? row.type === "perp" : tab === "spot" ? row.type === "spot" : tab === "crypto" ? row.kind === "crypto"
-    : tab === "tradfi" ? row.kind === "tradfi" : tab === "favs" ? (favourites || []).includes(row.market) : true;
+  // Several categories can be chosen at once (crypto + perps): within a group (perps/spot, crypto/tradfi) they add up, across
+  // groups and with the favourites star they narrow down. No selection (or "all") means every market. `tab` is one name or a list.
+  const chosen = (Array.isArray(tab) ? tab : tab ? [tab] : []).filter((name) => name !== "all");
+  const types = chosen.filter((name) => name === "perps" || name === "spot"), kinds = chosen.filter((name) => name === "crypto" || name === "tradfi");
+  const inTab = (row) => (!types.length || types.includes(row.type === "perp" ? "perps" : "spot")) && (!kinds.length || kinds.includes(row.kind))
+    && (!chosen.includes("favs") || (favourites || []).includes(row.market));
   const list = rows.filter((row) => inTab(row) && (!q || row.name.toLowerCase().includes(q) || row.market.toLowerCase().includes(q)));
   // Names that start with the text come first, shortest first (the asset picker's rule), then by volume.
   return q ? list.sort((a, b) => (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || a.name.length - b.name.length || (b.volume || 0) - (a.volume || 0)) : list;
@@ -5210,12 +5214,15 @@ function loadMarkets(force = false) {   // one fetch for the whole page: the per
 function setupMarkets() {
   const host = document.getElementById("t-markets");
   if (!host) return;
-  const view = { query: "", tab: "all", key: "volume", dir: "desc", shown: MARKETS_ROWS_PER_PAGE, active: 0, list: [] };
-  const search = el("input", { class: "trade-input mk-search", type: "text", placeholder: "Search", autocomplete: "off", spellcheck: "false", "aria-label": "Search markets" });
+  const view = { query: "", tabs: [], key: "volume", dir: "desc", shown: MARKETS_ROWS_PER_PAGE, active: 0, list: [] };
+  const search = el("input", { class: "trade-input mk-search", type: "text", autocomplete: "off", spellcheck: "false", "aria-label": "Search markets" });
   const tabs = el("div", { class: "mk-tabs", role: "group", "aria-label": "Market category" }, MARKET_TABS.map(([value, label]) => {
-    const button = el("button", { type: "button", class: "scale-chip mk-tab", "data-tab": value, text: label, "aria-pressed": String(value === view.tab),
-      title: { all: "All markets", perps: "Perpetuals", spot: "Spot pairs", crypto: "Crypto: main-DEX perps and spot", tradfi: "Stocks, commodities and indices (HIP-3 DEXs)", favs: "Your price strip assets" }[value] });
-    button.addEventListener("click", () => { view.tab = value; view.shown = MARKETS_ROWS_PER_PAGE; view.active = 0; draw(); });
+    const button = el("button", { type: "button", class: "scale-chip mk-tab", "data-tab": value, text: label, "aria-pressed": String(value === "all"),
+      title: { all: "All markets (clears the selection)", perps: "Perpetuals", spot: "Spot pairs", crypto: "Crypto: main-DEX perps and spot", tradfi: "Stocks, commodities and indices (HIP-3 DEXs)", favs: "Your price strip assets" }[value] });
+    button.addEventListener("click", () => {   // All clears; every other button toggles, so several can be on (crypto + perps)
+      view.tabs = value === "all" ? [] : view.tabs.includes(value) ? view.tabs.filter((name) => name !== value) : view.tabs.concat(value);
+      view.shown = MARKETS_ROWS_PER_PAGE; view.active = 0; draw();
+    });
     return button;
   }));
   const COLUMNS = [["name", "Symbol", false], ["price", "Last price", true], ["change", "24h change", true], ["funding", "8h funding", true], ["volume", "Volume", true], ["oi", "Open interest", true]];
@@ -5246,9 +5253,9 @@ function setupMarkets() {
   };
   function draw() {
     const favourites = tickerState().assets;
-    tabs.querySelectorAll(".mk-tab").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.tab === view.tab)));
+    tabs.querySelectorAll(".mk-tab").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.tab === "all" ? !view.tabs.length : view.tabs.includes(button.dataset.tab))));
     head.querySelectorAll("th[data-key]").forEach((th) => th.setAttribute("aria-sort", th.dataset.key === view.key ? (view.dir === "asc" ? "ascending" : "descending") : "none"));
-    const filtered = filterMarkets(marketsData.rows, view.query, view.tab, favourites);
+    const filtered = filterMarkets(marketsData.rows, view.query, view.tabs, favourites);
     view.list = view.query.trim() ? filtered : sortMarkets(filtered, view.key, view.dir);   // while searching, the best name match leads
     view.active = Math.min(view.active, Math.max(0, view.list.length - 1));
     const visible = view.list.slice(0, view.shown);
