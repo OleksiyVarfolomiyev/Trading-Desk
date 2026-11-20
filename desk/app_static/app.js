@@ -2612,7 +2612,7 @@ function setLook(kind, value) {
 }
 // Trade bar: asset, side, an optional strategy tag, then ▶ plans the entry and asks ✓ / ✗ (runAction). On the local page
 // the order is copied for Claude, as everywhere else the dashboard cannot trade.
-let tradeSide = "long";
+let tradeSide = null;   // no side is preselected: a long or short is always chosen on purpose (XMR and ENA went long by default on 2026-11-19)
 function tradeAssets() {
   const tables = (latest && latest.data && latest.data.tables) || {};
   const names = new Set();
@@ -2693,15 +2693,21 @@ function assetPicker(label, submit, selectToSubmit = false) {
 }
 
 function tradeBar(close) {
+  tradeSide = null;   // every open starts with neither side chosen
   const sides = [["long", "▲", "Long"], ["short", "▼", "Short"]].map(([value, glyph, name]) => {
     const b = el("button", { type: "button", class: "trade-side " + value, text: glyph, title: name, "aria-label": name, "aria-pressed": String(value === tradeSide) });
-    b.addEventListener("click", () => { tradeSide = value; sides.forEach((x) => x.setAttribute("aria-pressed", String(x === b))); });
+    b.addEventListener("click", () => { tradeSide = value; sides.forEach((x) => { x.setAttribute("aria-pressed", String(x === b)); x.classList.remove("needs-pick"); }); });
     return b;
   });
   const strat = el("select", { class: "trade-input", "aria-label": "Strategy", title: "Strategy label (asked before planning if not picked here)" },
     [["", "strat"], ["directional", "directional"], ["conviction", "conviction"], ["hedge", "hedge"], ["fade", "fade"]]
       .map(([value, text]) => el("option", { value, text })));
   const picker = assetPicker("Asset to trade", (coin) => {
+    if (!tradeSide) {   // long or short must be picked: the bar stays open and marks the two buttons
+      sides.forEach((x) => x.classList.add("needs-pick"));
+      sides[0].focus();
+      return;
+    }
     close();
     feedback("trade", "plan", coin, tradeSide + (strat.value ? " " + strat.value : ""));
     if (window.DESK_SOURCE) runAction(tradeSide === "short" ? "Short" : "Long", tradeSide, 1, { coin, wallet: "07f2", label: strat.value || undefined });

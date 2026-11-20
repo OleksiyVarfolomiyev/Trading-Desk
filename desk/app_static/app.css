@@ -822,3 +822,5 @@ tr.group-label + tr.group-row td { border-top: 0; }
 @media (prefers-reduced-motion: reduce) { .card.filled > :not(h2), .tiles.filled > * { animation: none; } }
 /* The key numbers bar (PnL, desk value, risk...) hidden by its top-bar switch. */
 html[data-keynumbers="off"] #tiles { display: none; }
+/* The trade bar has no preselected side: both buttons are marked until one is picked. */
+.trade-side.needs-pick { outline: 1px solid var(--warning); outline-offset: 1px; }
