@@ -3341,8 +3341,11 @@ function decoratePublishedTraces(traces, layout) {
   }
   // The book's own curve starts where it first moves (months of a flat line before its first position say nothing); every
   // curve is cut there and rebased to 0%, so the benchmarks start level with the book.
+  // A figure whose axis is a percent format (tickformat ".0%") holds fractions (-0.26 is -26%): labelled as they are, not
+  // rebased or rounded as the percentage-point return curves below are.
+  const fractions = String((layout.yaxis || {}).tickformat || "").includes("%");
   const main = copy.find((t) => t.type === "scatter" && !BENCHMARK_NAME.test(String(t.name || "")));
-  if (main) {
+  if (main && !fractions) {
     const moved = main.y.findIndex((v, k) => k > 0 && Number.isFinite(v) && Math.abs(v - main.y[0]) > 1e-9);
     const from = moved > 0 ? new Date(main.x[moved - 1]).getTime() : null;
     if (from) copy = copy.map((trace) => {
@@ -3362,7 +3365,7 @@ function decoratePublishedTraces(traces, layout) {
   const lastAt = (trace) => { for (let k = trace.y.length - 1; k >= 0; k--) if (Number.isFinite(trace.y[k])) return k; return -1; };
   layout.annotations = copy.map((trace, i) => [trace, i]).filter(([trace]) => trace.type === "scatter" && lastAt(trace) >= 0)
     .map(([trace, i]) => ({ x: 1, y: trace.y[lastAt(trace)], xref: "paper", yref: "y", showarrow: false, xanchor: "right", xshift: -4,
-      text: `${String(trace.name || "").replace(/ \(on equity\)/, "").replace(/^Same \$ in /, "")} ${readablePct(trace.y[lastAt(trace)] / 100)}`,
+      text: `${String(trace.name || "").replace(/ \(on equity\)/, "").replace(/^Same \$ in /, "")} ${readablePct(trace.y[lastAt(trace)] / (fractions ? 1 : 100))}`,
       font: { size: 11, color: (trace.line && trace.line.color) || colors[i % colors.length] }, ...endLabelBox() }));
   return copy;
 }
