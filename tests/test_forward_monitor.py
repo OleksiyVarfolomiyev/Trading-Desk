@@ -72,6 +72,21 @@ class LiveStreamTests(unittest.TestCase):
         self.assertAlmostEqual(outcomes[0], 0.05 - fm.TRADE_COST)
         self.assertAlmostEqual(outcomes[1], -0.02 - fm.TRADE_COST)
 
+    def test_screener_outcomes_keep_strategy_and_benchmark(self):
+        start = datetime(2026, 11, 10, tzinfo=timezone.utc)
+        end = start + timedelta(days=7)
+        weak = {"strategy": "weak", "coin": "ETH", "benchmark": "BTC"}
+        candidates = [weak, weak, {**weak, "strategy": "fade"},
+                      {"strategy": "stocks", "coin": "xyz:TSLA", "benchmark": "xyz:SP500"}]
+        marks = {"ETH": 1.1, "BTC": 1.2, "xyz:TSLA": 0.9, "xyz:SP500": 0.95}
+        src = fm.Sources(now=end, price_at=lambda coin, at: 1 if at == start else marks[coin],
+                         screener_log=[{"as_of": start.isoformat(), "shorts": ["ETH"]},
+                                       {"as_of": start.isoformat(), "candidates": candidates}])
+        for strategy, expected in (("weak", 0.10), ("fade", 0.10), ("stocks", 0.05)):
+            outcomes = fm._screener_live(src, strategy)
+            self.assertEqual(len(outcomes), 1)
+            self.assertAlmostEqual(outcomes[0], expected - fm.TRADE_COST)
+
     def test_closed_trades_split_at_the_change_date(self):
         frame = pd.DataFrame({"time": ["2026-11-10 00:00:00+00:00", "2026-11-18 00:00:00+00:00"], "account": ["07f2", "07f2"],
                               "return": [0.1, -0.2]})

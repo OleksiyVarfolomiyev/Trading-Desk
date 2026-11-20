@@ -59,11 +59,11 @@ Panel: the 40 most liquid main-DEX perps, 2023-11-15 to 2026-11-19 (1082 days). 
 | fade: up >20% vs BTC in 3d, stretched | 14d | 6 |  |  |  |  | no |
 
 ## (c) Timing of the desk's own short entries (entry day minus placebo days of the same coin, a short's gain)
-| entry | hold | n | mean per trade | t | t 1st half | t 2nd half | validated |
+| entry | hold | n | mean per date | t | t 1st half | t 2nd half | validated |
 |---|---|---|---|---|---|---|---|
-| entry day vs placebo | 1d | 27 | +6.06% | 2.7 | 1.6 | 2.2 | no |
-| entry day vs placebo | 3d | 27 | +11.72% | 3.8 | 3.1 | 2.4 | yes |
-| entry day vs placebo | 7d | 23 | +16.11% | 4.4 | 3.1 | 3.0 | yes |
+| entry day vs placebo | 1d | 27 | +0.40% | 0.5 | -0.0 | 0.7 | no |
+| entry day vs placebo | 3d | 10 | +3.75% | 1.0 |  |  | no |
+| entry day vs placebo | 7d | 5 |  |  |  |  | no |
 
 ## Reading
 
@@ -72,12 +72,9 @@ Panel: the 40 most liquid main-DEX perps, 2023-11-15 to 2026-11-19 (1082 days). 
   is not a better entry, it is worse (negative, t down to -1.7). So the screener's ranking is labelled as the desk's record, not a validated signal.
 - **Fade:** stretched and up against BTC in 3 days, shorted for 1 to 14 days, does not validate at any threshold (5 to 20%), the same finding
   as the earlier pump-and-dump tests.
-- **Timing:** the desk's own short entries beat placebo days of the same coin (3 and 7 days out, t 3.8 and 4.4, both halves above 2; at 1 day the
-  first half is 1.6, not validated). It is a real finding about WHEN the desk enters, not WHAT: same coin, neighbouring days. Caveats: 27 distinct coin
-  days (entries merged per coin and day, only coins in the panel), closed trades only, and the size (+12% to +16% of price) is far above what a
-  rule would give, so read it as direction, not magnitude. It is not reproducible from simple price conditions here (weak plus bounce fails), so the
-  screener shows no timing marker: a timing rule is not established.
+- **Timing:** each day averages all available coin-level differences, and test dates are spaced at least one holding period apart.
+  The comparison covers closed trades with available candles. Nearby placebo windows can overlap and share market moves, so the
+  reported t-statistics are descriptive. These results do not establish an entry timing rule.
 - **The attribution's Timing row:** it is built from the deviation of the day's net weight from the window's average, times the benchmark return, plus
   fills marked to the close. That is partly net exposure against the benchmark, so it is not a clean measure of entry timing. The placebo test above
-  holds the coin and the exposure fixed and moves only the entry day, so the two agree in direction (timing is a strength) but the placebo test is the
-  cleaner evidence for it.
+  holds the coin fixed and moves the entry day.

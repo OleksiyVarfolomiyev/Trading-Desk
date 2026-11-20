@@ -89,7 +89,10 @@ class FitAndComparisonTests(unittest.TestCase):
         out = {r["coin"]: r for r in s.score(rows, fills=opened + closed, now_ms=self.NOW, series_for=self.series)}
         self.assertFalse(out["Y"]["followed"])     # a long was opened: the avoid was not followed
         self.assertTrue(out["X"]["followed"])
-        none = {r["coin"]: r for r in s.score(rows, fills=[], now_ms=self.NOW, series_for=self.series)}
+        unverified = s.score(rows, fills=[], now_ms=self.NOW, series_for=self.series)
+        self.assertTrue(all(r["followed"] is None for r in unverified))
+        none = {r["coin"]: r for r in s.score(rows, fills=[], now_ms=self.NOW, series_for=self.series,
+                                              fill_coverage=(start, self.NOW))}
         self.assertTrue(none["Y"]["followed"])
         self.assertFalse(none["X"]["followed"])
 
@@ -125,6 +128,20 @@ class FitAndComparisonTests(unittest.TestCase):
         self.assertEqual([e["coin"] for e in out], ["A"])                 # B was suggested, ETH is a ladder
         self.assertLess(out[0]["moves"][1], 0)                            # a short while the price rose 10%
 
+    def test_truncated_prices_do_not_fill_later_horizons(self):
+        at = "2026-11-20T00:00:00Z"
+        start = s._ms(at)
+        moves = s.moves_from_series([(start, 100), (start + 86_400_000, 110)], at, self.NOW)
+        self.assertAlmostEqual(moves[1], 0.1)
+        self.assertIsNone(moves[3])
+        self.assertIsNone(moves["now"])
+
+    def test_own_entries_keep_separate_opening_clusters(self):
+        start = s._ms("2026-11-20T00:00:00Z")
+        fill = {"coin": "BTC", "side": "B", "dir": "Open Long"}
+        fills = [{**fill, "time": start + offset} for offset in (0, 1000, 172_800_000)]
+        self.assertEqual(len(s.own_entries(fills, [], self.NOW, self.series)), 2)
+
     def test_the_hit_stat_carries_n_and_a_z(self):
         out = s.hit_stats([0.1, 0.2, -0.1, 0.3])
         self.assertEqual(out["n"], 4)
@@ -144,11 +161,7 @@ class LogAggregateTests(unittest.TestCase):
         self.assertEqual(out["by_trigger"], {"asked": 2, "unprompted": 1, "unknown": 0})
         self.assertEqual(out["by_month"], {"2026-11": 2, "2026-12": 1})
 
-    def test_followup_needs_two_shared_content_words_and_a_voided_row_is_left_out(self):
-        row = {"text": "Build the stale chip for the data age hover", "view": "how I would: a chip when a source is stale"}
-        commits = [{"hash": "abc1234", "subject": "improve(risk): stale chip and data age hover on the key numbers"}, {"hash": "def5678", "subject": "fix: unrelated thing"}]
-        self.assertTrue(s.followup(row, commits)["done"])
-        self.assertFalse(s.followup(row, commits[1:])["done"])
+    def test_voided_rows_are_excluded(self):
         import tempfile
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "log.jsonl"
@@ -162,6 +175,29 @@ class LogAggregateTests(unittest.TestCase):
         many = [{"moves": {1: 0.01, 3: 0.01, 7: None, "now": 0.01}, "followed": True} for _ in range(20)]
         self.assertIn("too few", s.summary(few)["verdict"])
         self.assertNotIn("too few", s.summary(many)["verdict"])
+
+
+class FunnelTests(unittest.TestCase):
+    def test_usage_requires_an_explicit_link_and_exact_post_deploy_events(self):
+        from desk import suggestion_funnel as funnel
+
+        suggestion = {"kind": "process", "text": "Trade confirmation", "at": "2026-11-20T12:00:00Z"}
+        links = {funnel.suggestion_id(suggestion): {"component": "desk", "commit": "example", "target": "orders", "action": "open"}}
+        deploy = {"component": "desk", "commit": "example", "at": "2026-11-20T15:00:00Z"}
+        event = {"target": "orders", "action": "open"}
+        events = [
+            {**event, "received": "2026-11-20T14:59:00Z"},
+            {**event, "received": "2026-11-20T15:01:00Z"},
+            {**event, "received": "2026-11-20T15:02:00Z", "target": "orders archive"},
+            {**event, "received": "2026-11-20T15:03:00Z", "action": "close"},
+        ]
+        unlinked, = funnel.funnel([suggestion], {}, [deploy], events)
+        self.assertFalse(unlinked["shipped"])
+        linked, = funnel.funnel([suggestion], links, [deploy], events)
+        self.assertTrue(linked["shipped"])
+        self.assertFalse(linked["used"])
+        self.assertEqual(linked["usage"]["events_before"], 1)
+        self.assertEqual(linked["usage"]["events_after"], 1)
 
 
 if __name__ == "__main__":

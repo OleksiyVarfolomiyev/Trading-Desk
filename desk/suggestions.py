@@ -37,6 +37,8 @@ LOG = ROOT / "data" / "suggestions.jsonl"
 REVIEW = ROOT / "research" / "suggestions_review.md"
 HORIZONS_DAYS = (1, 3, 7)
 MIN_SCORED = 20
+HOUR_MS = 3_600_000
+FOLLOWUP_MS = 3 * 86_400_000
 KINDS = ("trade", "size", "reduce", "hold", "avoid", "rule", "process", "test", "design", "info")
 SCORED_KINDS = ("trade", "avoid", "reduce")
 FITS = ("strategy", "additional", "process", "unknown")
@@ -103,32 +105,42 @@ def _candles(coin: str, start_ms: int, end_ms: int) -> list[tuple[int, float]]:
     from desk.hl.trade_analytics import post_info as _post_info   # the desk HL client (retries on 429)
 
     rows = _post_info({"type": "candleSnapshot", "req": {"coin": _hl_name(coin), "interval": "1h", "startTime": start_ms, "endTime": end_ms}})
-    return [(int(row["t"]), float(row["c"])) for row in rows]
+    return [(int(row["T"]), float(row["c"])) for row in rows]
 
 
 def moves_from_series(series: list[tuple[int, float]], at: str, now_ms: int | None = None) -> dict[int, float | None]:
-    """The price move from the suggestion's hour to each horizon, None where the horizon is still in the future."""
-    now_ms = now_ms or int(time.time() * 1000)
+    """Use the last completed hourly close at each mark, within one hour."""
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     start = _ms(at)
-    if not series:
-        return {**{days: None for days in HORIZONS_DAYS}, "now": None}
-    base = min(series, key=lambda point: abs(point[0] - start))[1]
-    out = {"now": series[-1][1] / base - 1}   # so far: the latest price against the price at the suggestion (interim, never a verdict)
-    for days in HORIZONS_DAYS:
-        target = start + days * 86400000
-        if target > now_ms:
-            out[days] = None
-            continue
-        point = min(series, key=lambda p: abs(p[0] - target))
-        out[days] = point[1] / base - 1
+    prices = sorted((t, p) for t, p in series if t <= now_ms and p > 0 and math.isfinite(p))
+
+    def mark(target):
+        return next((p for t, p in reversed(prices) if target - HOUR_MS <= t <= target), None)
+
+    base = mark(start)
+    targets = {**{days: start + days * 86_400_000 for days in HORIZONS_DAYS}, "now": now_ms}
+    out = dict.fromkeys(targets)
+    if base is not None:
+        for horizon, target in targets.items():
+            close = mark(target) if target <= now_ms else None
+            if close is not None:
+                out[horizon] = close / base - 1
     return out
 
 
 def price_moves(coin: str, at: str, now_ms: int | None = None) -> dict[int, float | None]:
-    now_ms = now_ms or int(time.time() * 1000)
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     start = _ms(at)
-    end = min(now_ms, start + (max(HORIZONS_DAYS) + 1) * 86400000)
-    return moves_from_series(_candles(coin, start - 3600000, end), at, now_ms)
+    end = min(now_ms, start + (max(HORIZONS_DAYS) + 1) * 86_400_000)
+    if now_ms < start:
+        return moves_from_series([], at, now_ms)
+    series = _candles(coin, start - 2 * HOUR_MS, end)
+    if now_ms > end:
+        try:
+            series += _candles(coin, now_ms - 2 * HOUR_MS, now_ms)
+        except Exception:
+            pass   # historical marks still have coverage
+    return moves_from_series(series, at, now_ms)
 
 
 def followed(coin: str, side: str, at: str, fills: list[dict], window_days: int = 3, kind: str = "trade") -> dict | None:
@@ -174,25 +186,30 @@ def direction_sign(row: dict) -> int:
 
 
 def score(rows: list[dict] | None = None, fills: list[dict] | None = None, now_ms: int | None = None, entries: list[dict] | None = None,
-          series_for=None) -> list[dict]:
+          series_for=None, *, fill_coverage: tuple[int, int] | None = None) -> list[dict]:
     """One result per scoreable suggestion: its move in the suggested direction at each horizon, whether it was followed and with
     which label. ``series_for(coin, at)`` is for tests (a price series); by default the HL candles are read."""
     rows = _without_approximate_duplicates(load() if rows is None else rows)
     results = []
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    observed_fills = [f for f in fills or [] if int(f["time"]) <= now_ms]
     for row in rows:
         if row["kind"] not in SCORED_KINDS or row.get("fit") == "process" or not row.get("coin") or row.get("side") not in ("long", "short"):
             continue
         try:
             moves = (moves_from_series(series_for(row["coin"], row["at"]), row["at"], now_ms) if series_for else price_moves(row["coin"], row["at"], now_ms))
         except Exception as exc:   # an unreadable market is shown as unscored, never as a miss
-            results.append({**row, "moves": {}, "error": type(exc).__name__, "followed": False, "label": None})
-            continue
+            moves, error = {}, type(exc).__name__
+        else:
+            error = None
         sign = direction_sign(row)
         directional = {days: (None if move is None else sign * move) for days, move in moves.items()}
-        fill = followed(row["coin"], row["side"], row["at"], fills or [], kind="trade" if row["kind"] == "avoid" else row["kind"])
-        did = (fill is None) if row["kind"] == "avoid" else bool(fill)   # avoiding a long is followed when no long was opened
+        fill = followed(row["coin"], row["side"], row["at"], observed_fills, kind="trade" if row["kind"] == "avoid" else row["kind"])
+        at_ms = _ms(row["at"])
+        covered = bool(fill_coverage and fill_coverage[0] <= at_ms and at_ms + FOLLOWUP_MS <= min(now_ms, fill_coverage[1]))
+        did = (row["kind"] != "avoid") if fill else ((row["kind"] == "avoid") if covered else None)
         label = chosen_label(row["coin"], row["side"], int(fill["time"]), entries or []) if fill and row["kind"] == "trade" else None
-        results.append({**row, "moves": directional, "followed": did, "fill_at": fill and int(fill["time"]), "label": label})
+        results.append({**row, "moves": directional, "followed": did, "fill_at": fill and int(fill["time"]), "label": label, "error": error})
     return results
 
 
@@ -255,20 +272,23 @@ def own_entries(fills: list[dict], suggested: list[dict], now_ms: int | None = N
     for f in fills:
         counts[f.get("coin")] += 1
     taken = {(r["coin"].split(":")[-1].upper(), r["side"]) for r in suggested if r.get("coin") and r.get("side")}
-    firsts = {}
+    last = {}
+    firsts = []
     for f in sorted(fills, key=lambda x: x["time"]):
         if not str(f.get("dir", "")).startswith("Open") or counts[f["coin"]] >= noisy_min:
             continue
         side = "long" if f["side"] == "B" else "short"
         key = (f["coin"], side)
-        if key in firsts and int(f["time"]) - firsts[key]["time"] < 86400000:
+        at_ms = int(f["time"])
+        if key in last and at_ms - last[key] < 86_400_000:
             continue
-        firsts[key] = {"coin": f["coin"], "side": side, "time": int(f["time"])}
+        last[key] = at_ms
+        firsts.append((f["coin"], side, at_ms))
     out = []
-    for (coin, side), e in firsts.items():
+    for coin, side, at_ms in firsts:
         if (coin.split(":")[-1].upper(), side) in taken:
             continue
-        at = datetime.fromtimestamp(e["time"] / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        at = datetime.fromtimestamp(at_ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             moves = moves_from_series(series_for(coin, at), at, now_ms) if series_for else price_moves(coin, at, now_ms)
         except Exception:
@@ -282,11 +302,11 @@ def comparison(results: list[dict], own: list[dict]) -> dict:
     """The key comparison: suggested and followed, suggested and not followed, the user's own entries never suggested."""
     trades = [r for r in results if r["kind"] in ("trade",)]
     return {"suggested_followed": summary([r for r in trades if r.get("followed")]),
-            "suggested_not_followed": summary([r for r in trades if not r.get("followed")]),
+            "suggested_not_followed": summary([r for r in trades if r.get("followed") is False]),
             "own_not_suggested": summary(own),
             # every directional call (trade, avoid, reduce), for a larger n; an avoid counts as followed when nothing was opened
             "all_followed": summary([r for r in results if r.get("followed")]),
-            "all_not_followed": summary([r for r in results if not r.get("followed")])}
+            "all_not_followed": summary([r for r in results if r.get("followed") is False])}
 
 
 def counts(rows: list[dict]) -> dict:
@@ -299,48 +319,26 @@ def counts(rows: list[dict]) -> dict:
             "by_fit": {f: sum(1 for r in rows if r.get("fit") == f) for f in FITS}}
 
 
-STOP = {"about", "after", "again", "before", "being", "build", "could", "every", "first", "going", "have", "instead", "never", "other", "should", "since",
-        "still", "their", "there", "these", "thing", "think", "those", "though", "under", "until", "using", "which", "while", "would", "your", "with", "that",
-        "this", "from", "when", "then", "than", "them", "into", "more", "only", "just", "make", "next", "keep", "like", "some", "want", "need", "also", "what"}
-
-
-def _keywords(text: str) -> set[str]:
-    import re
-
-    return {w for w in re.findall(r"[a-z][a-z0-9_]{4,}", text.lower()) if w not in STOP}
-
-
-def commits_after(at: str, days: int = 3) -> list[dict]:
-    """The desk's commits (hash, time, subject) in the ``days`` after a timestamp, for the follow-up check."""
-    start = datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    out = subprocess.run(["git", "-C", str(ROOT), "log", f"--since={start.isoformat()}", f"--until={(start.timestamp() + days * 86400)}", "--format=%h%x09%aI%x09%s"],
-                         capture_output=True, text=True).stdout
-    return [{"hash": h, "subject": subj} for h, _, subj in (line.split("\t", 2) for line in out.splitlines() if line.count("\t") >= 2)]
-
-
-def followup(row: dict, commits: list[dict]) -> dict:
-    """The checkable follow-up for a suggestion that is not a price call: a commit in the next 3 days that shares at least two content
-    words with it (the thing was built or changed), else 'no matching commit'. It shows that something was done, not that it was right."""
-    words = _keywords(row["text"] + " " + (row.get("view") or ""))
-    best = None
-    for commit in commits:
-        shared = len(words & _keywords(commit["subject"]))
-        if shared >= 2 and (best is None or shared > best[0]):
-            best = (shared, commit)
-    return {"done": bool(best), "evidence": f"{best[1]['hash']} {best[1]['subject'][:70]}" if best else "no matching commit"}
-
-
-def _fills() -> list[dict]:
+def _fill_history(now_ms: int) -> tuple[list[dict], tuple[int, int] | None]:
     from desk.accounts import accounts_for, load_accounts
-    from desk.hl.trade_analytics import post_info as _post_info
+    from desk.hl.account_analytics import FILLS_PAGE_SIZE
+    from desk.hl.trade_analytics import post_info
 
+    start_ms = now_ms - 21 * 86_400_000
+    accounts = accounts_for("hl", load_accounts())
     out = []
-    for account in accounts_for("hl", load_accounts()):
+    coverage = (start_ms, now_ms) if accounts else None
+    for account in accounts:
         try:
-            out += _post_info({"type": "userFillsByTime", "user": account.id, "startTime": int((time.time() - 21 * 86400) * 1000)})
+            batch = post_info({"type": "userFillsByTime", "user": account.id, "startTime": start_ms, "endTime": now_ms})
+            if not isinstance(batch, list) or any(not isinstance(f, dict) or not isinstance(f.get("time"), int) for f in batch):
+                raise ValueError("invalid fill history")
+            out.extend(batch)
+            if len(batch) >= FILLS_PAGE_SIZE:
+                coverage = None
         except Exception:
-            continue
-    return out
+            coverage = None
+    return out, coverage
 
 
 def _journal_entries() -> list[dict]:
@@ -359,33 +357,35 @@ def _journal_entries() -> list[dict]:
 def build(now_ms: int | None = None) -> dict:
     """Everything the tiles and the report need: scored rows, the comparison, by-fit and by-label splits, the weekly lines."""
     rows = load()
-    fills = _fills()
-    results = score(rows, fills, now_ms, entries=_journal_entries())
-    own = own_entries(fills, rows, now_ms)
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    fills, coverage = _fill_history(now_ms)
+    results = score(rows, fills, now_ms, entries=_journal_entries(), fill_coverage=coverage)
+    own = own_entries(fills, rows, now_ms) if coverage else []
     scored_keys = {(r["at"], r["text"]) for r in results}
-    others = [r for r in rows if (r["at"], r["text"]) not in scored_keys and r["kind"] != "info"]
-    follow = []
-    cache: dict[str, list[dict]] = {}
-    for r in others:
-        day = r["at"][:10]
-        if day not in cache:
-            cache[day] = commits_after(r["at"][:10] + "T00:00:00Z", 4)   # commits from that day through the next 3 days
-        follow.append({**r, **followup(r, [c for c in cache[day]])})
+    others = [r for r in rows if (r["at"], r["text"]) not in scored_keys]
+    from desk.suggestion_funnel import eligible, linked_commits, suggestion_id
+
+    links = linked_commits()
+    follow = [{**r, "done": suggestion_id(r) in links,
+               "evidence": (links.get(suggestion_id(r)) or {}).get("commit", "")} for r in others if eligible(r)]
     return {"rows": rows, "results": results, "own": own, "counts": counts(rows), "followups": follow, "summary": summary(results), "comparison": comparison(results, own),
             "by_fit": split_by(results, lambda r: r.get("fit", "unknown")), "by_label": split_by([r for r in results if r.get("followed") and r["kind"] == "trade"], lambda r: r.get("label") or "unknown"),
             "weekly": weekly(results), "weekly_now": weekly(results, "now")}
 
 
-def _pct(value, signed: bool = True) -> str:
+def _pct(value) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return ""
-    text = f"{abs(value) * 100:.1f}".rstrip("0").rstrip(".") if abs(value) * 100 >= 0.05 else ""
-    return ("" if not text else (("-" if value < 0 else "") + text + "%"))
+    return f"{value:.1%}"
 
 
 def _rate(value) -> str:
     """A hit rate as a whole percent, 0% included (a zero hit rate is a finding, not an absent value)."""
     return "n/a" if value is None else f"{value * 100:.0f}%"
+
+
+def followed_text(row: dict) -> str:
+    return {True: "yes", False: "no", None: "unknown"}[row.get("followed")]
 
 
 def tiles_payload(data: dict):
@@ -395,14 +395,14 @@ def tiles_payload(data: dict):
     table = []
     for r in sorted(data["results"], key=lambda r: r["at"], reverse=True):
         table.append({"Date": r["at"][:10], "Call": f"{r['kind']} {r['side']} {r['coin'].split(':')[-1]}", "Fit": r.get("fit", ""), "Confidence": r["confidence"],
-                      "Followed": "yes" if r.get("followed") else "no", "Label": r.get("label") or "",
+                      "Followed": followed_text(r), "Label": r.get("label") or "",
                       "Since": r["moves"].get("now"), "1d": r["moves"].get(1), "3d": r["moves"].get(3), "7d": r["moves"].get(7)})
     s = data["summary"]
     for days in ("now",) + HORIZONS_DAYS:
         h = s["horizons"][days]
         if h["n"]:
             name = "so far" if days == "now" else f"{days}d"
-            table.append({"Date": "", "Call": f"Hit rate {name} (n {h['n']})" + ("" if s["n"] >= MIN_SCORED else ", too few"), "Fit": "", "Confidence": "", "Followed": "",
+            table.append({"Date": "", "Call": f"Hit rate {name} (n {h['n']})" + ("" if h["n"] >= MIN_SCORED else ", too few"), "Fit": "", "Confidence": "", "Followed": "",
                           "Label": "", "Since": h["hit"] if days == "now" else None, "1d": h["hit"] if days == 1 else None,
                           "3d": h["hit"] if days == 3 else None, "7d": h["hit"] if days == 7 else None})
     frame = pd.DataFrame(table)
@@ -423,7 +423,7 @@ def tiles_payload(data: dict):
 
 def log_frame(data: dict):
     """The 'Suggestions log' table: per kind how many, how many asked vs unprompted, how many are scoreable on price, and for the rest the
-    share with a matching commit in the next three days (it shows it was done, not that it was right)."""
+    share linked to a commit explicitly."""
     import pandas as pd
 
     done = defaultdict(list)
@@ -431,7 +431,7 @@ def log_frame(data: dict):
         done[r["kind"]].append(r["done"])
     scored = defaultdict(int)
     for r in data["results"]:
-        scored[r["kind"]] += 1
+        scored[r["kind"]] += any(value is not None for value in r["moves"].values())
     rows = []
     for kind, n in data["counts"]["by_kind"].items():
         if not n:
@@ -440,7 +440,7 @@ def log_frame(data: dict):
         d = done.get(kind) or []
         rows.append({"Kind": kind, "Suggestions": n, "Asked": sum(1 for r in group if r.get("trigger") == "asked"),
                      "Unprompted": sum(1 for r in group if r.get("trigger") == "unprompted"), "Scored on price": scored.get(kind) or None,
-                     "Done (commit)": (sum(d) / len(d)) if d else None})
+                     "Linked commit": (sum(d) / len(d)) if d else None})
     frame = pd.DataFrame(rows)
     return frame
 
@@ -459,7 +459,7 @@ def publish(push: bool = True) -> list[str]:
     log = log_frame(data)
     if len(log):
         tile_feed.publish(log, "Suggestions log", reason="every recommendation by kind, asked or unprompted, scored or checked against what was done", relevance=0.1,
-                          hours=24 * 14, key="claude-suggestions-log", formats={"Done (commit)": "pct", "Suggestions": "int", "Asked": "int", "Unprompted": "int",
+                          hours=24 * 14, key="claude-suggestions-log", formats={"Linked commit": "pct", "Suggestions": "int", "Asked": "int", "Unprompted": "int",
                                                                                    "Scored on price": "int"}, push=False)
         keys.append("claude-suggestions-log")
     if figure is not None:
@@ -481,7 +481,7 @@ CLASSIFICATION_NOTES = """- **fit = strategy** when the call applies a rule or t
 - **kind**: trade/avoid/reduce are scored on price; hold and size are capacity or sizing views and cannot be scored on price (a hold that waits for room is not a price call);
   info is analysis or process.
 - **confidence**: 'I'd recommend yes' = high, 'I'd' / 'My view' / 'My suggestion' = medium, 'probably' and 'if you want' and options offered without a recommendation = low.
-- **followed**: a trade, an opening fill in that coin and direction within 3 days; a reduce, a closing fill on that side within 3 days; an avoid, no opening fill. ENA and
+- **followed**: a trade, an opening fill in that coin and direction within 3 days; a reduce, a closing fill on that side within 3 days; an avoid, no opening fill in a fully observed window. Missing or incomplete fill coverage is shown as unknown. ENA and
   XMR count as followed for the reduce because both longs were closed within a day (a full close, for a different reason: the longs were accidental), which is more than the
   trim that was suggested.
 - **price moves** are measured from the hour of the suggestion in the suggested direction at 1, 3 and 7 days; 'so far' is the move to the latest price and is interim."""
@@ -497,7 +497,7 @@ data/feedback.jsonl holds your clicks, not my advice, so it is not a source."""
 def report_text(data: dict) -> str:
     s, c = data["summary"], data["counts"]
     lines = ["# Suggestions review", "", f"Generated from desk/suggestions.py (log: data/suggestions.jsonl, append only). **{c['n']} suggestions logged**, **{c['scoreable']} scoreable on price**, "
-             f"{s['n']} scored so far (followed: {s['followed']}). Verdict: **{s['verdict']}**.", "", "## What is covered", "", COVERAGE, "",
+             f"{s['horizons']['now']['n']} scored so far (followed: {s['followed']}). Verdict: **{s['verdict']}**.", "", "## What is covered", "", COVERAGE, "",
              "A suggestion here is any advice I gave in an exchange (a view on what to do: how to size, open/close/hold/avoid, which tool or rule, what to test next, whether a design or "
              "number is right, why something should not be done), asked for or unprompted. Extracted from the assistant messages by sentence (first-person views, 'I'd', 'I recommend', "
              "'my read', 'not worth', 'better to', 'don't ...'), then classified by rule and reviewed on the price calls; recall is not perfect.", ""]
@@ -520,7 +520,7 @@ def report_text(data: dict) -> str:
         cell = lambda d: f"{_rate(g['horizons'][d]['hit'])} ({g['horizons'][d]['n']})"
         lines.append(f"| {label} | {g['n']} | {cell(1)} | {cell(3)} | {cell(7)} | {cell('now')} | {_pct(g['horizons']['now']['mean']) or 'n/a'} |")
     lines += ["", "All of these sit in one regime (a falling crypto market with the desk net short), so the calls and the entries are not independent: a high hit rate for shorts here "
-              "says the regime, not skill. Directional calls measured: trade, avoid, reduce. An avoid is followed when nothing was opened.", ""]
+              "says the regime, not skill. Directional calls measured: trade, avoid, reduce. An avoid is followed when no opening fill was found in a fully observed window.", ""]
     lines += ["## By fit (strategy vs additional)", "", "| Fit | n scored | Hit 3d (n) | Hit so far (n) |", "|---|---|---|---|"]
     for fit, out in data["by_fit"].items():
         h3, now = out["horizons"][3], out["horizons"]["now"]
@@ -531,9 +531,8 @@ def report_text(data: dict) -> str:
         lines.append(f"| {label} | {out['n']} | {_rate(h3['hit'])} ({h3['n']}) | {_rate(now['hit'])} ({now['n']}) |")
     if not data["by_label"]:
         lines.append("| (none) | 0 | n/a | n/a |")
-    lines += ["", "## The rest: was it done?", "", "For suggestions that are not price calls the checkable follow-up is a commit in the next three days that shares content words with the advice "
-              "(it was built or changed). It shows it was acted on, not that it was right; whether the outcome was what I said is checkable only for the price calls above.", "",
-              "| Kind | n | With a matching commit |", "|---|---|---|"]
+    lines += ["", "## The rest: was it done?", "", "The table counts explicit links to commits. The suggestion funnel checks deployment timestamps and exact usage targets separately.", "",
+              "| Kind | n | With an explicit commit link |", "|---|---|---|"]
     by = defaultdict(list)
     for r in data["followups"]:
         by[r["kind"]].append(r["done"])
@@ -543,7 +542,7 @@ def report_text(data: dict) -> str:
     for r in sorted(data["results"], key=lambda r: r["at"]):
         m = r["moves"]
         f = lambda v: "" if v is None else f"{v * 100:+.1f}%"
-        lines.append(f"| {r['at'][:16]} | {r['kind']} | {r['side']} | {r['coin']} | {r.get('fit', '')} | {r['confidence']} | {'yes' if r.get('followed') else 'no'} | {r.get('label') or ''} | "
+        lines.append(f"| {r['at'][:16]} | {r['kind']} | {r['side']} | {r['coin']} | {r.get('fit', '')} | {r['confidence']} | {followed_text(r)} | {r.get('label') or ''} | "
                      f"{f(m.get('now'))} | {f(m.get(1))} | {f(m.get(3))} | {f(m.get(7))} |")
     voided = [r for r in load(include_voided=True) if r.get("voided")]
     if voided:
@@ -553,12 +552,11 @@ def report_text(data: dict) -> str:
     lines += ["## The honest read", "",
               f"- **Coverage:** {c['n']} suggestions in the 18 days the transcripts cover; nothing for 2026-10-16 to 2026-11-02, and the extraction is by sentence, so some advice buried in "
               "long lists or tables is missed.",
-              f"- **Price calls:** {s['n']} are scored; the 1-day, 3-day and 7-day hit rates are in the table with their n. Below 20 scored the desk's rule says too few to claim anything; "
-              "the longer horizons have fewer calls than the 1-day.",
+              "- **Price calls:** the 1-day, 3-day and 7-day hit rates are in the table with their sample sizes. Each horizon needs at least 20 scores.",
               f"- **Strategy-fit vs additional:** {n_s} strategy-fit and {n_a} additional calls are scored. Compare their hit rates only with their n beside them.",
               "- **Followed vs not followed vs your own entries:** see the table; the groups share one market regime, so differences between them are not evidence of skill.",
-              "- **Most of what I advise is not a price call** (design, process, rules, tests): for those the record is whether it was done, not whether it was right.", ""]
-    return "\n".join(lines) + "\n"
+              "- **Design, process, rules and tests:** explicit links to commits document implementation. The suggestion funnel checks release and usage evidence.", ""]
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -594,7 +592,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     for r in data["results"]:
         moves = ", ".join((f"{'so far' if d == 'now' else str(d) + 'd'} {format(m, '+.1%')}" if m is not None else f"{d}d -") for d, m in r["moves"].items())
-        print(f"{r['at'][:10]} {r['kind']:6} {r.get('side') or '':5} {r.get('coin') or '':10} {r.get('fit', ''):10} {moves:38} {'followed' if r.get('followed') else 'not done':9} {r.get('label') or '':12} {r['text'][:50]}")
+        print(f"{r['at'][:10]} {r['kind']:6} {r.get('side') or '':5} {r.get('coin') or '':10} {r.get('fit', ''):10} {moves:38} {followed_text(r):9} {r.get('label') or '':12} {r['text'][:50]}")
     print(json.dumps({k: data[k] for k in ("summary", "comparison", "by_fit", "by_label")}, default=str)[:3000])
     return 0
 

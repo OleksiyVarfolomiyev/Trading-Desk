@@ -9,6 +9,7 @@ WorkingDirectory=/home/desk/trading-desk
 ExecStart=/usr/bin/node web/server.mjs
 Restart=always
 RestartSec=5
+TimeoutStopSec=435
 
 [Install]
 WantedBy=multi-user.target

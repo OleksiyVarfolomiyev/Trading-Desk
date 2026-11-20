@@ -257,11 +257,47 @@ const ACTIONS_LOG = path.join(HOME, ".trading-desk", "web_actions.log");
 const pendingActions = new Map();
 let actionRunning = false;
 
+const RECEIPTS = path.join(STORE, "order-receipts");
+const RELAY_INSTANCE = crypto.randomUUID();
+let stopping = false;
+
+function receiptPath(id) {
+  return path.join(RECEIPTS, id + ".json");
+}
+
+async function readReceipt(id) {
+  if (!/^[a-f0-9]{24}$/.test(id)) return null;
+  try {
+    const receipt = JSON.parse(await fsp.readFile(receiptPath(id), "utf8"));
+    if (receipt.state === "processing" && receipt.instance !== RELAY_INSTANCE) {
+      return { id, state: "unknown", error: "The relay restarted before recording an outcome. Check orders and fills before submitting again." };
+    }
+    return { id, state: receipt.state, code: receipt.code, result: receipt.result, error: receipt.error };
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function writeReceipt(id, receipt, initial = false) {
+  await fsp.mkdir(RECEIPTS, { recursive: true, mode: 0o700 });
+  const file = receiptPath(id);
+  const staged = initial ? file : file + ".tmp";
+  const handle = await fsp.open(staged, initial ? "wx" : "w", 0o600);
+  try {
+    await handle.writeFile(JSON.stringify(receipt));
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  if (!initial) await fsp.rename(staged, file);
+}
+
 function daemonCall(message, answer) {
   return new Promise((resolve) => {
     const socket = net.createConnection({ path: DAEMON_SOCKET });
-    let buffer = "", text = "", code = 2, data;
-    const finish = () => { socket.destroy(); resolve({ code, text, data }); };
+    let buffer = "", text = "", code = 2, data, acknowledged = false;
+    const finish = () => { socket.destroy(); resolve({ code, text, data, acknowledged }); };
     socket.setEncoding("utf8");
     socket.setTimeout(message.batch ? 360_000 : 240_000, finish);
     socket.on("connect", () => socket.write(JSON.stringify(message) + "\n"));
@@ -274,7 +310,7 @@ function daemonCall(message, answer) {
         if (item.t === "out") text += item.text;
         else if (item.t === "data") data = item.data;
         else if (item.t === "ask") { text += item.text + "\n"; socket.write(JSON.stringify({ t: "answer", text: answer ? answer(item.text) : "" }) + "\n"); }
-        else if (item.t === "end") { code = Number(item.code); finish(); }
+        else if (item.t === "end") { code = Number(item.code); acknowledged = true; finish(); }
       }
     });
     socket.on("error", (error) => { text += `The trading daemon could not be reached (${error.code || error.message}).`; finish(); });
@@ -313,6 +349,11 @@ async function dashboardAction(request, response) {
   // screen and sent at the confirm step, so the plan is keyed without it.
   const key = JSON.stringify(batch ? request_ : { ...request_, label: undefined });
   const outputLimit = batch ? 12000 : 4000;
+  if (stage === "confirm" && token) {
+    const existing = await readReceipt(String(token || ""));
+    if (existing) return send(200, existing);
+  }
+  if (stopping) return send(503, { error: "The relay is restarting. Plan the order again when it is back." });
   if (actionRunning) return send(409, { error: "another desk action is running" });
   actionRunning = true;
   try {
@@ -333,12 +374,18 @@ async function dashboardAction(request, response) {
       if (!pending || pending.key !== key || pending.expires < Date.now()) return send(400, { error: "the plan expired or changed: plan it again" });
       // The cap flex is chosen on the confirm step (never preset): it is not part of the planned key.
       const useFlex = body.use_flex === true;
-      const { code, text } = await daemonCall({ ...request_, live: true, limits: pending.limits, ...(useFlex ? { use_flex: true } : {}) }, (prompt) =>
+      const id = String(token);
+      await writeReceipt(id, { state: "processing", instance: RELAY_INSTANCE }, true);
+      const { code, text, acknowledged } = await daemonCall({ ...request_, live: true, limits: pending.limits, ...(useFlex ? { use_flex: true } : {}) }, (prompt) =>
         prompt.includes("SUBMIT ORDERS") ? "SUBMIT ORDERS" : prompt.includes("SUBMIT POSITION ACTIONS") ? "SUBMIT POSITION ACTIONS" : prompt.includes("LIVE TRADING") ? "LIVE TRADING" : "");
-      await fsp.appendFile(ACTIONS_LOG, JSON.stringify({ at: new Date().toISOString(), change, coin, wallet, fraction, label, notional, use_flex: useFlex,
-        signals: request_.batch, code,
+      const receipt = acknowledged
+        ? { state: "complete", code, result: text.slice(-outputLimit) }
+        : { state: "unknown", error: "The daemon disconnected before confirming the outcome. Check orders and fills before submitting again." };
+      await writeReceipt(id, receipt);
+      await fsp.appendFile(ACTIONS_LOG, JSON.stringify({ id, at: new Date().toISOString(), change, coin, wallet, fraction, label, notional, use_flex: useFlex,
+        signals: request_.batch, code: acknowledged ? code : null, state: receipt.state,
         result: text.slice(-600) }) + "\n").catch(() => {});
-      return send(200, { code, result: text.slice(-outputLimit) });
+      return send(200, { id, ...receipt });
     }
     return send(400, { error: "stage must be plan or confirm" });
   } finally {
@@ -365,6 +412,12 @@ async function handle(request, response) {
   if (url.pathname === "/feedback" && request.method === "POST") return saveFeedback(request, response);
   if (url.pathname === "/highlight_state") return highlightState(request, response);
   if (url.pathname === "/action" && request.method === "POST") return dashboardAction(request, response);
+  if (url.pathname === "/action/status" && request.method === "GET") {
+    const receipt = await readReceipt(url.searchParams.get("id") || "");
+    response.writeHead(receipt ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    response.end(JSON.stringify(receipt || { state: "missing" }));
+    return;
+  }
   if (url.pathname === "/ladder" && request.method === "POST") {   // stop a market-making ladder, or start a neutral one (the confirmations are the click)
     let body = {};
     try { body = JSON.parse((await readBody(request)).toString("utf8") || "{}"); } catch (error) { body = {}; }
@@ -434,15 +487,14 @@ function serve() {
       response.end(JSON.stringify({ error: "the relay failed to answer" }));
     });
   });
-  server.listen(PORT, "127.0.0.1", () => console.log(`${new Date().toISOString()} desk relay on 127.0.0.1:${PORT}, store ${STORE}`));
-  // A stop (a deploy restart) waits for a confirmed order in flight, so its reply reaches the page: no new connections, then exit
-  // once the action is done (at most 80 s; systemd stops it at 90).
+  server.listen(PORT, "127.0.0.1", () => console.log(`${new Date().toISOString()} desk relay on 127.0.0.1:${server.address().port}, store ${STORE}`));
   process.on("SIGTERM", async () => {
-    console.log(`${new Date().toISOString()} stopping${actionRunning ? ": waiting for the running action" : ""}`);
-    server.close();
-    const until = Date.now() + 80_000;
-    while (actionRunning && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 250));
-    await new Promise((resolve) => setTimeout(resolve, actionRunning ? 0 : 300));
+    if (stopping) return;
+    stopping = true;
+    const drained = new Promise((resolve) => server.close(resolve));
+    const deadline = Date.now() + 420_000;
+    while (actionRunning && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 250));
+    await Promise.race([drained, new Promise((resolve) => setTimeout(resolve, 1000))]);
     process.exit(0);
   });
   const capture = () => worker.scheduled(null, environment(), context);

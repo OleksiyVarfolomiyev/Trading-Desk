@@ -492,7 +492,8 @@ class BaseChainTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_alchemy_reads_every_token_and_both_transfer_directions(self):
+    @patch("desk.venues.onchain.staking_reward_holdings", return_value=[])
+    def test_alchemy_reads_every_token_and_both_transfer_directions(self, _rewards):
         from desk.venues import onchain
 
         usdc, spam = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", "0x" + "5" * 40
@@ -590,7 +591,8 @@ class BaseChainTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot.equity_usd, 4_250.0)
         self.assertTrue(any("main tokens only" in note for note in notes))
 
-    def test_base_uses_blockscout_pro_with_the_key_in_a_header(self):
+    @patch("desk.venues.onchain.staking_reward_holdings", return_value=[])
+    def test_base_uses_blockscout_pro_with_the_key_in_a_header(self, _rewards):
         from desk.venues import onchain
 
         seen = []

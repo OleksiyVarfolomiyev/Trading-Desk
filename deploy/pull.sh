@@ -26,3 +26,5 @@ fi
 if ! git diff --quiet "$before" HEAD -- execution desk; then
   echo "trading code changed: the daemon still runs the earlier version until it is restarted"
 fi
+
+bash deploy/record_deployment.sh desk "$before"

@@ -46,5 +46,5 @@ Mac too.
 
 - Daemon commands: `ssh desk@SERVER`, then the usual `.venv/bin/python execution/hl_daemon.py status`
   (or `ladder`, `reattach`, ...). The desk settings load with the login.
-- Restart the daemon after a trading-code change: `ssh desk@SERVER 'sudo systemctl restart desk-daemon'`.
+- Restart the daemon after a trading-code change: `ssh desk@SERVER 'cd trading-desk && sudo systemctl restart desk-daemon && systemctl is-active desk-daemon && bash deploy/record_deployment.sh daemon'`. Pass the daemon's previous commit as the script's second argument when a restart activates several commits.
 - Logs: `journalctl -u desk-daemon -f`, `journalctl -u desk-relay`, and `~/.trading-desk/hl_daemon.log`.

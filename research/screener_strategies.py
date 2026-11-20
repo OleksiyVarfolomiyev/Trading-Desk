@@ -135,9 +135,18 @@ def timing_test() -> list[dict]:
             placebo = [p for p in placebo if p is not None and p == p]
             if actual is not None and actual == actual and len(placebo) >= 2:
                 diffs.append((trade["day"], actual - float(np.mean(placebo))))
-        series = pd.Series({d: v for d, v in sorted(diffs)})
-        out.append({"hold": hold, **(verdict(series) if len(series) >= 8 else {"mean": float("nan"), "t": float("nan"), "n": len(series),
-                                                                                  "t1": float("nan"), "t2": float("nan"), "ok": False})})
+        # Give each date equal weight and retain every coin-day in its date's mean.
+        by_day = pd.DataFrame(diffs, columns=["day", "difference"])
+        series = by_day.groupby("day")["difference"].mean()
+        # Greedily keep one test date per holding window.
+        selected = []
+        for day in series.index:
+            if not selected or (day - selected[-1]).days >= hold:
+                selected.append(day)
+        series = series.loc[selected]
+        stats = verdict(series)
+        stats["ok"] = len(series) >= 8 and stats["ok"]
+        out.append({"hold": hold, "coin_days": len(diffs), **stats})
     return out
 
 
@@ -148,15 +157,12 @@ NOTES = """## Reading
   is not a better entry, it is worse (negative, t down to -1.7). So the screener's ranking is labelled as the desk's record, not a validated signal.
 - **Fade:** stretched and up against BTC in 3 days, shorted for 1 to 14 days, does not validate at any threshold (5 to 20%), the same finding
   as the earlier pump-and-dump tests.
-- **Timing:** the desk's own short entries beat placebo days of the same coin (3 and 7 days out, t 3.8 and 4.4, both halves above 2; at 1 day the
-  first half is 1.6, not validated). It is a real finding about WHEN the desk enters, not WHAT: same coin, neighbouring days. Caveats: 27 distinct coin
-  days (entries merged per coin and day, only coins in the panel), closed trades only, and the size (+12% to +16% of price) is far above what a
-  rule would give, so read it as direction, not magnitude. It is not reproducible from simple price conditions here (weak plus bounce fails), so the
-  screener shows no timing marker: a timing rule is not established.
+- **Timing:** each day averages all available coin-level differences, and test dates are spaced at least one holding period apart.
+  The comparison covers closed trades with available candles. Nearby placebo windows can overlap and share market moves, so the
+  reported t-statistics are descriptive. These results do not establish an entry timing rule.
 - **The attribution's Timing row:** it is built from the deviation of the day's net weight from the window's average, times the benchmark return, plus
   fills marked to the close. That is partly net exposure against the benchmark, so it is not a clean measure of entry timing. The placebo test above
-  holds the coin and the exposure fixed and moves only the entry day, so the two agree in direction (timing is a strength) but the placebo test is the
-  cleaner evidence for it.
+  holds the coin fixed and moves the entry day.
 """
 
 
@@ -165,7 +171,7 @@ def pct(x) -> str:
 
 
 def table(rows: list[dict], first: str) -> str:
-    lines = [f"| {first} | hold | n | mean per trade | t | t 1st half | t 2nd half | validated |", "|---|---|---|---|---|---|---|---|"]
+    lines = [f"| {first} | hold | n | mean per {'date' if first == 'entry' else 'trade'} | t | t 1st half | t 2nd half | validated |", "|---|---|---|---|---|---|---|---|"]
     for row in rows:
         lines.append(f"| {row.get('signal', 'entry day vs placebo')} | {row['hold']}d | {row['n']} | {pct(row['mean'])} | "
                      f"{'' if row['t'] != row['t'] else format(row['t'], '.1f')} | {'' if row['t1'] != row['t1'] else format(row['t1'], '.1f')} | "

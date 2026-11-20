@@ -359,11 +359,14 @@ const VIEWS = {
     // Strategy chips (weak / fade / stocks) filter the list; each strategy's evidence is a short word, the full sentence on hover.
     keep: (r) => { const chosen = candidateStrategies(); return !chosen.length || chosen.includes(r.Strategy || "weak"); },
     derive: (r) => ({ Strategy: r.Strategy || "weak", _evidence: shortEvidence(r.Evidence) }),
-    hover: (r) => [r.Evidence, r.Strategy === "stocks" ? "vs the S&P 500, not BTC" : ""].filter(Boolean).join(" · "),
+    hover: (r) => [r.Evidence, r.Strategy === "stocks" ? "Benchmark: S&P 500" : "Benchmark: BTC"].filter(Boolean).join(" · "),
     columnsNow: () => {
       const scale = currentScale("candidates");
-      const pick = { "1D": ["vs BTC 24h", "vs BTC D"], "1W": ["vs BTC 7d", "vs BTC W"], "1M": ["vs BTC 30d", "vs BTC M"], All: ["vs BTC 30d", "vs BTC M"] }[scale];
-      return [["Coin"], ["Strategy"], pick, ["Corr BTC 30d", "Corr BTC"], ["From high 60d"], ["Funding 7d (APR)", "Funding W (APR)"], ["OI / volume"], ["Volume 24h", "Volume D"], ["_evidence", "Evidence"], ["Days on list", "Days"], ["Notes"]];
+      const [field, period] = { "1D": ["vs BTC 24h", "D"], "1W": ["vs BTC 7d", "W"], "1M": ["vs BTC 30d", "M"], All: ["vs BTC 30d", "M"] }[scale];
+      const selected = candidateStrategies();
+      const benchmark = selected.length === 1 && selected[0] === "stocks" ? "S&P 500"
+        : selected.length && !selected.includes("stocks") ? "BTC" : "BTC / S&P 500";
+      return [["Coin"], ["Strategy"], [field, `vs ${benchmark} ${period}`], ["Corr BTC 30d", `Corr ${benchmark}`], ["From high 60d"], ["Funding 7d (APR)", "Funding W (APR)"], ["OI / volume"], ["Volume 24h", "Volume D"], ["_evidence", "Evidence"], ["Days on list", "Days"], ["Notes"]];
     },
     columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["Corr BTC 30d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
@@ -4354,16 +4357,11 @@ function openBatchTrade() {
       return;
     }
     const body = { change: "batch", wallet: wallet.value, signals };
-    const post = async (extra) => {
-      try {
-        const response = await fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" },
-          credentials: "same-origin", body: JSON.stringify({ ...body, ...extra }) });
-        return await readReply(response);
-      } catch (error) { return { error: String(error) }; }
-    };
+    const post = (extra) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" },
+      credentials: "same-origin", body: JSON.stringify({ ...body, ...extra }) }).then(readReply);
     status.textContent = "Planning with live data…";
     preview.disabled = true;
-    const plan = await post({ stage: "plan" });
+    const plan = await post({ stage: "plan" }).catch((error) => ({ error: String(error) }));
     preview.disabled = false;
     if (!overlay.isConnected) return;
     if (!plan.token) {
@@ -4378,7 +4376,7 @@ function openBatchTrade() {
     confirm.addEventListener("click", async () => {
       overlay.remove();
       const pending = notify(["The trading daemon is processing the reviewed orders."], "Submitting batch");
-      const result = await post({ stage: "confirm", token: plan.token, use_flex: flex.useFlex() });
+      const result = await confirmOrder(() => post({ stage: "confirm", token: plan.token, use_flex: flex.useFlex() }), plan.token, "Batch order");
       pending.remove();
       notify([result.error || result.result || "The daemon returned no order details."],
         result.code === 0 ? "Batch processed" : "Batch requires review");
@@ -4498,12 +4496,63 @@ function planChips(planText, coin) {   // [{text, title, kind}]: 2-4 words each,
 }
 // COMPACT_PLAN_HELPERS_END
 
-// The relay answers a confirmed order after the daemon is done (up to a minute). If the connection is cut meanwhile (the relay
-// restarted by a deploy) the body is empty: that is "no reply", not a failed order, and the order may well have gone through.
 async function readReply(response) {
   const text = await response.text();
-  try { return JSON.parse(text); } catch (error) { return { error: "No reply from the server (the order may have gone through)", noReply: true }; }
+  try {
+    const reply = JSON.parse(text);
+    return response.status >= 500 && response.status !== 503 ? { ...reply, noReply: true } : reply;
+  } catch (error) { return { noReply: true }; }
 }
+
+const ORDER_RECEIPTS_KEY = "desk-order-receipts";
+
+function savedOrderReceipts() {
+  try { return JSON.parse(sessionStorage.getItem(ORDER_RECEIPTS_KEY) || "{}"); }
+  catch (error) { return {}; }
+}
+
+function rememberOrder(id, title) {
+  try {
+    const saved = savedOrderReceipts();
+    if (title === null) delete saved[id]; else saved[id] = title;
+    sessionStorage.setItem(ORDER_RECEIPTS_KEY, JSON.stringify(saved));
+  } catch (error) { /* Receipt recovery still works until the page is closed. */ }
+}
+
+async function recoverOrder(id) {
+  const deadline = Date.now() + 435_000;
+  do {
+    try {
+      const response = await fetch("/action/status?id=" + encodeURIComponent(id), { credentials: "same-origin", cache: "no-store",
+        signal: AbortSignal.timeout(5000) });
+      const receipt = await readReply(response);
+      if (receipt.state === "complete" || receipt.state === "unknown") return receipt;
+      if (response.status === 401) return { state: "unknown", error: "Sign in to recover the order outcome." };
+    } catch (error) { /* The relay can be offline while restarting. */ }
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+  } while (Date.now() < deadline);
+  return { state: "unknown", error: "Order status is unavailable. Check orders and fills before submitting again." };
+}
+
+async function confirmOrder(post, id, title) {
+  rememberOrder(id, title);
+  let result;
+  try { result = await post(); }
+  catch (error) { result = { noReply: true }; }
+  if (result.noReply || result.state === "processing") result = await recoverOrder(id);
+  if (result.state !== "unknown") rememberOrder(id, null);
+  return result;
+}
+
+async function resumeOrderReceipts() {
+  for (const [id, title] of Object.entries(savedOrderReceipts())) {
+    const result = await recoverOrder(id);
+    if (result.state === "complete") rememberOrder(id, null);
+    notify([result.error || result.result || "See current orders and fills."], title);
+    lastRendered = null; load();
+  }
+}
+
 async function runAction(label, change, fraction, target) {
   const coin = target.coin, title = `${label}: ${marketName(coin)} (HL ${target.wallet})`;
   const isEntry = change === "short" || change === "long";
@@ -4560,11 +4609,9 @@ async function runAction(label, change, fraction, target) {
     try {
       overlay.remove();   // gone at once; if something goes wrong a notice appears
       feedback("action", "confirm", marketName(coin), label);
-      let result;
-      try { result = await post({ stage: "confirm", token: plan.token, use_flex: flex.useFlex() }); } catch (e) { result = { error: String(e) }; }
-      if (result.noReply) {   // not a failure: look at the positions, which are the truth
-        notify(["No confirmation came back. The order may have gone through; the positions are being refreshed."], `${title}: sent, check positions`);
-        setTimeout(() => { lastRendered = null; load(); }, 4000);
+      const result = await confirmOrder(() => post({ stage: "confirm", token: plan.token, use_flex: flex.useFlex() }), plan.token, title);
+      if (result.state === "unknown") {
+        notify([result.error], `${title}: outcome unknown`);
       } else if (result.code !== 0) {
         const lines = planLines(result.result || result.error || "", coin);
         notify(lines.notices.concat(lines.mine, result.error && !lines.mine.length ? [String(result.error)] : []), `${title}: not completed`);
@@ -4614,7 +4661,7 @@ async function runClassAction(kind, change, fraction) {
   const { overlay, box } = actionDialog(title);
   box.replaceChildren(el("h3", { text: title }), el("p", { class: "muted", text: "Planning each position…" }));
   const post = (row, body) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-    body: JSON.stringify(Object.assign({ change, coin: row.Symbol, wallet: String(row.Account).slice(-4), fraction }, body)) }).then((r) => r.json());
+    body: JSON.stringify(Object.assign({ change, coin: row.Symbol, wallet: String(row.Account).slice(-4), fraction }, body)) }).then(readReply);
   const plans = [];
   for (const row of rows) { try { plans.push([row, await post(row, { stage: "plan" })]); } catch (e) { plans.push([row, { error: String(e) }]); } }
   const ready = plans.filter(([, plan]) => plan.token);
@@ -4626,7 +4673,15 @@ async function runClassAction(kind, change, fraction) {
     overlay.remove();   // gone at once; a notice only for the positions that did not go through
     feedback("action", "confirm class", kind, title);
     const failed = [];
-    for (const [row, plan] of ready) { try { const r = await post(row, { stage: "confirm", token: plan.token }); if (r.code !== 0) failed.push(`${marketName(row.Symbol)} not completed`); } catch (e) { failed.push(`${marketName(row.Symbol)} failed`); } }
+    for (const [row, plan] of ready) {
+      const name = marketName(row.Symbol);
+      const result = await confirmOrder(() => post(row, { stage: "confirm", token: plan.token }), plan.token, name);
+      if (result.state === "unknown") {
+        failed.push(`${name}: ${result.error}`);
+        break;
+      }
+      if (result.code !== 0) failed.push(`${name} not completed`);
+    }
     if (failed.length) notify(failed, title);
     lastRendered = null; load();
   });
@@ -5586,3 +5641,5 @@ document.addEventListener("mouseover", markHover, { passive: true, capture: true
 document.documentElement.addEventListener("mouseleave", () => { for (const node of hovered) node.classList.remove("is-hover"); hovered = new Set(); });
 restoreLastDoc();
 poll();
+
+resumeOrderReceipts();

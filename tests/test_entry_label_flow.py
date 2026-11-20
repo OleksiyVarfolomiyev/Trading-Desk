@@ -32,7 +32,7 @@ class EntryLabelFlowTests(unittest.TestCase):
     def test_the_relay_plans_without_a_label_and_refuses_a_confirm_without_one(self):
         self.assertNotIn("before planning.", SERVER)
         self.assertIn("{ ...request_, label: undefined }", SERVER)   # the plan is keyed without the label
-        confirm = SERVER[SERVER.index('if (stage === "confirm")'):]
+        confirm = SERVER[SERVER.index('    if (stage === "confirm") {'):]
         first = confirm.splitlines()[1]
         self.assertTrue(re.search(r"entry && !label", first), first)  # checked before the token is consumed
         self.assertLess(confirm.index("entry && !label"), confirm.index("pendingActions.delete"))

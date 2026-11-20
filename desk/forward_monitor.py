@@ -276,18 +276,26 @@ def _book_signals_live(src: Sources) -> list[float]:
     return best
 
 
-def _screener_live(src: Sources) -> list[float]:
-    """Each logged screener short: the coin's 7-day move against BTC from the snapshot (a short earns when it lags)."""
+SCREENER_BENCHMARKS = {"weak": "BTC", "fade": "BTC", "stocks": "xyz:SP500"}
+
+
+def _screener_live(src: Sources, strategy: str = "weak") -> list[float]:
+    """Score distinct candidates against the benchmark recorded in their snapshot."""
     outcomes = []
     for snap in src.screener_log:
         at = datetime.fromisoformat(snap["as_of"].replace("Z", "+00:00"))
-        if src.now - at < timedelta(days=7) or src.price_at is None:
+        end = at + timedelta(days=7)
+        if src.now < end or src.price_at is None:
             continue
-        btc0, btc1 = src.price_at("BTC", at), src.price_at("BTC", at + timedelta(days=7))
-        for coin in snap.get("shorts", []):
-            p0, p1 = src.price_at(coin, at), src.price_at(coin, at + timedelta(days=7))
-            if p0 and p1 and btc0 and btc1:
-                outcomes.append(-((p1 / p0) - (btc1 / btc0)) - TRADE_COST)
+        # Legacy rows did not record a strategy and may contain a mixed shortlist.
+        candidates = snap.get("candidates", [])
+        pairs = {(r["coin"], r["benchmark"]) for r in candidates
+                 if r.get("strategy") == strategy and r.get("coin") and r.get("benchmark")}
+        for coin, benchmark in sorted(pairs):
+            b0, b1 = src.price_at(benchmark, at), src.price_at(benchmark, end)
+            p0, p1 = src.price_at(coin, at), src.price_at(coin, end)
+            if p0 and p1 and b0 and b1:
+                outcomes.append(b1 / b0 - p1 / p0 - TRADE_COST)
     return outcomes
 
 
@@ -325,8 +333,10 @@ REGISTRY: list[Item] = [
          note="no study of sizing outcomes; live return of trades opened since the restore"),
     Item("book-signals", "Order-book signals (logger)", "research", "2026-11-19", None, _book_signals_live,
          forward_only="forward-only by design", note="best signal's net return per snapshot at 60 minutes"),
-    Item("screener", "Screener short candidates", "strategy", "2026-11-20", None, _screener_live,
-         forward_only="history: picks vs basket not established", note="outcome: 7-day move against BTC from each daily snapshot"),
+    *(Item(f"screener-{strategy}", f"Short candidates: {strategy}", "strategy", "2026-11-20", None,
+           lambda src, strategy=strategy: _screener_live(src, strategy),
+           forward_only="strategy-tagged snapshots only", note=f"7-day move against {benchmark}")
+      for strategy, benchmark in SCREENER_BENCHMARKS.items()),
     Item("take-profits", "Held take-profit on crypto entries (single target)", "execution", "2026-11-20", None, _count(r"take-profit"),
          note="one held target at the sizing distance x reward; crypto only, stocks held passively. The take-profit ladder "
               "(desk/tp_ladder.py) is off until research/tp_ladder_replay.py shows it beats the single target"),
@@ -456,15 +466,18 @@ def snapshot_screener() -> None:
     except (OSError, ValueError):
         return
     as_of = screener.get("as_of")
-    shorts = [row.get("Coin") for row in screener.get("shorts", []) if row.get("Coin")]
-    if not as_of or not shorts:
+    pairs = {(row.get("Strategy") or "weak", row["Coin"]) for row in screener.get("shorts", []) if row.get("Coin")}
+    candidates = [{"coin": coin, "strategy": strategy, "benchmark": SCREENER_BENCHMARKS[strategy]}
+                  for strategy, coin in sorted(pairs) if strategy in SCREENER_BENCHMARKS]
+    if not as_of or not candidates:
         return
-    seen = {json.loads(line).get("as_of") for line in SCREENER_LOG.read_text().splitlines()} if SCREENER_LOG.exists() else set()
+    existing = [json.loads(line) for line in SCREENER_LOG.read_text().splitlines()] if SCREENER_LOG.exists() else []
+    seen = {row.get("as_of") for row in existing if "candidates" in row}
     if as_of in seen:
         return
     SCREENER_LOG.parent.mkdir(parents=True, exist_ok=True)
     with SCREENER_LOG.open("a") as handle:
-        handle.write(json.dumps({"as_of": as_of, "shorts": shorts}) + "\n")
+        handle.write(json.dumps({"as_of": as_of, "candidates": candidates}) + "\n")
 
 
 def hourly_price_at() -> Callable[[str, datetime], float | None]:
