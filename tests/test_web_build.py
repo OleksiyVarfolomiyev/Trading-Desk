@@ -33,6 +33,34 @@ class WebSiteTests(unittest.TestCase):
             self.assertIn('src="live.js"', page)
 
 
+class OpeningCascadeTests(unittest.TestCase):
+    """The page opens as a frame with placeholders, not a blank loading screen, and fills in by stages."""
+
+    def test_both_pages_ship_the_frame_not_a_loading_screen(self):
+        for page in ("web/index.html", "desk/app_static/index.html"):
+            html = (ROOT / page).read_text()
+            self.assertIn('<div id="content" class="skeleton">', html, page)   # visible from the first byte
+            self.assertNotIn("Loading the desk", html, page)
+            self.assertNotIn('role="progressbar"', html, page)
+
+    def test_the_renderer_fills_the_frame_in_stages_and_a_restored_page_in_one_go(self):
+        script = (ROOT / "desk/app_static/app.js").read_text()
+        order = [script.index(name) for name in ("renderFirst(doc, data)", "renderPositions(doc, data)",
+                                                 "renderTablesAndBenchmarks(doc, data)", "renderChartsAndTiles(doc, data)")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("render(latest, { instant: true })", script)   # the restored page
+        self.assertIn('classList.remove("skeleton")', script)
+        css = (ROOT / "desk/app_static/app.css").read_text()
+        self.assertIn("prefers-reduced-motion", css[css.index("desk-fill-in"):])
+
+    def test_the_web_build_starts_the_relay_reads_together(self):
+        live = (ROOT / "web/live.js").read_text()
+        build = live[live.index("async function build()"):]
+        self.assertIn("const relayReads = Promise.all([", build)
+        self.assertNotIn('const ibData = await every("ib"', build)   # not ten round trips in a row
+        self.assertLess(build.index("const relayReads"), build.index("const hlReads"))
+
+
 class WalletsSecretTests(unittest.TestCase):
     def test_the_secret_maps_short_ids_to_full_addresses(self):
         with tempfile.TemporaryDirectory() as folder:

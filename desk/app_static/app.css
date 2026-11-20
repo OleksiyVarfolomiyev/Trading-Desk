@@ -808,3 +808,12 @@ td.group-name { white-space: nowrap; }
 .bgroup { display: flex; align-items: center; gap: 6px; padding: 4px 8px 1px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
 .bgroup-fig { margin-left: auto; font-variant-numeric: tabular-nums; }
 .group-toggle { margin-left: 4px; }
+
+/* Opening cascade: the frame shows at once with quiet placeholders; a card fills in when its data renders. */
+#content.skeleton .tiles:empty { min-height: 56px; }
+#content.skeleton .card:not(.filled) .table-wrap:empty,
+#content.skeleton .card:not(.filled) .chart:empty { min-height: 72px; border-radius: 6px; background: var(--grid); opacity: .3; }
+#content.skeleton .card:not(.filled) .highlights:empty { min-height: 18px; border-radius: 6px; background: var(--grid); opacity: .3; }
+.card.filled > :not(h2), .tiles.filled > * { animation: desk-fill-in .12s ease-out; }
+@keyframes desk-fill-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .card.filled > :not(h2), .tiles.filled > * { animation: none; } }

@@ -60,12 +60,11 @@
 </div>
 
 <main id="main">
-  <div id="loading" class="loading">
-    <div class="progress" role="progressbar" aria-label="Loading the desk"><span></span></div>
-    <p>Loading the desk…</p>
-  </div>
+  <!-- The frame is on the page from the first byte: cards hold quiet placeholders until their data arrives, and the
+       data fills them in order (key numbers and highlights, positions, then tables, charts and the lower tiles). -->
+  <div id="loading" class="loading" hidden></div>
 
-  <div id="content" hidden>
+  <div id="content" class="skeleton">
     <!-- Now first: key numbers, highlights, positions, exposure and strategies, candidates and market making. History and
          the account view (backend detail, hidden by default) last. -->
     <!-- Research shows what needs attention too (the Now screen has it in the highlights). -->

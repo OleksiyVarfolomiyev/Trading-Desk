@@ -596,6 +596,22 @@
     const now = Date.now();
     const problems = [], notes = [];
     await listWallets();
+    // The relay's reads and the wallets do not depend on the HL reads: they start with them, not after them one by one (each
+    // is a round trip to the server, ten in a row on a cold open).
+    const relayReads = Promise.all([
+      every("ib", 5 * 60000, () => relay("/ib")).catch(() => null),
+      every("walletperf", 30 * 60000, () => relay("/walletperf")).catch(() => null),
+      every("regime", 30 * 60000, () => relay("/regime")).catch(() => null),
+      every("alerts", 60000, () => relay("/alerts")).catch(() => null),
+      every("tiles", 60000, () => relay("/tiles")).catch(() => null),
+      every("books", 15 * 60000, () => relay("/books")).catch(() => null),   // each book's performance (the Mac, hourly)
+      every("usage_model", 600000, () => getJSON("/usage_model")).catch(() => ({})),
+      every("catalog", 3600000, () => getJSON("/catalog.json").then((c) => c.entries || [])).catch(() => []),   // published from the notebooks (desk/tile_feed.py)
+      every("sync", 30 * 60000, () => relay("/sync")).catch(() => null),
+      every("research", 15 * 60000, () => relay("/research")).catch(() => null),
+    ]);
+    const walletReadsStarted = readWallets(CFG.wallets);
+    walletReadsStarted.catch(() => {});   // its error, if any, is raised where it is awaited below
     const hlReads = await Promise.all(CFG.wallets.map((wallet) => readHL(wallet).catch((error) => ({ wallet, error }))));
     const trading = [], status = [];
     hlReads.forEach((read, i) => {
@@ -613,7 +629,7 @@
       error.accountsStatus = status;
       throw error;
     }
-    const walletReads = await readWallets(CFG.wallets);
+    const walletReads = await walletReadsStarted;
     const wallets = walletReads.filter((w) => !w.error);
     walletReads.forEach((w) => {
       status.push(w.error ? { name: w.label, ok: false, problem: w.error }
@@ -621,16 +637,7 @@
       if (w.error) problems.push(`${w.label}: ${w.error}`);
       (w.notes || []).forEach((note) => notes.push(note));
     });
-    const ibData = await every("ib", 5 * 60000, () => relay("/ib")).catch(() => null);
-    const walletPerf = await every("walletperf", 30 * 60000, () => relay("/walletperf")).catch(() => null);
-    const regime = await every("regime", 30 * 60000, () => relay("/regime")).catch(() => null);
-    const daemonAlerts = await every("alerts", 60000, () => relay("/alerts")).catch(() => null);
-    const tileFeed = await every("tiles", 60000, () => relay("/tiles")).catch(() => null);
-    const bookPerf = await every("books", 15 * 60000, () => relay("/books")).catch(() => null);   // each book's performance (the Mac, hourly)
-    const usageModel = await every("usage_model", 600000, () => getJSON("/usage_model")).catch(() => ({}));
-    const catalogEntries = await every("catalog", 3600000, () => getJSON("/catalog.json").then((c) => c.entries || [])).catch(() => []);   // published from the notebooks (desk/tile_feed.py)
-    const syncRun = await every("sync", 30 * 60000, () => relay("/sync")).catch(() => null);
-    const research = await every("research", 15 * 60000, () => relay("/research")).catch(() => null);
+    const [ibData, walletPerf, regime, daemonAlerts, tileFeed, bookPerf, usageModel, catalogEntries, syncRun, research] = await relayReads;
     const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];
     ibs.forEach((account) => {
       const age = Date.now() - account.asOf;

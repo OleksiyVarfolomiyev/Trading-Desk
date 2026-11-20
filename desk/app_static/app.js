@@ -2154,7 +2154,52 @@ function renderBenchmarkTables(doc) {
   }
 }
 
-function render(doc) {
+// The opening cascade: the page frame is already there (a skeleton); the first data fills it in stages, each painted before
+// the next starts: key numbers and highlights, then the open positions, then the other tables, then charts and the lower
+// tiles. Later data renders in one go (nothing to cascade), and so does a page restored from the last data it showed.
+const FIRST_TABLES = ["positions", "positions_stocks", "wallets", "exposure"];
+let cascadeToken = 0, cascadeDone = false, cascadeStarted = false;
+function markFilled(...ids) {
+  for (const id of ids) {
+    const node = document.getElementById(id);
+    const card = node && (node.matches(".card") ? node : node.closest(".card"));
+    if (card) card.classList.add("filled");
+  }
+}
+function renderFirst(doc, data) {   // key numbers and highlights
+  renderTiles(data.kpis || {}, data.theses);
+  redrawHighlights();
+  document.getElementById("tiles")?.classList.add("filled");
+  document.querySelectorAll("#content .highlights-card").forEach((card) => card.classList.add("filled"));
+}
+function renderPositions(doc, data) {
+  const context = { deskValue: (data.kpis || {}).desk_value };
+  for (const id of FIRST_TABLES) renderTable(id, applyView(id, withWallets(id, data.tables || {}), context));
+  drawPositionScales();
+  balanceColumns();
+  markFilled(...FIRST_TABLES.map((id) => "t-" + id));
+}
+function renderTablesAndBenchmarks(doc, data) {
+  const context = { deskValue: (data.kpis || {}).desk_value };
+  for (const id of TABLES.filter((name) => !FIRST_TABLES.includes(name))) renderTable(id, applyView(id, withWallets(id, data.tables || {}), context));
+  renderBenchmarkTables(doc);
+  balanceColumns();
+  markFilled(...TABLES.map((id) => "t-" + id), "t-benchmark-intraday", "t-benchmark-history", "t-benchmark-attribution",
+    "t-benchmark-regimes", "t-benchmark-regime-drivers");
+}
+function renderChartsAndTiles(doc, data) {
+  renderCharts(data.charts);
+  renderPublished(data.tiles || []);
+  drawChartScales();
+  const notes = document.getElementById("notes");  // developer notes: not on the page (the band shows real problems)
+  if (notes) notes.replaceChildren(...(data.notes || []).map((note) => el("li", { text: note })));
+  document.querySelectorAll("#content .card").forEach((card) => card.classList.add("filled"));
+  document.getElementById("content").classList.remove("skeleton");
+  cascadeDone = true;
+}
+function afterPaint(step) { requestAnimationFrame(() => setTimeout(step, 0)); }
+
+function render(doc, { instant = false } = {}) {
   const now = new Date(doc.server_time || Date.now());
   const { data, status } = doc;
   const accounts = new Map((data?.accounts_status || []).map((row) => [row.name, row]));
@@ -2167,29 +2212,34 @@ function render(doc) {
     accounts.set("Accounts", { name: "Accounts", ok: false, label: "data stale", last_seen: status.last_ok });
   }
   renderAccountStatus([...accounts.values()], now);
-  if (!data) {
-    document.getElementById("loading").hidden = Boolean(status.error);
-    return;
-  }
   document.getElementById("loading").hidden = true;
-  document.getElementById("content").hidden = false;
+  if (!data) return;   // the frame stays up with its placeholders until the first data
   if (lastRendered === doc.status.last_ok) return;   // same data: keep tables, sort and hover as they are
   lastRendered = doc.status.last_ok;
-  renderTiles(data.kpis || {}, data.theses);
-  redrawHighlights();
-  const context = { deskValue: (data.kpis || {}).desk_value };
-  for (const id of TABLES) renderTable(id, applyView(id, withWallets(id, data.tables || {}), context));
-  drawPositionScales();
-  renderBenchmarkTables(doc);
-  balanceColumns();
-  renderCharts(data.charts);
-  renderPublished(data.tiles || []);
-  drawChartScales();
-  const notes = document.getElementById("notes");  // developer notes: not on the page (the band shows real problems)
-  if (notes) notes.replaceChildren(...(data.notes || []).map((note) => el("li", { text: note })));
+  const token = ++cascadeToken;   // a newer render cancels the stages still waiting
+  if (instant || cascadeDone || cascadeStarted) {   // a cascade already running is not started over: new data renders in one go
+    renderFirst(doc, data);
+    renderPositions(doc, data);
+    renderTablesAndBenchmarks(doc, data);
+    renderChartsAndTiles(doc, data);
+    return;
+  }
+  cascadeStarted = true;
+  renderFirst(doc, data);
+  afterPaint(() => {
+    if (token !== cascadeToken) return;
+    renderPositions(doc, data);
+    afterPaint(() => {
+      if (token !== cascadeToken) return;
+      renderTablesAndBenchmarks(doc, data);
+      afterPaint(() => {
+        if (token !== cascadeToken) return;
+        renderChartsAndTiles(doc, data);
+      });
+    });
+  });
 }
 
-// The web copy (web/live.js) builds the same document in the browser and sets DESK_SOURCE.
 async function load() {
   try {
     if (!highlightStateLoaded) loadHighlightState().then(() => {
@@ -2231,7 +2281,7 @@ function restoreLastDoc() {   // before the first fetch: the page shows what thi
     const saved = JSON.parse(sessionStorage.getItem(LAST_DOC_KEY));
     if (!saved || !saved.doc || !saved.doc.data || Date.now() - saved.at > 15 * 60000) return;
     latest = saved.doc;
-    render(latest);
+    render(latest, { instant: true });
     if (saved.scroll) requestAnimationFrame(() => window.scrollTo(0, saved.scroll));
   } catch (error) { /* nothing saved, or not readable */ }
 }
