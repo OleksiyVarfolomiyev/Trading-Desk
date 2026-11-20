@@ -745,7 +745,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         "tiles": published_tiles(),
         "catalog": catalog_entries(),   # the notebook sections that can be pulled onto the dashboard (desk/tile_catalog.py)   # charts and tables published from the notebooks (desk/tile_feed.py)
         "highlights": {"well": [list(row) for row in well], "attention": [list(row) for row in attention],
-                       "hover": daemon_alerts.hovers(daemon_alerts.read())},  # headlines around a big move
+                       "hover": {**getattr(desk.overview, "highlight_hover", {}), **daemon_alerts.hovers(daemon_alerts.read())}},  # headlines around a big move; what ALL means on the winners and losers rows
         "tables": tables,
         "charts": {"value": value_series, "value_with_wallets": with_wallets, "twr": twr,
                    "managed_since": _managed_since(),   # the repo start: the return chart marks where the managed desk begins

@@ -1090,6 +1090,7 @@
     // -- highlights (desk/overview.py and desk_accounts.py rules)
     const well = [], attention = [];
     let fundingNow = [];  // positions paying adverse funding at the current rate, for the one "Funding" row
+    const allHover = {};  // what ALL means on the winners and losers rows (since entry), on their hover
     // The desk return is in the TW return and Return 30D tiles and the performance table's bold row: no highlight.
     if (tradePositions.length) {
       // uPnL by book, the groups of the positions tables (stocks = IB plus the HL stock and tradfi perps), each over its
@@ -1111,18 +1112,29 @@
       // Winners and losers are today's: each position's 24h price move in its direction (a short gains when the price
       // falls). What was gained or lost since entry is the uPnL row above, and can be months old.
       const dayMove = (r) => (r.Side === "SHORT" ? -1 : 1) * r["24h change (%)"];
-      const winnerParts = [], loserParts = [];
+      // A held position under a day old shows its result since entry (ALL), not a flat day's move: the positions tile does the same.
+      const youngResult = (r) => {
+        const hit = thesisList.find((t) => bareName(t.coin) === bareName(r.Symbol) && String(t.side || "").toUpperCase() === r.Side);
+        return hit && Number(hit.days) < 1 && fin(r["uPnL (%)"]) ? r["uPnL (%)"] : NaN;
+      };
+      const shownMove = (r) => (fin(youngResult(r)) ? youngResult(r) : dayMove(r));
+      const winnerParts = [], loserParts = [], allNotes = { "Largest winners": [], "Largest losers": [] };
       KINDS.forEach((kind) => {  // crypto and stocks ranked apart, shown in one row per side
         const group = tableRows.filter((r) => (String(r["Asset class"]).startsWith("crypto") ? "Crypto" : "Stocks") === kind
-          && !SYMBOLIC.has(String(r.Symbol)) && fin(dayMove(r))).sort((a, b) => dayMove(a) - dayMove(b));
-        const line = (rows) => rows.map((r) => `${r.Symbol} ${percent(dayMove(r), true)}`).join(", ");
-        const winners = group.slice().reverse().filter((r) => dayMove(r) > 0).slice(0, HIGHLIGHT_MOVERS);
-        const losers = group.filter((r) => dayMove(r) < 0).slice(0, HIGHLIGHT_MOVERS);
-        if (winners.length) winnerParts.push(`${kind.toLowerCase()}: ${line(winners)}`);
-        if (losers.length) loserParts.push(`${kind.toLowerCase()}: ${line(losers)}`);
+          && !SYMBOLIC.has(String(r.Symbol)) && fin(shownMove(r))).sort((a, b) => shownMove(a) - shownMove(b));
+        const line = (rows, title) => rows.map((r) => {
+          const young = fin(youngResult(r));
+          if (young) allNotes[title].push(`${bareName(r.Symbol)}: ALL is since entry at ${fin(r["Avg price"]) ? Number(r["Avg price"]) : "?"}`);
+          return `${r.Symbol} ${percent(shownMove(r), true)}${young ? " ALL" : ""}`;
+        }).join(", ");
+        const winners = group.slice().reverse().filter((r) => shownMove(r) > 0).slice(0, HIGHLIGHT_MOVERS);
+        const losers = group.filter((r) => shownMove(r) < 0).slice(0, HIGHLIGHT_MOVERS);
+        if (winners.length) winnerParts.push(`${kind.toLowerCase()}: ${line(winners, "Largest winners")}`);
+        if (losers.length) loserParts.push(`${kind.toLowerCase()}: ${line(losers, "Largest losers")}`);
       });
       if (winnerParts.length) well.push(["Largest winners", "D " + winnerParts.join("; ") + "."]);
       if (loserParts.length) attention.push(["Largest losers", "D " + loserParts.join("; ") + "."]);
+      Object.entries(allNotes).forEach(([title, lines]) => { if (lines.length) allHover[title] = lines.join("\n"); });
       // A broad index (SPY, the S&P perp) is a market holding, not a single-name concentration: never flagged (user, 2026-11-17).
       const INDEX_FUNDS = new Set(["SPY", "QQQ", "VOO", "IVV", "DIA", "IWM", "SP500"]);
       const singles = tradePositions.filter((p) => !INDEX_FUNDS.has(String(p.symbol).split(":").pop().toUpperCase()));
@@ -1365,8 +1377,8 @@
         money_weighted: moneyWeighted(histories, start), since: iso(headline.start), drawdown: headline.drawdown,
         peak_date: iso(headline.peak.t),
       },
-      highlights: { well, attention, hover: Object.fromEntries(((daemonAlerts && daemonAlerts.alerts) || [])
-        .filter((a) => a.context).map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), a.context])) },
+      highlights: { well, attention, hover: Object.assign({}, allHover, Object.fromEntries(((daemonAlerts && daemonAlerts.alerts) || [])
+        .filter((a) => a.context).map((a) => [String(a.title).charAt(0).toUpperCase() + String(a.title).slice(1), a.context]))) },
       tables,
       catalog: catalogEntries,
       intraday,

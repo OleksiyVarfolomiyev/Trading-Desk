@@ -7,7 +7,9 @@ executions are saved under data/ so IB history builds up from run to run.
 
 from __future__ import annotations
 
+import calendar
 import math
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -261,6 +263,26 @@ def trading_equity(overview) -> float:
     """HL wallets and IB (every snapshot but the on-chain wallets): the base of every book's beta and share. A
     function rather than only a property, so an overview built before a notebook's code reload still answers."""
     return sum(snapshot.equity_usd for snapshot in overview.snapshots if snapshot.venue != "onchain")
+
+
+YOUNG_POSITION_DAYS = 1.0   # a position open less than this shows its result since entry in the winners and losers rows
+
+
+def young_entries(entries: list[dict], now: float, days: float = YOUNG_POSITION_DAYS) -> dict[tuple[str, str, str], float]:
+    """Open journal entries younger than ``days``: (wallet last 4, coin, side) -> days open. An entry without a record (IB
+    stocks, wallet tokens) is not in it, so its age is unknown and the 24h move stands."""
+    out = {}
+    for entry in entries:
+        if entry.get("closed"):
+            continue
+        try:
+            opened = calendar.timegm(time.strptime(str(entry["opened"])[:19], "%Y-%m-%dT%H:%M:%S"))
+        except (KeyError, ValueError):
+            continue
+        age = (now - opened) / 86400
+        if 0 <= age < days:
+            out[(str(entry.get("wallet", ""))[-4:].lower(), str(entry.get("coin", "")), str(entry.get("side", "")).upper())] = age
+    return out
 
 
 class DeskOverview:
@@ -831,26 +853,53 @@ class DeskOverview:
             except Exception as exc:
                 degraded.report("24h moves", exc)
                 moves = {}
+            from desk import journal
+
+            opened_at = young_entries(journal.load(), time.time())   # (wallet last 4, coin, side) -> days open, for entries under a day old
+
             def day_move(item):
                 label, position = item
                 change = moves.get((label, position.symbol), float("nan"))
                 return change * (1 if position.quantity > 0 else -1)
+
+            since_entry = {}   # id(item) -> the result since entry, for a held position younger than a day: it shows as ALL, not D
+
+            def shown(item):
+                """The figure a winners/losers row prints: the position's own 24h move, or its result since entry when it is
+                under a day old (a flat day says nothing about a position bought a few hours ago); matches the positions tile."""
+                label, position = item
+                key = (str(label)[-4:].lower(), position.symbol, position.side)
+                if key in opened_at and math.isfinite(position.avg_price) and position.avg_price:
+                    cost = abs(position.notional_usd - position.unrealized_usd)
+                    if cost:
+                        since_entry[id(item)] = (position.unrealized_usd / cost, position.avg_price, opened_at[key])
+                        return since_entry[id(item)][0]
+                return day_move(item)
             winner_parts, loser_parts = [], []
+            hover = {"Largest winners": [], "Largest losers": []}
             for kind in MARKET_KINDS:  # crypto and stocks ranked apart, shown in one row per side
                 group = [item for item in ranked if market_kind(item[1]) == kind and item[1].symbol not in SYMBOLIC_HOLDINGS
-                         and math.isfinite(day_move(item))]
-                group.sort(key=day_move)
-                line = lambda rows: ", ".join(f"{item[1].symbol} {_pct(day_move(item))}" for item in rows)
-                winners = [item for item in group[::-1] if day_move(item) > 0][:HIGHLIGHT_MOVERS]
-                losers = [item for item in group if day_move(item) < 0][:HIGHLIGHT_MOVERS]
+                         and math.isfinite(shown(item))]
+                group.sort(key=shown)
+                def line(rows, title):
+                    parts = []
+                    for item in rows:
+                        entry = since_entry.get(id(item))
+                        parts.append(f"{item[1].symbol} {_pct(shown(item))}" + (" ALL" if entry else ""))
+                        if entry:
+                            hover[title].append(f"{item[1].symbol.split(':')[-1]}: ALL is since entry at {entry[1]:g}, opened {entry[2] * 24:.0f}h ago")
+                    return ", ".join(parts)
+                winners = [item for item in group[::-1] if shown(item) > 0][:HIGHLIGHT_MOVERS]
+                losers = [item for item in group if shown(item) < 0][:HIGHLIGHT_MOVERS]
                 if winners:
-                    winner_parts.append(f"{kind.lower()}: " + line(winners))
+                    winner_parts.append(f"{kind.lower()}: " + line(winners, "Largest winners"))
                 if losers:
-                    loser_parts.append(f"{kind.lower()}: " + line(losers))
+                    loser_parts.append(f"{kind.lower()}: " + line(losers, "Largest losers"))
             if winner_parts:
                 well.append(("Largest winners", "D " + "; ".join(winner_parts) + "."))
             if loser_parts:
                 attention.append(("Largest losers", "D " + "; ".join(loser_parts) + "."))
+            self.highlight_hover = {title: "\n".join(lines) for title, lines in hover.items() if lines}   # what ALL means, on the row's hover
             # A broad index (SPY, the S&P perp) is a market holding, not a single-name concentration: never flagged.
             singles = [item for item in positions if item[1].symbol.split(":")[-1].upper() not in INDEX_FUNDS]
             label, largest = max(singles or positions, key=lambda item: abs(item[1].notional_usd))
