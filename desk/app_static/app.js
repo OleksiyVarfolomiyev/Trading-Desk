@@ -526,8 +526,7 @@ function renderBarList(id, spec, plan, host) {
     shownGroup.add(row.__group);
     const head = heads.get(row.__group) || {};
     return el("div", { class: "bgroup", title: head.__hover || "" }, [
-      el("span", { class: "group-dot", style: `background:var(${STRATEGY_TINT[row.__group] || "--muted"})` }),
-      el("span", { class: "bgroup-name", text: row.__group }),
+      el("span", { class: "bgroup-name", style: `color:var(${STRATEGY_TINT[row.__group] || "--muted"})`, text: row.__group }),
       el("span", { class: "bgroup-fig " + (isNum(head[plan.value]) ? signClass(head[plan.value]) : ""), text: isNum(head[plan.value]) ? text(plan.value, head[plan.value]) : "" }),
     ]);
   };
@@ -994,7 +993,7 @@ function renderTable(id, spec) {
     const legColor = /^(long|short|net)$/.test(leg) ? "name-" + leg : "";
     const classes = [format.num ? "num" : "", tone, key, legColor].filter(Boolean).join(" ");
     if (row.__groupRow) {   // a strategy's subtotal row: its name in the strategy's colour, figures as plain numbers
-      if (column === spec.columns[0]) return el("td", { class: "group-name" }, [el("span", { class: "group-dot", style: `background:var(${STRATEGY_TINT[row.__group] || "--muted"})` }), el("span", { text: text })]);
+      if (column === spec.columns[0]) return el("td", { class: "group-name", text: "Total" });   // the name is the centred line above
       return el("td", { class: classes + (/\d/.test(text) ? " digits" : ""), text: ZERO_TEXT.test(text) ? "" : text });
     }
     // Any figure in a cell (a note with "$1.5K", a text column of amounts) is hidden with the numbers, not only number columns.
@@ -1032,8 +1031,14 @@ function renderTable(id, spec) {
     return el("td", { class: classes + withDigits, title: row.__cellTitles?.[column.key],
       text: spec.keepColumns ? text || "—" : ZERO_TEXT.test(text) ? "" : text });
   };
-  const body = el("tbody", {}, rows.map((row, index) => el("tr", Object.assign(row.__hover ? { title: row.__hover } : {}, row.__groupRow ? { class: "group-row" } : {}),
-    spec.columns.map((column) => cell(row, column, index)).concat(id in CANDIDATE_TABLES && row.Coin ? [candidateActions(id, row)] : []))));
+  const body = el("tbody", {}, rows.flatMap((row, index) => {
+    const line = el("tr", Object.assign(row.__hover ? { title: row.__hover } : {}, row.__groupRow ? { class: "group-row" } : {}),
+      spec.columns.map((column) => cell(row, column, index)).concat(id in CANDIDATE_TABLES && row.Coin ? [candidateActions(id, row)] : []));
+    if (!row.__groupRow) return [line];
+    // A strategy's name sits centred over its group in the strategy's colour, on a line of its own, so it never runs into the symbols.
+    const label = el("tr", { class: "group-label" }, [el("td", { colspan: String(spec.columns.length), style: `color:var(${STRATEGY_TINT[row.__group] || "--muted"})`, text: row.__group })]);
+    return [label, line];
+  }));
   if (id in CANDIDATE_TABLES) head.append(el("th", { class: "row-actions" }));
   const parts = [el("thead", {}, head), body];
   if (spec.total && spec.rows.length > 1) {  // the total of a single row only repeats it
