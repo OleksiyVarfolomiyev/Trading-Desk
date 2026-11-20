@@ -241,10 +241,20 @@ function moveTotal(rows, scale) {   // the book's move over the window: value no
   });
   return base ? change / base : NaN;
 }
+// In $ mode the change column is the position's profit or loss over the window in dollars: its value now times the price move
+// over (1 + move), signed (a short that gained is positive), so it matches the % column and sums to the group and the book.
+function changeUsd(row, scale) {
+  const move = windowMove(row, scale);
+  return isNum(move) && isNum(row.Value) && move > -1 ? row.Value * move / (1 + move) : NaN;
+}
+function changeUsdTotal(rows, scale) {
+  const known = rows.map((row) => changeUsd(row, scale)).filter(isNum);
+  return known.length ? known.reduce((total, value) => total + value, 0) : NaN;
+}
 function positionColumns(last, id) {   // All is the uPnL column itself, so the change column goes
   const letter = positionLetter(id);
   const columns = [["Symbol"], ...(letter ? [["24h change (%)", letter]] : []), ["uPnL (%)", "uPnL"], ["Funding (APR)"], [last], ["Risk", "Risk", "rpct"]];
-  return pnlUnit === "usd" ? columns.map((column) => (column[0] === "uPnL (%)" ? ["uPnL", "uPnL"] : column)) : columns;
+  return pnlUnit === "usd" ? columns.map((column) => (column[0] === "uPnL (%)" ? ["uPnL", "uPnL"] : column[0] === "24h change (%)" ? ["_changeUsd", letter, "susd"] : column)) : columns;
 }
 // ---- the positions by strategy: the journal's label per position (from the research feed's theses; never guessed),
 // so like is compared with like. The toggle on the tile (remembered in the browser) swaps "by strategy" and "all".
@@ -275,7 +285,7 @@ function groupSubtotal(rows, scale) {   // one group's figures on the same cost 
   const risk = rows.some((row) => isNum(row.Risk)) ? sum("Risk") : NaN;
   return { Value: sum("Value"), uPnL: sum("uPnL"), Weight: rows.some((row) => isNum(row.Weight)) ? sum("Weight") : NaN, Risk: risk,
     "uPnL (%)": cost ? priced.reduce((total, row) => total + row.uPnL, 0) / cost : NaN,
-    "24h change (%)": scale === "All" ? NaN : moveTotal(rows, scale),
+    "24h change (%)": scale === "All" ? NaN : moveTotal(rows, scale), _changeUsd: scale === "All" ? NaN : changeUsdTotal(rows, scale),
     "Funding (APR)": fundBase ? known.reduce((total, row) => total + Math.abs(row.Value) * row["Funding (APR)"], 0) / fundBase : NaN };
 }
 const POSITION_ALIGN = (last) => ({ "Symbol": 18, "D": 16, "W": 16, "M": 16, "uPnL": 16, "Funding (APR)": 16, [last]: 16, "Risk": 16 });
@@ -284,12 +294,14 @@ const positionView = (id) => ({
   // chart's bars and this column are green and red together, and the total row (the book's gain) is in the same terms.
   derive: (r) => {
     const move = windowMove(r, positionScale(id));
-    return { Symbol: marketName(r.Symbol), "24h change (%)": r.Symbol && isNum(move) && isNum(r.Value) && r.Value < 0 ? -move : move };   // the total row has no symbol: it is already the book's gain
+    return { Symbol: marketName(r.Symbol), "24h change (%)": r.Symbol && isNum(move) && isNum(r.Value) && r.Value < 0 ? -move : move,   // the total row has no symbol: it is already the book's gain
+      _changeUsd: r.Symbol ? changeUsd(r, positionScale(id)) : NaN };
   },
   windowTotal: (spec) => {   // D is the table's own total unless a position is younger than a day; All is the table's uPnL total
     const scale = positionScale(id), rows = spec.rows.filter((row) => !row._wallet);
-    if (scale === "All" || (scale === "1D" && !rows.some((row) => rowAge(row) < 1))) return {};
-    return { "24h change (%)": moveTotal(rows, scale) };
+    const usdTotal = scale === "All" ? {} : { _changeUsd: changeUsdTotal(rows, scale) };
+    if (scale === "All" || (scale === "1D" && !rows.some((row) => rowAge(row) < 1))) return usdTotal;
+    return Object.assign({ "24h change (%)": moveTotal(rows, scale) }, usdTotal);
   },
   size: (r) => Math.abs(r.Value),   // rows and bars run largest position first
   // A symbol opens its page: HL's trade page for an HL market, a quote page for an IB stock (as on HL).
@@ -335,7 +347,7 @@ const VIEWS = {
   // Wallet tokens in the positions tables' layout: same columns, order and widths; their share of the desk where
   // the positions show their weight (tokens have no cost basis or funding, so those cells stay empty).
   wallets: {
-    derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol, "24h change (%)": windowMove(r, positionScale("wallets")) }),
+    derive: (r) => ({ Account: r.Wallet, Symbol: r.Symbol, "24h change (%)": windowMove(r, positionScale("wallets")), _changeUsd: changeUsd(r, positionScale("wallets")) }),
     hover: (r) => [isNum(r.Value) ? usd(r.Value) : "", r.Chain, r.Note].filter(Boolean).join(" · "),
     columnsNow: () => positionColumns("% of desk", "wallets"),
     columns: [["Symbol"], ["24h change (%)", "D"], ["uPnL (%)", "uPnL"], ["Funding (APR)"], ["% of desk"], ["Risk", "Risk", "rpct"]],
