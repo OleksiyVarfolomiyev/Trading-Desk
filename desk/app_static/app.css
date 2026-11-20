@@ -358,7 +358,7 @@ th.key { color: var(--series-1); font-weight: 700; }
 html.has-full { overflow: hidden; }
 /* Highlight answers: read, not important. Shown on hover (always on touch screens). */
 .hl-actions { display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s; }
-.highlights li:hover .hl-actions, .highlights li:focus-within .hl-actions { opacity: 1; }
+.highlights li:hover .hl-actions, .highlights li:focus-within .hl-actions, .highlights li.is-hover .hl-actions { opacity: 1; }
 @media (hover: none) { .hl-actions { opacity: 1; } }
 .hl-act { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 7px; border-radius: 4px; }
 .hl-act:hover { color: var(--ink); background: var(--border); }
@@ -417,7 +417,7 @@ html.private .js-plotly-plot .numeric-note, html.private .bfig { filter: blur(7p
 .tile.dragging { opacity: 0.45; cursor: grabbing; }
 .tile.drop-target { outline: 2px dashed var(--series-1); outline-offset: -2px; }
 .tile-tools { position: absolute; top: 2px; right: 2px; opacity: 0; transition: opacity .12s; background: var(--surface); border-radius: 6px; }
-.tile:hover .tile-tools, .tile:focus-within .tile-tools { opacity: 1; }
+.tile:hover .tile-tools, .tile:focus-within .tile-tools, .tile.is-hover .tile-tools { opacity: 1; }
 .tile.tile-min .sub, .tile.tile-min .line { display: none; }
 /* Privacy, the rest of the page: every table figure (a number column or any cell with a digit), the chart labels (bar and
    point text, value ticks, end notes) and the chart hover. Names, headings and signs stay. */
@@ -488,7 +488,7 @@ html.private td.digits { cursor: pointer; }
 /* Window tools appear only on hover or focus, everywhere (cards like the key-number tiles); the grip is not drawn, the
    whole card drags. Touch screens, which cannot hover, keep the tools visible. */
 .card .card-tools { opacity: 0; transition: opacity .12s; }
-.card:hover .card-tools, .card:focus-within .card-tools, .card.card-full .card-tools { opacity: 1; }
+.card:hover .card-tools, .card:focus-within .card-tools, .card.card-full .card-tools, .card.is-hover .card-tools { opacity: 1; }
 .card-grip { display: none; }
 @media (hover: none) { .card .card-tools, .tile-tools { opacity: 1; } }
 /* Key numbers on one line each: label, value, then the detail, which gives way (ellipsis) before the value does. */
@@ -507,7 +507,7 @@ html.private td.digits { cursor: pointer; }
 .tick[draggable="true"] { cursor: grab; }
 .tick.drop-target { outline: 1px dashed var(--series-1); }
 .tick-hide { opacity: 0.6; font-size: 15px; padding: 0 6px; }
-.ticker:hover .tick-hide { opacity: 1; }
+.ticker:hover .tick-hide, .ticker.is-hover .tick-hide { opacity: 1; }
 .unit-button.auto { position: relative; }
 .unit-button.auto::after { content: ""; position: absolute; top: 3px; right: 3px; width: 4px; height: 4px; border-radius: 50%; background: var(--series-1); }
 .card-filter-box { margin-left: auto; width: 140px; background: transparent; color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font: inherit; font-size: 12px; }
@@ -526,7 +526,7 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 /* An element's own scale chips, shown on its hover. */
 .scale-chips { display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s; order: 5; margin-left: auto; }
 .tile .scale-chips { order: 0; margin-inline-start: 0; }
-.tile:hover .scale-chips, .card:hover .scale-chips, .scale-chips:focus-within { opacity: 1; }
+.tile:hover .scale-chips, .card:hover .scale-chips, .scale-chips:focus-within, .tile.is-hover .scale-chips, .card.is-hover .scale-chips { opacity: 1; }
 .scale-chip { background: transparent; border: 0; color: var(--muted); font: inherit; font-size: 11px; padding: 1px 5px; border-radius: 4px; cursor: pointer; position: relative; }
 .scale-chips.table-periods { display: flex; flex-wrap: wrap; order: 0; margin: 0 0 4px; }
 .scale-chip.on { color: var(--ink); background: var(--border); }
@@ -544,7 +544,7 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 /* Card names on hover only; the heading keeps its height small. */
 .card h2 { min-height: 18px; margin-bottom: 2px; }
 .card h2 .card-name { opacity: 0; transition: opacity .12s; font-weight: 500; color: var(--muted); }
-.card:hover h2 .card-name, .card:focus-within h2 .card-name, .card.card-min h2 .card-name, .card.card-full h2 .card-name { opacity: 1; }
+.card:hover h2 .card-name, .card:focus-within h2 .card-name, .card.card-min h2 .card-name, .card.card-full h2 .card-name, .card.is-hover h2 .card-name { opacity: 1; }
 @media (hover: none) { .card h2 .card-name { opacity: 1; } }
 /* "+" menus: a layer on a tile, a key number on the row. */
 .card h2 { position: relative; }
@@ -555,7 +555,7 @@ tr:hover .row-act, .row-act.on, .row-act:focus-visible { opacity: 1; }
 .tiles { position: relative; }
 .tile-add-wrap { position: relative; display: flex; align-items: center; }
 .tile-add { background: transparent; border: 1px dashed var(--border); color: var(--muted); border-radius: 8px; width: 28px; height: 28px; cursor: pointer; opacity: 0; transition: opacity .12s; }
-.tiles:hover .tile-add, .tile-add:focus-visible { opacity: 1; }
+.tiles:hover .tile-add, .tile-add:focus-visible, .tiles.is-hover .tile-add { opacity: 1; }
 .tile-menu { top: 110%; left: 0; right: auto; }
 .tile-pick { width: 100%; background: transparent; border: 0; color: var(--ink-2); font: inherit; text-align: left; gap: 8px; justify-content: flex-start !important; }
 .tile-pick:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
@@ -627,7 +627,7 @@ th, td { padding: 1px 5px; }
 /* Thumbs: bottom right of the tile, on hover. */
 .card { position: relative; }
 .card-foot { position: absolute; left: 4px; bottom: 2px; display: inline-flex; gap: 2px; opacity: 0; transition: opacity .12s; background: var(--surface); border-radius: 6px; }
-.card:hover .card-foot, .tile:hover .card-foot, .card-foot:focus-within { opacity: 1; }
+.card:hover .card-foot, .tile:hover .card-foot, .card-foot:focus-within, .card.is-hover .card-foot, .tile.is-hover .card-foot { opacity: 1; }
 .tile-foot { left: 2px; bottom: 0; }
 @media (hover: none) { .card-foot { opacity: 1; } }
 /* Nothing but separation: no heading height, no card padding beyond a hairline, tight table rows and charts. */
@@ -679,13 +679,13 @@ table.aligned td, table.aligned th { padding: 0 3px !important; }
 #content > .highlights-card, #columns .highlights-card { column-span: none; width: 100%; }
 /* The + asset field and the strip's hide button show only while the pointer is on the strip (or the field has focus). */
 .ticker .tick-add, .ticker .tick-hide { opacity: 0; transition: opacity .12s; }
-.ticker:hover .tick-add, .ticker:hover .tick-hide, .ticker:focus-within .tick-add, .ticker:focus-within .tick-hide { opacity: 1; }
+.ticker:hover .tick-add, .ticker:hover .tick-hide, .ticker:focus-within .tick-add, .ticker:focus-within .tick-hide, .ticker.is-hover .tick-add, .ticker.is-hover .tick-hide { opacity: 1; }
 @media (hover: none) { .ticker .tick-add, .ticker .tick-hide { opacity: 1; } }
 /* Highlights: the answers sit under their line, appearing on hover, with no column held open on the right. */
 .highlights li { display: block !important; }
 .highlights li .text { display: block; }
 .highlights li .hl-actions { display: flex; gap: 2px; max-height: 0; overflow: hidden; opacity: 0; transition: max-height .12s, opacity .12s; }
-.highlights li:hover .hl-actions, .highlights li:focus-within .hl-actions { max-height: 24px; opacity: 1; }
+.highlights li:hover .hl-actions, .highlights li:focus-within .hl-actions, .highlights li.is-hover .hl-actions { max-height: 24px; opacity: 1; }
 @media (hover: none) { .highlights li .hl-actions { max-height: 24px; opacity: 1; } }
 /* Bar rows: name, bar with its figure, answers on hover. */
 :root { --kind-crypto-bg: color-mix(in srgb, var(--kind-crypto) 80%, transparent); --kind-stocks-bg: color-mix(in srgb, var(--kind-stocks) 80%, transparent); }
@@ -775,7 +775,7 @@ th { text-align: center; }
 
 .period-chips { position: relative; z-index: 5; display: flex; justify-content: flex-start; height: 0; margin: 0; overflow: visible; opacity: 0; transition: opacity .12s; }   /* D W M Y ALL float over the chart's corner on hover: no row of their own taking the tile's height */
 .period-chips .scale-chip { transform: translateY(4px); }
-.card:hover .period-chips, .period-chips:focus-within { opacity: 1; }
+.card:hover .period-chips, .period-chips:focus-within, .card.is-hover .period-chips { opacity: 1; }
 @media (hover: none) { .period-chips { opacity: 1; } }
 
 /* Pulse prices scroll independently of the asset controls. */
@@ -828,7 +828,7 @@ html[data-keynumbers="off"] #tiles { display: none !important; }   /* !important
 .trade-side.needs-pick { outline: 1px solid var(--warning); outline-offset: 1px; }
 /* The by-strategy / all-positions switch shows only on hover, like the tile's other controls. */
 .group-toggle { opacity: 0; transition: opacity .12s; }
-.card:hover .group-toggle, .card:focus-within .group-toggle, .group-toggle:focus-visible { opacity: 1; }
+.card:hover .group-toggle, .card:focus-within .group-toggle, .group-toggle:focus-visible, .card.is-hover .group-toggle { opacity: 1; }
 @media (hover: none) { .group-toggle { opacity: 1; } }
 /* A card name that does not fit between the chips and the tools is clipped, never run under them (app.js fitCardTitle). */
 .card h2 { box-sizing: border-box; }
@@ -857,4 +857,5 @@ html[data-keynumbers="off"] #tiles { display: none !important; }   /* !important
 .mk-name.kind-stocks { color: var(--kind-stocks); }
 .mk-badge, .mk-dex { margin-left: 5px; font-size: 10.5px; color: var(--muted); }
 .mk-badge { border: 1px solid var(--border); border-radius: 4px; padding: 0 3px; }
+/* is-hover: set by app.js from the pointer's position, so hover controls also work when the browser has not yet handed this window the mouse (the cursor just came back from another app). */
 

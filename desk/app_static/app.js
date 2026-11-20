@@ -5333,5 +5333,21 @@ function setupMarkets() {
 
 // Nothing in the arrangement may stop the data from loading: each setup step is isolated, then the poll starts.
 for (const step of [watchUse, setupSections, wireScreens, setupMarkets]) { try { step(); } catch (error) { console.error("dashboard setup:", error); } }
+// Hover controls follow the pointer from its position (pointermove/mouseover), not only from the browser's :hover, which a
+// window that has not yet been made active again can leave stale until the first click: the cursor comes back from another
+// app and the controls show at once. CSS pairs every :hover reveal with a .is-hover twin.
+const HOVER_TARGETS = [".card", ".tile", ".tiles", ".ticker", ".highlights li"];
+let hovered = new Set();
+function markHover(event) {
+  const now = new Set();
+  const target = event.target;
+  if (target && target.closest) for (const selector of HOVER_TARGETS) { const node = target.closest(selector); if (node) now.add(node); }
+  for (const node of hovered) if (!now.has(node)) node.classList.remove("is-hover");
+  for (const node of now) if (!hovered.has(node)) node.classList.add("is-hover");
+  hovered = now;
+}
+document.addEventListener("pointermove", markHover, { passive: true, capture: true });
+document.addEventListener("mouseover", markHover, { passive: true, capture: true });
+document.documentElement.addEventListener("mouseleave", () => { for (const node of hovered) node.classList.remove("is-hover"); hovered = new Set(); });
 restoreLastDoc();
 poll();
