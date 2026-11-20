@@ -618,6 +618,12 @@ def main(argv: list[str] | None = None) -> int:
             tiles = drawdown.publish()
             sent = drawdown.notify(drawdown.load_levels(), drawdown.tolerance())
             reports = [str(drawdown.write_report(kind)) for kind in drawdown.report_due()]
+            from desk import drawdown_monitor   # the crypto models' statistical drawdown levels: re-evaluate when crossed
+
+            fitted = drawdown_monitor.load_fit()
+            if fitted:
+                crossed = drawdown_monitor.notify(drawdown_monitor.current_drawdown(), drawdown_monitor.levels_now(fitted), fitted)
+                sent = f"{sent}, crypto {crossed}" if sent and crossed else (f"crypto {crossed}" if crossed else sent)
             print(f"  drawdown: tiles {', '.join(tiles)}" + (f"; push {sent}" if sent else "")
                   + (f"; reports {', '.join(reports)}" if reports else ""))
         except Exception as exc:

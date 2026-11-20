@@ -336,6 +336,11 @@ REGISTRY: list[Item] = [
     Item("dd-tolerance", "Desk drawdown tolerance alert", "risk", "2026-11-20", None, None,
          monitor="monitoring, alert only", note="the investor's accepted drawdown (desk/fiduciary.json); attention at 75% "
          "of it and at it, phone push on a new level; nothing trades on it (desk/drawdown.py)"),
+    Item("dd-crypto-models", "Crypto drawdown: re-evaluate models", "risk", "2026-11-20", None, None,
+         monitor="monitoring, alert only", note="the crypto book's drawdown against two statistical levels (watch about a third of "
+         "quarters, re-evaluate about 1 in 12, for a book whose model is right at a Sharpe of 1, proxy replay of today's "
+         "positions); a crossing means check the theses, sizing and regime (desk/drawdown_monitor.py, "
+         "research/crypto_drawdown_threshold.md)"),
     Item("cap-flex", "Risk-cap flex, opt-in per trade", "risk", "2026-11-20", None, _count(r"FLEX"),
          note="3-point flex (33% to 36%) used only when chosen on the confirm step or with --use-flex"),
 ]
