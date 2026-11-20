@@ -1174,6 +1174,20 @@ class TradeAnalyticsTests(unittest.TestCase):
         self.assertEqual(blocked.leverage, 3)
         self.assertIn("33% equity cap", blocked.block_reason)
 
+    def test_long_on_an_asset_whose_atr_stop_is_below_zero_is_sized_not_refused(self):
+        # SNDK: 3 ATR was larger than the price, so the long's sizing level went negative and the planner refused (2026-11-20).
+        dates = pd.date_range("2025-01-01", periods=110, tz="UTC")
+        wild = pd.DataFrame({"time": dates, "open": 100.0, "high": 190.0, "low": 20.0, "close": 100.0})   # ATR about 170 on a price of 100
+        market = Market("xyz:WILD", "xyz", 100, 100, 3, 10)
+        long = size_trade("xyz:WILD", "xyz", "LONG", market, wild, make_funding(), equity=10_000, risk_headroom=5_000,
+                          available_margin=5_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004)
+        self.assertGreater(long.quantity, 0)
+        self.assertGreater(long.stop_price, 0)
+        self.assertLessEqual(long.risk_budget, 10_000 * 0.8 * 0.05 + 1e-6)   # still one position's budget, over the whole price at risk
+        short = size_trade("xyz:WILD", "xyz", "SHORT", market, wild, make_funding(), equity=10_000, risk_headroom=5_000,
+                           available_margin=5_000, maker_fee_rate=0.0001, taker_fee_rate=0.0004)
+        self.assertGreater(short.quantity, 0)                                 # shorts are unchanged: their level is above the price
+
     def test_position_risk_budget_and_margin_limit_scale_quantity(self):
         candles = make_candles()
         funding = make_funding()

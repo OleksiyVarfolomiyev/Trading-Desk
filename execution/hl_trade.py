@@ -57,6 +57,9 @@ def adverse_funding_cost_per_unit(*args, **kwargs) -> float:
 CONVICTION_CAP_FLEX = 0.03
 ENTRY_LABELS = ("directional", "fade", "hedge", "conviction")   # the strategy picked for an entry (desk/journal.py)
 
+# The sizing level of a long cannot go below zero: its risk per unit is capped at this share of the price (95%).
+MAX_LONG_RISK_SHARE_OF_PRICE = 0.95
+
 KEYCHAIN_SERVICE = "Hyperliquid API wallet"
 BASE_URL = "https://api.hyperliquid.xyz"
 # Sizing rules are shared with every other venue's executor.
@@ -992,6 +995,8 @@ def size_trade(
         raise ValueError("Account equity must be positive and finite.")
     atr = wilder_atr(candles, 14)
     stop_distance = atr * STOP_ATR_MULTIPLE
+    if direction > 0:   # a long can lose at most the whole price: a volatile asset (3 ATR above its price) is sized on that, not refused
+        stop_distance = min(stop_distance, market.mark_price * MAX_LONG_RISK_SHARE_OF_PRICE)
     funding_reserve = adverse_funding_cost_per_unit(
         funding,
         side,
