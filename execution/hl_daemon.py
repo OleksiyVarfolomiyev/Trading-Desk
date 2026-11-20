@@ -3423,9 +3423,11 @@ class Daemon:
             return self.unprotect(request)
         if command == "resize" and str(request.get("change")) in ("short", "long"):   # a new entry from the dashboard
             label = str(request.get("label") or "")
-            if label not in ht.ENTRY_LABELS:   # the label is the strategy; an entry without one is not sent
-                print("Pick a label (directional, fade, hedge or conviction) before planning the entry; nothing was planned.")
-                return 2
+            if label not in ht.ENTRY_LABELS:
+                if request.get("live"):   # the label is the strategy: an entry without one is never sent
+                    print("Pick a label (directional, fade, hedge or conviction) before sending the entry; nothing was sent.")
+                    return 2
+                label = "directional"   # a plan only: the size never depends on the label
             notional = request.get("notional")   # an explicit amount is an opt-in picked at the trade; no preset size
             try:
                 notional = float(notional) if notional not in (None, "") else None

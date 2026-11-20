@@ -296,7 +296,6 @@ async function dashboardAction(request, response) {
   const label = ["directional", "conviction", "hedge", "fade"].includes(body.label) ? body.label : "";
   // An entry's size is the risk-based one unless the user typed an explicit dollar amount at the trade (opt-in).
   const notional = entry && body.notional !== undefined && body.notional !== null && body.notional !== "" ? Number(body.notional) : null;
-  if (entry && !label) return send(400, { error: "Pick a label (directional, fade, hedge or conviction) before planning." });
   if (notional !== null && !(notional > 0 && notional < 1e7)) return send(400, { error: "The entry amount must be a positive number of dollars." });
   const market = /^[A-Za-z0-9_]{1,24}(?::[A-Za-z0-9_]{1,24})?$/;
   if (!/^[0-9a-fA-F]{4}$/.test(String(wallet || ""))) return send(400, { error: "invalid HL wallet" });
@@ -310,7 +309,9 @@ async function dashboardAction(request, response) {
   }
   const request_ = batch ? { cmd: "trade", wallet, batch: signals.map(({coin, side, dex}) => ({coin, side, dex})), fast: true }
     : { cmd: "resize", wallet, coin, change, fraction, label, ...(notional !== null ? { notional } : {}) };
-  const key = JSON.stringify(request_);
+  // The plan does not depend on an entry's label (it sets the journal tag, never the size): the label is picked on the plan
+  // screen and sent at the confirm step, so the plan is keyed without it.
+  const key = JSON.stringify(batch ? request_ : { ...request_, label: undefined });
   const outputLimit = batch ? 12000 : 4000;
   if (actionRunning) return send(409, { error: "another desk action is running" });
   actionRunning = true;
@@ -326,6 +327,7 @@ async function dashboardAction(request, response) {
       return send(200, { code, plan: text.slice(-outputLimit), token: id });
     }
     if (stage === "confirm") {
+      if (entry && !label) return send(400, { error: "Pick a label (directional, fade, hedge or conviction) before sending the entry." });   // the token stays valid
       const pending = pendingActions.get(String(token || ""));
       pendingActions.delete(String(token || ""));
       if (!pending || pending.key !== key || pending.expires < Date.now()) return send(400, { error: "the plan expired or changed: plan it again" });

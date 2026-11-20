@@ -392,13 +392,22 @@ class DaemonTradeTests(unittest.TestCase):
         self.assertAlmostEqual(limit, 7.96)
         self.assertNotIn((WALLET, "AVAX"), self.daemon.guards.entries)
 
-    def test_a_dashboard_entry_needs_a_label_and_is_risk_sized_not_conviction(self):
+    def test_a_dashboard_entry_is_planned_without_a_label_but_never_sent_without_one(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(hl_daemon.daemon_link, "RUN_DIR", Path(folder)):
             with patch.object(self.daemon, "trade", return_value=0) as trade:
-                code = self.daemon.dispatch({"cmd": "resize", "change": "long", "coin": "xmr", "wallet": WALLET[-4:]}, FakeSession())
+                base = {"cmd": "resize", "change": "long", "coin": "xmr", "wallet": WALLET[-4:]}
+                code = self.daemon.dispatch(dict(base, live=True), FakeSession())   # sending needs the label
                 self.assertEqual(code, 2)
                 trade.assert_not_called()
                 self.assertIn("Pick a label", self.output.getvalue())
+                self.assertEqual(self.daemon.dispatch(dict(base, live=False), FakeSession()), 0)   # a plan does not: the label never sets the size
+                self.assertFalse(trade.call_args.args[0]["live"])
+                self.assertEqual(trade.call_args.args[0]["notional"], None)
+                trade.reset_mock()
+
+    def test_a_dashboard_entry_is_risk_sized_not_conviction(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(hl_daemon.daemon_link, "RUN_DIR", Path(folder)):
+            with patch.object(self.daemon, "trade", return_value=0) as trade:
                 self.assertEqual(self.daemon.dispatch({"cmd": "resize", "change": "long", "coin": "xmr", "wallet": WALLET[-4:],
                                                        "label": "directional"}, FakeSession()), 0)
                 request = trade.call_args.args[0]

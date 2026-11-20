@@ -2718,7 +2718,7 @@ function tradeBar(close) {
     b.addEventListener("click", () => { tradeSide = value; sides.forEach((x) => { x.setAttribute("aria-pressed", String(x === b)); x.classList.remove("needs-pick"); }); });
     return b;
   });
-  const strat = el("select", { class: "trade-input", "aria-label": "Strategy", title: "Strategy label (asked before planning if not picked here)" },
+  const strat = el("select", { class: "trade-input", "aria-label": "Strategy", title: "Strategy label (chosen on the plan screen if not picked here)" },
     [["", "strat"], ["directional", "directional"], ["conviction", "conviction"], ["hedge", "hedge"], ["fade", "fade"]]
       .map(([value, text]) => el("option", { value, text })));
   const picker = assetPicker("Asset to trade", (coin) => {
@@ -4282,61 +4282,36 @@ function openBatchTrade() {
 
 // When the plan says an entry would need the 3-point cap flex, the confirm step asks: Use flex or Normal size, neither
 // preselected, and the confirm button waits for the choice. Without a FLEX line there is nothing to choose.
-function flexChoice(planText, confirm) {
-  if (!/\bFLEX:/.test(String(planText || ""))) return { node: null, useFlex: () => false };
+function flexChoice(planText, onChange) {
+  if (!/\bFLEX:/.test(String(planText || ""))) return { node: null, useFlex: () => false, ready: () => true };
   let chosen = null;
-  confirm.disabled = true;
   const node = el("div", { class: "scale-chips", role: "group", "aria-label": "Risk cap flex" },
     [["flex", "Use flex"], ["normal", "Normal size"]].map(([value, text]) => {
       const button = el("button", { type: "button", class: "scale-chip", text, "aria-pressed": "false" });
       button.addEventListener("click", () => {
         chosen = value;
         node.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b === button); b.setAttribute("aria-pressed", String(b === button)); });
-        confirm.disabled = false;
+        onChange();
       });
       return button;
     }));
-  return { node, useFlex: () => chosen === "flex" };
-}
-
-// A new entry first asks for its label (the strategy: none is preselected unless the trade bar's choice came with it) and,
-// the size is always the risk budget over the asset volatility; there is nothing to type.
-function pickEntry(label, change, target) {
-  const title = `${label}: ${marketName(target.coin)} (HL ${target.wallet})`;
-  const { overlay, box } = actionDialog(title);
-  let chosen = ["directional", "fade", "hedge", "conviction"].includes(target.label) ? target.label : "";
-  const plan = el("button", { type: "button", class: "asset-action lead", text: "Plan", disabled: !chosen });
-  const labels = el("div", { class: "scale-chips", role: "group", "aria-label": "Label" },
-    ["directional", "fade", "hedge", "conviction"].map((name) => {
-      const button = el("button", { type: "button", class: "scale-chip" + (name === chosen ? " on" : ""), text: name, "aria-pressed": String(name === chosen) });
-      button.addEventListener("click", () => {
-        chosen = name;
-        labels.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b === button); b.setAttribute("aria-pressed", String(b === button)); });
-        plan.disabled = false;
-      });
-      return button;
-    }));
-  // The size is always the standard one (risk and volatility based, as agreed): nothing to type or choose here. A dollar
-  // size of your own exists only on the command line (--notional).
-  plan.addEventListener("click", () => {
-    if (!chosen) return;
-    overlay.remove();
-    runAction(label, change, 1, Object.assign({}, target, { label: chosen, picked: true }));
-  });
-  box.replaceChildren(el("h3", { text: title }), labels,
-    el("div", { class: "asset-actions" }, [plan, closeButton(overlay).firstChild]));
+  return { node, useFlex: () => chosen === "flex", ready: () => chosen !== null };
 }
 
 async function runAction(label, change, fraction, target) {
-  if ((change === "short" || change === "long") && !target.picked) { pickEntry(label, change, target); return; }
   const coin = target.coin, title = `${label}: ${marketName(coin)} (HL ${target.wallet})`;
+  const isEntry = change === "short" || change === "long";
   feedback("action", "plan", marketName(coin), label);
   const { overlay, box } = actionDialog(title);
   box.replaceChildren(el("h3", { text: title }), el("p", { class: "muted", text: "Planning with live data…" }));
+  // An entry's strategy label is chosen on the plan screen below (never preselected, unless the trade bar already picked one);
+  // it sets the journal tag and never the size, so the plan does not need it.
+  const ENTRY_LABELS = ["directional", "fade", "hedge", "conviction"];
+  let chosenLabel = ENTRY_LABELS.includes(target.label) ? target.label : "";
   const post = (body) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
-    body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction, label: target.label, notional: target.notional }, body)) }).then((r) => r.json());
+    body: JSON.stringify(Object.assign({ change, coin, wallet: target.wallet, fraction, label: isEntry ? chosenLabel || undefined : undefined, notional: target.notional }, body)) }).then((r) => r.json());
   let plan;
-  try { plan = await post({ stage: "plan" }); } catch (e) { plan = { error: String(e) }; }
+  try { plan = await post({ stage: "plan", label: undefined }); } catch (e) { plan = { error: String(e) }; }
   if (plan.error || !plan.token) {
     const lines = planFailureLines(plan, coin);
     box.replaceChildren(el("h3", { text: title }), el("p", { class: "neg", text: "Nothing can be sent." }),
@@ -4347,22 +4322,42 @@ async function runAction(label, change, fraction, target) {
   const confirm = el("button", { type: "button", class: "asset-action lead", text: "✓", title: `${label} ${marketName(coin)}`, "aria-label": `Confirm: ${label} ${marketName(coin)}` });
   const cancel = el("button", { type: "button", class: "asset-action", text: "✗", title: "Cancel", "aria-label": "Cancel" });
   cancel.addEventListener("click", () => { feedback("action", "cancel", marketName(coin), label); overlay.remove(); });
-  const flex = flexChoice(plan.plan, confirm);
+  let flex;
+  const refresh = () => {   // confirm waits for the label (entries) and for the flex choice (when the plan offers one)
+    const ready = (!isEntry || Boolean(chosenLabel)) && (!flex || flex.ready());
+    confirm.disabled = !ready;
+    confirm.title = ready ? `${label} ${marketName(coin)}` : isEntry && !chosenLabel ? "Pick a strategy label first" : "Choose normal or flex first";
+  };
+  flex = flexChoice(plan.plan, refresh);
+  const labels = isEntry ? el("div", { class: "scale-chips label-chips", role: "group", "aria-label": "Strategy label" },
+    ENTRY_LABELS.map((name) => {
+      const button = el("button", { type: "button", class: "scale-chip" + (name === chosenLabel ? " on" : ""), text: name, "aria-pressed": String(name === chosenLabel) });
+      button.addEventListener("click", () => {
+        chosenLabel = name;
+        labels.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b === button); b.setAttribute("aria-pressed", String(b === button)); });
+        refresh();
+      });
+      return button;
+    })) : null;
   confirm.addEventListener("click", async () => {
-    overlay.remove();   // gone at once; if something goes wrong a notice appears
-    feedback("action", "confirm", marketName(coin), label);
-    let result;
-    try { result = await post({ stage: "confirm", token: plan.token, use_flex: flex.useFlex() }); } catch (e) { result = { error: String(e) }; }
-    if (result.code !== 0) {
-      const lines = planLines(result.result || result.error || "", coin);
-      notify(lines.notices.concat(lines.mine), `${title}: not completed`);
-    }
-    lastRendered = null; load();
+    try {
+      overlay.remove();   // gone at once; if something goes wrong a notice appears
+      feedback("action", "confirm", marketName(coin), label);
+      let result;
+      try { result = await post({ stage: "confirm", token: plan.token, use_flex: flex.useFlex() }); } catch (e) { result = { error: String(e) }; }
+      if (result.code !== 0) {
+        const lines = planLines(result.result || result.error || "", coin);
+        notify(lines.notices.concat(lines.mine, result.error && !lines.mine.length ? [String(result.error)] : []), `${title}: not completed`);
+      }
+      lastRendered = null; load();
+    } catch (error) { notify([String(error && error.message || error)], `${title}: failed`); }   // never a silent click
   });
+  refresh();
   box.replaceChildren(el("h3", { text: title }),
     ...notices.map((line) => el("p", { class: "action-line notice", text: line })),
     ...mine.map((line) => el("p", { class: "action-line", text: line })),
     ...(flex.node ? [flex.node] : []),
+    ...(labels ? [labels] : []),
     el("div", { class: "asset-actions" }, [confirm, cancel]));
 }
 
