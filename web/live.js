@@ -1173,7 +1173,8 @@
       if (deskEquity > 0 && fin(riskRow["VaR 95%"])) riskParts.push(`VaR ${percent(riskRow["VaR 95%"] / deskEquity)}/day`);
       (riskRow.books || []).forEach((row) => {  // desk/live_risk.py book_line: terse, the reader knows the benchmarks
         const parts = [];
-        if (fin(row.beta)) parts.push(`β ${row.beta.toFixed(2)}` + (fin(row.perHeld) ? ` (${row.perHeld.toFixed(2)} per $)` : ""));
+        // The beta of the dollars held in the book leads; on the whole account it reads low because only part of the equity is in the book.
+        if (fin(row.beta)) parts.push(fin(row.perHeld) ? `β ${row.perHeld.toFixed(1)} per $, ${row.beta.toFixed(2)} of equity` : `β ${row.beta.toFixed(2)} of equity`);
         parts.push(`net ${percent(row.net / tradingEquity, false, 0)}`);
         if (fin(row.vol)) parts.push(`vol ${percent(row.vol, false, 0)}`);
         riskParts.push(`${row.name} ${parts.join(", ")}`);

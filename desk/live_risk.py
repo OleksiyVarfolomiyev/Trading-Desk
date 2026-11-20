@@ -286,14 +286,16 @@ def book_rows(holdings: pd.DataFrame, returns: pd.DataFrame, equity: float, benc
 
 
 def book_line(row: dict) -> str:
-    """"crypto β 0.18 (1.05 per $), net 17%, vol 23%": one book's risk, terse (the reader knows the benchmarks)."""
+    """"crypto β 1.1 per $, 0.18 of equity, net 17%, vol 23%": one book's risk, terse (the reader knows the benchmarks)."""
     from desk.numbers import pct
 
     name = row["Basis"].split(" book")[0].lower()
     parts = []
     if np.isfinite(row.get("Beta", np.nan)):
         held = row.get("Beta per $ held", np.nan)
-        parts.append(f"β {row['Beta']:.2f}" + (f" ({held:.2f} per $)" if np.isfinite(held) else ""))
+        # The beta of the dollars held in the book leads ("β 2.0 per $"); on the whole account it reads low (0.92) because only part of
+        # the equity is in the book. The account-level beta stays as the second figure.
+        parts.append(f"β {held:.1f} per $, {row['Beta']:.2f} of equity" if np.isfinite(held) else f"β {row['Beta']:.2f} of equity")
     parts.append(f"net {pct(row['Net / equity'])}")
     if np.isfinite(row.get("Volatility (/yr)", np.nan)):
         parts.append(f"vol {pct(row['Volatility (/yr)'])}")
