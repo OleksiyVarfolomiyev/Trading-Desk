@@ -824,3 +824,8 @@ tr.group-label + tr.group-row td { border-top: 0; }
 html[data-keynumbers="off"] #tiles { display: none; }
 /* The trade bar has no preselected side: both buttons are marked until one is picked. */
 .trade-side.needs-pick { outline: 1px solid var(--warning); outline-offset: 1px; }
+/* The by-strategy / all-positions switch shows only on hover, like the tile's other controls. */
+.group-toggle { opacity: 0; transition: opacity .12s; }
+.card:hover .group-toggle, .card:focus-within .group-toggle, .group-toggle:focus-visible { opacity: 1; }
+@media (hover: none) { .group-toggle { opacity: 1; } }
+
