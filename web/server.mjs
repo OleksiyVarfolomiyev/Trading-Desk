@@ -435,6 +435,16 @@ function serve() {
     });
   });
   server.listen(PORT, "127.0.0.1", () => console.log(`${new Date().toISOString()} desk relay on 127.0.0.1:${PORT}, store ${STORE}`));
+  // A stop (a deploy restart) waits for a confirmed order in flight, so its reply reaches the page: no new connections, then exit
+  // once the action is done (at most 80 s; systemd stops it at 90).
+  process.on("SIGTERM", async () => {
+    console.log(`${new Date().toISOString()} stopping${actionRunning ? ": waiting for the running action" : ""}`);
+    server.close();
+    const until = Date.now() + 80_000;
+    while (actionRunning && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, actionRunning ? 0 : 300));
+    process.exit(0);
+  });
   const capture = () => worker.scheduled(null, environment(), context);
   setTimeout(capture, 60_000);              // one capture a minute after start...
   setInterval(capture, CAPTURE_EVERY_MS);   // ...then every 6 hours, as the cron did

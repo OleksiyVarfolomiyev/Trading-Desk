@@ -38,5 +38,14 @@ class EntryLabelFlowTests(unittest.TestCase):
         self.assertLess(confirm.index("entry && !label"), confirm.index("pendingActions.delete"))
 
 
+
+class RelayStopTests(unittest.TestCase):
+    def test_a_stop_waits_for_the_running_action_and_a_page_only_deploy_does_not_restart_the_relay(self):
+        self.assertIn('process.on("SIGTERM"', SERVER)
+        stop = SERVER[SERVER.index('process.on("SIGTERM"'):]
+        self.assertIn("while (actionRunning", stop)
+        pull = (ROOT / "deploy" / "pull.sh").read_text()
+        self.assertIn("git diff --quiet \"$before\" HEAD -- web/server.mjs", pull)   # the relay restarts only when its own code changed
+
 if __name__ == "__main__":
     unittest.main()
