@@ -4323,16 +4323,25 @@ function pickEntry(label, change, target) {
       });
       return button;
     }));
-  const amount = el("input", { class: "trade-input", type: "number", min: "1", step: "any", inputmode: "decimal",
-    placeholder: "risk-based size", "aria-label": "Explicit amount in dollars (optional)", title: "Leave empty for the risk-based size; a dollar amount here is a deliberate opt-in" });
+  // The size is the standard one (risk and volatility based, as agreed): nothing to type. A dollar amount of your own is a
+  // deliberate opt-in behind the small $ button, hidden until asked for.
+  const amount = el("input", { class: "trade-input", type: "number", min: "1", step: "any", inputmode: "decimal", hidden: true,
+    placeholder: "$", "aria-label": "Your own dollar size" });
+  const custom = el("button", { type: "button", class: "scale-chip", text: "$", title: "Set your own dollar size instead of the standard one", "aria-label": "Set your own dollar size", "aria-pressed": "false" });
+  custom.addEventListener("click", () => {
+    amount.hidden = !amount.hidden;
+    custom.setAttribute("aria-pressed", String(!amount.hidden));
+    custom.classList.toggle("on", !amount.hidden);
+    if (amount.hidden) amount.value = ""; else amount.focus();
+  });
   plan.addEventListener("click", () => {
     if (!chosen) return;
-    const notional = amount.value.trim() ? Number(amount.value) : undefined;
+    const notional = !amount.hidden && amount.value.trim() ? Number(amount.value) : undefined;
     if (notional !== undefined && !(notional > 0)) { amount.focus(); return; }
     overlay.remove();
     runAction(label, change, 1, Object.assign({}, target, { label: chosen, notional, picked: true }));
   });
-  box.replaceChildren(el("h3", { text: title }), labels, el("div", { class: "trade-bar" }, [amount]),
+  box.replaceChildren(el("h3", { text: title }), labels, el("div", { class: "trade-bar" }, [custom, amount]),
     el("div", { class: "asset-actions" }, [plan, closeButton(overlay).firstChild]));
 }
 
