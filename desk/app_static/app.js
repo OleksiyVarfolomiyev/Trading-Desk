@@ -903,6 +903,13 @@ function tableWindow(id, host, spec) {
   return selected ? { ...spec, rows: spec.rows.filter((row) => row.Window === selected), total: null } : spec;
 }
 
+// CARD_UNHIDE_START
+// A tile the reader asked for (added back from the Sections menu) stays on the page even when its table is empty: only a tile
+// nobody asked for hides itself when it has nothing to show.
+function cardHiddenWhenEmpty(empty, requested) { return Boolean(empty) && !requested; }
+// A tile that is in no column (a saved arrangement that never placed it) goes to the shortest column.
+function shortestColumn(heights) { return heights.reduce((best, height, index) => (height < heights[best] ? index : best), 0); }
+// CARD_UNHIDE_END
 function renderTable(id, spec) {
   const original = spec;
   lastSpecs[id] = spec;
@@ -914,8 +921,12 @@ function renderTable(id, spec) {
   const numbers = spec && spec.columns ? spec.columns.filter((c) => (FORMATS[c.fmt] || FORMATS.text).num) : [];
   const allZero = !spec?.keepColumns && numbers.length && (spec.rows || []).every((row) => numbers.every((c) => !isNum(row[c.key]) || Math.abs(row[c.key]) < 1e-9));
   const empty = !spec || !spec.columns || !spec.columns.length || !(spec.rows || []).length || allZero;
-  if (card) card.hidden = empty;
-  if (empty) return;
+  const requested = Boolean(card && card.dataset.requested === "1");
+  if (card) card.hidden = cardHiddenWhenEmpty(empty, requested);
+  if (empty) {
+    if (requested) host.append(el("p", { class: "table-note", text: "None open" }));   // asked for, with nothing to show: a quiet line, not a vanished tile
+    return;
+  }
   if (id.startsWith("pub-")) spec = tableWindow(id, host, spec);
   if (!spec.tableOnly && (isChartView() || id === "strategies") && renderTableChart(id, spec)) return;   // the performance tile is always the stacked bars   // ?view=charts: the table drawn as a chart
   // A text column with the same value in every row is said once, above the table; an empty one is left out.
@@ -4500,10 +4511,30 @@ function saveOrder() {
   state.order = cols.flat();   // column after column: the fallback for a screen width not arranged yet
   saveLayout(state);
 }
+// A tile added back from the menu must be there: marked as asked for (so an empty table does not hide it again), attached to a
+// column if its slot is in none, and its table drawn from the data already loaded.
+function showRequestedCard(card) {
+  card.dataset.requested = "1";
+  card.hidden = false;
+  const slot = card.parentElement && card.parentElement.classList.contains("slot") ? card.parentElement : card;
+  const columns = [...document.querySelectorAll("#columns > .col")];
+  if (columns.length && !columns.some((column) => column.contains(slot))) columns[shortestColumn(columns.map((column) => column.scrollHeight))].append(slot);
+  const host = card.querySelector(".table-wrap[id^='t-']");
+  const id = host ? host.id.slice(2) : "";
+  if (id && latest && latest.data && TABLES.includes(id)) {
+    const data = latest.data;
+    renderTable(id, applyView(id, withWallets(id, data.tables || {}), { deskValue: (data.kpis || {}).desk_value }));
+    if (/^positions/.test(id)) drawPositionScales();
+  }
+  card.classList.add("filled");
+  if (typeof queueFitCardTitles === "function") queueFitCardTitles();
+}
 function setHidden(id, hidden) {
   const card = document.getElementById(id) && document.getElementById(id).closest(".card");
   if (!card) return;
   card.classList.toggle("card-off", hidden);
+  if (hidden) delete card.dataset.requested;
+  else showRequestedCard(card);
   feedback("section", hidden ? "hide" : "show", cardTitle(card));
   const state = layoutState();
   state.hidden = [...document.querySelectorAll("#content .card-off")].map(cardId);
