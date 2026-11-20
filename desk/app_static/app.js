@@ -3634,6 +3634,9 @@ function assetButton(market, label, className) {
   return button;
 }
 const CANDLE_INTERVALS = [["1m", 1], ["5m", 5], ["15m", 15], ["1h", 60], ["4h", 240], ["1d", 1440], ["1w", 10080]];
+// How many candles a chart opens with: about the current regime (the last 30 days) on the daily and 4-hour views, a day or a
+// week on the short ones, so a chart never opens on months of history.
+const CANDLE_COUNT = { "1m": 360, "5m": 288, "15m": 192, "1h": 168, "4h": 180, "1d": 35, "1w": 26 };
 // A symbol in a highlight (or the strip) opens the asset as a tile at the top of the page: price and candles (HL markets),
 // your position in it, links to its page, and the sensible actions for where it stands. The action buttons do not trade:
 // they copy the order as a sentence, to paste to Claude, which runs it with the usual confirmation (or the pop-up).
@@ -3995,7 +3998,7 @@ async function openAsset(symbol, targetCard = null) {
     try {
       const end = Date.now();
       const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ type: "candleSnapshot", req: { coin: hlName, interval, startTime: end - 168 * minutes * 60000, endTime: end } }) });
+        body: JSON.stringify({ type: "candleSnapshot", req: { coin: hlName, interval, startTime: end - (CANDLE_COUNT[interval] || 168) * minutes * 60000, endTime: end } }) });
       if (!response.ok) throw new Error("Candle request failed");
       const candles = await response.json();
       if (controller.signal.aborted) return;
@@ -4088,7 +4091,7 @@ async function openAsset(symbol, targetCard = null) {
     chip.addEventListener("click", () => loadCandles(interval, minutes));
     scales.append(chip);
   }
-  const interval = CANDLE_INTERVALS.find(([label]) => label === card.assetInterval) || ["1h", 60];
+  const interval = CANDLE_INTERVALS.find(([label]) => label === card.assetInterval) || ["4h", 240];   // opens on the last 30 days
   return loadCandles(...interval);
 }
 
