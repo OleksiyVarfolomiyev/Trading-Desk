@@ -3635,9 +3635,10 @@ function assetButton(market, label, className) {
   return button;
 }
 const CANDLE_INTERVALS = [["1m", 1], ["5m", 5], ["15m", 15], ["1h", 60], ["4h", 240], ["1d", 1440], ["1w", 10080]];
-// How many candles a chart opens with: about the current regime (the last 30 days) on the daily and 4-hour views, a day or a
-// week on the short ones, so a chart never opens on months of history.
-const CANDLE_COUNT = { "1m": 360, "5m": 288, "15m": 192, "1h": 168, "4h": 180, "1d": 35, "1w": 26 };
+// A chart keeps the time span you are looking at when the candle size changes (30 days to start, or what you zoom to): 4h and 1d
+// show the same weeks, only the candles differ. It is cut only where the candles cannot cover it: Hyperliquid returns at most
+// 5000 candles, and a few candles are not a chart (weekly shows at least 24 candles).
+const CANDLE_HORIZON_MS = 30 * 86400000, MIN_VISIBLE_CANDLES = 24, MAX_CANDLES = 5000;
 // A tradfi perp whose stock split has its price re-based at once while the candles before are not (desk/splits.py): the chart
 // puts every candle before a split on the new scale, so there is no cliff. 1/N forward, N reverse; small N exact (a -45% crash
 // is not a 2-for-1 split), large N may be 20% off. Mirrored in web/live.js and desk/splits.py.
@@ -4020,9 +4021,11 @@ async function openAsset(symbol, targetCard = null) {
     chart._candleSeries = null;
     chart.textContent = "Loading candles…";
     try {
-      const end = Date.now();
+      const end = Date.now(), step = minutes * 60000;
+      const span = Math.min(MAX_CANDLES * step * 0.66, Math.max(card.assetHorizonMs || CANDLE_HORIZON_MS, MIN_VISIBLE_CANDLES * step));   // what is shown
+      const reach = Math.min(MAX_CANDLES * step, span * 1.5);                                                                          // what is fetched, to pan back a little
       const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ type: "candleSnapshot", req: { coin: hlName, interval, startTime: end - (CANDLE_COUNT[interval] || 168) * minutes * 60000, endTime: end } }) });
+        body: JSON.stringify({ type: "candleSnapshot", req: { coin: hlName, interval, startTime: Math.floor(end - reach), endTime: end } }) });
       if (!response.ok) throw new Error("Candle request failed");
       const candles = await response.json();
       if (controller.signal.aborted) return;
@@ -4084,7 +4087,12 @@ async function openAsset(symbol, targetCard = null) {
       chart._paintVolume = paint;
       if (isNum(entry)) series.createPriceLine({ price: entry, color: token("--muted"), lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted,
         axisLabelVisible: true, title: "Entry" });
-      instance.timeScale().fitContent();
+      let programmatic = true;   // the span we set is not the span the reader chose: only their own zoom or pan changes the horizon
+      try { instance.timeScale().setVisibleRange({ from: Math.floor((end - span) / 1000), to: Math.ceil(end / 1000) }); } catch (error) { instance.timeScale().fitContent(); }
+      requestAnimationFrame(() => { programmatic = false; });
+      instance.timeScale().subscribeVisibleTimeRangeChange((range) => {
+        if (!programmatic && range && range.from && range.to && range.to > range.from) card.assetHorizonMs = (range.to - range.from) * 1000;
+      });
       // Keep it live: every 10 seconds the newest candles replace or extend the last ones (paused while the tab is hidden).
       (async () => {
         const live = () => !controller.signal.aborted && chart.isConnected && chart._candleSeries === series;
