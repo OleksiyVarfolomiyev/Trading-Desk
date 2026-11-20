@@ -3813,7 +3813,8 @@ function candleColors() {
   const up = token("--good-text"), down = token("--bad-text");
   return {
     upColor: withAlpha(up, 0.42), downColor: withAlpha(down, 0.42),
-    borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down,
+    borderVisible: false,   // no frame round the bodies: the fill and the wick carry the candle
+    wickUpColor: up, wickDownColor: down,
   };
 }
 function candlePriceFormat(candles) {
