@@ -557,7 +557,6 @@ function renderBarList(id, spec, plan, host) {
     const figures = [[plan.value, value], ...(plan.text && plan.text !== plan.value ? [[plan.text, extra]] : [])]
       .filter(([, number]) => number !== null && number !== undefined && number !== "");
     const end = figures.length ? el("span", { class: "bfig", style: endStyle }, [
-      ...(clipped ? [el("span", { class: signClass(value), text: "» " })] : []),
       ...figures.flatMap(([key, number], index) => [
         ...(index ? [el("span", { text: " · " })] : []),
         el("span", {
@@ -743,7 +742,7 @@ function renderTableChart(id, spec, override) {
     traces = [{ type: "bar", orientation: "h", y: order.map((i) => names[i]), x: order.map((i) => drawn(i) * axis.mult),
       marker: { color: order.map((i) => kindColor(id, rows[i])) }, showlegend: false,
       // A short bar has no room for its name inside: the name joins the figures at its end instead of overlapping them.
-      text: order.map((i) => (clipped(i) ? "» " : "") + (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
+      text: order.map((i) => (fits(i) ? figures(i) : `${names[i]} · ${figures(i)}`)),
       textposition: "outside", cliponaxis: false,
       outsidetextfont: LABEL_FONT(13, order.map((i) => (rows[i][plan.value] < 0 ? bad : good))),
       ...(() => {   // a pop-up only where there is something to see: a big 24h move or a funding rate that matters

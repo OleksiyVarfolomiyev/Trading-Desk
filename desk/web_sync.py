@@ -607,6 +607,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  build history: {added} new commits labelled; tiles {', '.join(build_history.publish())}")
         except Exception as exc:
             print(f"  build history not refreshed ({type(exc).__name__}: {exc})")
+        try:   # Claude's suggestions, scored against the market and the execution history (desk/suggestions.py)
+            from desk import suggestions
+
+            print(f"  suggestions: tiles {', '.join(suggestions.publish())}")
+        except Exception as exc:
+            print(f"  suggestions not refreshed ({type(exc).__name__}: {exc})")
         try:   # drawdown by period (fiduciary view), tolerance alerts and the quarterly/yearly report (desk/drawdown.py)
             from desk import drawdown
 

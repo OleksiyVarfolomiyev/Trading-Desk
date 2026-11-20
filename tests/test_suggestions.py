@@ -52,5 +52,85 @@ class SuggestionTests(unittest.TestCase):
             self.assertEqual([row["text"] for row in s.load(path)], ["first", "second"])
 
 
+class FitAndComparisonTests(unittest.TestCase):
+    NOW = s._ms("2026-11-25T00:00:00Z")
+
+    def series(self, coin, at):   # +10% a day for a week from 100
+        start = s._ms(at)
+        return [(start + h * 3600_000, 100 * 1.1 ** (h / 24)) for h in range(-1, 24 * 8)]
+
+    def test_old_rows_default_to_unknown_fit_and_a_bad_fit_is_refused(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "log.jsonl"
+            path.write_text('{"at": "2026-11-20T00:00:00Z", "coin": "X", "side": "long", "kind": "trade", "confidence": "low", "text": "old"}\n')
+            self.assertEqual(s.load(path)[0]["fit"], "unknown")
+            with self.assertRaises(ValueError):
+                s.add("X", "long", "t", fit="whatever", path=path)
+
+    def test_reduce_and_avoid_are_scored_in_their_own_direction(self):
+        rows = [{"at": "2026-11-20T00:00:00Z", "coin": "X", "side": "long", "kind": "reduce", "fit": "strategy", "confidence": "low", "text": "r"},
+                {"at": "2026-11-20T00:00:00Z", "coin": "Y", "side": "long", "kind": "avoid", "fit": "additional", "confidence": "low", "text": "a"},
+                {"at": "2026-11-20T00:00:00Z", "coin": "Z", "side": "short", "kind": "trade", "fit": "strategy", "confidence": "low", "text": "t"}]
+        out = s.score(rows, fills=[], now_ms=self.NOW, series_for=self.series)
+        by = {r["coin"]: r for r in out}
+        self.assertLess(by["X"]["moves"][1], 0)    # reduce a long: the price rose 10%, so the cut was wrong
+        self.assertLess(by["Y"]["moves"][1], 0)    # avoid a long: the price rose, so avoiding it was wrong
+        self.assertLess(by["Z"]["moves"][1], 0)    # short: the price rose, wrong
+        self.assertAlmostEqual(by["X"]["moves"][1], -0.10, places=2)
+
+    def test_avoid_is_followed_when_no_long_was_opened_and_reduce_by_a_closing_fill(self):
+        at = "2026-11-20T00:00:00Z"
+        start = s._ms(at)
+        rows = [{"at": at, "coin": "Y", "side": "long", "kind": "avoid", "fit": "additional", "confidence": "low", "text": "a"},
+                {"at": at, "coin": "X", "side": "long", "kind": "reduce", "fit": "strategy", "confidence": "low", "text": "r"}]
+        opened = [{"coin": "Y", "side": "B", "dir": "Open Long", "time": start + 3600_000}]
+        closed = [{"coin": "X", "side": "A", "dir": "Close Long", "time": start + 3600_000}]
+        out = {r["coin"]: r for r in s.score(rows, fills=opened + closed, now_ms=self.NOW, series_for=self.series)}
+        self.assertFalse(out["Y"]["followed"])     # a long was opened: the avoid was not followed
+        self.assertTrue(out["X"]["followed"])
+        none = {r["coin"]: r for r in s.score(rows, fills=[], now_ms=self.NOW, series_for=self.series)}
+        self.assertTrue(none["Y"]["followed"])
+        self.assertFalse(none["X"]["followed"])
+
+    def test_chosen_label_comes_from_the_journal_entry_opened_near_the_fill(self):
+        entries = [{"coin": "xyz:SHAZ", "side": "SHORT", "strategy": "directional", "opened": "2026-11-20T17:42:00"},
+                   {"coin": "xyz:SHAZ", "side": "SHORT", "strategy": "fade", "opened": "2026-11-10T10:00:00"}]
+        fill_ms = s._ms("2026-11-20T17:42:30Z")
+        self.assertEqual(s.chosen_label("xyz:SHAZ", "short", fill_ms, entries), "directional")
+        self.assertIsNone(s.chosen_label("xyz:QNT", "short", fill_ms, entries))
+
+    def test_an_approximate_row_is_dropped_when_an_exact_one_exists(self):
+        rows = [{"at": "2026-11-20T14:00:00Z", "coin": "X", "side": "short", "kind": "trade", "text": "x. Time approximate."},
+                {"at": "2026-11-20T01:49:04Z", "coin": "X", "side": "short", "kind": "trade", "text": "x exact"}]
+        self.assertEqual(len(s._without_approximate_duplicates(rows)), 1)
+        self.assertEqual(len(s._without_approximate_duplicates(rows[:1])), 1)   # alone it stays
+
+    def test_weekly_lines_are_cumulative_per_fit_and_comparison_has_three_groups(self):
+        results = [{"at": "2026-11-16T10:00:00Z", "fit": "strategy", "kind": "trade", "followed": True, "moves": {3: 0.05, "now": 0.05}},
+                   {"at": "2026-11-23T10:00:00Z", "fit": "strategy", "kind": "trade", "followed": False, "moves": {3: -0.02, "now": -0.02}},
+                   {"at": "2026-11-17T10:00:00Z", "fit": "additional", "kind": "trade", "followed": False, "moves": {3: 0.01, "now": 0.01}}]
+        weeks = s.weekly(results)
+        self.assertEqual([n for _, n, _ in weeks["strategy"]], [1, 2])     # cumulative
+        self.assertEqual(weeks["strategy"][1][2], 0.5)
+        out = s.comparison(results, [{"coin": "Q", "side": "long", "at": "2026-11-18T00:00:00Z", "moves": {3: 0.02, "now": 0.02}}])
+        self.assertEqual((out["suggested_followed"]["n"], out["suggested_not_followed"]["n"], out["own_not_suggested"]["n"]), (1, 2, 1))
+
+    def test_own_entries_leave_out_suggested_coins_and_market_making_noise(self):
+        start = s._ms("2026-11-18T00:00:00Z")
+        fills = [{"coin": "A", "side": "A", "dir": "Open Short", "time": start}, {"coin": "B", "side": "B", "dir": "Open Long", "time": start}]
+        fills += [{"coin": "ETH", "side": "B", "dir": "Open Long", "time": start + i * 60_000} for i in range(10)]   # a ladder: noisy
+        suggested = [{"coin": "B", "side": "long"}]
+        out = s.own_entries(fills, suggested, now_ms=self.NOW, series_for=self.series)
+        self.assertEqual([e["coin"] for e in out], ["A"])                 # B was suggested, ETH is a ladder
+        self.assertLess(out[0]["moves"][1], 0)                            # a short while the price rose 10%
+
+    def test_the_hit_stat_carries_n_and_a_z(self):
+        out = s.hit_stats([0.1, 0.2, -0.1, 0.3])
+        self.assertEqual(out["n"], 4)
+        self.assertEqual(out["hit"], 0.75)
+        self.assertAlmostEqual(out["z"], 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

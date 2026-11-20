@@ -343,6 +343,9 @@ REGISTRY: list[Item] = [
          "quarters, re-evaluate about 1 in 12, for a book whose model is right at a Sharpe of 1, proxy replay of today's "
          "positions); a crossing means check the theses, sizing and regime (desk/drawdown_monitor.py, "
          "research/crypto_drawdown_threshold.md)"),
+    Item("claude-suggestions", "Claude suggestions", "strategy", "2026-11-21", None, None,
+         monitor="monitoring, no trading rule", note="every recommendation logged when made (data/suggestions.jsonl) and scored against the price at 1, 3, 7 days and "
+         "against what was executed, split strategy-fit vs additional; too few below 20 scored (desk/suggestions.py, research/suggestions_review.md)"),
     Item("cap-flex", "Risk-cap flex, opt-in per trade", "risk", "2026-11-20", None, _count(r"FLEX"),
          note="3-point flex (33% to 36%) used only when chosen on the confirm step or with --use-flex"),
 ]
