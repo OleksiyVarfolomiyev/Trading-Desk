@@ -86,7 +86,9 @@ def benchmark_regimes(books):
     indices = {"crypto": "btc", "stocks": "spy"}
 
     result, dates_by_regime = {}, {}
-    for window, days in WINDOWS.items():
+    from desk.drawdown import with_active_window   # + "Active": since active management began
+
+    for window, days in with_active_window(WINDOWS, end).items():
         matched = [(start, stop, regime) for start, stop, regime in intervals
                    if days is None or stop >= end - pd.Timedelta(days=days - 1)]
         if not matched:

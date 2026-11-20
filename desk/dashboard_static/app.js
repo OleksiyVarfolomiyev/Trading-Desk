@@ -1317,7 +1317,8 @@ async function loadHighlightState() {
 }
 function redrawHighlights() {
   if (!latest || !latest.data) return;
-  const hl = latest.data.highlights || {}, watch = benchmarkWatch(latest.data.book_comparison?.regimes || {});
+  const hl = { ...(latest.data.highlights || {}) }, watch = benchmarkWatch(latest.data.book_comparison?.regimes || {});
+  hl.attention = eraRows(hl.attention);   // an era-tagged alert (drawdown against tolerance) only under its own choice
   const hover = { ...hl.hover, ...watch.hover };
   for (const kind of ["crypto", "stocks", "desk"]) {
     renderHighlights(`hl-${kind}-well`, [
@@ -2059,20 +2060,27 @@ function renderRegimeDrivers(data, period) {
 
 function renderBenchmarkTables(doc) {
   const now = new Date(doc.server_time || Date.now()).getTime();
-  for (const [id, { periods, initial }] of Object.entries(BENCHMARK_WINDOWS)) {
+  for (const [id, base] of Object.entries(BENCHMARK_WINDOWS)) {
     const host = document.getElementById("t-" + id);
     if (!host) continue;
+    // Since active management: the windows that fit inside the era, then "Active" (the whole era); the longer ones
+    // reach back into the passive months and belong to since inception.
+    const limit = eraDays(now);
+    const managed = era === "managed" && id !== "benchmark-intraday" && limit;
+    const periods = managed ? [...base.periods.filter(([, days]) => days && days < limit), ["Active", limit]] : base.periods;
+    const initial = managed ? "Active" : base.initial;
     const periodKey = id === "benchmark-regime-drivers" ? id + "-period" : id;
     const preference = scaleChoices[periodKey] || (id === "benchmark-regime-drivers" ? scaleChoices["benchmark-regimes"] : initial);
-    const selected = periods.find(([label]) => label === preference) || periods.find(([label]) => label === initial);
+    const selected = periods.find(([label]) => label === preference) || periods.find(([label]) => label === initial) || periods[periods.length - 1];
     const previous = host.previousElementSibling;
     const anchor = previous?.classList.contains("market-directions") ? previous : host;
     let toolbar = anchor.previousElementSibling;
+    if (toolbar?.classList.contains("table-periods") && toolbar.dataset.era !== (managed ? "managed" : "inception")) { toolbar.remove(); toolbar = anchor.previousElementSibling; }   // the era changed: other windows
     if (!toolbar?.classList.contains("table-periods")) {
-      toolbar = el("div", { class: "scale-chips table-periods", role: "group", "aria-label": "Table period" });
+      toolbar = el("div", { class: "scale-chips table-periods", role: "group", "aria-label": "Table period", "data-era": managed ? "managed" : "inception" });
       for (const [label, days] of periods) {
         const button = el("button", { type: "button", class: "scale-chip", "data-window": label, text: label,
-          title: days ? (days === 1 ? "Last 24 hours" : `Last ${days} days`) : "All available history" });
+          title: label === "Active" ? "Since active management began" : days ? (days === 1 ? "Last 24 hours" : `Last ${days} days`) : "All available history" });
         button.addEventListener("click", () => {
           scaleChoices[periodKey] = label;
           saveScaleChoices();
@@ -2206,6 +2214,8 @@ function icon(kind) {   // 16px line icons, drawn in the button's text colour
     moon: ["M13 9.6A5.5 5.5 0 0 1 6.4 3a5.5 5.5 0 1 0 6.6 6.6z"],
     report: ["M4 1.8h5.5L12.5 5v9.2H4z", "M9.5 1.8V5h3", "M6 8h4.5", "M6 10.5h4.5"],
     pulse: ["M1.5 8.5h3l1.8-5 3.2 9 1.8-4h3.2"],
+    inception: ["M2 12.5h12", "M2 12.5V4.5", "M2 8l4-2.5 3 1.5 5-3.5"],   // the whole history, from the start
+    managed: ["M2 12.5h12", "M8 12.5V3.5", "M8 3.5h4.5l-1.2 1.8 1.2 1.8H8", "M8 9.5l2.5-1.5 3.5-1"],   // from the flag: active management
   }[kind];
   paths.forEach((d) => { const p = document.createElementNS(ns, "path"); p.setAttribute("d", d); svg.append(p); });
   return svg;
@@ -2223,6 +2233,33 @@ function autoScale() {
   return !isNum(days) ? "1D" : days < 2 ? "1D" : days < 10 ? "1W" : days < 60 ? "1M" : "All";
 }
 function currentScale(element = "tile") { const choice = scaleChoices[element] || "auto"; return choice === "auto" ? (element === "tile" ? "1D" : autoScale()) : choice; }
+// Analytics since inception (the passive months included, to see how management changes the passive status quo) or since
+// active management began (the desk's record, from the repo start). Default: since active management. Remembered in the browser.
+let era = "managed";
+try { era = localStorage.getItem("desk-era") === "inception" ? "inception" : "managed"; } catch (e) {}
+function managedStartMs() { const day = latest && latest.data && latest.data.charts && latest.data.charts.managed_since; return day ? Date.parse(day + "T00:00:00Z") : NaN; }
+function eraDays(now = Date.now()) { const start = managedStartMs(); return isNum(start) && now > start ? Math.max(2, Math.ceil((now - start) / 86400000)) : null; }
+function eraWindow(days) {   // a chart/table window in days (null = all history) cut to the chosen era
+  const limit = era === "managed" ? eraDays() : null;
+  return limit ? (days ? Math.min(days, limit) : limit) : days;
+}
+function eraRows(rows) { return (rows || []).filter((row) => !row[2] || row[2] === era); }   // alert rows a tile tags with its era
+const ERA_TILES = { managed: ["drawdown-periods", "drawdown-underwater"], inception: ["drawdown-periods-all", "drawdown-underwater-all", "drawdown-passive"] };
+function applyEraTiles() {   // the tiles of the other era stay out of the page
+  const hidden = new Set(ERA_TILES[era === "managed" ? "inception" : "managed"]);
+  document.querySelectorAll(".feed .card[data-published]").forEach((card) => card.classList.toggle("era-hidden", hidden.has(card.dataset.published)));
+}
+function setEra(value) {
+  era = value === "inception" ? "inception" : "managed";
+  try { localStorage.setItem("desk-era", era); } catch (e) {}
+  feedback("look", "era", era);
+  drawModes();
+  applyEraTiles();
+  if (!latest || !latest.data) return;
+  redrawHighlights();
+  renderBenchmarkTables(latest);
+  renderCharts(latest.data.charts);
+}
 function saveScaleChoices() {
   try { localStorage.setItem("desk-scales", JSON.stringify(scaleChoices)); } catch (e) {}
 }
@@ -2400,7 +2437,7 @@ const colorFor = (name) => (name === "BTC" ? token("--kind-crypto") : token("--k
 
 function zoomCharts() {   // the value charts show the chosen window (All: the whole history)
   if (typeof Plotly === "undefined") return;
-  const days = (SCALES.find(([name]) => name === currentScale("charts")) || [])[1];
+  const days = eraWindow((SCALES.find(([name]) => name === currentScale("charts")) || [])[1]);   // All = the chosen era
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id);
     if (!node || !node.data) return;
@@ -2618,7 +2655,14 @@ function drawModes() {
     "aria-label": "Live price strip", "aria-pressed": tickerOn ? "true" : "false" }, [icon("pulse")]);
   strip.addEventListener("click", () => { const s = tickerState(); s.on = !s.on; saveTicker(s); feedback("look", "price strip", s.on ? "on" : "off"); drawModes(); refreshTicker(); });
   report.addEventListener("click", openReport);
-  host.replaceChildren(views, units, toggle, styles, strip, report);
+  const since = managedStartMs();
+  const sinceText = isNum(since) ? new Date(since).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit", timeZone: "UTC" }).replace(/, (\d+)$/, " '$1") : "";
+  const eraSwitch = el("div", { class: "switch", role: "group", "aria-label": "Analytics period" }, [
+    el("button", { type: "button", class: "icon-button era-button", "aria-pressed": "false",
+      title: era === "managed" ? "Analytics since active management. Click for since inception: the passive months too" : `Analytics since inception. Click for since active management${sinceText ? " (" + sinceText + ")" : ""}`,
+      "aria-label": era === "managed" ? "Show analytics since inception" : "Show analytics since active management" }, [icon(era === "managed" ? "inception" : "managed")])]);
+  eraSwitch.firstChild.addEventListener("click", () => setEra(era === "managed" ? "inception" : "managed"));
+  host.replaceChildren(views, units, eraSwitch, toggle, styles, strip, report);
   host.querySelectorAll(".switch").forEach((group) => group.classList.add("choices"));
 }
 // A look change redraws only what it changes, from the data already loaded (render() skips unchanged data): the view
@@ -3362,8 +3406,9 @@ function renderPublished(tiles) {
       renderTable("pub-" + tile.key, publishedTable(tile));
     }
   });
-  feed.hidden = !feed.querySelector(".card:not(.card-off)");
-  later.hidden = !later.querySelector(".card:not(.card-off)");
+  applyEraTiles();
+  feed.hidden = !feed.querySelector(".card:not(.card-off):not(.era-hidden)");
+  later.hidden = !later.querySelector(".card:not(.card-off):not(.era-hidden)");
 }
 function applyCardState(card) {   // the remembered minimized and hidden state of a card that was created after load
   const state = layoutState(), id = cardId(card);

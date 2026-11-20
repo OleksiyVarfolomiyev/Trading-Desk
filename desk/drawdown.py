@@ -48,6 +48,16 @@ def managed_since(path: Path | None = None) -> pd.Timestamp:
     return pd.Timestamp(value or MANAGED_SINCE)
 
 
+def with_active_window(windows: dict, last) -> dict:
+    """The comparison windows (W, M, Q, Y, All) plus "Active": the days since active management began (the managed
+    desk's first day through ``last``), so a table can show the managed era as one window. Left out until the era is two
+    days long."""
+    stamp = pd.Timestamp(last)
+    stamp = (stamp.tz_localize(None) if stamp.tzinfo else stamp).normalize()
+    active = (stamp - managed_since()).days + 1
+    return {**windows, "Active": active} if active >= 2 else dict(windows)
+
+
 # ------------------------------------------------------------------------------------------------------------- series
 def desk_returns(returns_of: dict[str, pd.Series], equity: dict[str, pd.Series]) -> pd.Series:
     """The desk's daily time-weighted return: the books' returns weighted by each book's trading equity going into the day
@@ -86,8 +96,11 @@ def load_raw(path: Path | None = None) -> dict[str, pd.Series]:
 
 def load_levels(path: Path | None = None, era: str = "managed", since: pd.Timestamp | None = None) -> dict[str, pd.Series]:
     """Growth of 1 for the desk and each book, cut to the first day all of them exist. ``era`` "managed" (default) starts
-    at the close before the managed desk's first day, so its first day's move counts; "passive" is everything before it."""
+    at the close before the managed desk's first day, so its first day's move counts; "passive" is everything before it;
+    "all" is since inception (the passive months included)."""
     levels = load_raw(path)
+    if era == "all":   # since inception: everything the books file has, from the first day all of the series exist
+        return common_window(dict(levels))
     since = since if since is not None else managed_since()
     out = {}
     for name, s in levels.items():
@@ -179,15 +192,15 @@ def periods(first: pd.Timestamp, last: pd.Timestamp, months: int = 3, quarters: 
     return out
 
 
-def period_table(levels: dict[str, pd.Series], inception: pd.Timestamp | None = None) -> list[dict]:
-    """Rows for the tile: each period, the desk then the books."""
+def period_table(levels: dict[str, pd.Series], inception: pd.Timestamp | None = None, names: tuple[str, ...] = NAMES) -> list[dict]:
+    """Rows for the tile: each period, the desk then the books (``names`` may add "spy", the stocks' reference)."""
     if not levels:
         return []
     first = max(s.index.min() for s in levels.values())
     last = min(s.index.max() for s in levels.values())
     rows = []
     for kind, label, start, end in periods(first, last, inception=inception):
-        for name in NAMES:
+        for name in names:
             if name not in levels:
                 continue
             stats = period_stats(levels[name], start, end)
@@ -278,17 +291,24 @@ def alert_level(current_dd: float | None, limit: float | None) -> str | None:
     return None
 
 
-def alerts(levels: dict[str, pd.Series], limit: float | None) -> list[list[str]]:
-    """Attention rows for the desk's drawdown against the tolerance (alert only)."""
+PASSIVE_NOTE = "includes the passive IB stocks"
+
+
+def alerts(levels: dict[str, pd.Series], limit: float | None, label: str = "Managed desk") -> list[list[str]]:
+    """Attention rows for the desk's drawdown against the tolerance (alert only). The desk's drawdown includes the
+    passive IB stocks (hover says so)."""
     desk = levels.get("desk")
     if desk is None or desk.empty:
         return []
     current = float(drawdowns(desk).iloc[-1])
     level = alert_level(current, limit)
+    parts = [f"{text} {_pct(float(drawdowns(levels[name]).iloc[-1]))}" for name, text in (("crypto", "crypto"), ("stocks", "stocks, passive"))
+             if name in levels and len(levels[name])]
+    split = f" From their highs: {', '.join(parts)}." if parts else ""   # how much of the desk figure is the passive stocks
     if level == "breach":
-        return [["Drawdown past tolerance", f"Managed desk {_pct(current)} from its high; tolerance {_pct(-limit)}. Review exposure."]]
+        return [["Drawdown past tolerance", f"{label} {_pct(current)} from its high; tolerance {_pct(-limit)} ({PASSIVE_NOTE}).{split} Review exposure."]]
     if level == "warn":
-        return [["Drawdown nearing tolerance", f"Managed desk {_pct(current)} from its high; tolerance {_pct(-limit)}."]]
+        return [["Drawdown nearing tolerance", f"{label} {_pct(current)} from its high; tolerance {_pct(-limit)} ({PASSIVE_NOTE}).{split}"]]
     return []
 
 
@@ -329,7 +349,10 @@ def _since(day, now) -> str:
     return since(day, now)
 
 
-def underwater_figure(levels: dict[str, pd.Series]):
+def underwater_figure(levels: dict[str, pd.Series], limit: float | None = None, spy: pd.Series | None = None,
+                      crypto_levels: dict | None = None):
+    """Drawdowns from the high. The stocks book is passive (no drawdown rule): dashed, with SPY beside it; the crypto
+    models' two statistical levels (desk/drawdown_monitor.py) are dotted lines in the crypto colour."""
     import plotly.graph_objects as go
 
     colors = {"desk": None, "crypto": "#d95926", "stocks": "#3b82f6"}
@@ -340,15 +363,32 @@ def underwater_figure(levels: dict[str, pd.Series]):
             line = {"width": 2.4 if name == "desk" else 1.6}
             if colors[name]:
                 line["color"] = colors[name]
-            figure.add_scatter(name=name, x=[d.strftime("%Y-%m-%d") for d in dd.index], y=dd.round(4).tolist(),
-                               mode="lines", line=line)
+            if name == "stocks":
+                line["dash"] = "dash"
+            figure.add_scatter(name="stocks (passive)" if name == "stocks" else name, x=[d.strftime("%Y-%m-%d") for d in dd.index],
+                               y=dd.round(4).tolist(), mode="lines", line=line)
+    if spy is not None and len(spy) >= 2 and "stocks" in levels:
+        window = spy[(spy.index >= levels["stocks"].index[0]) & (spy.index <= levels["stocks"].index[-1])]
+        if len(window) >= 2:
+            dd = drawdowns(window / window.iloc[0])
+            figure.add_scatter(name="SPY", x=[d.strftime("%Y-%m-%d") for d in dd.index], y=dd.round(4).tolist(), mode="lines",
+                               line={"width": 1.2, "dash": "dot", "color": "#9aa0a6"})
+    for key, text in (("watch", "crypto watch"), ("re-evaluate", "crypto re-evaluate")):
+        if crypto_levels and crypto_levels.get(key):
+            figure.add_hline(y=-crypto_levels[key], line={"width": 1, "dash": "dot", "color": colors["crypto"]},
+                             annotation_text=f"{text} {_pct(-crypto_levels[key])}", annotation_position="top right",
+                             annotation_font={"size": 10})
     figure.update_layout(yaxis={"tickformat": ".0%"}, hovermode="x unified")
+    if limit:   # the investor's tolerance on the desk, as a dashed line
+        figure.add_hline(y=-limit, line={"dash": "dash", "width": 1.2, "color": "#a1a1aa"}, annotation_text=f"tolerance {_pct(-limit)}",
+                         annotation_position="bottom left", annotation_font={"size": 10})
     return figure
 
 
 def publish(push: bool = True, directory: Path | None = None, path: Path | None = None, spy: pd.Series | None = None) -> list[str]:
-    """Three tiles: the managed desk's drawdown by period and from its high (the desk's record, from the repo start), and
-    the passive era before it, shown apart (stocks beside SPY, the drawdown that book accepted)."""
+    """Drawdown tiles for the page's two analytics choices: since active management (the managed desk, from the repo start)
+    and since inception (everything, passive months included, the passive era and SPY beside it). The page shows the tiles
+    of the chosen era only, and so only that era's alert rows."""
     from desk import tile_feed
 
     since = managed_since()
@@ -356,21 +396,53 @@ def publish(push: bool = True, directory: Path | None = None, path: Path | None 
     if not levels:
         return []
     limit = tolerance()
-    rows = period_table(levels, inception=since)
-    table = pd.DataFrame([{k: v for k, v in row.items() if not k.startswith("_")} for row in rows])
-    reason = (f"managed desk (HL + IB) and books from {since:%b %-d '%y}, the repo start"
-              + (f"; tolerance {_pct(-limit)}" if limit else "; no tolerance set"))
+    spy_series = spy_closes() if spy is None else spy
+    crypto = fitted = None
+    try:   # the crypto models' statistical drawdown levels as of today (desk/drawdown_monitor.py); a separate signal from the tolerance
+        from desk import drawdown_monitor
+
+        fitted = drawdown_monitor.load_fit()
+        crypto = drawdown_monitor.levels_now(fitted) if fitted else None
+    except Exception as exc:
+        from desk import degraded
+
+        degraded.report("Crypto drawdown levels", exc)
+    note = (f"; tolerance {_pct(-limit)}" if limit else "; no tolerance set") + f"; the desk's drawdown {PASSIVE_NOTE}" \
+        + "; stocks are passive (no drawdown rule), shown against SPY" \
+        + (f"; crypto models: watch {_pct(-crypto['watch'])}, re-evaluate {_pct(-crypto['re-evaluate'])} from the high" if crypto else "")
     common = {"hours": 48, "relevance": 0.1, "push": False, "directory": directory}
     formats = {"Return": "spct", "Max DD": "spct", "DD at end": "spct", "Under water": "num", "Return / max DD": "num"}
-    tile_feed.publish(table, "Drawdown by period, managed desk", reason=reason, key="drawdown-periods", formats=formats,
-                      attention=alerts(levels, limit), **common)
-    tile_feed.publish(underwater_figure(levels), "Drawdown from the high, managed desk", reason=reason, key="drawdown-underwater", **common)
-    keys = ["drawdown-periods", "drawdown-underwater"]
+    keys = []
+    for era, key, title, era_levels, label, inception in [
+        ("managed", "drawdown", "managed desk", levels, "Managed desk", since),
+        ("inception", "drawdown-all", "since inception", load_levels(path, era="all"), "Desk since inception", None),
+    ]:
+        if not era_levels:
+            continue
+        with_spy = dict(era_levels)
+        if len(spy_series) and "stocks" in era_levels:   # SPY beside the passive stocks over the same window
+            window = spy_series[(spy_series.index >= era_levels["stocks"].index[0]) & (spy_series.index <= era_levels["stocks"].index[-1])]
+            if len(window) >= 2:
+                with_spy["spy"] = window / window.iloc[0]
+        rows = period_table(with_spy, inception=inception, names=NAMES + ("spy",))
+        names = {"stocks": "stocks (passive)", "spy": "SPY"}
+        table = pd.DataFrame([{k: (names.get(v, v) if k == "Book" else v) for k, v in row.items() if not k.startswith("_")} for row in rows])
+        first = max(s.index.min() for s in era_levels.values())
+        reason = f"{title} (HL + IB) and books from {first:%b %-d '%y}" + note
+        suffix = "" if era == "managed" else "-all"
+        attention = alerts(era_levels, limit, label)
+        if crypto and era == "managed":   # the crypto models' own signal, on the managed era only
+            attention += drawdown_monitor.alerts(drawdown_monitor.current_drawdown(era_levels), crypto, fitted)
+        tile_feed.publish(table, f"Drawdown by period, {title}", reason=reason, key=f"drawdown-periods{suffix}", formats=formats,
+                          attention=attention, era=era, **common)
+        tile_feed.publish(underwater_figure(era_levels, limit, spy_series, crypto), f"Drawdown from the high, {title}", reason=reason,
+                          key=f"drawdown-underwater{suffix}", era=era, **common)
+        keys += [f"drawdown-periods{suffix}", f"drawdown-underwater{suffix}"]
     passive = passive_table(path, since, spy)
     if passive:
         tile_feed.publish(pd.DataFrame(passive), "Drawdown before the managed desk", key="drawdown-passive", formats=formats,
                           reason=f"passive holding before {since:%b %-d '%y}: IB long only (SPY beside it), crypto untraded; not the desk's record",
-                          **common)
+                          era="inception", **common)
         keys.append("drawdown-passive")
     else:
         tile_feed.withdraw("drawdown-passive", push=False, directory=directory)
@@ -425,6 +497,8 @@ def write_report(kind: str = "Q", today: pd.Timestamp | None = None, path: Path 
     elif desk and desk["Max DD"]:
         used = -desk["Max DD"] / limit
         lines.append(f"Drawdown tolerance {_pct(-limit)} (managed desk): its deepest drawdown used {used:.0%} of it.")
+    else:   # a tolerance is set and the desk never fell from its high in the period
+        lines.append(f"Drawdown tolerance {_pct(-limit)} (managed desk): the desk had no drawdown in this period.")
     if "desk" in levels:
         months = [(p, period_stats(levels["desk"], max(p.start_time, start), min(p.end_time.normalize(), end)))
                   for p in pd.period_range(start, end, freq="M")]

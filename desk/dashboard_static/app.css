@@ -800,3 +800,4 @@ select.trade-input { width: auto; appearance: none; -webkit-appearance: none; ba
 .trade-side.short[aria-pressed="true"] { color: #dc2626; border-color: #dc2626; opacity: 1; }
 .trade-go { opacity: 1; }
 .regime-cell span + span { margin-left: 6px; }
+.card.era-hidden { display: none !important; }   /* a tile of the other analytics era (since inception / since active management) */

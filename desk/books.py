@@ -1222,7 +1222,9 @@ def decision_attribution(book: "Book", returns: pd.Series) -> dict:
     bench = closes.pct_change(fill_method=None).reindex(book.days).fillna(0.0)
     actual = returns.reindex(book.days).fillna(0.0)
     result = {}
-    for label, days in {"W": 7, "M": 30, "Q": 90, "Y": 365, "All": None}.items():
+    from desk.drawdown import with_active_window   # + "Active": since active management began
+
+    for label, days in with_active_window({"W": 7, "M": 30, "Q": 90, "Y": 365, "All": None}, book.days[-1]).items():
         selected = [(prior, day) for prior, day in edges if days is None or
                     day >= book.days[-1] - pd.Timedelta(days=days - 1)]
         if not selected:

@@ -107,14 +107,14 @@ class EraTests(unittest.TestCase):
 
 
 class ToleranceTests(unittest.TestCase):
-    def test_tolerance_empty_by_default(self):
+    def test_tolerance_parses_and_the_repo_value_is_the_users(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "f.json"
             path.write_text(json.dumps({"drawdown_tolerance": None}))
             self.assertIsNone(dd.tolerance(path))
             path.write_text(json.dumps({"drawdown_tolerance": 20}))
             self.assertAlmostEqual(dd.tolerance(path), 0.2)
-        self.assertIsNone(json.loads(dd.CONFIG.read_text())["drawdown_tolerance"])   # no number is invented
+        self.assertEqual(json.loads(dd.CONFIG.read_text())["drawdown_tolerance"], 0.10)   # set by the user 2026-11-19: the desk's drawdown over the year
 
     def test_alert_levels(self):
         self.assertIsNone(dd.alert_level(-0.10, None))
@@ -170,6 +170,65 @@ class ReportTests(unittest.TestCase):
         self.assertIn("managed desk", text)
         self.assertIn("| desk |", text)
         self.assertIn("tolerance", text.lower())
+
+
+class EraTests(unittest.TestCase):
+    """The page's two analytics choices: since active management and since inception."""
+
+    def books(self, folder):
+        idx = pd.date_range("2025-11-20", "2026-11-18", freq="D")
+        payload = {"series": {"crypto": [[d.strftime("%Y-%m-%d"), 0.001 * i] for i, d in enumerate(idx)],
+                              "stocks": [[d.strftime("%Y-%m-%d"), -0.0005 * i] for i, d in enumerate(idx)]},
+                   "desk_series": [[d.strftime("%Y-%m-%d"), 0.0002 * i] for i, d in enumerate(idx)]}
+        books = Path(folder) / "books.json"
+        books.write_text(json.dumps(payload))
+        return books
+
+    def test_active_window_counts_days_since_the_managed_start(self):
+        windows = {"W": 7, "M": 30, "All": None}
+        out = dd.with_active_window(windows, pd.Timestamp("2026-11-18", tz="UTC"))
+        self.assertEqual(out["Active"], 34)   # Oct 16 .. Nov 18 inclusive
+        self.assertEqual({k: v for k, v in out.items() if k != "Active"}, windows)
+        self.assertNotIn("Active", dd.with_active_window(windows, pd.Timestamp("2026-10-16")))   # not yet two days long
+
+    def test_inception_levels_start_with_the_passive_months(self):
+        with tempfile.TemporaryDirectory() as folder:
+            books = self.books(folder)
+            everything = dd.load_levels(books, era="all")
+            managed = dd.load_levels(books)
+        self.assertEqual(everything["desk"].index[0], pd.Timestamp("2025-11-20"))
+        self.assertEqual(managed["desk"].index[0], pd.Timestamp("2026-10-15"))
+        self.assertGreater(len(everything["desk"]), len(managed["desk"]))
+
+    def test_alert_rows_carry_the_era_and_say_the_desk_includes_passive_stocks(self):
+        from desk import tile_feed
+
+        levels = {"desk": series([1.0, 1.2, 1.05])}   # 12.5% under its high, past a 10% tolerance
+        rows = dd.alerts(levels, 0.10, "Desk since inception")
+        self.assertEqual(rows[0][0], "Drawdown past tolerance")
+        self.assertIn("passive IB stocks", rows[0][1])
+        self.assertIn("Desk since inception", rows[0][1])
+        with tempfile.TemporaryDirectory() as folder:
+            tile_feed.publish(pd.DataFrame([{"Period": "x", "Return": 0.1}]), "t", key="k", push=False, directory=Path(folder),
+                              attention=rows, era="inception")
+            tile = json.loads((Path(folder) / "k.json").read_text())
+        self.assertEqual(tile["era"], "inception")
+        self.assertEqual(tile["attention"][0][2], "inception")
+
+    def test_underwater_chart_marks_the_tolerance(self):
+        figure = dd.underwater_figure({"desk": series([1.0, 1.1, 1.0])}, 0.10)
+        self.assertAlmostEqual(figure.layout.shapes[0].y0, -0.10)
+        self.assertEqual(len(dd.underwater_figure({"desk": series([1.0, 1.1, 1.0])}).layout.shapes), 0)
+
+    def test_publish_makes_both_eras_tiles_with_their_own_alert_rows(self):
+        with tempfile.TemporaryDirectory() as folder:
+            books = self.books(folder)
+            tiles = Path(folder) / "tiles"
+            tiles.mkdir()
+            keys = dd.publish(push=False, directory=tiles, path=books, spy=pd.Series(dtype=float))
+            eras = {json.loads(f.read_text()).get("era") for f in tiles.glob("drawdown-*.json")}
+        self.assertTrue({"drawdown-periods", "drawdown-underwater", "drawdown-periods-all", "drawdown-underwater-all"} <= set(keys))
+        self.assertEqual(eras, {"managed", "inception"})
 
 
 class MonitorTests(unittest.TestCase):
