@@ -357,7 +357,8 @@ const VIEWS = {
     link: (r) => hlLink(r.Coin),
     hover: (r) => [isNum(r["Ladder PnL"]) ? usd(r["Ladder PnL"]) : "", isNum(r.Fills) ? `${r.Fills} fills` : "", r.Since ? `since ${r.Since}` : "",
       r.Status || ""].filter(Boolean).join(" · "),
-    columns: [["Coin"], ["_return", "Return", "spct"]] },
+    // The ladder's inventory now (value, and its uPnL % on cost): market making left the open positions tiles, so it is here.
+    columns: [["Coin"], ["_return", "Return", "spct"], ["Inventory", "Inventory", "susd"], ["Inventory uPnL (%)", "Inv uPnL", "spct"]] },
 };
 
 function columnsFor(view) {   // the uPnL column in dollars when the $ switch is on; a view can choose its own columns

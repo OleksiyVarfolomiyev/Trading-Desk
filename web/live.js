@@ -789,7 +789,16 @@
       if (risk === undefined && /^IB/.test(String(r.Account)) && fin(ibRisk) && ibGross > 0) risk = ibRisk * Math.abs(r.Value) / ibGross;
       r.Risk = fin(risk) && riskCapNow > 0 ? risk / riskCapNow : NaN;
     });
-    const positionTotal = (rows) => {
+    // Market-making inventory (a neutral ladder's coin with no journal tag) is not a held position: it leaves the positions
+    // tiles for the Market making tile, but stays in the exposure, risk and movers figures (it is real risk). The shown weights
+    // are re-based on what is shown; each table keeps what it took out so the split ties out (reconcile).
+    const isMarketMaking = (r) => r.Strategy === "market making";
+    const mmRows = tableRows.filter(isMarketMaking), shownRows = tableRows.filter((r) => !isMarketMaking(r));
+    const shownGross = sum(shownRows.map((r) => Math.abs(r.Value)));
+    shownRows.forEach((r) => { r.Weight = shownGross ? Math.abs(r.Value) / shownGross : NaN; });
+    const excludedOf = (rows) => (rows.length ? { label: "market making", positions: rows.length, gross: sum(rows.map((r) => Math.abs(r.Value))),
+      Value: sum(rows.map((r) => r.Value)), uPnL: sum(rows.map((r) => r["uPnL"])), Risk: sum(rows.map((r) => (fin(r.Risk) ? r.Risk : 0))), rows } : null);
+    const positionTotal = (rows, taken) => {
       const priced = rows.filter((r) => fin(r["uPnL (%)"]));
       const pricedCost = sum(priced.map((r) => Math.abs(r.Value - r["uPnL"])));
       return { "Asset class": "Total", "Value": sum(rows.map((r) => r.Value)),
@@ -797,7 +806,8 @@
         "Exposure / equity": sum(rows.map((r) => r["Exposure / equity"])),
         "Risk": sum(rows.map((r) => (fin(r.Risk) ? r.Risk : 0))) || NaN,
         "uPnL (%)": pricedCost ? sum(priced.map((r) => r["uPnL"])) / pricedCost : NaN,
-        "24h change (%)": dayChangeTotal(rows), "Funding (APR)": fundingTotal(rows) };
+        "24h change (%)": dayChangeTotal(rows), "Funding (APR)": fundingTotal(rows),
+        ...(taken ? { __hover: `Without market making (${taken.positions} positions, $${Math.round(taken.gross).toLocaleString("en-US")} gross): they are in the Market making tile` } : {}) };
     };
     const fundingTotal = (rows) => {  // annualised funding over the gross value of the positions that have a rate
       const known = rows.filter((r) => fin(r["Funding (APR)"]));
@@ -1204,16 +1214,16 @@
         { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
       movers_stocks: table(moverRows("Stocks"), ["Account", "Symbol", "Side", "Value", "uPnL", "% of position"],
         { "Side": "side", "Value": "susd", "uPnL": "susd", "% of position": "spct" }, { key: { "uPnL": "abs" } }),
-      positions: table(tableRows.filter(isCrypto), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
+      positions: table(shownRows.filter(isCrypto), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
         "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity", "Strategy", "Risk"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
         { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct", "Risk": "rpct" }),
-      { total: positionTotal(tableRows.filter(isCrypto)), key: { "Weight": "max" } }),
-      positions_stocks: table(tableRows.filter((r) => !isCrypto(r)), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
+      { total: positionTotal(shownRows.filter(isCrypto), excludedOf(mmRows.filter(isCrypto))), key: { "Weight": "max" } }),
+      positions_stocks: table(shownRows.filter((r) => !isCrypto(r)), ["Asset class", "Account", "Symbol", "Side", "Quantity", "Avg price", "Mark", "Value",
         "uPnL", "uPnL (%)", "24h change (%)", "Funding (APR)", "Weight", "Exposure / equity", "Strategy", "Risk"],
       Object.assign({ "Side": "side", "Quantity": "num", "Avg price": "price", "Mark": "price" }, signed,
         { "uPnL (%)": "spct", "24h change (%)": "spct", "Funding (APR)": "spct", "Weight": "pct", "Exposure / equity": "pct", "Risk": "rpct" }),
-      { total: positionTotal(tableRows.filter((r) => !isCrypto(r))), key: { "Weight": "max" } }),
+      { total: positionTotal(shownRows.filter((r) => !isCrypto(r)), excludedOf(mmRows.filter((r) => !isCrypto(r)))), key: { "Weight": "max" } }),
       market_making: (() => {  // the ladders, as the trading daemon last sent them (desk/market_making.py)
         const rows = (daemonAlerts && daemonAlerts.market_making) || [];
         if (!rows.length) return { columns: [], rows: [], total: null };
@@ -1225,8 +1235,15 @@
           const fills = sum(known.map((r) => r.Fills));
           total[k] = fills ? sum(known.map((r) => r[k] * r.Fills)) / fills : NaN;
         });
-        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees", "Funding", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued", "Settings"],
-          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "susd", "Funding": "susd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps", "Position vs base": "spct", "Quotes": "int", "Queued": "int" },
+        // Each live ladder's inventory (value now and uPnL % on it): it left the open positions tiles, so it is shown here.
+        const inventory = new Map(mmRows.map((r) => [bareName(r.Symbol), r]));
+        rows.forEach((r) => {
+          const held = inventory.get(bareName(r.Coin));
+          r["Inventory"] = held ? held.Value : null;
+          r["Inventory uPnL (%)"] = held && fin(held["uPnL (%)"]) ? held["uPnL (%)"] : null;
+        });
+        return table(rows, ["Account", "Coin", "Side", "Status", "Since", "Fills", "Volume", "Spread captured", "Inventory drift", "Fees", "Funding", "Ladder PnL", "Captured per $1k", "Markout 1m (bps)", "Markout 15m (bps)", "Position vs base", "Quotes", "Queued", "Settings", "Inventory", "Inventory uPnL (%)"],
+          { "Fills": "int", "Volume": "usd", "Spread captured": "susd", "Inventory drift": "susd", "Fees": "susd", "Funding": "susd", "Ladder PnL": "susd", "Captured per $1k": "susd", "Markout 1m (bps)": "sbps", "Markout 15m (bps)": "sbps", "Position vs base": "spct", "Quotes": "int", "Queued": "int", "Inventory": "susd", "Inventory uPnL (%)": "spct" },
           { total, key: { "Ladder PnL": "abs" } });
       })(),
       strategies: (() => {  // desk/journal.py, as the daemon last sent it (the last row is the total)
@@ -1279,6 +1296,8 @@
     notes.push("SPY is Yahoo Finance's daily close, read through the relay; S&P 500 beta in the risk table uses HL's S&P 500 perp, which trades every day like the crypto book.");
     notes.push("Current-holdings risk is a historical simulation: today's positions moved by each of the last 90 days' prices.");
     [...new Set(riskNotes)].forEach((note) => notes.push(`Open risk: ${note}`));
+    tables.positions.excluded = excludedOf(mmRows.filter(isCrypto));   // what the tiles took out, for the tie-out
+    tables.positions_stocks.excluded = excludedOf(mmRows.filter((r) => !isCrypto(r)));
     // Tables that should tie out and don't, and compared figures whose windows differ (desk/reconcile.py windows): first.
     reconcile(tables).concat(reconcileWindows(twr, (bookPerf && bookPerf.attribution) || {})).reverse().forEach((row) => attention.unshift(row));
     // Rows a published tile carries (the forward monitor's "Live drift" and "No historical / forward test").
@@ -1379,6 +1398,13 @@
         if (Math.abs(summed - expected) > tolerance) found.push(["Tables disagree", `${name} strategy groups: ${label} ${summed.toPrecision(4)}, table total ${expected.toPrecision(4)}`]);
       });
     });
+    // Market-making inventory is out of the positions tiles but in the exposure table: shown plus taken out is its gross.
+    const taken = sum(["positions", "positions_stocks"].map((name) => Number((tables[name] && tables[name].excluded && tables[name].excluded.gross) || 0)));
+    if (taken) {
+      const shown = sum(["positions", "positions_stocks"].flatMap((name) => ((tables[name] || {}).rows || []).map((r) => (fin(r.Value) ? Math.abs(r.Value) : 0))));
+      const gross = tables.exposure && tables.exposure.total && tables.exposure.total.Gross;
+      if (fin(gross) && Math.abs(shown + taken - gross) > 1) found.push(["Tables disagree", `positions with market making taken out: shown ${shown.toFixed(2)} + market making ${taken.toFixed(2)}, exposure gross ${gross.toFixed(2)}`]);
+    }
     return found;
   }
 

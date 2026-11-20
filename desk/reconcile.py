@@ -58,6 +58,7 @@ def checks(tables: dict[str, dict]) -> list[tuple[str, str]]:
     compare("position weights", "crypto and stocks", _row_sum([tables.get("positions"), tables.get("positions_stocks")], "Weight"),
             "expected", 1.0)
     found += strategy_groups(tables)
+    found += market_making_excluded(tables)
     return found
 
 
@@ -84,6 +85,21 @@ def strategy_groups(tables: dict[str, dict]) -> list[tuple[str, str]]:
             if abs(summed - expected) > tolerance:
                 found.append(("Tables disagree", f"{name} strategy groups: {label} {summed:,.4g}, table total {expected:,.4g}"))
     return found
+
+
+def market_making_excluded(tables: dict[str, dict]) -> list[tuple[str, str]]:
+    """Market-making inventory is out of the positions tiles but still in the exposure table: the shown positions plus what
+    was taken out must add up to the exposure table's gross value (no silent gap)."""
+    taken = sum(float((tables.get(name) or {}).get("excluded", {}).get("gross") or 0.0) for name in ("positions", "positions_stocks"))
+    if not taken:
+        return []
+    shown = sum(abs(float(row["Value"])) for name in ("positions", "positions_stocks") for row in (tables.get(name) or {}).get("rows", [])
+                if isinstance(row.get("Value"), (int, float)) and math.isfinite(row["Value"]))
+    exposure = (tables.get("exposure") or {}).get("total") or {}
+    gross = exposure.get("Gross")
+    if isinstance(gross, (int, float)) and math.isfinite(gross) and abs(shown + taken - gross) > 1.0:
+        return [("Tables disagree", f"positions with market making taken out: shown {shown:,.2f} + market making {taken:,.2f}, exposure gross {gross:,.2f}")]
+    return []
 
 
 # ---------------------------------------------------------------------------------------------------------------- windows

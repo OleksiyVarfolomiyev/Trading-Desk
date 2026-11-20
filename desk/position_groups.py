@@ -123,3 +123,86 @@ def position_risks(overview, now: float | None = None) -> dict:
             out[(str(entry.label).split()[-1][-4:].lower(), bare(symbol))] = float(risk)
     _risk_cache.update(at=now, value=out)
     return dict(out)
+
+
+def _finite(value) -> bool:
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def exclude_market_making(tables: dict) -> None:
+    """Take the market-making inventory (a neutral ladder's coin with no journal tag) out of the positions tables, in place.
+
+    It stays in the Market making tile (``add_inventory``) and in every exposure and risk figure (it is real risk), but it
+    is not a held position to decide on. Each table keeps what it took out as ``excluded`` (count, gross value, value,
+    uPnL, weight, risk and the rows) so ``desk.reconcile.market_making_excluded`` can tie the split to the exposure table,
+    and the shown weights are re-based (they still sum to the same total) and the total row is recomputed from what is
+    shown, with a hover that says what is left out.
+    """
+    from desk.overview import day_change_total, funding_total
+
+    taken_weight = 0.0
+    for name in TABLES:
+        spec = tables.get(name) or {}
+        rows = spec.get("rows") or []
+        mm = [row for row in rows if row.get("Strategy") == MARKET_MAKING]
+        if not mm:
+            continue
+        spec["rows"] = [row for row in rows if row.get("Strategy") != MARKET_MAKING]
+        spec["excluded"] = {
+            "label": MARKET_MAKING, "positions": len(mm),
+            "gross": sum(abs(row["Value"]) for row in mm if _finite(row.get("Value"))),
+            **{key: sum(row[key] for row in mm if _finite(row.get(key))) for key in ("Value", "uPnL", "Weight", "Risk")},
+            "rows": mm,
+        }
+        taken_weight += spec["excluded"]["Weight"]
+    if not taken_weight:
+        return
+    scale = 1.0 / (1.0 - taken_weight) if taken_weight < 1 else 1.0
+    for name in TABLES:
+        spec = tables.get(name) or {}
+        rows = spec.get("rows") or []
+        for row in rows:
+            if _finite(row.get("Weight")):
+                row["Weight"] *= scale
+        total = spec.get("total")
+        if total is None or "excluded" not in spec:
+            continue
+        if not rows:
+            spec["total"] = None
+            continue
+        priced = [row for row in rows if _finite(row.get("uPnL (%)"))]
+        cost = sum(abs(row["Value"] - row["uPnL"]) for row in priced)
+        total.update({"Value": sum(row["Value"] for row in rows if _finite(row.get("Value"))),
+                      "uPnL": sum(row["uPnL"] for row in rows if _finite(row.get("uPnL"))),
+                      "Exposure / equity": sum(row["Exposure / equity"] for row in rows if _finite(row.get("Exposure / equity")))})
+        if "Risk" in total:
+            total["Risk"] = sum(row["Risk"] for row in rows if _finite(row.get("Risk"))) or None
+        if cost:
+            total["uPnL (%)"] = sum(row["uPnL"] for row in priced) / cost
+        if "24h change (%)" in total:
+            total["24h change (%)"] = day_change_total([row.get("Value") for row in rows], [row.get("24h change (%)") for row in rows])
+        if "Funding (APR)" in total:
+            total["Funding (APR)"] = funding_total([row.get("Value") for row in rows], [row.get("Funding (APR)") for row in rows])
+        taken = spec["excluded"]
+        total["__hover"] = f"Without market making ({taken['positions']} positions, ${taken['gross']:,.0f} gross): they are in the Market making tile"
+
+
+def add_inventory(tables: dict) -> None:
+    """The Market making tile shows each live ladder's inventory (value now and uPnL % on it), taken from the positions
+    tables' excluded rows, so nothing is lost when they leave the open positions tiles."""
+    spec = tables.get("market_making") or {}
+    rows = spec.get("rows") or []
+    if not rows:
+        return
+    held: dict[str, dict] = {}
+    for name in TABLES:
+        for row in (tables.get(name) or {}).get("excluded", {}).get("rows", []):
+            held[bare(row.get("Symbol"))] = row
+    for row in rows:
+        mine = held.get(bare(row.get("Coin")))
+        row["Inventory"] = mine.get("Value") if mine else None
+        row["Inventory uPnL (%)"] = mine.get("uPnL (%)") if mine else None
+    keys = {column["key"] for column in spec.get("columns", [])}
+    spec["columns"] = list(spec.get("columns", [])) + [column for column in (
+        {"key": "Inventory", "fmt": "susd"}, {"key": "Inventory uPnL (%)", "fmt": "spct"}) if column["key"] not in keys]
+

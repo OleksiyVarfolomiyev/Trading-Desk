@@ -633,6 +633,8 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
             degraded.report("Position strategies feed", exc)
             theses = []
         position_groups.annotate(tables, theses, ladders, risks, risk_cap)
+        position_groups.exclude_market_making(tables)   # ladder inventory is in the Market making tile, not a held position
+        position_groups.add_inventory(tables)
     except Exception as exc:
         degraded.report("Position strategies", exc)
     try:  # each token's 24-hour move (DefiLlama), as the positions tables show it
