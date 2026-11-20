@@ -51,9 +51,12 @@ CROWDED_SHARE = 0.5                      # shorts paid in more than half the hou
 FUNDING_DAYS = 7
 # Research columns only: the stop, the size and the margin are the executor's and the daemon's.
 CANDIDATE_COLUMNS = ["Coin", "Score", "Basis", "vs BTC 30d", "vs BTC 7d", "vs BTC 24h", "Corr BTC 30d", "From high 60d", "Funding 7d (APR)",
-                     "OI / volume", "Volume 24h", "Notes"]
+                     "OI / volume", "Volume 24h", "Notes", "Strategy", "Evidence", "Days on list", "Stretch 30d"]
+STRATEGIES_FILE = ROOT / "data" / "screener_strategies.json"   # research/screener_strategies.py: what held up, per strategy
+HISTORY_FILE = ROOT / "data" / "screener_history.json"          # consecutive days each name has been a candidate
+STALE_DAYS = 20
 CANDIDATE_FORMATS = {"Score": "num2", "vs BTC 30d": "spct", "vs BTC 7d": "spct", "vs BTC 24h": "spct", "Corr BTC 30d": "num2", "From high 60d": "spct",
-                     "Funding 7d (APR)": "spct", "OI / volume": "num2", "Volume 24h": "usd"}
+                     "Funding 7d (APR)": "spct", "OI / volume": "num2", "Volume 24h": "usd", "Days on list": "int", "Stretch 30d": "spct"}
 # Funding for a ladder: the 7-day time-weighted average from the long side (positive: longs pay). The ladder's
 # position swings both ways, so what it pays is that average times its lean; a crowded side is flagged in Notes.
 MM_COLUMNS = ["Coin", "Efficiency 30d", "Move 30d", "Range position 60d", "Daily range 30d", "Volume 24h", "Longs pay 7d (APR)",
@@ -105,6 +108,9 @@ def latest_signals(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
     signals = research.signal_frames(data)
     frame = pd.DataFrame({name: values.iloc[-1] for name, values in signals.items()})
     frame["atr_pct"] = (research.atr(high, low, close) / close).iloc[-1]
+    if "BTC" in close:   # for the fade: how far up against BTC in 3 days, and how far above its own 30-day mean
+        frame["rel3"] = close.div(close["BTC"], axis=0).pct_change(3, fill_method=None).iloc[-1]
+    frame["stretch30"] = (close / close.rolling(30, min_periods=20).mean() - 1).iloc[-1]
     moves = close.diff().abs().rolling(30, min_periods=20).sum()
     frame["efficiency"] = ((close - close.shift(30)).abs() / moves).iloc[-1]
     frame["move30"] = close.pct_change(30, fill_method=None).iloc[-1]
@@ -193,8 +199,120 @@ def short_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[s
                      "Corr BTC 30d": row.get("corr_btc"),
                      "From high 60d": row.get("from_high60"), "Funding 7d (APR)": apr,
                      "OI / volume": open_interest / volume if volume else float("nan"), "Volume 24h": volume,
-                     "Notes": "; ".join(notes)})
+                     "Notes": "; ".join(notes), "Strategy": "weak", "Evidence": evidence("weak")})
     return pd.DataFrame(rows, columns=CANDIDATE_COLUMNS)
+
+
+def evidence(strategy: str, path: Path = STRATEGIES_FILE) -> str:
+    """What the research says about a strategy's rule, in a few words; never "validated" without a test that passed."""
+    try:
+        result = json.loads(path.read_text())
+    except (OSError, ValueError):
+        result = None
+    if strategy == "weak":
+        if result and result.get("validated_windows"):
+            best = max(result["validated_windows"], key=lambda r: r["t"])
+            return f"tested: {best['signal']} over {best['hold']}d, t {best['t']:.1f}, both halves"
+        return "desk record: 93% of selected trades; windows 1-60d not validated" if result else "desk record: 93% of selected trades; not tested as a screen"
+    if strategy == "fade":
+        if result and result.get("validated_fade"):
+            best = max(result["validated_fade"], key=lambda r: r["t"])
+            return f"tested: {best['signal']} over {best['hold']}d, t {best['t']:.1f}, both halves"
+        return "tested: no edge net of costs (fade windows, pump and dump)" if result else "not tested"
+    return "not tested"
+
+
+def update_history(names: dict[str, list[str]], today: pd.Timestamp | None = None, path: Path = HISTORY_FILE) -> dict[str, int]:
+    """Consecutive days each (strategy, coin) has been a candidate, saved: a name that was there yesterday continues its run, a
+    new one starts at 1, one that dropped off is forgotten. Returns "strategy|coin" -> days."""
+    today = (today or pd.Timestamp.now(tz="UTC")).normalize()
+    try:
+        saved = json.loads(path.read_text())
+    except (OSError, ValueError):
+        saved = {}
+    out, record = {}, {}
+    for strategy, coins in names.items():
+        for coin in coins:
+            key = f"{strategy}|{coin}"
+            before = saved.get(key)
+            if before and before["last"] == today.strftime("%Y-%m-%d"):
+                days, first = before["days"], before["first"]
+            elif before and before["last"] == (today - pd.Timedelta(days=1)).strftime("%Y-%m-%d"):
+                days, first = before["days"] + 1, before["first"]
+            else:
+                days, first = 1, today.strftime("%Y-%m-%d")
+            out[key] = days
+            record[key] = {"first": first, "last": today.strftime("%Y-%m-%d"), "days": days}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record))
+    except OSError:
+        pass
+    return out
+
+
+def fade_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[str], used: set[str], top: int = 5,
+                    funding_history=recent_funding) -> pd.DataFrame:
+    """Stretched moves to short back down: up against BTC over 3 days and above the 30-day mean, the most stretched first.
+    Crowded longs (longs paying a lot of funding) are flagged. Ranked by the sum of the two z-scores."""
+    names = [coin for coin in tradable if coin in live.index and coin in signals.index and coin not in used]
+    if not names or "rel3" not in signals.columns:
+        return pd.DataFrame(columns=CANDIDATE_COLUMNS)
+    frame = signals.loc[names].dropna(subset=["rel3", "stretch30"])
+    frame = frame[(frame["rel3"] > 0) & (frame["stretch30"] > 0)]
+    if frame.empty:
+        return pd.DataFrame(columns=CANDIDATE_COLUMNS)
+    z = zscores(frame, ["rel3", "stretch30"]).fillna(0.0)
+    frame = frame.assign(score=-(z["rel3"] + z["stretch30"])).sort_values("score").head(top)   # lowest score first, as the shorts list
+    rows = []
+    for coin, row in frame.iterrows():
+        apr, paid = crowding(funding_history(coin))
+        crowded = ["crowded long"] if apr == apr and apr >= CROWDED_LONG_APR else []
+        volume = live.loc[coin, "volume24h"]
+        open_interest = live.loc[coin, "open_interest"] if "open_interest" in live.columns else float("nan")
+        rows.append({"Coin": coin, "Score": row["score"], "Basis": "fade: stretched, up vs BTC 3d", "vs BTC 30d": row.get("rel30"),
+                     "vs BTC 7d": row.get("rel7"), "vs BTC 24h": float("nan"), "Corr BTC 30d": row.get("corr_btc"), "From high 60d": row.get("from_high60"),
+                     "Funding 7d (APR)": apr, "OI / volume": open_interest / volume if volume else float("nan"), "Volume 24h": volume,
+                     "Notes": "; ".join(crowded + [f"up {row['rel3']:.0%} vs BTC in 3d"]), "Stretch 30d": row["stretch30"]})
+    return pd.DataFrame(rows, columns=CANDIDATE_COLUMNS)
+
+
+def tradfi_candidates(panel: dict[str, pd.DataFrame], used: set[str], top: int = 5, index: str = "xyz:SP500", min_volume: float = 100_000.0,
+                      skip: set[str] | None = None) -> pd.DataFrame:
+    """Stocks, commodities and indices on the HIP-3 DEXs that are weak against the S&P 500 over 30 days (the weak-vs-index rule on stocks),
+    the weakest first, with beta to the index and daily volatility as the squeeze risk. Splits are put on one price scale first."""
+    from desk import splits
+
+    if index not in panel:
+        return pd.DataFrame(columns=CANDIDATE_COLUMNS)
+    skip = (skip or set()) | {index}
+    bench = panel[index]["close"].dropna()
+    rows = []
+    for coin, frame in panel.items():
+        if ":" not in coin or coin in skip or coin in used or coin.split(":")[-1] in {u.split(":")[-1] for u in used}:
+            continue
+        dex, name = coin.split(":", 1)
+        if splits.is_tradfi(dex):   # the splitter wants a "time" column; the panel is indexed by date
+            stamped = frame.rename_axis("time").reset_index()
+            frame = splits.apply(stamped, name, dex).set_index("time")
+        close = frame["close"].dropna()
+        if len(close) < 60 or (frame["volume"] * frame["close"]).tail(30).median() < min_volume:
+            continue
+        both = pd.concat([close.pct_change(fill_method=None), bench.pct_change(fill_method=None)], axis=1, keys=["a", "b"]).dropna().tail(60)
+        if len(both) < 40 or both["b"].var() == 0:
+            continue
+        aligned = pd.concat([close, bench], axis=1, keys=["a", "b"]).dropna()
+        if len(aligned) < 31:
+            continue
+        rel = aligned["a"] / aligned["b"]
+        rel30, rel7 = rel.iloc[-1] / rel.iloc[-31] - 1, rel.iloc[-1] / rel.iloc[-8] - 1
+        beta = float(both["a"].cov(both["b"]) / both["b"].var())
+        vol = float(both["a"].std())
+        rows.append({"Coin": coin, "Score": rel30, "Basis": "weak vs S&P 500 30d", "vs BTC 30d": rel30, "vs BTC 7d": rel7, "vs BTC 24h": float("nan"),
+                     "Corr BTC 30d": float(both["a"].corr(both["b"])), "From high 60d": float(close.iloc[-1] / close.tail(60).max() - 1),
+                     "Funding 7d (APR)": float("nan"), "OI / volume": float("nan"), "Volume 24h": float((frame["volume"] * frame["close"]).iloc[-1]),
+                     "Notes": f"beta {beta:.1f} to the S&P; {vol:.1%} a day: squeeze risk" + ("; high" if beta > 2.5 or vol > 0.05 else ""), "Stretch 30d": float("nan")})
+    return pd.DataFrame(rows, columns=CANDIDATE_COLUMNS).sort_values("Score").head(top).reset_index(drop=True)
 
 
 def market_making_candidates(signals: pd.DataFrame, live: pd.DataFrame, tradable: list[str], laddered: set[str],
@@ -260,6 +378,19 @@ def run(desk_equity: float | None = None, exposures: list | None = None, held: s
     used = set(held) | set(laddered) | journal.recently_traded()
     shorts = short_candidates(signals, live, tradable, weights, basis, desk_equity, exposures, used, free_margin=free_margin,
                               kelly=kelly_weights())
+    # The other strategies at hand, each ranked by its own rule and labelled with what the research says about it.
+    fades = fade_candidates(signals, live, tradable, used)
+    fades["Strategy"], fades["Evidence"] = "fade", evidence("fade")
+    try:
+        stocks = tradfi_candidates({name: frame for name, frame in panel.items() if ":" in name}, used)
+    except Exception:
+        stocks = pd.DataFrame(columns=CANDIDATE_COLUMNS)
+    stocks["Strategy"], stocks["Evidence"] = "stocks", evidence("stocks")
+    shorts = pd.concat([shorts, fades, stocks], ignore_index=True)[CANDIDATE_COLUMNS]
+    days = update_history({name: list(group["Coin"]) for name, group in shorts.groupby("Strategy")})
+    shorts["Days on list"] = [days.get(f"{row.Strategy}|{row.Coin}", 1) for row in shorts.itertuples()]
+    shorts["Notes"] = [(note + "; " if note else "") + "stale: 20+ days on the list" if days_ >= STALE_DAYS else note
+                       for note, days_ in zip(shorts["Notes"].fillna(""), shorts["Days on list"])]
     mm = market_making_candidates(signals, live, tradable, used, edges=ladder_edges())
     state = {"as_of": pd.Timestamp.now(tz="UTC").isoformat(), "candles_to": f"{data['close'].index[-1]:%Y-%m-%d}",
              "basis": basis, "universe": len(tradable), "desk_equity": desk_equity,

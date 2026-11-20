@@ -356,10 +356,14 @@ const VIEWS = {
   },
   // The "vs BTC" figure over one period at a time (the card's chips: 1D, 1W, 1M), named with its period; the rest as before.
   candidates: { link: (r) => hlLink(r.Coin),
+    // Strategy chips (weak / fade / stocks) filter the list; each strategy's evidence is a short word, the full sentence on hover.
+    keep: (r) => { const chosen = candidateStrategies(); return !chosen.length || chosen.includes(r.Strategy || "weak"); },
+    derive: (r) => ({ Strategy: r.Strategy || "weak", _evidence: shortEvidence(r.Evidence) }),
+    hover: (r) => [r.Evidence, r.Strategy === "stocks" ? "vs the S&P 500, not BTC" : ""].filter(Boolean).join(" · "),
     columnsNow: () => {
       const scale = currentScale("candidates");
       const pick = { "1D": ["vs BTC 24h", "vs BTC D"], "1W": ["vs BTC 7d", "vs BTC W"], "1M": ["vs BTC 30d", "vs BTC M"], All: ["vs BTC 30d", "vs BTC M"] }[scale];
-      return [["Coin"], pick, ["Corr BTC 30d", "Corr BTC"], ["From high 60d"], ["Funding 7d (APR)", "Funding W (APR)"], ["OI / volume"], ["Volume 24h", "Volume D"], ["Notes"]];
+      return [["Coin"], ["Strategy"], pick, ["Corr BTC 30d", "Corr BTC"], ["From high 60d"], ["Funding 7d (APR)", "Funding W (APR)"], ["OI / volume"], ["Volume 24h", "Volume D"], ["_evidence", "Evidence"], ["Days on list", "Days"], ["Notes"]];
     },
     columns: [["Coin"], ["Basis"], ["vs BTC 30d"], ["vs BTC 7d"], ["Corr BTC 30d"], ["From high 60d"], ["Funding 7d (APR)"],
     ["OI / volume"], ["Volume 24h"], ["Notes"]] },
@@ -799,6 +803,14 @@ const ZERO_TEXT = /^-?(\$0(\.0+)?|0(\.0+)?%|0\.0+)$/;
 // (plan the entry, then confirm; web dashboard). Every answer is logged, so the screener learns what is refused.
 const CANDIDATE_KEY = "desk-candidates";
 const CANDIDATE_TABLES = { candidates: "short", mm_candidates: null };
+// The strategy chips on the short candidates tile: none chosen shows every strategy, a choice (or several) narrows the list.
+const CANDIDATE_STRATEGIES = [["weak", "weak", "Weak against BTC over 30 days (the desk's rule)"], ["fade", "fade", "Stretched and up against BTC: a fade"],
+  ["stocks", "stocks", "Stocks and indices on the HIP-3 DEXs, weak against the S&P 500"]];
+function candidateStrategies() { try { return JSON.parse(localStorage.getItem("desk-candidate-strategies")) || []; } catch (e) { return []; } }
+function shortEvidence(text) {   // a few words; never "tested" without a pass
+  const t = String(text || "");
+  return /no edge/i.test(t) ? "no edge" : /^tested/i.test(t) ? "tested" : /^desk record/i.test(t) ? "desk record" : "untested";
+}
 function candidateState() { try { return Object.assign({ refused: {}, starred: [] }, JSON.parse(localStorage.getItem(CANDIDATE_KEY)) || {}); } catch (e) { return { refused: {}, starred: [] }; } }
 function saveCandidates(state) { try { localStorage.setItem(CANDIDATE_KEY, JSON.stringify(state)); } catch (e) {} }
 function candidateActions(id, row) {
@@ -2502,10 +2514,25 @@ function drawChartScales() {
         button.addEventListener("click", () => setScale(element, name));
         controls.append(button);
       }
+      if (element === "candidates") {   // the strategies: toggle on and off, several at once; none chosen = all
+        for (const [value, text, title] of CANDIDATE_STRATEGIES) {
+          const chip = el("button", { type: "button", class: "scale-chip strategy-chip kind-" + (value === "stocks" ? "stocks" : "crypto"), "data-strategy": value, text, title, "aria-pressed": "false" });
+          chip.addEventListener("click", () => {
+            const chosen = candidateStrategies();
+            const next = chosen.includes(value) ? chosen.filter((name) => name !== value) : chosen.concat(value);
+            try { localStorage.setItem("desk-candidate-strategies", JSON.stringify(next)); } catch (e) {}
+            feedback("candidates", "strategy", value, next.join(","));
+            if (latest && latest.data) renderTable("candidates", applyView("candidates", latest.data.tables.candidates, {}));
+            drawChartScales();
+          });
+          controls.append(chip);
+        }
+      }
     }
     const scale = currentScale(element);
     const selected = element === "candidates" && scale === "All" ? "1M" : scale;
     for (const button of controls.children) {
+      if (button.dataset.strategy) { const on = candidateStrategies().includes(button.dataset.strategy); button.classList.toggle("on", on); button.setAttribute("aria-pressed", String(on)); continue; }
       const active = button.dataset.window === selected;
       button.classList.toggle("on", active);
       button.setAttribute("aria-pressed", String(active));

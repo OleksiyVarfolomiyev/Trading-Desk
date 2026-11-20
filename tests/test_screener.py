@@ -88,6 +88,60 @@ class ScreenerTests(unittest.TestCase):
         self.assertTrue(pd.isna(rows.loc["TOP", "Own ladder edge per $1k"]))   # no made-up edge where no ladder has traded
 
 
+
+class StrategyTests(unittest.TestCase):
+    def test_fade_ranks_the_most_stretched_up_mover_first_and_skips_coins_that_are_down(self):
+        signals = pd.DataFrame({"rel3": [0.30, 0.10, -0.05, 0.20], "stretch30": [0.50, 0.10, -0.10, 0.20], "rel30": [0.0] * 4, "rel7": [0.0] * 4,
+                                "corr_btc": [0.8] * 4, "from_high60": [-0.1] * 4}, index=["HOT", "MILD", "DOWN", "WARM"])
+        live = pd.DataFrame({"volume24h": [1e6] * 4, "open_interest": [2e6] * 4}, index=signals.index)
+        rows = screener.fade_candidates(signals, live, list(signals.index), {"WARM"}, funding_history=lambda c: [0.0001] * 100)
+        self.assertEqual(list(rows["Coin"]), ["HOT", "MILD"])                  # DOWN is not up, WARM was used
+        self.assertIn("crowded long", rows.iloc[0]["Notes"])                    # longs paying 88% a year
+        self.assertAlmostEqual(rows.iloc[0]["Stretch 30d"], 0.50)
+
+    def test_stocks_are_ranked_weakest_against_the_index_and_flag_the_squeeze_risk(self):
+        days = pd.date_range("2026-06-01", periods=120, tz="UTC")
+        import numpy as np
+
+        rng = np.random.default_rng(1)
+        market = 100 * np.cumprod(1 + rng.normal(0, 0.01, 120))
+        def frame(close):
+            return pd.DataFrame({"open": close, "high": close, "low": close, "close": close, "volume": 1e5}, index=days)
+        panel = {"xyz:SP500": frame(market), "xyz:WEAK": frame(market * np.linspace(1, 0.6, 120)), "xyz:FLAT": frame(market * 1.0),
+                 "xyz:GONE": frame(market * np.linspace(1, 0.5, 120)), "xyz:BTCISH": frame(market * np.linspace(1, 1.4, 120))}
+        rows = screener.tradfi_candidates(panel, {"xyz:GONE"}, top=2)
+        self.assertEqual(list(rows["Coin"]), ["xyz:WEAK", "xyz:FLAT"])           # used names leave; weakest vs the index first
+        self.assertIn("beta", rows.iloc[0]["Notes"])
+
+    def test_evidence_never_says_validated_without_a_passing_test(self):
+        import json, tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "r.json"
+            self.assertEqual(screener.evidence("stocks", path), "not tested")
+            self.assertIn("not tested as a screen", screener.evidence("weak", path))
+            path.write_text(json.dumps({"validated_windows": [], "validated_fade": []}))
+            self.assertIn("not validated", screener.evidence("weak", path))
+            self.assertIn("no edge", screener.evidence("fade", path))
+            path.write_text(json.dumps({"validated_windows": [{"signal": "weak 7d", "hold": 7, "t": 2.6}], "validated_fade": []}))
+            self.assertIn("tested: weak 7d", screener.evidence("weak", path))
+
+    def test_days_on_list_counts_consecutive_days_and_resets_after_a_gap(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "h.json"
+            day = pd.Timestamp("2026-11-18", tz="UTC")
+            screener.update_history({"weak": ["A", "B"]}, day, path)
+            two = screener.update_history({"weak": ["A"]}, day + pd.Timedelta(days=1), path)
+            self.assertEqual(two["weak|A"], 2)
+            again = screener.update_history({"weak": ["A"]}, day + pd.Timedelta(days=1), path)   # the same day twice does not count twice
+            self.assertEqual(again["weak|A"], 2)
+            late = screener.update_history({"weak": ["A", "B"]}, day + pd.Timedelta(days=4), path)
+            self.assertEqual((late["weak|A"], late["weak|B"]), (1, 1))                           # a gap starts a new run
+
 if __name__ == "__main__":
     unittest.main()
 
