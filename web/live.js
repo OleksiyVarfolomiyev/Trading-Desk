@@ -1349,7 +1349,7 @@
           Status: stale && spikeFadeLive.watching ? `${status} · stale` : status,
           Symbol: attempt?.symbol,
           Allocation: budget,
-          Exposure: flat ? 0 : attempt.open_notional_usd,
+          Exposure: flat || finished ? 0 : attempt.open_notional_usd,
           "Modeled entry risk": attempt?.risk_usd,
           "Net P&L": pnl,
           Return: fin(pnl) && budget > 0 ? pnl / budget : null,
