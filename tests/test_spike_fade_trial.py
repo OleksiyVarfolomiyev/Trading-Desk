@@ -59,9 +59,12 @@ class SpikeFadeTrialTests(unittest.TestCase):
         daemon.wallet.return_value = "07f2"
         exchange = Mock()
         daemon.exchanges = {"07f2": exchange}
-        daemon.state.markets.return_value = {"DOGE": SimpleNamespace(mark_price=2.1)}
+        daemon.state.markets.return_value = {"DOGE": SimpleNamespace(mark_price=2.1, size_decimals=0)}
         ht._current_position_quantity.return_value = -25
         ht.kill_switch_engaged.return_value = False
+        ht._book_mid.return_value = 2.1
+        ht._round_price.return_value = 2.1105
+        ht._status_rows.return_value = [{"filled": {"totalSz": "25"}}]
         state = {"wallet": "07f2", "budget": 250, "attempt": {
             "coin": "DOGE", "started": 1000, "hold_ms": 1000, "quantity": 25, "taker_fee_rate": 0.00045,
         }}
@@ -71,5 +74,5 @@ class SpikeFadeTrialTests(unittest.TestCase):
             path = Path(folder) / "trial.json"
             trial.monitor(daemon, ht, path, state, 2200)
             self.assertTrue(json.loads(path.read_text())["attempt"]["noticed"])
-        exchange.market_close.assert_called_once_with("DOGE", 25, slippage=trial.MAX_BOOK_SLIPPAGE)
+        exchange.order.assert_called_once_with("DOGE", True, 25, 2.1105, {"limit": {"tif": "Ioc"}}, reduce_only=True)
         daemon.alerts.set.assert_called_once()

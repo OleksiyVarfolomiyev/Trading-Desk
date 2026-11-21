@@ -94,16 +94,21 @@ def monitor(daemon, ht, path: Path, trial: dict, now: int) -> None:
     live = ht._current_position_quantity(wallet, "", coin)
     if not math.isclose(live, -size, rel_tol=0, abs_tol=1e-8):
         return  # Wait for the fills and position reads to agree.
+    market = daemon.state.markets([(coin, "")])[coin] if size else None
     if size and now >= started + opened["hold_ms"] and not ht.kill_switch_engaged():
-        # The standard held target may also fill. A reduce-only close cannot reverse the position.
-        daemon.exchanges[wallet].market_close(coin, size, slippage=MAX_BOOK_SLIPPAGE)
+        # Buy-only reduce-only keeps this safe if a held target fills or the account flips sides.
+        limit = ht._round_price(ht._book_mid(coin, "") * (1 + MAX_BOOK_SLIPPAGE), market.size_decimals)
+        response = daemon.exchanges[wallet].order(coin, True, size, limit, {"limit": {"tif": "Ioc"}}, reduce_only=True)
+        status = ht._status_rows(response)[0]
+        if "error" in status:
+            daemon.alerts.set("spike-fade:exit", "Spike fade timed exit",
+                              f"{coin} close attempt did not fill. {status['error']}", ttl=3600)
     end = now if size else int(fills[-1]["time"])
     funding = ht.post_info({"type": "userFunding", "user": wallet, "startTime": started, "endTime": end}, timeout=8)
     pnl = sum(float(fill["closedPnl"]) - float(fill["fee"]) for fill in fills)
     pnl += sum(float(event["delta"]["usdc"]) for event in funding if event["delta"]["coin"] == coin)
     if size:
         entry = sum(float(fill["sz"]) * float(fill["px"]) for fill in shorts) / sum(float(fill["sz"]) for fill in shorts)
-        market = daemon.state.markets([(coin, "")])[coin]
         pnl += size * (entry - market.mark_price * (1 + opened["taker_fee_rate"]))
     opened.update(status="holding" if size else "closed", pnl_usd=pnl)
     if pnl <= -NOTICE_LOSS * trial["budget"] and not opened.get("noticed"):
