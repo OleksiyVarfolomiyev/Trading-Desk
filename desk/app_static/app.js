@@ -5523,7 +5523,7 @@ function reportHtml() {
   @media print { .bar { display: none; } body { margin: 0; max-width: none; } }
 </style></head><body>
 <div class="bar"><button onclick="window.print()">Print / save as PDF</button></div>
-<h1>Trading desk report</h1><div class="as">${escape(stamp)} ET · from the dashboard's data</div>
+<h1>Trading desk report</h1><div class="as">${escape(stamp)} ET · from the desk</div>
 <div class="keys">${tiles}</div>
 <h2>What stands out</h2><ul>${rows(data.highlights && data.highlights.well)}</ul>
 <h2>Needs attention</h2><ul>${rows(data.highlights && data.highlights.attention)}</ul>

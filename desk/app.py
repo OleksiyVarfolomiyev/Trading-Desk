@@ -1013,7 +1013,7 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"seconds between account refreshes (minimum {MIN_INTERVAL_SECONDS})")
     parser.add_argument("--data-dir", default=str(ROOT_DATA), help="desk data folder (default: the repo's data/)")
     parser.add_argument("--wallet-data-dir", default=None, help="HL history folder (default: the repo's data/)")
-    parser.add_argument("--open", action="store_true", help="open the dashboard in the default browser")
+    parser.add_argument("--open", action="store_true", help="open the desk in the default browser")
     parser.add_argument("--regime-start", default=None,
                         help="start of the current regime (YYYY-MM-DD) for risk statistics; detected from the HL "
                              "book's exposure by default")
