@@ -64,6 +64,10 @@ assert.equal(cryptoBook.points[2][1], 10);
 assert.equal(stocksBook.points[2][1], 1);
 assert.equal(stocksBook.coverage, 0.5);
 assert.deepEqual(intradayBookMoves(positions, new Map(), 0, 2 * hour, 1000), []);
+const liveAt = 2.5 * hour;
+const liveQuotes = new Map([["hl:BTC", [...crypto, [liveAt, 4]]]]);
+const [liveBook] = intradayBookMoves([["hl", "BTC", "crypto", -100, "perp", 5]], liveQuotes, 0, liveAt, 1000, true);
+assert.deepEqual(liveBook.points.at(-1), [liveAt, 12]);
 """
         subprocess.run([NODE, "-e", script], check=True, capture_output=True, text=True)
 

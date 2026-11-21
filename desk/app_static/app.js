@@ -2643,11 +2643,12 @@ function intradayBookMoves(positions, quotes, start, end, equity, includeEnd = f
       const maxAge = venue === "hl" ? 75 * 60000 : 5 * 24 * hour;
       return row && time - row[0] <= maxAge ? row[1] : null;
     };
-    const priced = group.flatMap(([venue, symbol, , value]) => {
+    const priced = group.flatMap(([venue, symbol, , value, , snapshotMark]) => {
       const rows = quotes.get(venue + ":" + symbol) || [];
       const base = mark(rows, first, venue);
       const current = mark(rows, end, venue);
-      return base > 0 && current > 0 ? [{ venue, value, rows, base, current }] : [];
+      const reference = venue === "hl" && snapshotMark > 0 ? snapshotMark : current;
+      return base > 0 && current > 0 ? [{ venue, value, rows, base, reference }] : [];
     });
     if (!priced.length) return [];
     const points = [];
@@ -2657,7 +2658,7 @@ function intradayBookMoves(positions, quotes, start, end, equity, includeEnd = f
     for (const t of times) {
       const marks = priced.map(({ rows, venue }) => mark(rows, t, venue));
       if (marks.some((price) => !(price > 0))) continue;
-      const pnl = priced.reduce((total, p, i) => total + p.value * (marks[i] - p.base) / p.current, 0);
+      const pnl = priced.reduce((total, p, i) => total + p.value * (marks[i] - p.base) / p.reference, 0);
       points.push([t, 100 * pnl / equity]);
     }
     if (points.length < (includeEnd ? 2 : 3)) return [];
@@ -2668,13 +2669,13 @@ function intradayBookMoves(positions, quotes, start, end, equity, includeEnd = f
 // INTRADAY_BOOK_END
 
 const intradayBookQuoteCache = new Map();
-function bookHourlyQuotes(venue, symbol) {
-  const key = venue + ":" + symbol, saved = intradayBookQuoteCache.get(key), now = Date.now();
+function bookHourlyQuotes(venue, symbol, hours = 27) {
+  const key = venue + ":" + symbol + ":" + hours, saved = intradayBookQuoteCache.get(key), now = Date.now();
   if (saved && now - saved.at < 5 * 60000) return saved.promise;
   const signal = AbortSignal.timeout(8000);
   const request = venue === "hl"
     ? fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, signal,
-      body: JSON.stringify({ type: "candleSnapshot", req: { coin: symbol, interval: "1h", startTime: now - 27 * 3600000, endTime: now } }) })
+      body: JSON.stringify({ type: "candleSnapshot", req: { coin: symbol, interval: "1h", startTime: now - hours * 3600000, endTime: now } }) })
     : fetch("/stock-hourly/" + encodeURIComponent(symbol.toUpperCase().replace(/ /g, "-")), { signal });
   const promise = request.then((response) => {
     if (!response.ok) throw new Error("Hourly market history unavailable");
@@ -2687,24 +2688,37 @@ function bookHourlyQuotes(venue, symbol) {
   return promise;
 }
 
-async function loadIntradayBooks(data, start, end, includeEnd = false) {
-  const positions = data.bookPositions || [];
+let latestCryptoMarks;
+function currentCryptoMarks() {
+  if (latestCryptoMarks && Date.now() - latestCryptoMarks.requestedAt < 30_000) return latestCryptoMarks.promise;
+  const requestedAt = Date.now();
+  const promise = tickerContexts(["BTC"], AbortSignal.timeout(7000)).then((quotes) => ({
+    at: Date.now(), quotes,
+  }));
+  latestCryptoMarks = { requestedAt, promise };
+  return promise;
+}
+
+async function loadIntradayBook(data, kind, start, end, { includeEnd = false, live = null, hours = 27 } = {}) {
+  const positions = (data.bookPositions || []).filter((row) => row[2] === kind);
   const supported = positions.filter(([venue, , , value, assetClass]) =>
     isNum(value) && value !== 0 && (venue === "hl" || (venue === "ib" && assetClass === "equity")));
   const symbols = [...new Map(supported.map(([venue, symbol]) => [venue + ":" + symbol, [venue, symbol]])).entries()];
   const quotes = new Map();
   for (let i = 0; i < symbols.length; i += 6) {
-    await Promise.all(symbols.slice(i, i + 6).map(async ([key, [venue, symbol]]) => quotes.set(key, await bookHourlyQuotes(venue, symbol))));
+    await Promise.all(symbols.slice(i, i + 6).map(async ([key, [venue, symbol]]) => quotes.set(key, await bookHourlyQuotes(venue, symbol, hours))));
   }
   if (includeEnd) {
-    for (const [venue, symbol, , , , live] of supported) {
+    for (const [venue, symbol, , , , snapshotMark] of supported) {
       const key = venue + ":" + symbol;
-      if (venue === "hl" && live > 0 && quotes.get(key)?.length) {
-        quotes.set(key, [...quotes.get(key).filter(([time]) => time < end), [end, live]]);
+      const price = live ? live.quotes[symbol]?.price : snapshotMark;
+      if (live && !(price > 0)) quotes.delete(key);   // an hourly close alone cannot supply the live crypto point
+      else if (venue === "hl" && price > 0 && quotes.get(key)?.length) {
+        quotes.set(key, [...quotes.get(key).filter(([time]) => time < end), [end, price]]);
       }
     }
   }
-  return intradayBookMoves(positions, quotes, start, end, data.tradingEquity, includeEnd);
+  return intradayBookMoves(positions, quotes, start, end, data.tradingEquity, includeEnd).find((row) => row.kind === kind);
 }
 
 const returnTails = new WeakMap();
@@ -2713,32 +2727,38 @@ function refreshReturnTails(charts) {
   if (!data || !charts.twr?.length || returnTails.has(charts)) return;
   const pending = {};
   returnTails.set(charts, pending);
-  const points = {};
+  pending.points = {};
+  const record = (name, point) => {
+    pending.points[name] = point;
+    if (latest?.data?.charts === charts && currentScale("charts") !== "1D") renderCharts(charts);
+  };
   const jobs = charts.twr.map(async (series) => {
     const { name } = series;
     if (/^(crypto|stocks)$/i.test(name)) {
+      const kind = name.toLowerCase(), crypto = kind === "crypto";
       const from = Date.parse(series.x.at(-1)) + 86400000;   // the previous daily book point is the close of that UTC day
-      if (!(from < end && end - from < 86400000)) return;
-      const rows = await loadIntradayBooks(data, from, end, true);
-      const book = rows.find(({ kind }) => kind === name.toLowerCase());
+      if (!(from < end && end - from < (crypto ? 7 : 1) * 86400000)) return;
+      const live = crypto ? await currentCryptoMarks() : null;
+      if (crypto && live.at <= from) return;
+      const book = await loadIntradayBook(data, kind, from, crypto ? live.at : end,
+        { includeEnd: true, live, hours: crypto && end - from > 24 * 3600000 ? 8 * 24 : 27 });
       const [at, value] = book?.points.at(-1) || [];
-      if (at > from) points[name] = { at, value, estimate: true,
-        note: `current holdings, price moves only · ${Math.round(book.coverage * 100)}% of gross exposure priced` };
+      if (at > from && (!crypto || at === live.at)) record(name, { at, value, estimate: true,
+        note: `current holdings, price moves only · ${Math.round(book.coverage * 100)}% of gross exposure priced` });
       return;
     }
-    if (/^btc$/i.test(name) || /^S&P/i.test(name)) {
-      const coin = /^btc$/i.test(name) ? "BTC" : "xyz:SP500";
-      const context = (await tickerContexts([coin], AbortSignal.timeout(7000)))[coin];
-      if (context?.price > 0) points[name] = { at: Date.now(), value: context.price };
+    if (/^btc$/i.test(name)) {
+      const { at, quotes } = await currentCryptoMarks();
+      if (quotes.BTC?.price > 0) record(name, { at, value: quotes.BTC.price });
+    } else if (/^S&P/i.test(name)) {
+      const context = (await tickerContexts(["xyz:SP500"], AbortSignal.timeout(7000)))["xyz:SP500"];
+      if (context?.price > 0) record(name, { at: Date.now(), value: context.price });
     } else if (/^spy$/i.test(name)) {
       const [at, value] = (await bookHourlyQuotes("ib", "SPY")).at(-1) || [];
-      if (value > 0) points[name] = { at, value };
+      if (value > 0) record(name, { at, value });
     }
   });
-  Promise.allSettled(jobs).then(() => {
-    pending.points = points;
-    if (Object.keys(points).length && latest?.data?.charts === charts && currentScale("charts") !== "1D") renderCharts(charts);
-  });
+  Promise.allSettled(jobs);
 }
 
 function drawIntraday(node, days) {
@@ -2747,11 +2767,19 @@ function drawIntraday(node, days) {
   const lines = [];
   const asOf = Math.floor(end / 3600000);
   if (data.bookPositions?.length && (node._intradayBooks?.source !== data || node._intradayBooks?.asOf !== asOf)) {
-    const book = { source: data, asOf, rows: [] };
+    const book = { source: data, asOf, rows: [], btc: null };
     node._intradayBooks = book;
-    loadIntradayBooks(data, start, end).then((rows) => {
-      book.rows = rows;
-      if (rows.length && node._intradayBooks === book && node._intraday && currentScale("charts") === "1D") drawIntraday(node, days);
+    const redraw = () => {
+      if (node._intradayBooks === book && node._intraday && currentScale("charts") === "1D") drawIntraday(node, days);
+    };
+    loadIntradayBook(data, "stocks", start, end).then((row) => {
+      if (row) { book.rows.push(row); redraw(); }
+    }).catch(() => {});
+    currentCryptoMarks().then(async (live) => {
+      if (live.quotes.BTC?.price > 0) { book.btc = [live.at, live.quotes.BTC.price]; redraw(); }
+      const row = await loadIntradayBook(data, "crypto", start, live.at, { includeEnd: true, live })
+        || await loadIntradayBook(data, "crypto", start, end);
+      if (row) { book.rows.push(row); redraw(); }
     }).catch(() => {});
   }
   const rebased = (points, pick) => {
@@ -2762,7 +2790,8 @@ function drawIntraday(node, days) {
   };
   const desk = rebased(data.desk || [], () => 1);
   if (desk) lines.push(["desk", desk, { width: 2.6, color: token("--ink") }]);
-  const btc = rebased(data.BTC || [], (row) => row[1]);
+  const liveBtc = node._intradayBooks?.source === data ? node._intradayBooks.btc : null;
+  const btc = rebased([...(data.BTC || []), ...(liveBtc ? [liveBtc] : [])], (row) => row[1]);
   if (btc) lines.push(["BTC", btc, { width: 1.4, dash: "dot", color: colorFor("BTC") }]);
   const sp = rebased(data["S&P500"] || [], (row) => row[1]);
   if (sp) lines.push(["S&P500", sp, { width: 1.4, dash: "dot", color: colorFor("S&P500") }]);
