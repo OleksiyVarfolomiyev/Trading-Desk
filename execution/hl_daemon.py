@@ -3909,6 +3909,10 @@ def serve(args: argparse.Namespace) -> int:
     threading.Thread(target=daemon.buildups.run, name="buildups", daemon=True).start()
     daemon.held.resume()
     threading.Thread(target=daemon.held.run, name="held-targets", daemon=True).start()
+    if not args.paper:
+        from execution import spike_fade_trial
+
+        threading.Thread(target=spike_fade_trial.run, args=(daemon, ht, log), name="spike-fade-trial", daemon=True).start()
     threading.Thread(target=daemon.research.run, name="research", daemon=True).start()
 
     server = _Server(str(daemon_link.SOCKET_PATH), _Handler)
