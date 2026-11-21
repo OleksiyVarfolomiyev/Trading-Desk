@@ -636,6 +636,7 @@
       every("regime", 30 * 60000, () => relay("/regime")).catch(() => null),
       every("alerts", 60000, () => relay("/alerts")).catch(() => null),
       every("spike-fade-paper", 60000, () => relay("/spike-fade-paper")).catch(() => null),
+      every("spike-fade-live", 30000, () => relay("/spike-fade-live")).catch(() => null),
       every("tiles", 60000, () => relay("/tiles")).catch(() => null),
       every("books", 15 * 60000, () => relay("/books")).catch(() => null),   // each book's performance (the Mac, hourly)
       every("usage_model", 600000, () => getJSON("/usage_model")).catch(() => ({})),
@@ -670,7 +671,7 @@
       if (w.error) problems.push(`${w.label}: ${w.error}`);
       (w.notes || []).forEach((note) => notes.push(note));
     });
-    const [ibData, walletPerf, regime, daemonAlerts, spikeFadePaper, tileFeed, bookPerf, usageModel, catalogEntries, syncRun, research] = await relayReads;
+    const [ibData, walletPerf, regime, daemonAlerts, spikeFadePaper, spikeFadeLive, tileFeed, bookPerf, usageModel, catalogEntries, syncRun, research] = await relayReads;
     const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];
     ibs.forEach((account) => {
       const age = Date.now() - account.asOf;
@@ -1327,6 +1328,33 @@
         return table(rows.slice(0, -1).map(view), ["Strategy", "Crypto", "Stocks", "Realized 30d", "uPnL", "Total"],
           { "Crypto": "spct", "Stocks": "spct", "Realized 30d": "spct", "uPnL": "spct", "Total": "spct" },
           { total: view(rows[rows.length - 1]), key: { "Total": "abs" } });
+      })(),
+      spike_fade_live: (() => {
+        const columns = ["Account", "Status", "Symbol", "Allocation", "Exposure", "Modeled entry risk", "Net P&L", "Return"];
+        const formats = { Allocation: "usd", Exposure: "usd", "Modeled entry risk": "rusd", "Net P&L": "susd", Return: "spct" };
+        if (!spikeFadeLive) return table([{ Status: "Live trial unavailable" }], ["Status"], {});
+        const { account, budget, attempt } = spikeFadeLive;
+        const finished = attempt?.status === "closed" || attempt?.status === "no fill observed";
+        const stale = !finished && (
+          !fin(spikeFadeLive.updated_at) || now - spikeFadeLive.updated_at > 120000 ||
+          (!attempt && (!fin(spikeFadeLive.signal_at) || now - spikeFadeLive.signal_at > 180000))
+        );
+        const status = attempt
+          ? ({ holding: "Holding short", closed: "Closed", "no fill observed": "No fill" }[attempt.status] || "Checking fill")
+          : spikeFadeLive.watching ? "Waiting for spike" : "Starting";
+        const flat = !attempt || attempt.status === "no fill observed";
+        const pnl = flat ? 0 : attempt.pnl_usd;
+        const spec = table([{
+          Account: account ? `…${account}` : "",
+          Status: stale && spikeFadeLive.watching ? `${status} · stale` : status,
+          Symbol: attempt?.symbol,
+          Allocation: budget,
+          Exposure: flat ? 0 : attempt.open_notional_usd,
+          "Modeled entry risk": attempt?.risk_usd,
+          "Net P&L": pnl,
+          Return: fin(pnl) && budget > 0 ? pnl / budget : null,
+        }], columns, formats, { key: { Return: "abs" } });
+        return { ...spec, keepColumns: true, tableOnly: true };
       })(),
       candidates: (() => {  // desk/screener.py
         // A coin held now is a candidate already taken (the screener runs hourly; positions are live).

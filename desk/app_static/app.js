@@ -1,7 +1,7 @@
 "use strict";
 
 const POLL_MS = 5000;
-const TABLES = ["performance", "accounts", "positions", "positions_stocks", "exposure", "wallets", "market_making", "strategies", "candidates", "mm_candidates"];
+const TABLES = ["performance", "accounts", "positions", "positions_stocks", "exposure", "wallets", "market_making", "strategies", "spike_fade_live", "candidates", "mm_candidates"];
 const sortState = {};          // table id -> {key, dir}; click a header to change it (the builders' order is the ranking)
 let lastRendered = null;        // last_ok of the data currently drawn
 let latest = null;              // latest /api/state document

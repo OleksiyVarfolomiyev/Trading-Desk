@@ -83,7 +83,8 @@ def monitor(daemon, ht, path: Path, trial: dict, now: int) -> None:
     if not fills:
         if now - started > BAR_MS:
             opened["status"] = "no fill observed"
-            save(path, trial)
+        trial["updated_at"] = now
+        save(path, trial)
         return
     shorts = [fill for fill in fills if fill["side"] == "A"]
     covers = [fill for fill in fills if fill["side"] == "B"]
@@ -110,7 +111,9 @@ def monitor(daemon, ht, path: Path, trial: dict, now: int) -> None:
     if size:
         entry = sum(float(fill["sz"]) * float(fill["px"]) for fill in shorts) / sum(float(fill["sz"]) for fill in shorts)
         pnl += size * (entry - market.mark_price * (1 + opened["taker_fee_rate"]))
-    opened.update(status="holding" if size else "closed", pnl_usd=pnl)
+    opened.update(status="holding" if size else "closed", pnl_usd=pnl,
+                  open_notional_usd=size * market.mark_price if size else 0)
+    trial["updated_at"] = now
     if pnl <= -NOTICE_LOSS * trial["budget"] and not opened.get("noticed"):
         daemon.alerts.set("spike-fade:drawdown", "Live spike fade drawdown",
                           f"The ${trial['budget']:g} trial is down ${-pnl:.2f}, at least 10% of its allocation.", ttl=86400)
@@ -129,8 +132,11 @@ def run(daemon, ht, log, path: Path = TRIAL) -> None:
                 if "attempt" not in trial:
                     if "watching_since" not in trial:
                         trial["watching_since"] = now
-                        save(path, trial)
-                    attempt(daemon, ht, path, trial, json.loads(PAPER.read_text()), now)
+                    paper = json.loads(PAPER.read_text())
+                    attempt(daemon, ht, path, trial, paper, now)
+                    trial["updated_at"] = now
+                    trial["signal_at"] = paper["updated_at"]
+                    save(path, trial)
                 elif trial["attempt"].get("status") not in {"closed", "no fill observed"}:
                     monitor(daemon, ht, path, trial, now)
         except Exception as exc:

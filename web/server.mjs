@@ -423,6 +423,25 @@ async function handle(request, response) {
     response.end(JSON.stringify(status));
     return;
   }
+  if (url.pathname === "/spike-fade-live" && request.method === "GET") {
+    let status = null;
+    try {
+      const runDir = process.env.HL_DAEMON_DIR || path.join(HOME, ".trading-desk");
+      const trial = JSON.parse(await fsp.readFile(path.join(runDir, "spike_fade_trial.json"), "utf8"));
+      const attempt = trial.attempt;
+      status = {
+        account: String(trial.wallet).slice(-4), budget: trial.budget,
+        updated_at: trial.updated_at, signal_at: trial.signal_at, watching: Boolean(trial.watching_since),
+        attempt: attempt ? { symbol: attempt.coin, status: attempt.status, risk_usd: attempt.risk_usd,
+          open_notional_usd: attempt.open_notional_usd, pnl_usd: attempt.pnl_usd } : null,
+      };
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    response.end(JSON.stringify(status));
+    return;
+  }
   if (url.pathname === "/feedback" && request.method === "POST") return saveFeedback(request, response);
   if (url.pathname === "/highlight_state") return highlightState(request, response);
   if (url.pathname === "/action" && request.method === "POST") return dashboardAction(request, response);
