@@ -426,8 +426,9 @@ function applyView(id, spec, context) {
       groups.get(name).push([row, rows[i]]);
     });
     rows = [...groups.entries()].sort((a, b) => strategyRank(a[0]) - strategyRank(b[0]) || a[0].localeCompare(b[0])).flatMap(([name, members]) => {
-      const sub = view.groupTotal(members.map(([row]) => row));
-      const head = {};
+      const labelOnly = id === "positions_stocks" && members.length === 1;
+      const sub = labelOnly ? {} : view.groupTotal(members.map(([row]) => row));
+      const head = { __groupLabelOnly: labelOnly };
       columnsFor(view).forEach(([from, label]) => { head[label || from] = from === "Symbol" ? name : sub[from]; });
       head.__groupRow = true; head.__group = name; head.__raw = {};
       head.__hover = [`${members.length} ${members.length === 1 ? "position" : "positions"}`, isNum(sub.Value) ? usd(sub.Value) : "", isNum(sub.uPnL) ? `${usd(sub.uPnL)} uPnL` : "",
@@ -552,7 +553,8 @@ function renderBarList(id, spec, plan, host) {
     const head = heads.get(row.__group) || {};
     return el("div", { class: "bgroup", title: head.__hover || "" }, [
       el("span", { class: "bgroup-name", style: `color:var(${STRATEGY_TINT[row.__group] || "--muted"})`, text: row.__group }),
-      el("span", { class: "bgroup-fig " + (isNum(head[plan.value]) ? signClass(head[plan.value]) : ""), text: isNum(head[plan.value]) ? text(plan.value, head[plan.value]) : "" }),
+      head.__groupLabelOnly ? null : el("span", { class: "bgroup-fig " + (isNum(head[plan.value]) ? signClass(head[plan.value]) : ""),
+        text: isNum(head[plan.value]) ? text(plan.value, head[plan.value]) : "" }),
     ]);
   };
   const body = el("div", { class: "barlist" + (plan.zeroCentered ? " zero-centered" : "") + (id.startsWith("pub-") ? " wide-labels" : "") }, list.flatMap((row) => {
@@ -1080,11 +1082,11 @@ function renderTable(id, spec) {
     if (!row.__groupRow) return [line];
     // A strategy's name sits centred over its group in the strategy's colour, on a line of its own, so it never runs into the symbols.
     const label = el("tr", { class: "group-label" }, [el("td", { colspan: String(spec.columns.length), style: `color:var(${STRATEGY_TINT[row.__group] || "--muted"})`, text: row.__group })]);
-    return [label, line];
+    return row.__groupLabelOnly ? [label] : [label, line];
   }));
   if (id in CANDIDATE_TABLES) head.append(el("th", { class: "row-actions" }));
   const parts = [el("thead", {}, head), body];
-  if (spec.total && spec.rows.length > 1) {  // the total of a single row only repeats it
+  if (spec.total && spec.rows.filter((row) => !row.__groupRow).length > 1) {  // strategy headings do not count as positions
     parts.push(el("tfoot", {}, el("tr", { class: "total", title: spec.total.__hover }, spec.columns.map((column) => cell(spec.total, column)))));
   }
   if (shared.length) host.append(el("p", { class: "table-note", text: shared.join(" · ") }));
