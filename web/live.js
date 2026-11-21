@@ -1084,7 +1084,7 @@
           }
         }
       }
-      const bookPositions = tradePositions.map((p) => [p.venue, p.coin || p.symbol, marketKind(p).toLowerCase(), value(p), p.asset_class]);
+      const bookPositions = tradePositions.map((p) => [p.venue, p.coin || p.symbol, marketKind(p).toLowerCase(), value(p), p.asset_class, p.venue === "hl" ? p.mark_price : null]);
       return { desk, matched_desk, accounts, bookPositions, tradingEquity, BTC: await hours(BTC), "S&P500": await hours(SP500) };
     })();
 
@@ -1405,7 +1405,7 @@
       theses: (research && research.theses) || [],
       usage_model: usageModel,
       tiles: ((tileFeed && tileFeed.tiles) || []).filter((tile) => Number(tile.expires) * 1000 > Date.now()),
-      charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, value_idle: [], managed_since: (bookPerf && bookPerf.managed_since) || "2026-10-16" },
+      charts: { value: valueSeries, value_with_wallets: valueWithWallets(), twr, desk_twr_at: chartIndex.at(-1)?.t, value_idle: [], managed_since: (bookPerf && bookPerf.managed_since) || "2026-10-16" },
       problems, notes,
       accounts_status: status,
     });

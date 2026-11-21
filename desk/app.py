@@ -84,7 +84,8 @@ def intraday_series(desk) -> dict:
     out["tradingEquity"] = float(sum(snapshot.equity_usd for snapshot in snapshots))
     out["bookPositions"] = [
         [position.venue, position.symbol, "crypto" if position.asset_class.startswith("crypto") else "stocks",
-         float(position.notional_usd), position.asset_class]
+         float(position.notional_usd), position.asset_class,
+         float(position.mark_price) if position.venue == "hl" else None]
         for snapshot in snapshots for position in snapshot.positions if math.isfinite(position.notional_usd)
     ]
     try:
@@ -755,7 +756,7 @@ def build_payload(desk: DeskAccounts, day_change: DayChange | None = None,
         "highlights": {"well": [list(row) for row in well], "attention": [list(row) for row in attention],
                        "hover": {**getattr(desk.overview, "highlight_hover", {}), **daemon_alerts.hovers(daemon_alerts.read())}},  # headlines around a big move; what ALL means on the winners and losers rows
         "tables": tables,
-        "charts": {"value": value_series, "value_with_wallets": with_wallets, "twr": twr,
+        "charts": {"desk_twr_at": int(desk.index.index.max().timestamp() * 1000), "value": value_series, "value_with_wallets": with_wallets, "twr": twr,
                    "managed_since": _managed_since(),   # the repo start: the return chart marks where the managed desk begins
                    # Stretches with no trading on any account, collapsed on the value chart.
                    "value_idle": [[start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), (end - start).days]
@@ -957,7 +958,7 @@ def make_handler(dashboard: DeskApp, port: int):
                 from desk.venues.ib_statement import yahoo_hourly_closes
 
                 try:
-                    self._send(json.dumps({"closes": yahoo_hourly_closes(stock[1])}).encode(), "application/json")
+                    self._send(json.dumps(yahoo_hourly_closes(stock[1])).encode(), "application/json")
                 except (ValueError, OSError, KeyError):
                     self.send_error(502)
             elif path in STATIC_FILES:

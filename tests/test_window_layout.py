@@ -67,6 +67,26 @@ assert.deepEqual(intradayBookMoves(positions, new Map(), 0, 2 * hour, 1000), [])
 """
         subprocess.run([NODE, "-e", script], check=True, capture_output=True, text=True)
 
+    @unittest.skipUnless(NODE, "node is not installed here (the desk server has it)")
+    def test_long_windows_keep_the_latest_endpoint_for_each_line(self):
+        core = re.search(r"// RETURN_WINDOW_START\n(.*?)// RETURN_WINDOW_END", APP, re.S).group(1)
+        script = core + """
+const assert = require("node:assert/strict");
+const now = Date.parse("2026-11-20T20:30:00Z");
+const days = ["2026-11-18", "2026-11-19"];
+const make = (name) => ({name, x: days, levels: [1, 1.05], y: [0, 5]});
+const rows = returnSeriesWithLatest([make("Desk"), make("crypto"), make("stocks"), make("BTC")], now,
+  {crypto: {at: now, value: 2, estimate: true, note: "price moves only"}, BTC: {at: now, value: 1.08}});
+const output = returnWindow(rows, 7, now).rows;
+assert.equal(output[0].x.at(-1), new Date(now).toISOString());
+assert.equal(output[1].estimateAt, new Date(now).toISOString());
+assert.equal(output[1].y.at(-1), 7.1);
+assert.equal(output[2].x.at(-1), days.at(-1));
+assert.equal(output[3].y.at(-1), 8);
+assert.equal(rows[0].y.at(-1), 5);
+"""
+        subprocess.run([NODE, "-e", script], check=True, capture_output=True, text=True)
+
 
 if __name__ == "__main__":
     unittest.main()

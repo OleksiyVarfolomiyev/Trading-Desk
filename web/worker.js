@@ -333,7 +333,8 @@ async function stockHourlyCloses(ticker) {
   if (!response.ok) throw new Error("Stock price history unavailable");
   const result = (await response.json()).chart.result[0];
   const closes = result.indicators.quote[0].close;
-  const body = { closes: result.timestamp.map((t, i) => [(t + 3600) * 1000, closes[i]]).filter(([, close]) => close > 0) };
+  const body = { closes: result.timestamp.map((t, i) => [(t + 3600) * 1000, closes[i]]).filter(([, close]) => close > 0),
+    latest: [result.meta?.regularMarketTime * 1000, result.meta?.regularMarketPrice] };
   if (stockHours.size >= 128) stockHours.delete(stockHours.keys().next().value);
   stockHours.set(ticker, { at: Date.now(), body });
   return body;

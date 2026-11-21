@@ -1868,21 +1868,20 @@ function renderCharts(charts) {
     : /^(total|desk)/i.test(s.name) ? { width: 2.6, color: token("--ink") }
     : /^btc/i.test(s.name) ? { width: 1.4, dash: "dot", color: token("--kind-crypto") }
     : { width: 1.4, dash: "dot", color: token("--kind-stocks") };
-  const twr = (charts.twr || []).map((s, i) => colorHover({
+  const series = returnSeriesWithLatest(charts.twr || [], charts.desk_twr_at, returnTails.get(charts)?.points);
+  const twr = series.map((s, i) => colorHover({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
-    line: Object.assign({ shape: "linear" }, lineFor(s, i)),
-    customdata: s.y.map((v) => readablePct(v / 100)),
+    line: Object.assign({ shape: "linear" }, lineFor(s, i)), meta: { estimateAt: s.estimateAt, estimateNote: s.estimateNote },
+    customdata: s.y.map((v, index) => returnHover(v, s.x[index], s)),
     hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>",
   }));
-  // % since the start; the desk line ends at the "TW return" tile.
   const shortName = (name) => (/^(total|desk)/i.test(name) ? "desk" : String(name));
-  const drawn = (charts.twr || []).map((s, i) => [s, twr[i]]).filter(([s]) => s.y.length);
-  const labels = endLabels(charts.twr || [], (v) => readablePct(v / 100)).map((label, i) => Object.assign(label, {
-    text: `${shortName(drawn[i][0].name)} ${label.text}`, font: { size: 11, color: drawn[i][1].line.color || token("--ink-2") } }));
-  // Where the managed desk begins (the repo start, its risk measures): a thin vertical line with the explanation on hover;
-  // before it the book was held passively (IB long only, crypto untraded).
-  const managed = charts.managed_since, lastDay = Math.max(0, ...(charts.twr || []).flatMap((s) => (s.x || []).map((x) => Date.parse(x) || 0)));
-  const firstDay = Math.min(Infinity, ...(charts.twr || []).flatMap((s) => (s.x || []).map((x) => Date.parse(x) || Infinity)));
+  const drawn = series.map((s, i) => [s, twr[i]]).filter(([s]) => s.y.length);
+  const labels = endLabels(series, (v) => readablePct(v / 100)).map((label, i) => Object.assign(label, {
+    text: `${shortName(drawn[i][0].name)}${drawn[i][0].estimateAt ? " est." : ""} ${label.text}`,
+    font: { size: 11, color: drawn[i][1].line.color || token("--ink-2") } }));
+  const managed = charts.managed_since, lastDay = Math.max(0, ...series.flatMap((s) => s.x.map((x) => Date.parse(x) || 0)));
+  const firstDay = Math.min(Infinity, ...series.flatMap((s) => s.x.map((x) => Date.parse(x) || Infinity)));
   const markManaged = managed && Date.parse(managed) > firstDay && Date.parse(managed) < lastDay;
   const twrLayout = baseLayout({
     showlegend: false,   // the colours and the end labels name the lines
@@ -1893,7 +1892,11 @@ function renderCharts(charts) {
       .concat(markManaged ? [{ type: "line", layer: "below", xref: "x", yref: "paper", x0: managed, x1: managed, y0: 0, y1: 1, line: { color: token("--muted"), width: 1, dash: "dot" } }] : []),
   });
   twrLayout.yaxis = Object.assign({}, twrLayout.yaxis, { ticksuffix: "%" });
-  Plotly.react("chart-twr", twr, twrLayout, CONFIG).then(() => { spreadEndLabels("chart-twr"); markNumericNotes(); zoomCharts(); drawChartScales(); });
+  Plotly.react("chart-twr", twr, twrLayout, CONFIG).then((node) => {
+    node._orig = null;
+    spreadEndLabels("chart-twr"); markNumericNotes(); zoomCharts(); drawChartScales();
+  });
+  if (currentScale("charts") !== "1D") refreshReturnTails(charts);
 }
 
 // ---------------------------------------------------------------- page
@@ -2555,48 +2558,62 @@ function drawChartScales() {
     if (old) old.replaceWith(chips); else { const tools = title.querySelector(".card-tools"); if (tools) tools.before(chips); else title.append(chips); }
   });
 }
-// The return chart over a window: every curve starts at 0% on the window's first day (what each did over the window, not
-// since its own start). All: the curves as they were drawn.
-function rebaseReturns(node, days) {
-  node._orig = node._orig || node.data.map((trace) => ({ x: trace.x.slice(), y: trace.y.slice() }));
-  const start = days ? Date.now() - days * 86400000 : null;
+// RETURN_WINDOW_START
+function returnWindow(traces, days, now) {
+  const start = days ? now - days * 86400000 : null;
   let baseTime = start;
-  // Every view compares like with like (desk policy: one start, one end, one base): the lines start on the first day the
-  // desk and both books all have and end on the last such day (the books are built to yesterday's close, the desk and the
-  // indices run to now), and each is rebased there, so the desk sits between its books. Only the desk and the books set
-  // the window: an index that does not trade at weekends must not cut the others back to Friday.
-  const spans = node._orig.map((trace, i) => [trace, (node.data[i] || {}).name || ""])
-    .filter(([trace, name]) => trace.x.length && /^(total|desk|crypto|stocks)/i.test(name))
-    .map(([trace]) => [new Date(trace.x[0]).getTime(), new Date(trace.x[trace.x.length - 1]).getTime()]);
-  const compared = spans.length > 1;   // the desk alone (no book lines yet) is not cut
-  const commonStart = compared ? Math.max(...spans.map(([first]) => first)) : -Infinity;
-  const commonEnd = compared ? Math.min(...spans.map(([, last]) => last)) : Infinity;
-  const from = Math.max(start ?? -Infinity, commonStart);
-  const cut = node._orig.map((trace) => {
-    const keep = trace.x.map((x) => new Date(x).getTime() <= commonEnd);
-    return { x: trace.x.filter((_, i) => keep[i]), y: trace.y.filter((_, i) => keep[i]) };
-  });
-  const ys = cut.map((trace) => {
-    if (!Number.isFinite(from)) return trace.y;
-    // the base is the last point at or before the window's start (daily points: yesterday's close for a day), so a
-    // short window shows the move from there to now, not a flat line; points before it are dropped
-    let first = -1;
-    trace.x.forEach((x, i) => { if (new Date(x).getTime() <= from) first = i; });
-    if (first < 0) first = trace.x.findIndex((x) => new Date(x).getTime() >= from);
-    if (first < 0) return trace.y;
-    baseTime = Math.min(baseTime ?? Infinity, new Date(trace.x[first]).getTime());
-    trace.x = trace.x.slice(first);
+  // A shared starting window, with each series running through its latest observation.
+  const starts = traces.filter((trace) => trace.x.length && /^(total|desk|crypto|stocks)/i.test(trace.name))
+    .map((trace) => Date.parse(trace.x[0]));
+  const from = Math.max(start ?? -Infinity, starts.length > 1 ? Math.max(...starts) : -Infinity);
+  const rows = traces.map((trace) => {
+    if (!Number.isFinite(from)) return trace;
+    let first = trace.x.findLastIndex((x) => Date.parse(x) <= from);
+    if (first < 0) first = trace.x.findIndex((x) => Date.parse(x) >= from);
+    if (first < 0) return trace;
+    baseTime = Math.min(baseTime ?? Infinity, Date.parse(trace.x[first]));
     const base = 1 + trace.y[first] / 100;
-    return trace.y.slice(first).map((y) => Math.round(10000 * ((1 + y / 100) / base - 1)) / 100);
+    return { ...trace, x: trace.x.slice(first),
+      y: base > 0 ? trace.y.slice(first).map((y) => Math.round(10000 * ((1 + y / 100) / base - 1)) / 100) : trace.y.slice(first) };
   });
-  Plotly.restyle(node, { x: cut.map((trace) => trace.x), y: ys });
+  return { rows, baseTime };
+}
+
+function returnSeriesWithLatest(series, deskAt, points = {}) {
+  return series.map((row) => {
+    const last = row.x.at(-1), lastTime = Date.parse(last);
+    if (!Number.isFinite(lastTime)) return row;
+    if (/^(desk|total)/i.test(row.name)) {
+      return Number.isFinite(deskAt) && deskAt > lastTime
+        ? { ...row, x: [...row.x.slice(0, -1), new Date(deskAt).toISOString()] } : row;
+    }
+    const point = points[row.name];
+    if (!point || !(point.at > lastTime) || !Number.isFinite(point.value) || !row.levels?.length) return row;
+    const at = new Date(point.at).toISOString();
+    const level = point.estimate ? row.levels.at(-1) * (1 + point.value / 100) : point.value;
+    const y = 100 * (level / row.levels[0] - 1);
+    if (!Number.isFinite(y)) return row;
+    const replace = !point.estimate && at.slice(0, 10) === String(last).slice(0, 10);
+    const xs = replace ? row.x.slice(0, -1) : row.x, ys = replace ? row.y.slice(0, -1) : row.y;
+    return { ...row, x: [...xs, at], y: [...ys, y], estimateAt: point.estimate ? at : null, estimateNote: point.note };
+  });
+}
+// RETURN_WINDOW_END
+function returnHover(value, stamp, meta) {
+  return readablePct(value / 100) + (meta?.estimateAt === stamp ? " · " + meta.estimateNote : "");
+}
+function rebaseReturns(node, days) {
+  node._orig = node._orig || node.data.map((trace) => ({ name: trace.name, x: trace.x.slice(), y: trace.y.slice(), meta: trace.meta }));
+  const { rows, baseTime } = returnWindow(node._orig, days, Date.now());
+  Plotly.restyle(node, { x: rows.map((trace) => trace.x), y: rows.map((trace) => trace.y),
+    customdata: rows.map((trace) => trace.y.map((y, i) => returnHover(y, trace.x[i], trace.meta))) });
   const notes = (node.layout.annotations || []).map((note) => Object.assign({}, note));
-  const drawn = ys.map((y, i) => [y, i]).filter(([y]) => y.length);
+  const drawn = rows.filter((trace) => trace.y.length);
   notes.filter((note) => note.xshift === 7).forEach((note, k) => {
-    const [y, i] = drawn[k] || [];
-    if (!y) return;
-    note.y = y[y.length - 1];
-    note.text = note.text.replace(/-?[\d.]+%$/, readablePct(y[y.length - 1] / 100));
+    const y = drawn[k]?.y.at(-1);
+    if (!Number.isFinite(y)) return;
+    note.y = y;
+    note.text = note.text.replace(/-?[\d.]+%$/, readablePct(y / 100));
   });
   Plotly.relayout(node, { annotations: notes });
   return baseTime;
@@ -2614,7 +2631,7 @@ function windowedLayout(layout, from, to) {
 }
 // WINDOWED_LAYOUT_END
 // INTRADAY_BOOK_START
-function intradayBookMoves(positions, quotes, start, end, equity) {
+function intradayBookMoves(positions, quotes, start, end, equity, includeEnd = false) {
   const hour = 3600000, first = Math.ceil(start / hour) * hour;
   if (!(equity > 0)) return [];
   return ["crypto", "stocks"].flatMap((kind) => {
@@ -2632,13 +2649,16 @@ function intradayBookMoves(positions, quotes, start, end, equity) {
     });
     if (!priced.length) return [];
     const points = [];
-    for (let t = first; t <= end; t += hour) {
+    const times = [];
+    for (let t = first; t <= end; t += hour) times.push(t);
+    if (includeEnd && times.at(-1) !== end) times.push(end);
+    for (const t of times) {
       const marks = priced.map(({ rows, venue }) => mark(rows, t, venue));
       if (marks.some((price) => !(price > 0))) continue;
       const pnl = priced.reduce((total, p, i) => total + p.value * (marks[i] - p.base) / p.current, 0);
       points.push([t, 100 * pnl / equity]);
     }
-    if (points.length < 3) return [];
+    if (points.length < (includeEnd ? 2 : 3)) return [];
     const gross = (rows, valueOf) => rows.reduce((total, row) => total + Math.abs(valueOf(row)), 0);
     return [{ kind, points, coverage: gross(priced, (p) => p.value) / gross(group, (p) => p[3]) }];
   });
@@ -2657,7 +2677,7 @@ function bookHourlyQuotes(venue, symbol) {
   const promise = request.then((response) => {
     if (!response.ok) throw new Error("Hourly market history unavailable");
     return response.json();
-  }).then((body) => (venue === "hl" ? body.map((row) => [row.t + 3600000, Number(row.c)]) : body.closes)
+  }).then((body) => (venue === "hl" ? body.map((row) => [row.t + 3600000, Number(row.c)]) : [...body.closes, ...(body.latest ? [body.latest] : [])])
     .filter(([t, price]) => Number.isFinite(t) && Number.isFinite(price) && price > 0 && t <= now)
     .sort((a, b) => a[0] - b[0])).catch(() => []);
   if (intradayBookQuoteCache.size >= 128) intradayBookQuoteCache.delete(intradayBookQuoteCache.keys().next().value);
@@ -2665,7 +2685,7 @@ function bookHourlyQuotes(venue, symbol) {
   return promise;
 }
 
-async function loadIntradayBooks(data, start, end) {
+async function loadIntradayBooks(data, start, end, includeEnd = false) {
   const positions = data.bookPositions || [];
   const supported = positions.filter(([venue, , , value, assetClass]) =>
     isNum(value) && value !== 0 && (venue === "hl" || (venue === "ib" && assetClass === "equity")));
@@ -2674,7 +2694,49 @@ async function loadIntradayBooks(data, start, end) {
   for (let i = 0; i < symbols.length; i += 6) {
     await Promise.all(symbols.slice(i, i + 6).map(async ([key, [venue, symbol]]) => quotes.set(key, await bookHourlyQuotes(venue, symbol))));
   }
-  return intradayBookMoves(positions, quotes, start, end, data.tradingEquity);
+  if (includeEnd) {
+    for (const [venue, symbol, , , , live] of supported) {
+      const key = venue + ":" + symbol;
+      if (venue === "hl" && live > 0 && quotes.get(key)?.length) {
+        quotes.set(key, [...quotes.get(key).filter(([time]) => time < end), [end, live]]);
+      }
+    }
+  }
+  return intradayBookMoves(positions, quotes, start, end, data.tradingEquity, includeEnd);
+}
+
+const returnTails = new WeakMap();
+function refreshReturnTails(charts) {
+  const data = latest?.data?.intraday, end = Date.now();
+  if (!data || !charts.twr?.length || returnTails.has(charts)) return;
+  const pending = {};
+  returnTails.set(charts, pending);
+  const points = {};
+  const jobs = charts.twr.map(async (series) => {
+    const { name } = series;
+    if (/^(crypto|stocks)$/i.test(name)) {
+      const from = Date.parse(series.x.at(-1)) + 86400000;   // the previous daily book point is the close of that UTC day
+      if (!(from < end && end - from < 86400000)) return;
+      const rows = await loadIntradayBooks(data, from, end, true);
+      const book = rows.find(({ kind }) => kind === name.toLowerCase());
+      const [at, value] = book?.points.at(-1) || [];
+      if (at > from) points[name] = { at, value, estimate: true,
+        note: `current holdings, price moves only · ${Math.round(book.coverage * 100)}% of gross exposure priced` };
+      return;
+    }
+    if (/^btc$/i.test(name) || /^S&P/i.test(name)) {
+      const coin = /^btc$/i.test(name) ? "BTC" : "xyz:SP500";
+      const context = (await tickerContexts([coin], AbortSignal.timeout(7000)))[coin];
+      if (context?.price > 0) points[name] = { at: Date.now(), value: context.price };
+    } else if (/^spy$/i.test(name)) {
+      const [at, value] = (await bookHourlyQuotes("ib", "SPY")).at(-1) || [];
+      if (value > 0) points[name] = { at, value };
+    }
+  });
+  Promise.allSettled(jobs).then(() => {
+    pending.points = points;
+    if (Object.keys(points).length && latest?.data?.charts === charts && currentScale("charts") !== "1D") renderCharts(charts);
+  });
 }
 
 function drawIntraday(node, days) {
@@ -5202,10 +5264,10 @@ function tickerState() {
 function saveTicker(state) { try { localStorage.setItem(TICKER_KEY, JSON.stringify(state)); } catch (e) {} }
 const lastPrices = {};
 const priceText = (value) => (value >= 1000 ? Math.round(value).toLocaleString("en-US") : value >= 100 ? value.toFixed(1).replace(/\.0$/, "") : String(Number(value.toPrecision(5))));   // thousands: whole numbers
-async function tickerContexts(assets) {   // name -> {price, previous} for the main DEX and, when asked for, the xyz DEX
+async function tickerContexts(assets, signal) {   // name -> {price, previous} for the main DEX and, when asked for, the xyz DEX
   const out = {};
   const read = async (dex) => {
-    const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" },
+    const response = await fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, signal,
       body: JSON.stringify(Object.assign({ type: "metaAndAssetCtxs" }, dex ? { dex } : {})) });
     const [meta, contexts] = await response.json();
     meta.universe.forEach((asset, i) => { out[asset.name] = { price: Number(contexts[i].markPx), previous: Number(contexts[i].prevDayPx) }; });
