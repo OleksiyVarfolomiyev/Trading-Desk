@@ -1883,7 +1883,9 @@ function renderCharts(charts) {
     : /^(total|desk)/i.test(s.name) ? { width: 2.6, color: token("--ink") }
     : /^btc/i.test(s.name) ? { width: 1.4, dash: "dot", color: token("--kind-crypto") }
     : { width: 1.4, dash: "dot", color: token("--kind-stocks") };
-  const series = returnSeriesWithLatest(charts.twr || [], charts.desk_twr_at, returnTails.get(charts)?.points);
+  const weekly = currentScale("charts") === "1W";
+  const week = weekly ? weeklyReturnWindow(charts.twr || [], latest?.data?.intraday || {}, eraWindow(7), Date.now()) : null;
+  const series = week ? week.rows : returnSeriesWithLatest(charts.twr || [], charts.desk_twr_at, returnTails.get(charts)?.points);
   const twr = series.map((s, i) => colorHover({
     type: "scatter", mode: "lines", name: s.name, x: s.x, y: s.y,
     line: Object.assign({ shape: "linear" }, lineFor(s, i)), meta: { estimateAt: s.estimateAt, estimateNote: s.estimateNote },
@@ -1907,11 +1909,17 @@ function renderCharts(charts) {
       .concat(markManaged ? [{ type: "line", layer: "below", xref: "x", yref: "paper", x0: managed, x1: managed, y0: 0, y1: 1, line: { color: token("--muted"), width: 1, dash: "dot" } }] : []),
   });
   twrLayout.yaxis = Object.assign({}, twrLayout.yaxis, { ticksuffix: "%" });
+  if (week) {
+    Object.assign(twrLayout, windowedLayout(twrLayout, week.start, week.end));
+    if (!series.length) twrLayout.annotations.push({ xref: "paper", yref: "paper", x: 0.5, y: 0.5, showarrow: false,
+      text: "No shared weekly observations", font: { color: token("--muted") } });
+  }
   Plotly.react("chart-twr", twr, twrLayout, CONFIG).then((node) => {
     node._orig = null;
+    if (week) node._intraday = false;
     spreadEndLabels("chart-twr"); markNumericNotes(); zoomCharts(); drawChartScales();
   });
-  if (currentScale("charts") !== "1D") refreshReturnTails(charts);
+  if (!weekly && currentScale("charts") !== "1D") refreshReturnTails(charts);
 }
 
 // ---------------------------------------------------------------- page
@@ -2495,6 +2503,7 @@ function setScale(element, scale) {
   else if (element === "positions") { redrawPositions(); drawPositionScales(); }
   else if (element === "candidates") { renderTable("candidates", applyView("candidates", latest.data.tables.candidates, {})); drawChartScales(); }
   else if (element === "performance") { renderTable("performance", applyView("performance", latest.data.tables.performance, { deskValue: (latest.data.kpis || {}).desk_value })); drawChartScales(); }
+  else if (element === "charts") { renderCharts(latest.data.charts); }
   else { zoomCharts(); drawChartScales(); }
 }
 function scaleChips(element, skip = [], active = currentScale(element)) {   // the element's own scale buttons, shown on its hover
@@ -2613,6 +2622,33 @@ function returnSeriesWithLatest(series, deskAt, points = {}) {
     return { ...row, x: [...xs, at], y: [...ys, y], estimateAt: point.estimate ? at : null, estimateNote: point.note };
   });
 }
+
+function weeklyReturnWindow(series, intraday, days, now) {
+  const hour = 3600000, day = 24 * hour;
+  const boundary = Math.floor(now / day) * day, cutoff = boundary - days * day;
+  const valid = (time, level) => time >= cutoff && time <= boundary && Number.isFinite(level) && level > 0;
+  // Daily book levels are end-of-day marks. The hourly benchmark feed timestamps the candle's open.
+  const books = series.filter(({ name }) => /^(total|desk|crypto|stocks)/i.test(name)).map(({ name, x, levels }) => ({
+    name, marks: new Map(x.flatMap((date, i) => {
+      const time = Date.parse(date) + day, level = levels?.[i];
+      return valid(time, level) ? [[time, level]] : [];
+    })),
+  }));
+  const benchmarks = [["BTC", intraday.BTC], ["S&P 500 perp", intraday["S&P500"]]].map(([name, points]) => ({
+    name, marks: new Map((points || []).flatMap(([open, close]) => {
+      const time = open + hour;
+      return time % day === 0 && valid(time, close) ? [[time, close]] : [];
+    })),
+  }));
+  const lines = [...books, ...benchmarks];
+  const desk = books.find(({ name }) => /^(total|desk)/i.test(name));
+  const dates = [...(desk?.marks.keys() || [])].filter((time) => lines.every(({ marks }) => marks.has(time))).sort((a, b) => a - b);
+  if (dates.length < 2) return { rows: [], start: cutoff, end: boundary };
+  const start = dates[0], end = dates.at(-1), x = dates.map((time) => new Date(time).toISOString());
+  const rows = lines.map(({ name, marks }) => ({ name, x,
+    y: dates.map((time) => Math.round(10000 * (marks.get(time) / marks.get(start) - 1)) / 100) }));
+  return { rows, start, end };
+}
 // RETURN_WINDOW_END
 function returnHover(value, stamp, meta) {
   return readablePct(value / 100) + (meta?.estimateAt === stamp ? " · " + meta.estimateNote : "");
@@ -2634,7 +2670,7 @@ function rebaseReturns(node, days) {
   return baseTime;
 }
 
-// The return chart over a day or a week at hourly resolution (daily points make a straight line): the HL wallets' PnL over their
+// The return chart over a day at hourly resolution (daily points make a straight line): the HL wallets' PnL over their
 // value at the window's start, BTC and the S&P 500 perp, each from the window's first hour. A month or more keeps the daily curves.
 // WINDOWED_LAYOUT_START
 // A day or week view runs over exactly its window: an explicit x range, and shapes anchored to the x axis outside it (the
@@ -2746,7 +2782,7 @@ function refreshReturnTails(charts) {
   pending.points = {};
   const record = (name, point) => {
     pending.points[name] = point;
-    if (latest?.data?.charts === charts && currentScale("charts") !== "1D") renderCharts(charts);
+    if (latest?.data?.charts === charts && !["1D", "1W"].includes(currentScale("charts"))) renderCharts(charts);
   };
   const jobs = charts.twr.map(async (series) => {
     const { name } = series;
@@ -2867,7 +2903,8 @@ function zoomCharts() {   // the value charts show the chosen window (All: the w
   ["chart-value", "chart-twr"].forEach((id) => {
     const node = document.getElementById(id);
     if (!node || !node.data) return;
-    if (id === "chart-twr" && days && days <= 1) { if (drawIntraday(node, days)) return; }          // a day: hourly (a week and up: the daily closes every line has)
+    if (id === "chart-twr" && currentScale("charts") === "1W") return;
+    if (id === "chart-twr" && days && days <= 1) { if (drawIntraday(node, days)) return; }
     else if (id === "chart-value" && days && days <= 7) { if (drawIntradayValue(node, days)) return; }
     else if ((id === "chart-twr" || id === "chart-value") && node._intraday) { node._intraday = false; if (latest && latest.data) renderCharts(latest.data.charts); return; }   // back to the daily curves
     const rebasedFrom = id === "chart-twr" ? rebaseReturns(node, days) : null;

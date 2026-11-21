@@ -91,6 +91,38 @@ assert.equal(rows[0].y.at(-1), 5);
 """
         subprocess.run([NODE, "-e", script], check=True, capture_output=True, text=True)
 
+    @unittest.skipUnless(NODE, "node is not installed here (the desk server has it)")
+    def test_week_uses_perp_closes_and_only_shared_start_and_end_marks(self):
+        core = re.search(r"// RETURN_WINDOW_START\n(.*?)// RETURN_WINDOW_END", APP, re.S).group(1)
+        script = core + """
+const assert = require("node:assert/strict");
+const hour = 3600000;
+const at = (day) => Date.parse("2026-11-" + day + "T00:00:00Z");
+const days = ["13", "14", "15", "19", "20", "21"].map(day => "2026-11-" + day);
+const line = (name, levels) => ({name, x: days, levels});
+const series = [
+  line("Desk (HL + IB)", [90, 100, 104, 110, 112, 115]),
+  line("crypto", [90, 100, 105, 118, 110, 117]),
+  line("stocks", [null, 100, 103, 106, 107, null]),
+  line("SPY", [400, null, null, 412, 415, null]),
+];
+const closes = (marks) => marks.map(([day, price]) => [at(day) - hour, price]);
+const intraday = {
+  BTC: closes([["14", 80], ["15", 100], ["16", 98], ["20", 105], ["21", 108], ["22", 110]]),
+  "S&P500": closes([["14", 85], ["15", 100], ["20", 103], ["22", 112]]),
+};
+const result = weeklyReturnWindow(series, intraday, 7, at("21") + 12 * hour);
+assert.equal(result.start, at("15"));
+assert.equal(result.end, at("20"));
+assert.deepEqual(result.rows.map(r => r.name), ["Desk (HL + IB)", "crypto", "stocks", "BTC", "S&P 500 perp"]);
+assert.deepEqual(result.rows.map(r => r.y), [[0, 10], [0, 18], [0, 6], [0, 5], [0, 3]]);
+for (const row of result.rows) {
+  assert.deepEqual(row.x.map(Date.parse), [at("15"), at("20")]);
+}
+assert.deepEqual(weeklyReturnWindow(series, {BTC: intraday.BTC}, 7, at("21")).rows, []);
+"""
+        subprocess.run([NODE, "-e", script], check=True, capture_output=True, text=True)
+
 
 if __name__ == "__main__":
     unittest.main()
