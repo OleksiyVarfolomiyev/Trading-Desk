@@ -58,6 +58,21 @@ console.log(JSON.stringify({ closes: out.rows.map((r) => r.close), volumes: out.
         self.assertEqual(out["volumes"], [100, 100, 100, 10, 10])
         self.assertEqual(out["factor"], 0.1)
 
+    @unittest.skipUnless(NODE, "node is not installed here (the desk server has it)")
+    def test_hourly_stock_book_uses_split_adjusted_marks(self):
+        split = re.search(r"function splitSnapChart\(.*?function adjustHourlySplitMarks\(.*?\n}\n", APP, re.S).group(0)
+        book = re.search(r"// INTRADAY_BOOK_START\n(.*?)// INTRADAY_BOOK_END", APP, re.S).group(1)
+        out = run(split + book + """
+const h = 3600000;
+const marks = adjustHourlySplitMarks([[0, 753.69], [h, 91.95], [2*h, 92.261]]);
+const positions = [["hl", "xyz:SNDK", "stocks", 300, "tradfi perp", 92.261]];
+const [line] = intradayBookMoves(positions, new Map([["hl:xyz:SNDK", marks]]), 0, 2*h, 1000);
+console.log(JSON.stringify({marks, first: line.points[0][1], last: line.points.at(-1)[1]}));
+""")
+        self.assertAlmostEqual(out["marks"][0][1], 753.69 / 8)
+        self.assertEqual(out["first"], 0)
+        self.assertAlmostEqual(out["last"], 30 * (92.261 - 753.69 / 8) / 92.261)
+
 
 if __name__ == "__main__":
     unittest.main()

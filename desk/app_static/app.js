@@ -2680,9 +2680,12 @@ function bookHourlyQuotes(venue, symbol, hours = 27) {
   const promise = request.then((response) => {
     if (!response.ok) throw new Error("Hourly market history unavailable");
     return response.json();
-  }).then((body) => (venue === "hl" ? body.map((row) => [row.t + 3600000, Number(row.c)]) : [...body.closes, ...(body.latest ? [body.latest] : [])])
-    .filter(([t, price]) => Number.isFinite(t) && Number.isFinite(price) && price > 0 && t <= now)
-    .sort((a, b) => a[0] - b[0])).catch(() => []);
+  }).then((body) => {
+    const marks = (venue === "hl" ? body.map((row) => [row.t + 3600000, Number(row.c)]) : [...body.closes, ...(body.latest ? [body.latest] : [])])
+      .filter(([t, price]) => Number.isFinite(t) && Number.isFinite(price) && price > 0 && t <= now)
+      .sort((a, b) => a[0] - b[0]);
+    return venue === "hl" && symbol.includes(":") ? adjustHourlySplitMarks(marks) : marks;
+  }).catch(() => []);
   if (intradayBookQuoteCache.size >= 128) intradayBookQuoteCache.delete(intradayBookQuoteCache.keys().next().value);
   intradayBookQuoteCache.set(key, { at: now, promise });
   return promise;
@@ -3908,9 +3911,9 @@ const CANDLE_HORIZON_MS = 30 * 86400000, MIN_VISIBLE_CANDLES = 24, MAX_CANDLES =
 function splitSnapChart(ratio) {
   if (!(ratio > 0)) return null;
   let best = null, error = Infinity;
-  for (const n of [2, 3, 4, 5, 10, 20, 50]) for (const f of [1 / n, n]) {
+  for (const n of [2, 3, 4, 5, 8, 10, 20, 50]) for (const f of [1 / n, n]) {
     const miss = Math.abs(ratio / f - 1);
-    if (miss <= (n < 5 ? 0.03 : 0.2) && miss < error) { best = f; error = miss; }
+    if (miss <= (n < 5 || n === 8 ? 0.03 : 0.2) && miss < error) { best = f; error = miss; }
   }
   return best;
 }
@@ -3924,6 +3927,10 @@ function adjustCandleSplits(rows) {   // rows: oldest first, {time, open, high, 
   if (!latest) return { rows, factor: null };
   return { factor: latest, rows: rows.map((r, i) => ({ ...r, open: r.open * factors[i], high: r.high * factors[i], low: r.low * factors[i],
     close: r.close * factors[i], volume: r.volume / factors[i] })) };
+}
+function adjustHourlySplitMarks(marks) {
+  const { rows } = adjustCandleSplits(marks.map(([time, close]) => ({ time, open: close, high: close, low: close, close, volume: 0 })));
+  return rows.map(({ time, close }) => [time, close]);
 }
 // A symbol in a highlight (or the strip) opens the asset as a tile at the top of the page: price and candles (HL markets),
 // your position in it, links to its page, and the sensible actions for where it stands. The action buttons do not trade:
