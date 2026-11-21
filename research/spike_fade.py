@@ -17,6 +17,8 @@ from pathlib import Path
 import pandas as pd
 
 from desk.hl.trade_analytics import post_info
+from desk.risk import MAX_TOTAL_RISK_PCT, RESERVE_PCT
+from execution.hl_trade import MIN_ORDER_VALUE_USD, fetch_daily_candles, fetch_funding_history, fetch_markets, size_trade
 
 MEMES = ("kPEPE", "kBONK", "DOGE", "WIF", "PENGU", "FARTCOIN", "PUMP", "TRUMP")
 HOUR_MS = 3600_000
@@ -211,19 +213,19 @@ def budget_notice(state: dict, marked_pnl: float) -> dict | None:
     return None
 
 
-def paper_step(path: Path, budget: float, fraction: float, *, learn: bool = False) -> dict:
+def paper_step(path: Path, budget: float, *, learn: bool = False) -> dict:
     """One position at a time, with marked budget PnL and a one-time notice per breach."""
-    if not math.isfinite(budget) or budget <= 0 or not 0.10 <= fraction <= 0.20:
-        raise ValueError("Set a positive paper budget and an entry fraction from 10% to 20%")
+    if not math.isfinite(budget) or budget <= 0:
+        raise ValueError("Set a positive paper budget")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.with_suffix(".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         state = json.loads(path.read_text()) if path.exists() else {
-            "budget": budget, "fraction": fraction, "position": None, "last_bar": {}, "realized": 0.0,
+            "budget": budget, "position": None, "last_bar": {}, "realized": 0.0,
             "below_notice": False, "observed_costs": [], "rule": list(DEFAULT_RULE),
         }
-        if (state.get("budget"), state.get("fraction")) != (budget, fraction):
-            raise ValueError("Use the budget and fraction already recorded for this state file")
+        if state["budget"] != budget:
+            raise ValueError("Use the budget already recorded for this state file")
         if learn and state["position"] is None:
             try:
                 calibrate_paper_state(state)
@@ -260,21 +262,36 @@ def paper_step(path: Path, budget: float, fraction: float, *, learn: bool = Fals
             now = int(time.time() * 1000)
             match = next((s for s in signals if s["spike"] and now - state["last_bar"].get(s["coin"], 0) >= 24 * HOUR_MS
                           and now - s["bar"] < 30 * 60_000), None)
-            notional = min(budget, budget + state["realized"]) * fraction
+            sizing_equity = min(budget, budget + state["realized"])
             result = {"status": "no eligible spike", "signals": signals}
-            if match is not None and notional > 0:
+            if match is not None and sizing_equity <= 0:
+                result = {"status": "paper budget exhausted"}
+            if match is not None and sizing_equity > 0:
                 coin = match["coin"]
-                book = post_info({"type": "l2Book", "coin": coin}, timeout=8)
-                bid, ask = (float(side[0]["px"]) for side in book["levels"])
-                quantity = notional / bid
-                entry = paper_fill(book, buy=False, quantity=quantity)
-                mark = paper_fill(book, buy=True, quantity=quantity)
-                position = {"coin": coin, "quantity": quantity, "entry": entry, "entered": int(time.time() * 1000),
-                            "hold_hours": hold, "entry_slippage": max(0, 1 - entry / ((bid + ask) / 2))}
-                marked_pnl = net_cover(position, mark)
-                state["position"] = position
-                state["last_bar"][coin] = match["bar"]
-                result = {"status": "short opened", "position": position}
+                daily = fetch_daily_candles(coin)
+                funding = fetch_funding_history(coin)
+                market = fetch_markets([""]).get(coin)
+                if market is None:
+                    raise ValueError(f"No usable Hyperliquid market metadata for {coin}")
+                # One position at a time. The subaccount's entire aggregate headroom and usable margin are free.
+                plan = size_trade(coin, "", "SHORT", market, daily, funding, sizing_equity,
+                                  sizing_equity * MAX_TOTAL_RISK_PCT, sizing_equity * (1 - RESERVE_PCT), FEE, FEE)
+                quantity = plan.quantity
+                result = {"status": plan.block_reason or "below minimum order value", "coin": coin,
+                          "planned_notional": quantity * market.mark_price, "risk_usd": plan.risk_budget}
+                if not plan.block_reason:
+                    book = post_info({"type": "l2Book", "coin": coin}, timeout=8)
+                    entry = paper_fill(book, buy=False, quantity=quantity)
+                    if quantity * entry >= MIN_ORDER_VALUE_USD:
+                        mark = paper_fill(book, buy=True, quantity=quantity)
+                        mid = sum(float(side[0]["px"]) for side in book["levels"]) / 2
+                        position = {"coin": coin, "quantity": quantity, "entry": entry, "entered": int(time.time() * 1000),
+                                    "hold_hours": hold, "entry_slippage": max(0, 1 - entry / mid),
+                                    "risk_usd": plan.risk_budget}
+                        marked_pnl = net_cover(position, mark)
+                        state["position"] = position
+                        state["last_bar"][coin] = match["bar"]
+                        result = {"status": "short opened", "position": position}
         notice = budget_notice(state, marked_pnl)
         if notice:
             state["notice"] = notice
@@ -295,7 +312,8 @@ def main() -> int:
     parser.add_argument("--cache", type=Path, default=Path("data/spike_fade_15m.csv.gz"))
     parser.add_argument("--state", type=Path)
     parser.add_argument("--budget", type=float)
-    parser.add_argument("--fraction", type=float, default=0.10)
+    # Accept the old systemd command line while deployments pick up the new unit.
+    parser.add_argument("--fraction", type=float, help=argparse.SUPPRESS)
     parser.add_argument("--interval", type=int, default=60)
     args = parser.parse_args()
     if args.mode in ("paper-step", "paper-watch") and (args.state is None or args.budget is None):
@@ -319,11 +337,11 @@ def main() -> int:
     elif args.mode == "paper-smoke":
         paper_round_trip("DOGE")
     elif args.mode == "paper-step":
-        print(json.dumps(paper_step(args.state, args.budget, args.fraction)), flush=True)
+        print(json.dumps(paper_step(args.state, args.budget)), flush=True)
     elif args.mode == "paper-watch":
         while True:
             try:
-                print(json.dumps(paper_step(args.state, args.budget, args.fraction, learn=True)), flush=True)
+                print(json.dumps(paper_step(args.state, args.budget, learn=True)), flush=True)
             except (OSError, ValueError, RuntimeError) as exc:
                 print(json.dumps({"mode": "paper", "error": str(exc)}), flush=True)
             time.sleep(max(args.interval, 60))
