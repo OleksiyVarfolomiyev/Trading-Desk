@@ -175,7 +175,13 @@ class LogAggregateTests(unittest.TestCase):
         self.assertEqual(trade["n"], 2)
         self.assertAlmostEqual(trade["Share of log"], 2 / 3)
         self.assertEqual((trade["Asked"], trade["Unprompted"], trade["Scored on price"]), (0.5, 0.0, 0.5))
-        self.assertEqual(frame.set_index("Kind").loc["process", "Linked commit"], 1.0)
+        self.assertEqual(frame.set_index("Kind").loc["process", "Implementation recorded"], 1.0)
+
+    def test_log_hides_implementation_column_without_any_links(self):
+        rows = [{"at": "2026-11-20", "kind": "process"}]
+        frame = s.log_frame({"rows": rows, "counts": s.counts(rows), "results": [],
+                             "followups": [{"kind": "process", "done": False}]})
+        self.assertNotIn("Implementation recorded", frame)
 
     def test_voided_rows_are_excluded(self):
         import tempfile

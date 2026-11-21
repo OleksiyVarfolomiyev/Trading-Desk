@@ -428,6 +428,7 @@ def log_frame(data: dict):
     done = defaultdict(list)
     for r in data["followups"]:
         done[r["kind"]].append(r["done"])
+    show_implementation = any(any(links) for links in done.values())
     scored = defaultdict(int)
     for r in data["results"]:
         scored[r["kind"]] += any(value is not None for value in r["moves"].values())
@@ -440,8 +441,9 @@ def log_frame(data: dict):
         rows.append({"Kind": kind, "Share of log": n / data["counts"]["n"], "n": n,
                      "Asked": sum(r.get("trigger") == "asked" for r in group) / n,
                      "Unprompted": sum(r.get("trigger") == "unprompted" for r in group) / n,
-                     "Scored on price": scored[kind] / n,
-                     "Linked commit": (sum(d) / len(d)) if d else None})
+                     "Scored on price": scored[kind] / n})
+        if show_implementation:
+            rows[-1]["Implementation recorded"] = sum(d) / len(d) if d else None
     frame = pd.DataFrame(rows)
     return frame
 
@@ -453,8 +455,10 @@ def publish_log(data: dict) -> bool:
     if frame.empty:
         return False
     formats = {column: "pct" for column in frame.columns if column not in ("Kind", "n")}
-    tile_feed.publish(frame, "Suggestions log",
-                      reason="Share of all suggestions. Asked, unprompted and price-scored rates are within each kind. Commit links are a share of eligible follow-ups.",
+    reason = "Share of all suggestions. Asked, unprompted and price-scored rates are within each kind."
+    if "Implementation recorded" in frame:
+        reason += " Implementation recorded counts eligible suggestions explicitly linked to a code change."
+    tile_feed.publish(frame, "Suggestions log", reason=reason,
                       relevance=0.1, hours=24 * 14, key="claude-suggestions-log", formats={**formats, "n": "int"}, push=False)
     return True
 
