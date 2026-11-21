@@ -128,6 +128,16 @@ def yahoo_closes(ticker: str, start: pd.Timestamp, end: pd.Timestamp, strict: bo
     return pd.Series(closes, index=index, dtype=float).dropna().groupby(level=0).last()
 
 
+def yahoo_hourly_closes(ticker: str) -> list[list[float]]:
+    """Recent hourly stock closes stamped at the end of the bar, in UTC milliseconds."""
+    response = requests.get(YAHOO_CHART + ticker, timeout=8, headers={"User-Agent": "Mozilla/5.0 (trading desk)"},
+                            params={"interval": "1h", "range": "5d"})
+    response.raise_for_status()
+    result, = response.json()["chart"]["result"]
+    closes = result["indicators"]["quote"][0]["close"]
+    return [[(t + 3600) * 1000, close] for t, close in zip(result["timestamp"], closes) if close and close > 0]
+
+
 def rebuild_nav(path: Path | str) -> tuple[pd.DataFrame, list[str]]:
     """Daily ``date, nav, flows`` in USD from the first deposit to the statement's last event."""
     sections = read_sections(path)

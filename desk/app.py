@@ -23,6 +23,7 @@ import datetime as dt
 import faulthandler
 import json
 import math
+import re
 import signal
 import sys
 import threading
@@ -79,6 +80,13 @@ def intraday_series(desk) -> dict:
     import pandas as _pd
 
     out = {"desk": [], "matched_desk": [], "accounts": [], "BTC": [], "S&P500": []}
+    snapshots = [snapshot for snapshot in desk.overview.snapshots if snapshot.venue in ("hl", "ib")]
+    out["tradingEquity"] = float(sum(snapshot.equity_usd for snapshot in snapshots))
+    out["bookPositions"] = [
+        [position.venue, position.symbol, "crypto" if position.asset_class.startswith("crypto") else "stocks",
+         float(position.notional_usd), position.asset_class]
+        for snapshot in snapshots for position in snapshot.positions if math.isfinite(position.notional_usd)
+    ]
     try:
         from desk.accounts import accounts_for
 
@@ -945,6 +953,13 @@ def make_handler(dashboard: DeskApp, port: int):
                 self._send(json.dumps(tile_catalog.STATUS).encode(), "application/json")
             elif path == "/api/state":
                 self._send(dashboard.state_json(), "application/json")
+            elif (stock := re.fullmatch(r"/stock-hourly/([A-Z0-9.-]{1,16})", path)):
+                from desk.venues.ib_statement import yahoo_hourly_closes
+
+                try:
+                    self._send(json.dumps({"closes": yahoo_hourly_closes(stock[1])}).encode(), "application/json")
+                except (ValueError, OSError, KeyError):
+                    self.send_error(502)
             elif path in STATIC_FILES:
                 name, content_type = STATIC_FILES[path]
                 self._send((STATIC_DIR / name).read_bytes(), content_type)

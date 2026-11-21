@@ -48,6 +48,25 @@ console.log(JSON.stringify(result));
         self.assertEqual(result["range"], ["2026-11-19T12:00:00.000Z", "2026-11-20T12:00:00.000Z"])
         self.assertEqual(result["type"], "date")
 
+    @unittest.skipUnless(NODE, "node is not installed here (the desk server has it)")
+    def test_intraday_book_estimates_start_at_zero_and_use_signed_exposure(self):
+        core = re.search(r"// INTRADAY_BOOK_START\n(.*?)// INTRADAY_BOOK_END", APP, re.S).group(1)
+        script = core + """
+const assert = require("node:assert/strict");
+const hour = 3600000;
+const stocks = [[0, 100], [hour, 105], [2 * hour, 110]];
+const crypto = [[0, 10], [hour, 8], [2 * hour, 5]];
+const quotes = new Map([["hl:BTC", crypto], ["ib:TEST", stocks]]);
+const positions = [["hl", "BTC", "crypto", -100], ["ib", "TEST", "stocks", 110], ["ib", "MISSING", "stocks", 110]];
+const [cryptoBook, stocksBook] = intradayBookMoves(positions, quotes, 0, 2 * hour, 1000);
+assert.equal(cryptoBook.points[0][1], 0);
+assert.equal(cryptoBook.points[2][1], 10);
+assert.equal(stocksBook.points[2][1], 1);
+assert.equal(stocksBook.coverage, 0.5);
+assert.deepEqual(intradayBookMoves(positions, new Map(), 0, 2 * hour, 1000), []);
+"""
+        subprocess.run([NODE, "-e", script], check=True, capture_output=True, text=True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2613,10 +2613,83 @@ function windowedLayout(layout, from, to) {
   return { shapes, xaxis: Object.assign({}, layout.xaxis, { autorange: false, range: [new Date(from).toISOString(), new Date(to).toISOString()] }) };
 }
 // WINDOWED_LAYOUT_END
+// INTRADAY_BOOK_START
+function intradayBookMoves(positions, quotes, start, end, equity) {
+  const hour = 3600000, first = Math.ceil(start / hour) * hour;
+  if (!(equity > 0)) return [];
+  return ["crypto", "stocks"].flatMap((kind) => {
+    const group = positions.filter((row) => row[2] === kind && Number.isFinite(row[3]) && row[3] !== 0);
+    const mark = (rows, time, venue) => {
+      const row = rows.findLast(([stamp]) => stamp <= time);
+      const maxAge = venue === "hl" ? 75 * 60000 : 5 * 24 * hour;
+      return row && time - row[0] <= maxAge ? row[1] : null;
+    };
+    const priced = group.flatMap(([venue, symbol, , value]) => {
+      const rows = quotes.get(venue + ":" + symbol) || [];
+      const base = mark(rows, first, venue);
+      const current = mark(rows, end, venue);
+      return base > 0 && current > 0 ? [{ venue, value, rows, base, current }] : [];
+    });
+    if (!priced.length) return [];
+    const points = [];
+    for (let t = first; t <= end; t += hour) {
+      const marks = priced.map(({ rows, venue }) => mark(rows, t, venue));
+      if (marks.some((price) => !(price > 0))) continue;
+      const pnl = priced.reduce((total, p, i) => total + p.value * (marks[i] - p.base) / p.current, 0);
+      points.push([t, 100 * pnl / equity]);
+    }
+    if (points.length < 3) return [];
+    const gross = (rows, valueOf) => rows.reduce((total, row) => total + Math.abs(valueOf(row)), 0);
+    return [{ kind, points, coverage: gross(priced, (p) => p.value) / gross(group, (p) => p[3]) }];
+  });
+}
+// INTRADAY_BOOK_END
+
+const intradayBookQuoteCache = new Map();
+function bookHourlyQuotes(venue, symbol) {
+  const key = venue + ":" + symbol, saved = intradayBookQuoteCache.get(key), now = Date.now();
+  if (saved && now - saved.at < 5 * 60000) return saved.promise;
+  const signal = AbortSignal.timeout(8000);
+  const request = venue === "hl"
+    ? fetch(HL_INFO, { method: "POST", headers: { "Content-Type": "application/json" }, signal,
+      body: JSON.stringify({ type: "candleSnapshot", req: { coin: symbol, interval: "1h", startTime: now - 27 * 3600000, endTime: now } }) })
+    : fetch("/stock-hourly/" + encodeURIComponent(symbol.toUpperCase().replace(/ /g, "-")), { signal });
+  const promise = request.then((response) => {
+    if (!response.ok) throw new Error("Hourly market history unavailable");
+    return response.json();
+  }).then((body) => (venue === "hl" ? body.map((row) => [row.t + 3600000, Number(row.c)]) : body.closes)
+    .filter(([t, price]) => Number.isFinite(t) && Number.isFinite(price) && price > 0 && t <= now)
+    .sort((a, b) => a[0] - b[0])).catch(() => []);
+  if (intradayBookQuoteCache.size >= 128) intradayBookQuoteCache.delete(intradayBookQuoteCache.keys().next().value);
+  intradayBookQuoteCache.set(key, { at: now, promise });
+  return promise;
+}
+
+async function loadIntradayBooks(data, start, end) {
+  const positions = data.bookPositions || [];
+  const supported = positions.filter(([venue, , , value, assetClass]) =>
+    isNum(value) && value !== 0 && (venue === "hl" || (venue === "ib" && assetClass === "equity")));
+  const symbols = [...new Map(supported.map(([venue, symbol]) => [venue + ":" + symbol, [venue, symbol]])).entries()];
+  const quotes = new Map();
+  for (let i = 0; i < symbols.length; i += 6) {
+    await Promise.all(symbols.slice(i, i + 6).map(async ([key, [venue, symbol]]) => quotes.set(key, await bookHourlyQuotes(venue, symbol))));
+  }
+  return intradayBookMoves(positions, quotes, start, end, data.tradingEquity);
+}
+
 function drawIntraday(node, days) {
   const data = (latest && latest.data && latest.data.intraday) || {};
-  const start = Date.now() - days * 86400000;
+  const end = Date.now(), start = end - days * 86400000;
   const lines = [];
+  const asOf = Math.floor(end / 3600000);
+  if (data.bookPositions?.length && (node._intradayBooks?.source !== data || node._intradayBooks?.asOf !== asOf)) {
+    const book = { source: data, asOf, rows: [] };
+    node._intradayBooks = book;
+    loadIntradayBooks(data, start, end).then((rows) => {
+      book.rows = rows;
+      if (rows.length && node._intradayBooks === book && node._intraday && currentScale("charts") === "1D") drawIntraday(node, days);
+    }).catch(() => {});
+  }
   const rebased = (points, pick) => {
     const rows = points.filter(([t]) => t >= start);
     if (rows.length < 3) return null;
@@ -2629,9 +2702,15 @@ function drawIntraday(node, days) {
   if (btc) lines.push(["BTC", btc, { width: 1.4, dash: "dot", color: colorFor("BTC") }]);
   const sp = rebased(data["S&P500"] || [], (row) => row[1]);
   if (sp) lines.push(["S&P500", sp, { width: 1.4, dash: "dot", color: colorFor("S&P500") }]);
+  for (const { kind, points, coverage } of node._intradayBooks?.source === data ? node._intradayBooks.rows : []) {
+    const name = kind === "crypto" ? "Crypto" : "Stocks";
+    const line = { x: points.map(([t]) => new Date(t)), y: points.map(([, y]) => y),
+      note: ` · current holdings, price moves only · ${Math.round(coverage * 100)}% of gross exposure priced` };
+    lines.push([name + " est.", line, { width: 1.8, color: token("--kind-" + kind) }]);
+  }
   if (!lines.length) return false;
   const traces = lines.map(([name, line, style]) => colorHover({ type: "scatter", mode: "lines", name, x: line.x, y: line.y, line: Object.assign({ shape: "linear" }, style),
-    customdata: line.y.map((v) => readablePct(v / 100)), hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>" }));
+    customdata: line.y.map((v) => readablePct(v / 100) + (line.note || "")), hovertemplate: "%{fullData.name}: %{customdata}<extra></extra>" }));
   const layout = Object.assign({}, node.layout, { annotations: lines.map(([name, line, style]) => ({ xref: "paper", x: 1, y: line.y[line.y.length - 1], xanchor: "left", xshift: 7,
     showarrow: false, text: `${name} ${readablePct(line.y[line.y.length - 1] / 100)}`, font: { size: 11, color: style.color }, ...endLabelBox() })), ...windowedLayout(node.layout, start, Date.now()),
     yaxis: Object.assign({}, node.layout.yaxis, { autorange: true, range: null }) });

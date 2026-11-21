@@ -324,6 +324,21 @@ async function spyCloses() {
   return body;
 }
 
+const stockHours = new Map();
+async function stockHourlyCloses(ticker) {
+  const saved = stockHours.get(ticker);
+  if (saved && Date.now() - saved.at < 5 * 60_000) return saved.body;
+  const url = "https://query1.finance.yahoo.com/v8/finance/chart/" + ticker + "?interval=1h&range=5d";
+  const response = await fetch(url, { signal: AbortSignal.timeout(7000), headers: { "User-Agent": "Mozilla/5.0 (desk relay)", Accept: "application/json" } });
+  if (!response.ok) throw new Error("Stock price history unavailable");
+  const result = (await response.json()).chart.result[0];
+  const closes = result.indicators.quote[0].close;
+  const body = { closes: result.timestamp.map((t, i) => [(t + 3600) * 1000, closes[i]]).filter(([, close]) => close > 0) };
+  if (stockHours.size >= 128) stockHours.delete(stockHours.keys().next().value);
+  stockHours.set(ticker, { at: Date.now(), body });
+  return body;
+}
+
 // Drop transaction hashes and anything naming the address; the address itself never leaves.
 function scrub(value, address) {
   const hidden = new RegExp(address.slice(2), "gi");
@@ -510,6 +525,13 @@ export default {
         return reply(await spyCloses(), 200, 3600);
       } catch (error) {
         return reply({ error: String(error && error.message || error) }, 502);
+      }
+    }
+    if (kind === "stock-hourly" && !what && /^[A-Z0-9.-]{1,16}$/.test(id || "")) {
+      try {
+        return reply(await stockHourlyCloses(id), 200, 300);
+      } catch (error) {
+        return reply({ error: "Stock price history unavailable" }, 502);
       }
     }
     if (kind === "sync" && !id) {  // the last scheduled capture: when, days saved per wallet, problems

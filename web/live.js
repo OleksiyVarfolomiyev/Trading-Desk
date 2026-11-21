@@ -1084,7 +1084,8 @@
           }
         }
       }
-      return { desk, matched_desk, accounts, BTC: await hours(BTC), "S&P500": await hours(SP500) };
+      const bookPositions = tradePositions.map((p) => [p.venue, p.coin || p.symbol, marketKind(p).toLowerCase(), value(p), p.asset_class]);
+      return { desk, matched_desk, accounts, bookPositions, tradingEquity, BTC: await hours(BTC), "S&P500": await hours(SP500) };
     })();
 
     // -- highlights (desk/overview.py and desk_accounts.py rules)
