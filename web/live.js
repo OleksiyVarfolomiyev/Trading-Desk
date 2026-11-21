@@ -635,6 +635,7 @@
       every("walletperf", 30 * 60000, () => relay("/walletperf")).catch(() => null),
       every("regime", 30 * 60000, () => relay("/regime")).catch(() => null),
       every("alerts", 60000, () => relay("/alerts")).catch(() => null),
+      every("spike-fade-paper", 60000, () => relay("/spike-fade-paper")).catch(() => null),
       every("tiles", 60000, () => relay("/tiles")).catch(() => null),
       every("books", 15 * 60000, () => relay("/books")).catch(() => null),   // each book's performance (the Mac, hourly)
       every("usage_model", 600000, () => getJSON("/usage_model")).catch(() => ({})),
@@ -669,7 +670,7 @@
       if (w.error) problems.push(`${w.label}: ${w.error}`);
       (w.notes || []).forEach((note) => notes.push(note));
     });
-    const [ibData, walletPerf, regime, daemonAlerts, tileFeed, bookPerf, usageModel, catalogEntries, syncRun, research] = await relayReads;
+    const [ibData, walletPerf, regime, daemonAlerts, spikeFadePaper, tileFeed, bookPerf, usageModel, catalogEntries, syncRun, research] = await relayReads;
     const ibs = ibData && ibData.account ? [ibAccount(ibData)] : [];
     ibs.forEach((account) => {
       const age = Date.now() - account.asOf;
@@ -1090,6 +1091,10 @@
 
     // -- highlights (desk/overview.py and desk_accounts.py rules)
     const well = [], attention = [];
+    const paperNotice = spikeFadePaper?.notice;
+    if (paperNotice && (spikeFadePaper.below_notice || now - paperNotice.at < DAY_MS) && fin(paperNotice.return)) {
+      attention.push(["Paper spike fade drawdown", `Paper strategy down ${Math.abs(paperNotice.return * 100).toFixed(1)}% of its starting budget · ${eastern(paperNotice.at)}`]);
+    }
     let fundingNow = [];  // positions paying adverse funding at the current rate, for the one "Funding" row
     const allHover = {};  // what ALL means on the winners and losers rows (since entry), on their hover
     // The desk return is in the TW return and Return 30D tiles and the performance table's bold row: no highlight.

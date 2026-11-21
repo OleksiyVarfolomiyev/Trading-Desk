@@ -1,0 +1,15 @@
+[Unit]
+Description=Desk spike-fade paper runner (public quotes, simulated positions)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=desk
+WorkingDirectory=/home/desk/trading-desk
+Environment=SPIKE_FADE_PAPER_BUDGET=250
+ExecStart=/home/desk/trading-desk/.venv/bin/python -m research.spike_fade paper-watch --state data/spike_fade_paper.json --budget ${SPIKE_FADE_PAPER_BUDGET} --fraction 0.10
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

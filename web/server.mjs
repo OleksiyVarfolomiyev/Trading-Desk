@@ -409,6 +409,20 @@ async function handle(request, response) {
     response.end(page ? loginPage() : "Sign in to see the desk.");
     return;
   }
+  if (url.pathname === "/spike-fade-paper" && request.method === "GET") {
+    let status = { mode: "paper", available: false };
+    try {
+      const raw = await fsp.readFile(path.resolve(HERE, "../data/spike_fade_paper.json"), "utf8");
+      const state = JSON.parse(raw);
+      status = { mode: "paper", available: true, budget: state.budget, fraction: state.fraction, equity: state.equity,
+        updated_at: state.updated_at, rule: state.rule, calibration: state.calibration, notice: state.notice, below_notice: state.below_notice };
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    response.end(JSON.stringify(status));
+    return;
+  }
   if (url.pathname === "/feedback" && request.method === "POST") return saveFeedback(request, response);
   if (url.pathname === "/highlight_state") return highlightState(request, response);
   if (url.pathname === "/action" && request.method === "POST") return dashboardAction(request, response);
