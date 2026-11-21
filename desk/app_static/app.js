@@ -1442,7 +1442,8 @@ async function loadHighlightState() {
 function redrawHighlights() {
   if (!latest || !latest.data) return;
   const hl = { ...(latest.data.highlights || {}) };
-  hl.attention = eraRows(hl.attention);   // an era-tagged alert (drawdown against tolerance) only under its own choice
+  const positions = latest.data.tables?.positions?.rows || [];
+  hl.attention = eraRows(hl.attention).map(([title, text]) => [title, liveHighlight(title, text, positions)]);
   const hover = { ...hl.hover };
   for (const kind of ["crypto", "stocks", "desk"]) {
     renderHighlights(`hl-${kind}-well`, [
@@ -1454,6 +1455,18 @@ function redrawHighlights() {
   }
   renderAlertStrip(hl.attention || [], hover);
   if (typeof drawSectionsMenu === "function") drawSectionsMenu();
+}
+function liveHighlight(title, text, positions) {
+  if (!/^auto: test thesis\?$/i.test(title)) return text;
+  const since = text.match(/\s+\(since [^()]*\)$/)?.[0] || "";
+  const trigger = text.slice(0, text.length - since.length).split(/\s+Worst (?:against entry|ALL):/i, 1)[0];
+  const rows = positions.filter((row) => row["Asset class"] === "crypto perp" && isNum(row["uPnL (%)"]))
+    .sort((a, b) => a["uPnL (%)"] - b["uPnL (%)"]).slice(0, 8)
+    .map((row) => {
+      const tag = row.Strategy && row.Strategy !== "untagged" ? ` (${row.Strategy})` : "";
+      return `${row.Symbol} ${String(row.Side).toLowerCase()} ${pct(row["uPnL (%)"])} ALL${tag}`;
+    });
+  return `${trigger} ${rows.length ? `Worst ALL: ${rows.join("; ")}` : "Current position returns unavailable"}${since}`;
 }
 function highlightsForKind(rows, kind) {
   const tables = (latest && latest.data && latest.data.tables) || {};

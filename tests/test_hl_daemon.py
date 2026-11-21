@@ -1318,7 +1318,7 @@ class FlattenTests(unittest.TestCase):
             self.assertEqual(name, "test thesis?")
             self.assertIn("Nothing was closed", note)
             self.assertLess(note.index("ENA"), note.index("WLD"))   # worst against its entry first
-            self.assertIn("(fade)", note)
+            self.assertIn("ENA short -25% ALL (fade)", note)
 
 
 class InfoUsageTests(unittest.TestCase):

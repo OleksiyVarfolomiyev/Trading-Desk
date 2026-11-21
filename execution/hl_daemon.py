@@ -2862,15 +2862,15 @@ class AutoTrader:
             rows = []
             for wallet, coin, quantity, upnl in picks:
                 mark = self.daemon.state.mark(coin) or 0.0
-                cost = abs(quantity * mark) - upnl
+                cost = abs(quantity * mark - upnl) if mark > 0 else 0.0
                 move = upnl / cost if cost > 0 else float("nan")
                 tag = next((str(e.get("strategy") or "") for e in reversed(entries)
                             if str(e.get("wallet", "")).lower() == wallet[-4:].lower() and e.get("coin") == coin), "")
                 rows.append((move, f"{coin} {'short' if quantity < 0 else 'long'} {_pct(move) if move == move else 'n/a'} "
-                                   f"vs entry ({tag or 'no thesis tag'})"))
+                                   f"ALL ({tag or 'no thesis tag'})"))
             rows.sort(key=lambda row: row[0] if row[0] == row[0] else 0.0)
             listed = "; ".join(line for _, line in rows[:8]) or "no crypto positions"
-            return f"{text}. Test thesis? Nothing was closed. Worst against entry: {listed}"
+            return f"{text}. Test thesis? Nothing was closed. Worst ALL: {listed}"
         self._spawn("test thesis?", work, [item[1] for item in picks])
 
     def flip(self, move: float, volume: float, text: str) -> None:
